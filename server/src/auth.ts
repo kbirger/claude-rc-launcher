@@ -141,6 +141,13 @@ export function requireUser(cfg: Config, now: () => number = Date.now): Middlewa
   };
 }
 
+/** Test helper: returns a `Cookie` header value carrying a validly signed session. */
+export async function mintSessionCookie(cfg: Config, user: User, exp: number): Promise<string> {
+  const { serializeSigned } = await import("hono/utils/cookie");
+  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), cfg.sessionSecret, { path: "/" });
+  return sc.split(";")[0]!;
+}
+
 async function readSession(c: Parameters<typeof getSignedCookie>[0], cfg: Config, now: () => number): Promise<User | null> {
   const raw = await getSignedCookie(c, cfg.sessionSecret, SESSION_COOKIE);
   if (!raw) return null;
