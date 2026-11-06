@@ -9,6 +9,7 @@ const base = {
 const cfg = (extra: Record<string, string> = {}) => loadConfig({ ...base, ...extra });
 const withSock = () => cfg({ SSH_AUTH_SOCK: "/run/ssh-agent.sock" });
 const P = "/srv/claude/projects/monitoring";
+const BS = String.fromCharCode(92);
 
 describe("renderUnit", () => {
   test("matches proven template", () => {
@@ -69,6 +70,20 @@ describe("renderUnit", () => {
     expect(() => renderUnit(cfg(), "/a\u0001b", "n")).toThrow();
     expect(() => renderUnit(cfg(), "/a\rb", "n")).toThrow();
     expect(() => renderUnit(cfg(), "/a\u007fb", "n")).toThrow();
+  });
+
+  test("backslash and edge whitespace in path throw", () => {
+    expect(() => renderUnit(cfg(), "/srv/x" + BS, "n")).toThrow();
+    expect(() => renderUnit(cfg(), "/srv/a" + BS + "b/c", "n")).toThrow();
+    expect(() => renderUnit(cfg(), "/srv/x ", "n")).toThrow();
+    expect(() => renderUnit(cfg(), "/srv/x\t", "n")).toThrow();
+  });
+
+  test("control chars in claudeRcArgs and sshAuthSock throw", () => {
+    expect(() => renderUnit(cfg({ CLAUDE_RC_ARGS: "--a --b\u0001c" }), P, "n")).toThrow();
+    expect(() => renderUnit(cfg({ CLAUDE_BIN: "cl\naude" }), P, "n")).toThrow();
+    expect(() => renderUnit(cfg({ SSH_AUTH_SOCK: "/run/a\nExecStartPre=x" }), P, "n")).toThrow();
+    expect(() => renderUnit(cfg({ SERVICE_USER: "bob" + BS }), P, "n")).toThrow();
   });
 
   test("relative path throws", () => {

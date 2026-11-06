@@ -46,8 +46,10 @@ export function renderUnit(cfg: Config, absPath: string, name: string): string {
   if (!isValidName(name)) throw new Error("invalid instance name");
   safe("path", absPath);
   if (!absPath.startsWith("/")) throw new Error("path must be absolute");
+  if (absPath.includes("\\")) throw new Error("path must not contain backslashes");
+  if (absPath !== absPath.trim()) throw new Error("path must not have leading or trailing whitespace");
   const user = safe("User", cfg.serviceUser);
-  if (/\s/.test(user)) throw new Error("invalid service user");
+  if (/\s/.test(user) || user.includes("\\")) throw new Error("invalid service user");
 
   const lines = [
     `${MARKER}${absPath}`,
