@@ -10,10 +10,16 @@ import type { Config } from "../src/config";
 let dir: string;
 let calls: { cmd: string; args: string[] }[];
 let failEnable: boolean;
+let failDisable: boolean;
+let gate: Promise<void> | null;
+let events: string[];
 
 const SHOW = "ActiveState=active\nSubState=running\nActiveEnterTimestamp=Thu 2026-11-06 10:00:00 UTC\n";
 const fake: Runner = async (cmd, args) => {
   calls.push({ cmd, args });
+  events.push(args.filter((a) => !a.startsWith("--user")).join(" ") + ((await readdir(dir).catch(() => [])).length ? " [file]" : " [nofile]"));
+  if (args.includes("enable") && gate) await gate;
+  if (args.includes("disable") && failDisable) return { code: 1, stdout: "", stderr: "nope" };
   if (args.includes("enable") && failEnable) return { code: 1, stdout: "", stderr: "boom" };
   if (args.includes("show")) return { code: 0, stdout: SHOW, stderr: "" };
   if (cmd === "journalctl") return { code: 0, stdout: "log line\n", stderr: "" };
@@ -47,6 +53,9 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "inst-"));
   calls = [];
   failEnable = false;
+  failDisable = false;
+  gate = null;
+  events = [];
 });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
@@ -96,6 +105,12 @@ describe("start", () => {
     }
     expect(await readdir(dir)).toEqual([]);
     expect(calls[calls.length - 1]).toEqual(sc("daemon-reload"));
+    const id = instanceId("/srv/proj");
+    expect(events.slice(-3)).toEqual([
+      `enable --now ${unitName(id)} [file]`,
+      `disable ${unitName(id)} [file]`,
+      "daemon-reload [nofile]",
+    ]);
   });
   test("user scope prefixes --user", async () => {
     await svc({ scope: "user" }).start({ path: "/srv/proj" });
@@ -137,10 +152,33 @@ describe("stop", () => {
     expect(calls).toEqual([sc("disable", "--now", unitName(id)), sc("daemon-reload")]);
     expect(await readdir(dir)).toEqual([]);
   });
+  test("failed disable is 500, keeps the unit file, no reload", async () => {
+    const id = await seed("/srv/a");
+    failDisable = true;
+    try { await svc().stop(id); throw new Error("no"); } catch (e) {
+      expect((e as HttpError).status).toBe(500);
+      expect((e as HttpError).message).toContain("nope");
+    }
+    expect(await readdir(dir)).toEqual([unitName(id)]);
+    expect(calls).toEqual([sc("disable", "--now", unitName(id))]);
+  });
+  test("stop during in-flight start is 409 and never disables", async () => {
+    let release!: () => void;
+    gate = new Promise<void>((r) => { release = r; });
+    const s = svc();
+    const id = instanceId("/srv/proj");
+    const started = s.start({ path: "/srv/proj" });
+    while (!calls.some((c) => c.args.includes("enable"))) await new Promise((r) => setTimeout(r, 1));
+    expect(await status(s.stop(id))).toBe(409);
+    expect(calls.some((c) => c.args.includes("disable"))).toBe(false);
+    release();
+    await started;
+    expect(await readdir(dir)).toEqual([unitName(id)]);
+  });
   test("unmanaged ids are 404 with runner untouched", async () => {
     const bare = "abcdef012345";
     await writeFile(join(dir, unitName(bare)), "[Unit]\nDescription=not ours\n");
-    expect(await status(svc().stop("../../etc/passwd"))).toBe(400);
+    expect(await status(svc().stop("../../etc/passwd"))).toBe(404);
     expect(await status(svc().stop("0123456789ab"))).toBe(404);
     expect(await status(svc().stop(bare))).toBe(404);
     expect(await status(svc().logs(bare, 10))).toBe(404);

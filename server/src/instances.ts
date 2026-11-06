@@ -62,7 +62,7 @@ export class InstanceService {
 
   /** Validate id and require an existing managed unit file; otherwise 400/404. Runner is never touched. */
   private async requireManaged(id: string): Promise<void> {
-    if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(400, "invalid id");
+    if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(404, "instance not found");
     let content: string;
     try {
       content = await readFile(this.file(id), "utf8");
@@ -132,6 +132,7 @@ export class InstanceService {
       await this.sysctl(["daemon-reload"]);
       const r = await this.sysctl(["enable", "--now", unit]);
       if (r.code !== 0) {
+        await this.sysctl(["disable", unit]); // best effort: undo a partial enable
         await unlink(this.file(id)).catch(() => {});
         await this.sysctl(["daemon-reload"]);
         throw new HttpError(500, `failed to start ${unit}: ${r.stderr.trim()}`);
@@ -143,18 +144,24 @@ export class InstanceService {
   }
 
   async stop(id: string): Promise<void> {
-    await this.requireManaged(id);
-    const unit = unitName(id);
-    const d = await this.sysctl(["disable", "--now", unit]);
-    let removeErr = false;
+    if (this.inflight.has(id)) throw new HttpError(409, "operation in progress");
+    this.inflight.add(id);
     try {
-      await unlink(this.file(id));
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") removeErr = true;
-    }
-    await this.sysctl(["daemon-reload"]);
-    if (removeErr) {
-      throw new HttpError(500, `failed to remove ${unit}${d.code !== 0 ? `: ${d.stderr.trim()}` : ""}`);
+      await this.requireManaged(id);
+      const unit = unitName(id);
+      const d = await this.sysctl(["disable", "--now", unit]);
+      if (d.code !== 0) throw new HttpError(500, `failed to stop ${unit}: ${d.stderr.trim()}`);
+      try {
+        await unlink(this.file(id));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+          await this.sysctl(["daemon-reload"]);
+          throw new HttpError(500, `failed to remove ${unit}`);
+        }
+      }
+      await this.sysctl(["daemon-reload"]);
+    } finally {
+      this.inflight.delete(id);
     }
   }
 
