@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { authRoutes, requireUser, type OidcClient, type User } from "../src/auth";
+import { authRoutes, createOidcClient, requireUser, type OidcClient, type User } from "../src/auth";
 import type { Config } from "../src/config";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
@@ -180,4 +180,11 @@ describe("requireUser", () => {
     expect((await app.request("/api/x", { headers: { cookie: ck } })).status).toBe(401);
     expect((await app.request("/", { headers: { cookie: ck } })).status).toBe(302);
   });
+});
+
+test("createOidcClient does not contact the IdP until first use", async () => {
+  const cfg = mkCfg();
+  cfg.oidc.issuer = "http://127.0.0.1:1/";
+  const c = await createOidcClient(cfg);
+  await expect(c.authorizationUrl({ redirectUri: "http://x/cb", state: "s", codeVerifier: "v".repeat(43) })).rejects.toThrow();
 });

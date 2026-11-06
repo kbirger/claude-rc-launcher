@@ -24,15 +24,27 @@ const isSecure = (cfg: Config) => cfg.publicUrl.startsWith("https:");
  */
 export async function createOidcClient(cfg: Config): Promise<OidcClient> {
   const issuer = new URL(cfg.oidc.issuer);
-  const config = await client.discovery(
-    issuer,
-    cfg.oidc.clientId,
-    cfg.oidc.clientSecret,
-    undefined,
-    issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined,
-  );
+  // Discovery is lazy (first login) and cached on success, so the server starts without the IdP.
+  // A failed discovery is not cached; the next login retries. Auth is never bypassed.
+  let pending: Promise<client.Configuration> | undefined;
+  const getConfig = () => {
+    pending ??= client
+      .discovery(
+        issuer,
+        cfg.oidc.clientId,
+        cfg.oidc.clientSecret,
+        undefined,
+        issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined,
+      )
+      .catch((e) => {
+        pending = undefined;
+        throw e;
+      });
+    return pending;
+  };
   return {
     async authorizationUrl({ redirectUri, state, codeVerifier }) {
+      const config = await getConfig();
       const url = client.buildAuthorizationUrl(config, {
         redirect_uri: redirectUri,
         scope: "openid email profile",
@@ -43,6 +55,7 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
       return url.href;
     },
     async exchange({ callbackUrl, state, codeVerifier }) {
+      const config = await getConfig();
       const tokens = await client.authorizationCodeGrant(config, callbackUrl, {
         expectedState: state,
         pkceCodeVerifier: codeVerifier,

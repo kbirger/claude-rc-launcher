@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "bun --watch server/src/index.ts",
     "test": "bun test server web/src",
-    "build:web": "bun run --cwd web build",
-    "build": "npm run build:web && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
+    "start": "bun server/src/index.ts",
+    "build:web": "npm --prefix web run build",
+    "build": "npm run build:web && bun scripts/gen-embed.ts && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
   },
   "dependencies": {
     "hono": "^4.13.16",
