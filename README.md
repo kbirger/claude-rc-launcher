@@ -26,12 +26,33 @@ plain HTTP; run it behind a reverse proxy. Login is OIDC (e.g. Authentik).
 
 ## Install
 
-Build (needs Node.js 20+ and npm; Bun is installed locally as a dev dependency, see Development):
+The compiled binary embeds the web UI, so the server needs no JavaScript runtime (no Node.js, no
+Bun). `claude` must be installed for `SERVICE_USER`. Choose one way to get the binary:
+
+**A. Prebuilt release (recommended).** Linux x64 and arm64 binaries are attached to each
+[GitHub release](https://github.com/kbirger/claude-rc-launcher/releases).
 
 ```sh
-./install.sh --build               # installs dependencies and produces dist/claude-rc-launcher
-# (or by hand: npm install && npm --prefix web install && npm run build)
+ARCH=$(uname -m | sed -e 's/x86_64/x64/' -e 's/aarch64/arm64/')
+BASE=https://github.com/kbirger/claude-rc-launcher/releases/latest/download
+curl -fsSLO "$BASE/claude-rc-launcher-linux-$ARCH" -O "$BASE/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS
+sudo install -m 755 "claude-rc-launcher-linux-$ARCH" /usr/local/bin/claude-rc-launcher
+```
+
+**B. Build from source.** Needs only [Bun](https://bun.sh); `install.sh` installs the pinned version
+(`.bun-version`) into `~/.bun` if it is missing, then the dependencies.
+
+```sh
+git clone https://github.com/kbirger/claude-rc-launcher && cd claude-rc-launcher
+./install.sh --build               # produces dist/claude-rc-launcher
 sudo install -m 755 dist/claude-rc-launcher /usr/local/bin/claude-rc-launcher
+```
+
+Then configure and start it (the two `deploy/` files are in the repo; fetch them from the same
+tag if you used option A):
+
+```sh
 sudo install -m 600 deploy/launcher.env.example /etc/claude-rc-launcher.env
 sudoedit /etc/claude-rc-launcher.env
 sudo install -m 644 deploy/claude-rc-launcher.service /etc/systemd/system/
@@ -40,8 +61,13 @@ sudo systemctl enable --now claude-rc-launcher
 curl http://127.0.0.1:8080/healthz   # {"ok":true}
 ```
 
-The binary embeds the web UI; the host needs no JS runtime. `claude` must be installed for
-`SERVICE_USER`.
+### Publishing a release (maintainers)
+
+Push a tag. The `Release` workflow tests, builds both binaries plus `SHA256SUMS`, and publishes them:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
 
 ## Configuration
 
@@ -200,12 +226,19 @@ Not yet executed; perform on a Linux host with systemd and Claude installed:
 
 ## Development
 
+Only [Bun](https://bun.sh) is needed (version pinned in `.bun-version`).
+
 ```sh
-npm install && npm --prefix web install
-npx bun test server web/src     # tests (also: npm test)
-npm run dev                     # backend with watch (bun)
-npm --prefix web run dev        # Vite dev server for the UI
-npm run build                   # web build, embed, bun build --compile -> dist/claude-rc-launcher
+./install.sh                    # or: bun install && (cd web && bun install)
+bun test                        # server + web tests
+bun run typecheck               # tsc --noEmit
+bun run --cwd web check         # svelte-check
+bun run dev                     # backend with watch
+bun run --cwd web dev           # Vite dev server for the UI (proxies /api and /auth to :8080)
+bun run build                   # web build, embed, bun build --compile -> dist/claude-rc-launcher
 ```
+
+CI (`.github/workflows/ci.yml`) runs the typecheck, tests and build on Linux for every push and
+pull request.
 
 Linux/systemd only at runtime.

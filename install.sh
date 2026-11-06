@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Installs the build dependencies for claude-rc-launcher (root + web/), optionally builds it.
+# Only Bun is needed: no Node.js or npm.
 #
-#   ./install.sh            install dependencies
+#   ./install.sh            install dependencies (installs Bun first if it is missing)
 #   ./install.sh --build    install dependencies, then build dist/claude-rc-launcher
 #
-# Bun is installed locally as a devDependency (node_modules/.bin/bun); nothing global is touched.
-# Deploying the binary and the systemd unit is a separate, root-only step: see README.md "Install".
+# If Bun is missing it is installed with Bun's official installer into ~/.bun (no root, no system
+# changes), pinned to the version in .bun-version. To skip building on the server entirely, download
+# a prebuilt binary from the GitHub releases page instead (see README.md "Install").
+# Deploying the binary and the systemd unit is a separate, root-only step: see README.md.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -14,41 +17,34 @@ BUILD=0
 for arg in "$@"; do
   case "$arg" in
     --build) BUILD=1 ;;
-    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
 
-need() {
-  command -v "$1" >/dev/null 2>&1 || { echo "error: '$1' is required but not found. $2" >&2; exit 1; }
-}
+BUN_VERSION=$(tr -d '[:space:]' < .bun-version)
 
-need node "Install Node.js 20 or newer (https://nodejs.org or your package manager)."
-need npm "It ships with Node.js."
-
-node_major=$(node -p 'process.versions.node.split(".")[0]')
-if [ "$node_major" -lt 20 ]; then
-  echo "error: Node.js 20+ is required (found $(node --version))." >&2
-  exit 1
+if ! command -v bun >/dev/null 2>&1 && [ -x "$HOME/.bun/bin/bun" ]; then
+  export PATH="$HOME/.bun/bin:$PATH"
 fi
 
-# npm ci is reproducible when a lockfile exists; fall back to install otherwise.
-install_deps() {
-  local dir=$1
-  if [ -f "$dir/package-lock.json" ]; then
-    npm --prefix "$dir" ci
-  else
-    npm --prefix "$dir" install
-  fi
-}
+if ! command -v bun >/dev/null 2>&1; then
+  command -v curl >/dev/null 2>&1 || { echo "error: curl is required to install Bun (or install Bun yourself: https://bun.sh)." >&2; exit 1; }
+  command -v unzip >/dev/null 2>&1 || { echo "error: unzip is required by the Bun installer (or install Bun yourself: https://bun.sh)." >&2; exit 1; }
+  echo "==> Bun not found; installing Bun ${BUN_VERSION} into \$HOME/.bun (official installer, https://bun.sh)"
+  curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
+  export PATH="$HOME/.bun/bin:$PATH"
+fi
 
-echo "==> Installing server dependencies (includes a local Bun)"
-install_deps .
+have=$(bun --version)
+if [ "$have" != "$BUN_VERSION" ]; then
+  echo "warning: bun $have found; this project is built and tested with $BUN_VERSION (.bun-version)." >&2
+fi
+
+echo "==> Installing server dependencies"
+bun install --frozen-lockfile
 echo "==> Installing web dependencies"
-install_deps web
-
-echo "==> Checking bun"
-./node_modules/.bin/bun --version
+(cd web && bun install --frozen-lockfile)
 
 # Runtime prerequisites. These only warn: the build itself does not need them.
 command -v systemctl >/dev/null 2>&1 || echo "warning: systemctl not found; the launcher needs systemd to run instances." >&2
@@ -56,8 +52,8 @@ command -v claude >/dev/null 2>&1 || echo "warning: 'claude' not on PATH for thi
 
 if [ "$BUILD" -eq 1 ]; then
   echo "==> Building"
-  PATH="$PWD/node_modules/.bin:$PATH" npm run build
+  bun run build
   echo "Built: dist/claude-rc-launcher"
 else
-  echo "Done. Run './install.sh --build' (or 'npm run build') to produce dist/claude-rc-launcher."
+  echo "Done. Run './install.sh --build' (or 'bun run build') to produce dist/claude-rc-launcher."
 fi

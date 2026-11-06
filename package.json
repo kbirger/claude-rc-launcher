@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "bun --watch server/src/index.ts",
     "test": "bun test server web/src",
+    "typecheck": "tsc --noEmit",
     "start": "bun server/src/index.ts",
-    "build:web": "npm --prefix web run build",
-    "build": "npm run build:web && bun scripts/gen-embed.ts && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
+    "build:web": "bun run --cwd web build",
+    "build:bundle": "bun run build:web && bun scripts/gen-embed.ts",
+    "build": "bun run build:bundle && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
   },
   "dependencies": {
     "hono": "^4.13.16",
@@ -15,7 +17,6 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
-    "bun": "^1.4.4",
     "typescript": "^7.0.2"
   }
 }
