@@ -40,14 +40,22 @@ sha256sum --ignore-missing -c SHA256SUMS
 sudo install -m 755 "claude-rc-launcher-linux-$ARCH" /usr/local/bin/claude-rc-launcher
 ```
 
+(From a clone you can instead run `sudo deploy/install-binary.sh claude-rc-launcher-linux-$ARCH`.)
+
 **B. Build from source.** Needs only [Bun](https://bun.sh); `install.sh` installs the pinned version
 (`.bun-version`) into `~/.bun` if it is missing, then the dependencies.
 
 ```sh
 git clone https://github.com/kbirger/claude-rc-launcher && cd claude-rc-launcher
 ./install.sh --build               # produces dist/claude-rc-launcher
-sudo install -m 755 dist/claude-rc-launcher /usr/local/bin/claude-rc-launcher
+sudo deploy/install-binary.sh      # copies it to /usr/local/bin, restarts the service if running
 ```
+
+`install-binary.sh` **copies** the binary to `$PREFIX/bin` (default `/usr/local`, the standard
+place for locally installed software) and replaces it atomically, so upgrading a running service is
+safe. It deliberately does not symlink into `dist/`: the service runs as root and must not execute
+a file in a build directory that others can write to, and a symlink breaks when the checkout is
+cleaned or moved.
 
 Then configure and start it (the two `deploy/` files are in the repo; fetch them from the same
 tag if you used option A):
