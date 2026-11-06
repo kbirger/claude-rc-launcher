@@ -26,11 +26,11 @@ plain HTTP; run it behind a reverse proxy. Login is OIDC (e.g. Authentik).
 
 ## Install
 
-Build (needs Bun and Node/npm; see Development):
+Build (needs Node.js 20+ and npm; Bun is installed locally as a dev dependency, see Development):
 
 ```sh
-npm install && npm --prefix web install
-npm run build                      # produces dist/claude-rc-launcher
+./install.sh --build               # installs dependencies and produces dist/claude-rc-launcher
+# (or by hand: npm install && npm --prefix web install && npm run build)
 sudo install -m 755 dist/claude-rc-launcher /usr/local/bin/claude-rc-launcher
 sudo install -m 600 deploy/launcher.env.example /etc/claude-rc-launcher.env
 sudoedit /etc/claude-rc-launcher.env
