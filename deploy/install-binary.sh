@@ -144,4 +144,10 @@ fi
 systemctl enable "$NAME"
 # enable --now does not restart a running service, so restart explicitly to pick up the new binary.
 systemctl restart "$NAME"
-echo "Enabled and started $NAME. Check: curl http://127.0.0.1:\$PORT/healthz  (PORT defaults to 8080)"
+
+# Tell the user where to check, using the port/host actually configured (defaults: 8080, all
+# interfaces -> use loopback).
+PORT=$(get PORT); PORT=${PORT:-8080}
+HOST=$(get HOST)
+case "$HOST" in ""|0.0.0.0|::|"[::]") HOST=127.0.0.1 ;; esac
+echo "Enabled and started $NAME. Check: curl http://$HOST:$PORT/healthz"
