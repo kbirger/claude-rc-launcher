@@ -1,0 +1,18 @@
+[Unit]
+Description=Claude RC Launcher (web UI for claude remote-control)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# User defaults to root, which is needed to write /etc/systemd/system.
+# You may change it (uncomment and edit) e.g. to a dedicated user together with
+# SYSTEMD_SCOPE=user and linger enabled; see the README.
+#User=root
+EnvironmentFile=/etc/claude-rc-launcher.env
+ExecStart=/usr/local/bin/claude-rc-launcher
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
