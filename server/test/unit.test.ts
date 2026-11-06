@@ -28,7 +28,7 @@ describe("renderUnit", () => {
       `Environment="HOME=/root"`,
       `Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`,
       `Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"`,
-      "ExecStart=claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir",
+      "ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir",
       "StandardOutput=null",
       "StandardError=journal",
       "Restart=always",
@@ -60,7 +60,7 @@ describe("renderUnit", () => {
     const out = renderUnit(cfg(), p, "n");
     expect(out).toContain('WorkingDirectory=/srv/my "proj" 100%%$x é\n');
     expect(out.split("\n").filter((l) => l.startsWith("ExecStart="))).toEqual([
-      "ExecStart=claude remote-control --name n --spawn same-dir --no-create-session-in-dir",
+      "ExecStart=/root/.local/bin/claude remote-control --name n --spawn same-dir --no-create-session-in-dir",
     ]);
     expect(parseManaged(out)).toEqual({ path: p });
   });
@@ -121,6 +121,9 @@ describe("names and ids", () => {
     expect(isValidName("a".repeat(64))).toBe(true);
     expect(isValidName("a b")).toBe(false);
     expect(isValidName("a/b")).toBe(false);
+    expect(isValidName("-x")).toBe(false);
+    expect(isValidName("--dangerously-skip-permissions")).toBe(false);
+    expect(isValidName("a-b")).toBe(true);
   });
 
   test("instanceId stable 12 hex", () => {
@@ -136,5 +139,28 @@ describe("names and ids", () => {
     expect(defaultName(cfg(), "/")).toBe("claude");
     expect(defaultName(cfg(), "/x/" + "a".repeat(100))).toHaveLength(64);
     expect(isValidName(defaultName(cfg(), "/x/we ird$"))).toBe(true);
+    expect(defaultName(cfg(), "/x/--dangerously-skip-permissions")).toBe("dangerously-skip-permissions");
+    expect(defaultName(cfg(), "/x/---")).toBe("claude");
+    expect(defaultName(cfg({ NAME_PREFIX: "-" }), "/x/p")).toBe("p");
+  });
+});
+
+describe("flag injection and scope", () => {
+  test("renderUnit rejects a name starting with '-'", () => {
+    expect(() => renderUnit(cfg(), P, "--dangerously-skip-permissions")).toThrow();
+    expect(() => renderUnit(cfg(), P, "-x")).toThrow();
+  });
+
+  test("system scope has User= and multi-user.target", () => {
+    const out = renderUnit(cfg(), P, "n");
+    expect(out).toContain("\nUser=root\n");
+    expect(out).toContain("WantedBy=multi-user.target");
+  });
+
+  test("user scope: WantedBy=default.target and no User=", () => {
+    const out = renderUnit(cfg({ SYSTEMD_SCOPE: "user", SERVICE_USER: "bob" }), P, "n");
+    expect(out).toContain("WantedBy=default.target");
+    expect(out).not.toContain("multi-user.target");
+    expect(out.split("\n").some((l) => l.startsWith("User="))).toBe(false);
   });
 });

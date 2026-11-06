@@ -1,10 +1,11 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { authRoutes, requireUser, type OidcClient, type User } from "./auth";
 import type { Config } from "./config";
-import { listDirs, makeDir } from "./fsapi";
+import { listDirs, makeDir, type DirOwner } from "./fsapi";
 import { HttpError, type InstanceService } from "./instances";
+import { PathError } from "./paths";
 
-export type Deps = { cfg: Config; instances: InstanceService; oidc: OidcClient; staticHandler?: MiddlewareHandler };
+export type Deps = { cfg: Config; instances: InstanceService; oidc: OidcClient; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -36,7 +37,7 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 export function createApp(deps: Deps): Hono {
-  const { cfg, instances, oidc, staticHandler } = deps;
+  const { cfg, instances, oidc, staticHandler, dirOwner } = deps;
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -81,7 +82,7 @@ export function createApp(deps: Deps): Hono {
     if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
       throw new HttpError(400, "parent and name are required strings");
     }
-    return c.json(await makeDir(body.parent, body.name, cfg.roots), 201);
+    return c.json(await makeDir(body.parent, body.name, cfg.roots, dirOwner), 201);
   });
 
   api.all("*", (c) => c.json({ error: "not found" }, 404));
@@ -90,10 +91,9 @@ export function createApp(deps: Deps): Hono {
   if (staticHandler) app.get("*", requireUser(cfg), staticHandler);
 
   app.onError((err, c) => {
-    const status = (err as { status?: unknown })?.status;
-    if (typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599) {
-      const extra = (err as { extra?: unknown }).extra;
-      return c.json({ ...(isObject(extra) ? extra : {}), error: err.message }, status as 400);
+    if (err instanceof HttpError || err instanceof PathError) {
+      const extra = err instanceof HttpError ? err.extra : undefined;
+      return c.json({ ...(isObject(extra) ? extra : {}), error: err.message }, err.status as 400);
     }
     console.error(err);
     return c.json({ error: "internal error" }, 500);

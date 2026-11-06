@@ -27,6 +27,16 @@ function nameFromUnit(content: string): string {
   return v.startsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v;
 }
 
+/** systemd `--timestamp=unix` prints `@<seconds>`; empty/`@0`/garbage -> null. */
+function parseUnixTimestamp(v: string | undefined): string | null {
+  const m = /^@([0-9]+)$/.exec(v ?? "");
+  if (!m) return null;
+  const secs = Number(m[1]);
+  if (!(secs > 0)) return null;
+  const d = new Date(secs * 1000);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export class InstanceService {
   private inflight = new Set<string>();
 
@@ -45,13 +55,13 @@ export class InstanceService {
   }
 
   private async show(id: string): Promise<{ state: string; startedAt: string | null }> {
-    const r = await this.sysctl(["show", unitName(id), "-p", "ActiveState,SubState,ActiveEnterTimestamp"]);
+    const r = await this.sysctl(["show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id)]);
     const kv: Record<string, string> = {};
     for (const line of r.stdout.split("\n")) {
       const i = line.indexOf("=");
       if (i > 0) kv[line.slice(0, i)] = line.slice(i + 1).trim();
     }
-    return { state: kv.ActiveState || "unknown", startedAt: kv.ActiveEnterTimestamp || null };
+    return { state: kv.ActiveState || "unknown", startedAt: parseUnixTimestamp(kv.ActiveEnterTimestamp) };
   }
 
   private async describe(id: string, content: string): Promise<Instance | null> {
@@ -172,6 +182,7 @@ export class InstanceService {
       ...(this.cfg.scope === "user" ? ["--user"] : []),
       "-u", unitName(id), "-n", String(n), "--no-pager", "-o", "cat",
     ]);
+    if (r.code !== 0) throw new HttpError(500, `failed to read logs: ${r.stderr.trim() || "journalctl exited " + r.code}`);
     return r.stdout;
   }
 }

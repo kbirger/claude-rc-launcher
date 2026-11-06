@@ -19,13 +19,20 @@ export async function loadWebFilesFromDisk(dir: string): Promise<WebFiles> {
   return out;
 }
 
+function isModuleNotFound(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") return true;
+  return e instanceof Error && /cannot find module|module not found|could not resolve/i.test(e.message);
+}
+
 /** Embedded files (compiled binary) -> web/dist on disk (dev) -> empty. */
 export async function loadWebFiles(): Promise<WebFiles> {
   try {
     // @ts-ignore embedded.ts is generated (gitignored) and may not exist in dev
     const mod = await import("./embedded");
     return mod.embeddedFiles as WebFiles;
-  } catch {
+  } catch (e) {
+    if (!isModuleNotFound(e)) console.error("failed to load embedded web files:", e);
     return loadWebFilesFromDisk(resolve(import.meta.dir, "../../web/dist"));
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "claude-rc-launcher-web",
-  "private": "true",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",

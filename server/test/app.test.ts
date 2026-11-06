@@ -47,6 +47,28 @@ const H = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "ap
 const post = (app: any, body: unknown, headers = H()) =>
   app.request("/api/instances", { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
 
+describe("error handling", () => {
+  test("non-HttpError with numeric status becomes 500 internal error", async () => {
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      const e = Object.assign(new Error("secret upstream detail"), { status: 502 });
+      const r = await mk({ list: async () => { throw e; } }).app.request("/api/instances", { headers: H() });
+      expect(r.status).toBe(500);
+      expect(await r.json()).toEqual({ error: "internal error" });
+    } finally {
+      console.error = orig;
+    }
+  });
+  test("HttpError and PathError pass through", async () => {
+    const a = await mk({ list: async () => { throw new HttpError(409, "dup", { instance: 1 }); } }).app.request("/api/instances", { headers: H() });
+    expect(a.status).toBe(409);
+    expect(await a.json()).toEqual({ instance: 1, error: "dup" });
+    const b = await mk({ list: async () => { throw new PathError(403, "outside"); } }).app.request("/api/instances", { headers: H() });
+    expect(b.status).toBe(403);
+  });
+});
+
 describe("auth gate", () => {
   test("healthz is open", async () => {
     const r = await mk().app.request("/healthz");
@@ -224,5 +246,19 @@ describe("me, errors, static", () => {
   });
   test("no static handler -> 404 for authed non-api", async () => {
     expect((await mk().app.request("/x", { headers: { cookie } })).status).toBe(404);
+  });
+});
+
+describe("mkdir owner", () => {
+  test("dirOwner is forwarded to makeDir (chown attempted)", async () => {
+    if (process.platform === "win32") return; // chown is a no-op on Windows
+    // A non-root test process cannot chown to another uid; a failing chown must yield 500.
+    const f = fake();
+    const app = createApp({ cfg, instances: f.svc, oidc, dirOwner: { uid: 0x7ffffff0, gid: 0x7ffffff0 } });
+    const r = await app.request("/api/fs/mkdir", {
+      method: "POST", headers: H(), body: JSON.stringify({ parent: root, name: "ownedtest" }),
+    });
+    if (process.getuid?.() === 0) expect(r.status).toBe(201);
+    else expect(r.status).toBe(500);
   });
 });

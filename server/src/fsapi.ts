@@ -1,4 +1,4 @@
-import { mkdir, readdir, realpath } from "node:fs/promises";
+import { chown, mkdir, readdir, realpath, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
 import { PathError, resolveWithinRoots } from "./paths";
@@ -69,7 +69,15 @@ export async function listDirs(path: string | undefined, roots: string[], showHi
 // eslint-disable-next-line no-control-regex
 const BAD_NAME = /[\u0000-\u001f\u007f/\\]/;
 
-export async function makeDir(parent: string, name: string, roots: string[]): Promise<{ path: string }> {
+export type DirOwner = { uid: number; gid: number };
+
+export async function makeDir(
+  parent: string,
+  name: string,
+  roots: string[],
+  owner?: DirOwner,
+  chownFn: (path: string, uid: number, gid: number) => Promise<void> = chown,
+): Promise<{ path: string }> {
   if (
     typeof name !== "string" ||
     name.length === 0 ||
@@ -92,5 +100,14 @@ export async function makeDir(parent: string, name: string, roots: string[]): Pr
   }
   const real = await realpath(target);
   await resolveChecked(real, roots);
+  if (owner) {
+    try {
+      await chownFn(real, owner.uid, owner.gid);
+    } catch (e) {
+      console.error("chown of new directory failed:", e);
+      await rmdir(real).catch(() => {});
+      throw new HttpError(500, "cannot set directory owner");
+    }
+  }
   return { path: real };
 }

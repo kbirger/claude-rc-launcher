@@ -15,8 +15,13 @@ plain HTTP; run it behind a reverse proxy. Login is OIDC (e.g. Authentik).
 - Prefer a dedicated non-root `SERVICE_USER` where possible, and keep `ROOTS` narrow.
 - Sessions are stateless signed cookies valid for 12 hours. Logout clears the cookie but cannot
   revoke a copy of it; rotate `SESSION_SECRET` to invalidate all sessions.
-- Use an **https** `OIDC_ISSUER`. The code accepts an `http://` issuer for development, but that is
-  insecure; do not use it in production.
+- `OIDC_ISSUER` must be **https**. The ID token is not signature-verified on the token-endpoint
+  response (it relies on TLS), so with an `http://` issuer a network attacker could forge a login.
+  `http://` is accepted only for loopback hosts (`localhost`, `127.0.0.1`, `::1`) or when you
+  explicitly set `OIDC_ALLOW_INSECURE=true` (not for production); a startup warning is logged.
+- Folders created from the UI are `chown`ed to `SERVICE_USER` when the launcher runs as root and
+  `SERVICE_USER` is not root (uid/gid resolved once at startup with `id -u`/`id -g`; startup fails if
+  the user does not exist), so the instance can write to them.
 - Path-prefix mounting (e.g. `https://host/rc/`) is not supported; serve at a hostname root.
 
 ## Install
@@ -49,19 +54,27 @@ Environment variables (set in `/etc/claude-rc-launcher.env`). Required: `PUBLIC_
 | `HOST` | `0.0.0.0` | Listen address (use `127.0.0.1` if the proxy is local) |
 | `PUBLIC_URL` | required | External URL; redirect URI is `PUBLIC_URL/auth/callback`; cookie is `Secure` when https |
 | `TRUST_PROXY` | off | Accepted (`1`/`true`/`yes`) but currently has no effect: forwarded headers are not consulted. Safe to set or omit |
-| `OIDC_ISSUER` | required | Issuer URL (discovery); should be https |
+| `OIDC_ISSUER` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `OIDC_ALLOW_INSECURE=true` |
+| `OIDC_ALLOW_INSECURE` | `false` | `true`/`1`/`yes` permits a non-loopback `http://` `OIDC_ISSUER`. INSECURE: ID tokens are not signature-verified, a network attacker can forge logins. Do not use in production |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | required | From the provider |
 | `SESSION_SECRET` | required | At least 32 chars: `openssl rand -hex 32` |
-| `ROOTS` | `SERVICE_HOME` | Colon-separated allowed directories (symlinks resolved; escapes refused) |
-| `SYSTEMD_SCOPE` | `system` | `system`, or `user` (`systemctl --user`; needs linger) |
+| `ROOTS` | `SERVICE_HOME` | Colon-separated allowed directories; every entry must be an absolute path (startup error otherwise). Symlinks resolved; escapes refused |
+| `SYSTEMD_SCOPE` | `system` | `system`, or `user` (`systemctl --user`; see "User scope" below; unverified on a real host) |
 | `UNIT_DIR` | `/etc/systemd/system`, or `SERVICE_HOME/.config/systemd/user` for user scope | Where unit files are written |
 | `SERVICE_USER` | `root` | `User=` of generated units |
 | `SERVICE_HOME` | `/root` or `/home/<SERVICE_USER>` | `HOME` of instances |
 | `SERVICE_PATH` | `SERVICE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` of instances |
 | `SSH_AUTH_SOCK` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit; otherwise omitted |
-| `CLAUDE_BIN` | `claude` | Claude executable used in `ExecStart` |
+| `CLAUDE_BIN` | `SERVICE_HOME/.local/bin/claude` | Claude executable used in `ExecStart`. Must be an absolute path: systemd does not search `PATH` for `ExecStart` (startup error otherwise) |
 | `CLAUDE_RC_ARGS` | `--spawn same-dir --no-create-session-in-dir` | Whitespace-separated args after `remote-control --name <name>`; operator-only |
-| `NAME_PREFIX` | empty | Prefix for the default `--name` (prefix + directory basename). Names must match `^[A-Za-z0-9._-]{1,64}$` |
+| `NAME_PREFIX` | empty | Prefix for the default `--name` (prefix + directory basename). Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` (no leading `-`, so a name cannot become a CLI flag) |
+
+### User scope (`SYSTEMD_SCOPE=user`)
+
+In user scope generated units omit `User=` (a user manager cannot switch users) and use
+`WantedBy=default.target`. The launcher itself must run as that user, with `loginctl enable-linger <user>`
+and `Environment=XDG_RUNTIME_DIR=/run/user/<uid>` in its own service so `systemctl --user` can reach the
+user bus. **This mode has not been verified on a real host.**
 
 ### What a generated unit looks like
 
@@ -83,7 +96,7 @@ Environment="HOME=/root"
 Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # next line only if SSH_AUTH_SOCK is configured
 Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"
-ExecStart=claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir
+ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir
 StandardOutput=null
 StandardError=journal
 Restart=always
@@ -94,7 +107,7 @@ WantedBy=multi-user.target
 ```
 
 - **Start** writes the unit, runs `daemon-reload`, then `enable --now`. Instances persist across
-  reboot (`WantedBy=multi-user.target`, `Restart=always`).
+  reboot (`WantedBy=multi-user.target` in system scope, `default.target` in user scope; `Restart=always`).
 - **Stop** means remove: `disable --now`, delete the unit file, `daemon-reload`. It will not come
   back after reboot.
 - The launcher only lists/stops unit files carrying the `managed-by` marker line and the

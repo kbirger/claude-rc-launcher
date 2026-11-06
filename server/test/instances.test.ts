@@ -14,14 +14,17 @@ let failDisable: boolean;
 let gate: Promise<void> | null;
 let events: string[];
 
-const SHOW = "ActiveState=active\nSubState=running\nActiveEnterTimestamp=Thu 2026-11-06 10:00:00 UTC\n";
+const SHOW = "ActiveState=active\nSubState=running\nActiveEnterTimestamp=@1730887200\n";
+let showOverride: string | null = null;
+let journalFail = false;
 const fake: Runner = async (cmd, args) => {
   calls.push({ cmd, args });
   events.push(args.filter((a) => !a.startsWith("--user")).join(" ") + ((await readdir(dir).catch(() => [])).length ? " [file]" : " [nofile]"));
   if (args.includes("enable") && gate) await gate;
   if (args.includes("disable") && failDisable) return { code: 1, stdout: "", stderr: "nope" };
   if (args.includes("enable") && failEnable) return { code: 1, stdout: "", stderr: "boom" };
-  if (args.includes("show")) return { code: 0, stdout: SHOW, stderr: "" };
+  if (args.includes("show")) return { code: 0, stdout: showOverride ?? SHOW, stderr: "" };
+  if (cmd === "journalctl" && journalFail) return { code: 1, stdout: "", stderr: "journal boom" };
   if (cmd === "journalctl") return { code: 0, stdout: "log line\n", stderr: "" };
   return { code: 0, stdout: "", stderr: "" };
 };
@@ -29,8 +32,8 @@ const fake: Runner = async (cmd, args) => {
 function cfg(over: Partial<Config> = {}): Config {
   return {
     port: 1, host: "h", publicUrl: "http://x", roots: ["/srv"], scope: "system", unitDir: dir,
-    serviceUser: "root", serviceHome: "/root", servicePath: "/usr/bin", claudeBin: "claude",
-    claudeRcArgs: ["--spawn", "same-dir"], namePrefix: "", oidc: { issuer: "", clientId: "", clientSecret: "" },
+    serviceUser: "root", serviceHome: "/root", servicePath: "/usr/bin", claudeBin: "/root/.local/bin/claude",
+    claudeRcArgs: ["--spawn", "same-dir"], namePrefix: "", oidc: { issuer: "", clientId: "", clientSecret: "", allowInsecure: false },
     sessionSecret: "x".repeat(32), trustProxy: false, ...over,
   };
 }
@@ -50,6 +53,8 @@ async function status(p: Promise<unknown>): Promise<number | string> {
 }
 
 beforeEach(async () => {
+  showOverride = null;
+  journalFail = false;
   dir = await mkdtemp(join(tmpdir(), "inst-"));
   calls = [];
   failEnable = false;
@@ -137,8 +142,17 @@ describe("list", () => {
     await writeFile(join(dir, "claude-rc-abcdef012345.service"), "[Unit]\n");
     await writeFile(join(dir, `claude-rc-${id}.txt`), renderUnit(cfg(), "/srv/c", "x"));
     const l = await svc().list();
-    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", state: "active", startedAt: "Thu 2026-11-06 10:00:00 UTC" }]);
-    expect(calls).toEqual([sc("show", unitName(id), "-p", "ActiveState,SubState,ActiveEnterTimestamp")]);
+    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", state: "active", startedAt: "2024-11-06T10:00:00.000Z" }]);
+    expect(calls).toEqual([sc("show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id))]);
+  });
+  test("garbage or empty timestamp -> null", async () => {
+    const id = await seed("/srv/a", "alpha");
+    for (const v of ["Thu 2026-11-06 10:00:00 UTC", "", "@abc", "@"]) {
+      showOverride = `ActiveState=inactive\nActiveEnterTimestamp=${v}\n`;
+      expect((await svc().list())[0]!.startedAt).toBeNull();
+    }
+    showOverride = "ActiveState=active\nActiveEnterTimestamp=@0\n";
+    expect((await svc().list())[0]!.startedAt).toBeNull();
   });
   test("missing unitDir is empty", async () => {
     expect(await svc({ unitDir: join(dir, "nope") }).list()).toEqual([]);
@@ -189,6 +203,18 @@ describe("stop", () => {
 });
 
 describe("logs", () => {
+  test("journalctl failure -> 500 with stderr", async () => {
+    const id = await seed("/srv/a");
+    journalFail = true;
+    try {
+      await svc().logs(id, 10);
+      throw new Error("no throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(HttpError);
+      expect((e as HttpError).status).toBe(500);
+      expect((e as HttpError).message).toContain("journal boom");
+    }
+  });
   test("journalctl args, clamped lines, user scope", async () => {
     const id = await seed("/srv/a");
     expect(await svc({ scope: "user" }).logs(id, 9999)).toBe("log line\n");

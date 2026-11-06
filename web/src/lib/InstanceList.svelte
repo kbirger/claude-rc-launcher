@@ -10,9 +10,13 @@
   let logs = $state<Record<string, string>>({});
   let now = $state(Date.now());
   let inflight = false;
+  let queued = false;
 
   async function refresh() {
-    if (inflight) return;
+    if (inflight) {
+      queued = true; // run once more right after the in-flight request finishes
+      return;
+    }
     inflight = true;
     try {
       instances = await listInstances();
@@ -23,6 +27,10 @@
     } finally {
       inflight = false;
       now = Date.now();
+      if (queued) {
+        queued = false;
+        void refresh();
+      }
     }
   }
 
@@ -36,9 +44,11 @@
     refresh();
   });
 
-  function uptime(startedAt: string | null): string {
-    if (!startedAt) return "";
-    const s = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
+  function uptime(state: string, startedAt: string | null): string {
+    if (state !== "active" || !startedAt) return "—";
+    const t = new Date(startedAt).getTime();
+    if (Number.isNaN(t)) return "—";
+    const s = Math.max(0, Math.floor((now - t) / 1000));
     const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
     if (d > 0) return `${d}d ${h}h`;
     if (h > 0) return `${h}h ${m}m`;
@@ -86,7 +96,7 @@
         <span class="badge {badge(i.state)}">{i.state}</span>
       </div>
       <div class="path muted">{i.path}</div>
-      <div class="muted">{uptime(i.startedAt)}</div>
+      <div class="muted">{uptime(i.state, i.startedAt)}</div>
       <div class="actions">
         <button onclick={() => toggleLogs(i)}>{i.id in logs ? "Hide logs" : "Logs"}</button>
         <button class="danger" onclick={() => stop(i)}>Stop</button>

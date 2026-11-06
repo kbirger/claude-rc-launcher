@@ -46,6 +46,22 @@ async function login(app: Hono) {
 }
 
 describe("login", () => {
+  test("discovery failure -> 502 readable page, logged", async () => {
+    const oidc: OidcClient = { async authorizationUrl() { throw new Error("discovery down"); }, async exchange() { return user; } };
+    const orig = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...a: unknown[]) => { logged.push(a); };
+    try {
+      const r = await build(mkCfg(), oidc).request("/auth/login");
+      expect(r.status).toBe(502);
+      expect(r.headers.get("content-type")).toContain("text/html");
+      expect(await r.text()).toContain("identity provider");
+      expect(find(r, "oidc_state")).toBeUndefined();
+    } finally {
+      console.error = orig;
+    }
+    expect(logged.length).toBe(1);
+  });
   test("redirects to provider and sets short-lived signed state cookie", async () => {
     const s = stub();
     const app = build(mkCfg(), s.oidc);
@@ -164,6 +180,30 @@ describe("requireUser", () => {
     const ck = await session(app);
     expect((await app.request("/api/x", { headers: { cookie: tamper(ck) } })).status).toBe(401);
     expect((await app.request("/", { headers: { cookie: tamper(ck) } })).status).toBe(302);
+  });
+  test("payload tampered with old signature rejected", async () => {
+    let t = 1_000_000;
+    const app = build(mkCfg(), stub().oidc, () => t);
+    const ck = await session(app);
+    const decoded = decodeURIComponent(ck.slice("session=".length));
+    const i = decoded.lastIndexOf(".");
+    const payload = JSON.parse(decoded.slice(0, i));
+    const sig = decoded.slice(i);
+    const forge = (p: object) => `session=${encodeURIComponent(JSON.stringify(p) + sig)}`;
+    expect((await app.request("/api/x", { headers: { cookie: ck } })).status).toBe(200);
+    expect((await app.request("/api/x", { headers: { cookie: forge({ ...payload, exp: payload.exp + 1e9 }) } })).status).toBe(401);
+    expect((await app.request("/api/x", { headers: { cookie: forge({ ...payload, user: { ...payload.user, sub: "admin" } }) } })).status).toBe(401);
+  });
+  test("state cookie value is not accepted as a session", async () => {
+    const app = build();
+    const { sc } = await login(app);
+    const forged = pair(sc).replace(/^oidc_state=/, "session=");
+    expect((await app.request("/api/x", { headers: { cookie: forged } })).status).toBe(401);
+  });
+  test("exact /api is treated as API (401 json)", async () => {
+    const r = await build().request("/api");
+    expect(r.status).toBe(401);
+    expect(await r.json()).toEqual({ error: "unauthenticated" });
   });
   test("cookie signed with another secret rejected", async () => {
     const other = build({ ...mkCfg(), sessionSecret: "different-secret-value" });

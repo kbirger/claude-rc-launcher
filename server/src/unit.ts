@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Config } from "./config";
 
 const MARKER = "# managed-by: claude-rc-launcher path=";
-const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const NAME_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/; // no leading "-": it would be parsed as a CLI flag
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = new RegExp("[\u0000-\u001f\u007f-\u009f\u2028\u2029]");
 
@@ -20,7 +20,7 @@ export function isValidName(name: string): boolean {
 
 export function defaultName(cfg: Config, absPath: string): string {
   const base = absPath.split("/").filter(Boolean).pop() ?? "";
-  const raw = (cfg.namePrefix + base).replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 64);
+  const raw = (cfg.namePrefix + base).replace(/[^A-Za-z0-9._-]/gu, "-").replace(/^-+/, "").slice(0, 64);
   return raw || "claude";
 }
 
@@ -48,6 +48,7 @@ export function renderUnit(cfg: Config, absPath: string, name: string): string {
   if (!absPath.startsWith("/")) throw new Error("path must be absolute");
   if (absPath.includes("\\")) throw new Error("path must not contain backslashes");
   if (absPath !== absPath.trim()) throw new Error("path must not have leading or trailing whitespace");
+  const userScope = cfg.scope === "user";
   const user = safe("User", cfg.serviceUser);
   if (/\s/.test(user) || user.includes("\\")) throw new Error("invalid service user");
 
@@ -60,7 +61,7 @@ export function renderUnit(cfg: Config, absPath: string, name: string): string {
     "",
     "[Service]",
     "Type=simple",
-    `User=${user}`,
+    ...(userScope ? [] : [`User=${user}`]),
     `WorkingDirectory=${absPath.replace(/%/g, "%%")}`,
     envLine("HOME", cfg.serviceHome),
     envLine("PATH", cfg.servicePath),
@@ -75,7 +76,7 @@ export function renderUnit(cfg: Config, absPath: string, name: string): string {
     "RestartSec=10",
     "",
     "[Install]",
-    "WantedBy=multi-user.target",
+    userScope ? "WantedBy=default.target" : "WantedBy=multi-user.target",
     "",
   );
   return lines.join("\n");

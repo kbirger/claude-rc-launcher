@@ -79,7 +79,8 @@ describe("makeDir", () => {
   const bad: [string, string, number][] = [
     ["..", "..", 400],
     ["a/b", "a/b", 400],
-    ["a\b", "a\b", 400],
+    ["backslash", "a\\b", 400],
+    ["control char", "a\u0008b", 400],
     [".", ".", 400],
     [".hidden", ".hidden", 400],
     ["empty", "", 400],
@@ -95,6 +96,20 @@ describe("makeDir", () => {
       expect((await readdir(root)).sort()).toEqual(beforeRoot);
     });
   }
+  test("chown called with created path and owner; none without owner", async () => {
+    const calls: unknown[][] = [];
+    const owner = { uid: 1234, gid: 5678 };
+    const r = await makeDir(root, "owned", roots, owner, async (p, u, g) => { calls.push([p, u, g]); });
+    expect(calls).toEqual([[r.path, 1234, 5678]]);
+    const none: unknown[][] = [];
+    await makeDir(root, "unowned", roots, undefined, async (p, u, g) => { none.push([p, u, g]); });
+    expect(none).toEqual([]);
+  });
+  test("chown failure removes the directory and returns 500", async () => {
+    const st = await status(makeDir(root, "willfail", roots, { uid: 1, gid: 1 }, async () => { throw new Error("EPERM"); }));
+    expect(st).toBe(500);
+    expect((await readdir(root)).includes("willfail")).toBe(false);
+  });
   test("existing name -> 409", async () => {
     expect(await status(makeDir(root, "beta", roots))).toBe(409);
   });

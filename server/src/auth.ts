@@ -34,7 +34,7 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
         cfg.oidc.clientId,
         cfg.oidc.clientSecret,
         undefined,
-        issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined,
+        issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined, // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
       )
       .catch((e) => {
         pending = undefined;
@@ -86,7 +86,16 @@ export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Da
   app.get("/login", async (c) => {
     const state = client.randomState();
     const codeVerifier = client.randomPKCECodeVerifier();
-    const location = await oidc.authorizationUrl({ redirectUri, state, codeVerifier });
+    let location: string;
+    try {
+      location = await oidc.authorizationUrl({ redirectUri, state, codeVerifier });
+    } catch (e) {
+      console.error("OIDC discovery/authorization setup failed:", e);
+      return c.html(
+        "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Login unavailable</title><h1>Identity provider unavailable</h1><p>The identity provider could not be reached. Try again in a moment.</p><p><a href=\"/auth/login\">Retry</a></p>",
+        502,
+      );
+    }
     await setSignedCookie(c, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), cfg.sessionSecret, {
       path: "/auth",
       httpOnly: true,
@@ -146,7 +155,8 @@ export function requireUser(cfg: Config, now: () => number = Date.now): Middlewa
   return async (c, next) => {
     const user = await readSession(c, cfg, now);
     if (!user) {
-      if (c.req.path.startsWith("/api/")) return c.json({ error: "unauthenticated" }, 401);
+      const p = c.req.path;
+      if (p === "/api" || p.startsWith("/api/")) return c.json({ error: "unauthenticated" }, 401);
       return c.redirect("/auth/login", 302);
     }
     c.set("user", user);
