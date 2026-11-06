@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch server/src/index.ts",
-    "test": "bun test server",
+    "test": "bun test server web/src",
     "build:web": "bun run --cwd web build",
     "build": "npm run build:web && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
   },
