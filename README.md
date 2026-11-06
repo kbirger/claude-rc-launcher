@@ -57,8 +57,19 @@ safe. It deliberately does not symlink into `dist/`: the service runs as root an
 a file in a build directory that others can write to, and a symlink breaks when the checkout is
 cleaned or moved.
 
-Then configure and start it (the two `deploy/` files are in the repo; fetch them from the same
-tag if you used option A):
+**Set up the service.** The quickest way, from a clone (fetch it at the same tag if you used option A):
+
+```sh
+sudo deploy/install-binary.sh --service [path/to/binary]
+```
+
+This installs the systemd unit and creates `/etc/claude-rc-launcher.env` (mode 600) with a freshly
+generated `SESSION_SECRET`. It never modifies an existing env file or overwrites a unit you have
+edited. It only enables and starts the service once `PUBLIC_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`
+and `OIDC_CLIENT_SECRET` are real values. Otherwise it tells you what to fill in; edit the env
+file and run the same command again.
+
+Or do it by hand:
 
 ```sh
 sudo install -m 600 deploy/launcher.env.example /etc/claude-rc-launcher.env

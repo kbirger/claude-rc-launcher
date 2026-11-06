@@ -1,25 +1,50 @@
 #!/usr/bin/env bash
-# Installs the compiled claude-rc-launcher binary onto the system PATH and restarts the service
-# if it is running.
+# Installs the compiled claude-rc-launcher binary onto the system PATH, optionally sets up the
+# systemd service, and restarts the service if it is running.
 #
-#   sudo deploy/install-binary.sh [path/to/binary]
+#   sudo deploy/install-binary.sh [--service] [path/to/binary]
 #
 # The binary defaults to ./dist/claude-rc-launcher (from `./install.sh --build`); pass the path of
-# a downloaded release binary instead if you used that. Environment:
-#   PREFIX   install prefix (default /usr/local; the binary goes to $PREFIX/bin/claude-rc-launcher)
+# a downloaded release binary instead if you used that.
 #
-# It COPIES the file (never symlinks it into a build tree: the service runs as root, so it must
-# not execute a file somebody else can modify) and replaces it atomically, so upgrading a running
-# service is safe. The systemd unit expects /usr/local/bin/claude-rc-launcher.
+#   --service   also install the systemd unit and /etc/claude-rc-launcher.env (see below)
+#
+# The binary is COPIED to $PREFIX/bin (never symlinked into a build tree: the service runs as
+# root, so it must not execute a file somebody else can modify) and replaced atomically, so
+# upgrading a running service is safe.
+#
+# With --service:
+#   * the unit is installed to /etc/systemd/system/claude-rc-launcher.service; an existing, different
+#     unit is left alone (you may have edited it) and a warning is printed
+#   * /etc/claude-rc-launcher.env is created from deploy/launcher.env.example (mode 600) with a freshly
+#     generated SESSION_SECRET. An existing env file is NEVER modified.
+#   * systemd is reloaded, but the service is only enabled and started once the env file has real
+#     values for PUBLIC_URL, OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and SESSION_SECRET. Otherwise
+#     it prints what to fill in; run the same command again afterwards.
+#
+# Environment (mainly for testing): PREFIX (default /usr/local), SYSTEMD_DIR (default
+# /etc/systemd/system), ENV_FILE (default /etc/claude-rc-launcher.env).
 set -euo pipefail
 
-SRC=${1:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dist/claude-rc-launcher"}
-PREFIX=${PREFIX:-/usr/local}
 NAME=claude-rc-launcher
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PREFIX=${PREFIX:-/usr/local}
+SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
+ENV_FILE=${ENV_FILE:-/etc/claude-rc-launcher.env}
 DEST_DIR="$PREFIX/bin"
 DEST="$DEST_DIR/$NAME"
 
-case "${1:-}" in -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+SERVICE=0
+SRC=""
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --service) SERVICE=1 ;;
+    -*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
+    *) [ -z "$SRC" ] || { echo "error: more than one binary path given" >&2; exit 2; }; SRC=$arg ;;
+  esac
+done
+SRC=${SRC:-"$HERE/../dist/claude-rc-launcher"}
 
 [ -f "$SRC" ] || { echo "error: binary not found: $SRC (build it with ./install.sh --build, or pass a path)" >&2; exit 1; }
 
@@ -43,11 +68,80 @@ mv -f "$TMP" "$DEST"
 trap - EXIT
 echo "Installed $DEST"
 
-if [ "$DEST" != "/usr/local/bin/$NAME" ]; then
-  echo "note: deploy/$NAME.service expects /usr/local/bin/$NAME; edit its ExecStart= to use $DEST." >&2
+HAVE_SYSTEMCTL=0
+command -v systemctl >/dev/null 2>&1 && HAVE_SYSTEMCTL=1
+
+# --------------------------------------------------------------------------------------------
+if [ "$SERVICE" -eq 0 ]; then
+  if [ "$DEST" != "/usr/local/bin/$NAME" ]; then
+    echo "note: $NAME.service expects /usr/local/bin/$NAME; edit its ExecStart= to use $DEST." >&2
+  fi
+  if [ "$HAVE_SYSTEMCTL" -eq 1 ] && systemctl is-active --quiet "$NAME" 2>/dev/null; then
+    echo "Restarting $NAME to pick up the new binary"
+    systemctl restart "$NAME"
+  fi
+  exit 0
 fi
 
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$NAME" 2>/dev/null; then
-  echo "Restarting $NAME to pick up the new binary"
-  systemctl restart "$NAME"
+# ---- --service ------------------------------------------------------------------------------
+UNIT_SRC="$HERE/$NAME.service"
+ENV_SRC="$HERE/launcher.env.example"
+[ -f "$UNIT_SRC" ] && [ -f "$ENV_SRC" ] || { echo "error: $UNIT_SRC or $ENV_SRC missing (run from a full checkout)" >&2; exit 1; }
+
+# Unit: render with the real binary path, never clobber a different existing unit.
+UNIT_DEST="$SYSTEMD_DIR/$NAME.service"
+mkdir -p "$SYSTEMD_DIR"
+RENDERED=$(mktemp)
+trap 'rm -f "$RENDERED"' EXIT
+sed "s|^ExecStart=.*|ExecStart=$DEST|" "$UNIT_SRC" > "$RENDERED"
+if [ ! -e "$UNIT_DEST" ]; then
+  install -m 644 "$RENDERED" "$UNIT_DEST"
+  echo "Installed $UNIT_DEST"
+elif cmp -s "$RENDERED" "$UNIT_DEST"; then
+  echo "Unit already up to date: $UNIT_DEST"
+else
+  echo "warning: $UNIT_DEST exists and differs from the shipped unit; leaving it unchanged." >&2
+  echo "         Compare with: diff $UNIT_DEST $UNIT_SRC" >&2
 fi
+
+# Env file: create once with a generated SESSION_SECRET; never touch an existing one.
+if [ ! -e "$ENV_FILE" ]; then
+  if command -v openssl >/dev/null 2>&1; then
+    SECRET=$(openssl rand -hex 32)
+  else
+    SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  fi
+  install -m 600 "$ENV_SRC" "$ENV_FILE"
+  sed -i "s|^SESSION_SECRET=.*|SESSION_SECRET=$SECRET|" "$ENV_FILE"
+  echo "Created $ENV_FILE (mode 600) with a generated SESSION_SECRET"
+else
+  echo "Keeping existing $ENV_FILE"
+fi
+
+if [ "$HAVE_SYSTEMCTL" -eq 1 ]; then systemctl daemon-reload; fi
+
+# Readiness: every required key must be set to a real (non-placeholder) value.
+get() { grep -E "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
+MISSING=()
+for key in PUBLIC_URL OIDC_ISSUER OIDC_CLIENT_ID OIDC_CLIENT_SECRET SESSION_SECRET; do
+  val=$(get "$key")
+  case "$val" in
+    ""|*replace-with*|*example.com*) MISSING+=("$key") ;;
+  esac
+done
+
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo
+  echo "Not enabling the service yet: set real values for ${MISSING[*]} in $ENV_FILE"
+  echo "(see README.md, 'Authentik setup'), then run again:  sudo $0 --service"
+  exit 0
+fi
+
+if [ "$HAVE_SYSTEMCTL" -eq 0 ]; then
+  echo "systemctl not found; start $DEST yourself with $ENV_FILE loaded."
+  exit 0
+fi
+systemctl enable "$NAME"
+# enable --now does not restart a running service, so restart explicitly to pick up the new binary.
+systemctl restart "$NAME"
+echo "Enabled and started $NAME. Check: curl http://127.0.0.1:\$PORT/healthz  (PORT defaults to 8080)"
