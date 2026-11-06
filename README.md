@@ -48,7 +48,7 @@ Environment variables (set in `/etc/claude-rc-launcher.env`). Required: `PUBLIC_
 | `PORT` | `8080` | Listen port |
 | `HOST` | `0.0.0.0` | Listen address (use `127.0.0.1` if the proxy is local) |
 | `PUBLIC_URL` | required | External URL; redirect URI is `PUBLIC_URL/auth/callback`; cookie is `Secure` when https |
-| `TRUST_PROXY` | off | `1`/`true`/`yes` honours `X-Forwarded-*` (set when behind a proxy) |
+| `TRUST_PROXY` | off | Accepted (`1`/`true`/`yes`) but currently has no effect: forwarded headers are not consulted. Safe to set or omit |
 | `OIDC_ISSUER` | required | Issuer URL (discovery); should be https |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | required | From the provider |
 | `SESSION_SECRET` | required | At least 32 chars: `openssl rand -hex 32` |
@@ -113,9 +113,12 @@ WantedBy=multi-user.target
 
 ## Reverse proxy
 
-Pass `Host` and `X-Forwarded-Proto`, and set `TRUST_PROXY=true` so the launcher honours the
-forwarded headers. `PUBLIC_URL` must be the exact external URL (state-changing requests whose
-`Origin` does not match it are rejected).
+The proxy must terminate TLS and forward the original `Host`. `TRUST_PROXY` is currently a no-op, so
+`X-Forwarded-*` headers are not used. Instead, `PUBLIC_URL` must be the external https URL that
+browsers use: the `Secure` cookie flag, the CSRF Origin check and the OIDC redirect URI all derive
+from it. State-changing `/api` requests need `Content-Type: application/json` (415 otherwise) and are
+rejected with 403 when an `Origin` header is present and does not match the origin of `PUBLIC_URL`
+(a request with no `Origin` header is allowed).
 
 ### nginx
 
