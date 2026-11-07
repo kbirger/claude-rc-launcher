@@ -125,11 +125,9 @@ if [ "$NODE" -eq 0 ]; then
     if command -v openssl >/dev/null 2>&1; then
       SECRET=$(openssl rand -hex 32)
     else
-      SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' 
-  ')
+      SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
     fi
-    ( umask 077; printf '%s
-  ' "$SECRET" > "$SESSION_SECRET_FILE" )
+    ( umask 077; printf '%s\n' "$SECRET" > "$SESSION_SECRET_FILE" )
     chmod 600 "$SESSION_SECRET_FILE"
     echo "Created $SESSION_SECRET_FILE (mode 600)"
   else

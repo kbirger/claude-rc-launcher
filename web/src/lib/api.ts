@@ -21,7 +21,9 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   const res = await fetch(url, init);
   if (res.status === 401) {
     const loc = (globalThis as any).location;
-    if (loc) loc.href = "/auth/login";
+    // "/" starts login in oidc mode (redirect to /auth/login) and hands over to the proxy in proxy-jwt mode,
+    // where /auth/login does not exist.
+    if (loc) loc.href = "/";
   }
   if (!res.ok) {
     let parsed: any = {};

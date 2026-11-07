@@ -40,10 +40,10 @@ test("409 rejects with ApiError carrying status and body", async () => {
   expect(err.body.instance.id).toBe("x");
 });
 
-test("401 redirects to login", async () => {
+test("401 reloads the app root, which starts login in oidc mode and lets the proxy log in in proxy-jwt mode", async () => {
   stub(401, { error: "unauthorized" });
   await listInstances("local").catch(() => {});
-  expect((globalThis as any).location.href).toBe("/auth/login");
+  expect((globalThis as any).location.href).toBe("/");
 });
 
 test("stopInstance handles 204 and getLogs returns log", async () => {
