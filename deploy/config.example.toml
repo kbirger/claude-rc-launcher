@@ -1,0 +1,33 @@
+# claude-rc-launcher hub configuration. Secrets are never written here: every secret is a
+# *_file path (relative to this file's directory), and the file must be mode 600.
+# Placeholder values (example.com, replace-with-...) must be replaced before the service starts.
+
+mode = "hub"                              # "hub" (default) | "node"
+# name = "home-server"                    # display name of this host; default: hostname
+port = 8080
+host = "127.0.0.1"
+# Public URL users browse to (no path prefix). OIDC redirect URI = public_url/auth/callback
+public_url = "https://rc.example.com"
+
+[instance]                                # applies to the instances started on this host
+# roots = ["/srv/claude/projects"]        # absolute directories users may browse/start in; default [service_home]
+# scope = "system"                        # system | user
+# unit_dir = "/etc/systemd/system"
+# service_user = "root"
+# service_home = "/root"
+# service_path = "/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+# ssh_auth_sock = "/run/ssh-agent.sock"
+# claude_bin = "/root/.local/bin/claude"  # must be absolute
+# claude_rc_args = ["--spawn", "same-dir", "--no-create-session-in-dir"]
+# name_prefix = "myhost-"
+
+[user_auth]                               # mode is REQUIRED; there is no unauthenticated mode
+mode = "oidc"
+# allowed_users = ["kir"]                 # optional; username or email; [] is an error
+session_secret_file = "session.secret"    # >= 32 chars (the installer generates it)
+
+[user_auth.oidc]
+issuer = "https://auth.example.com/application/o/claude-rc/"   # must be https (loopback http ok)
+client_id = "replace-with-client-id"
+client_secret_file = "oidc-client.secret"
+# allow_insecure = true                   # INSECURE: non-loopback http issuer, ID tokens not verified

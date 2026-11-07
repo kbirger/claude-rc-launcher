@@ -9,25 +9,26 @@ plain HTTP; run it behind a reverse proxy. Login is OIDC (e.g. Authentik).
 
 - The launcher typically runs as **root** (it must write unit files to `/etc/systemd/system`).
   A successful login therefore gives **root-level command execution** as the configured
-  `SERVICE_USER` (Claude running in any directory under `ROOTS`).
-- **Access control is entirely the OIDC provider's.** The launcher has no allow-list: anyone who
-  completes login is allowed. Bind the application in Authentik to the intended users/groups only.
-- Prefer a dedicated non-root `SERVICE_USER` where possible, and keep `ROOTS` narrow.
+  `instance.service_user` (Claude running in any directory under `instance.roots`).
+- **Access control is the OIDC provider's, plus an optional flat allow-list** (`user_auth.allowed_users`).
+  Without it anyone who completes login is allowed. Bind the application in Authentik to the intended
+  users/groups, and/or set `allowed_users`.
+- Prefer a dedicated non-root `instance.service_user` where possible, and keep `instance.roots` narrow.
 - Sessions are stateless signed cookies valid for 12 hours. Logout clears the cookie but cannot
-  revoke a copy of it; rotate `SESSION_SECRET` to invalidate all sessions.
-- `OIDC_ISSUER` must be **https**. The ID token is not signature-verified on the token-endpoint
+  revoke a copy of it; replace `session.secret` to invalidate all sessions.
+- `user_auth.oidc.issuer` must be **https**. The ID token is not signature-verified on the token-endpoint
   response (it relies on TLS), so with an `http://` issuer a network attacker could forge a login.
   `http://` is accepted only for loopback hosts (`localhost`, `127.0.0.1`, `::1`) or when you
-  explicitly set `OIDC_ALLOW_INSECURE=true` (not for production); a startup warning is logged.
-- Folders created from the UI are `chown`ed to `SERVICE_USER` when the launcher runs as root and
-  `SERVICE_USER` is not root (uid/gid resolved once at startup with `id -u`/`id -g`; startup fails if
+  explicitly set `user_auth.oidc.allow_insecure = true` (not for production); a startup warning is logged.
+- Folders created from the UI are `chown`ed to `instance.service_user` when the launcher runs as root and
+  that user is not root (uid/gid resolved once at startup with `id -u`/`id -g`; startup fails if
   the user does not exist), so the instance can write to them.
 - Path-prefix mounting (e.g. `https://host/rc/`) is not supported; serve at a hostname root.
 
 ## Install
 
 The compiled binary embeds the web UI, so the server needs no JavaScript runtime (no Node.js, no
-Bun). `claude` must be installed for `SERVICE_USER`. Choose one way to get the binary:
+Bun). `claude` must be installed for `instance.service_user`. Choose one way to get the binary:
 
 **A. Prebuilt release (recommended).** Linux x64 and arm64 binaries are attached to each
 [GitHub release](https://github.com/kbirger/claude-rc-launcher/releases).
@@ -63,17 +64,20 @@ cleaned or moved.
 sudo deploy/install-binary.sh --service [path/to/binary]
 ```
 
-This installs the systemd unit and creates `/etc/claude-rc-launcher.env` (mode 600) with a freshly
-generated `SESSION_SECRET`. It never modifies an existing env file or overwrites a unit you have
-edited. It only enables and starts the service once `PUBLIC_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`
-and `OIDC_CLIENT_SECRET` are real values. Otherwise it tells you what to fill in; edit the env
-file and run the same command again.
+This installs the systemd unit and creates `/etc/claude-rc-launcher/config.toml` (mode 644, no
+secrets) plus `session.secret` (mode 600, freshly generated). It never modifies existing files or
+overwrites a unit you have edited. It only enables and starts the service once `config.toml` has no
+placeholders left and `oidc-client.secret` exists. Otherwise it tells you what to fill in; edit the
+files and run the same command again. (`CONFIG_DIR` overrides the directory.)
 
 Or do it by hand:
 
 ```sh
-sudo install -m 600 deploy/launcher.env.example /etc/claude-rc-launcher.env
-sudoedit /etc/claude-rc-launcher.env
+sudo install -d /etc/claude-rc-launcher
+sudo install -m 644 deploy/config.example.toml /etc/claude-rc-launcher/config.toml
+sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/claude-rc-launcher/session.secret'
+sudo sh -c 'umask 077; cat > /etc/claude-rc-launcher/oidc-client.secret'   # paste the secret, Ctrl-D
+sudoedit /etc/claude-rc-launcher/config.toml
 sudo install -m 644 deploy/claude-rc-launcher.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now claude-rc-launcher
@@ -90,31 +94,37 @@ git tag v0.1.0 && git push origin v0.1.0
 
 ## Configuration
 
-Environment variables (set in `/etc/claude-rc-launcher.env`). Required: `PUBLIC_URL`,
-`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `SESSION_SECRET`.
+One TOML file: `--config <path>`, else `CLAUDE_RC_CONFIG`, else `/etc/claude-rc-launcher/config.toml`.
+**No other environment variable is read.** Unknown keys are errors (reported by dotted path), and all
+problems are reported together at startup. Secrets are never inline: each is a `*_file` path
+(relative to the config file's directory; one trailing newline is trimmed). On Linux a secret file
+that is group- or world-accessible is an error (`chmod 600`). `deploy/config.example.toml` shows every key.
 
-| Variable | Default | Meaning |
+| Key | Default | Meaning |
 |---|---|---|
-| `PORT` | `8080` | Listen port |
-| `HOST` | `0.0.0.0` | Listen address (use `127.0.0.1` if the proxy is local) |
-| `PUBLIC_URL` | required | External URL; redirect URI is `PUBLIC_URL/auth/callback`; cookie is `Secure` when https |
-| `TRUST_PROXY` | off | Accepted (`1`/`true`/`yes`) but currently has no effect: forwarded headers are not consulted. Safe to set or omit |
-| `OIDC_ISSUER` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `OIDC_ALLOW_INSECURE=true` |
-| `OIDC_ALLOW_INSECURE` | `false` | `true`/`1`/`yes` permits a non-loopback `http://` `OIDC_ISSUER`. INSECURE: ID tokens are not signature-verified, a network attacker can forge logins. Do not use in production |
-| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | required | From the provider |
-| `SESSION_SECRET` | required | At least 32 chars: `openssl rand -hex 32` |
-| `ROOTS` | `SERVICE_HOME` | Colon-separated allowed directories; every entry must be an absolute path (startup error otherwise). Symlinks resolved; escapes refused |
-| `SYSTEMD_SCOPE` | `system` | `system`, or `user` (`systemctl --user`; see "User scope" below; unverified on a real host) |
-| `UNIT_DIR` | `/etc/systemd/system`, or `SERVICE_HOME/.config/systemd/user` for user scope | Where unit files are written |
-| `SERVICE_USER` | `root` | `User=` of generated units |
-| `SERVICE_HOME` | `/root` or `/home/<SERVICE_USER>` | `HOME` of instances |
-| `SERVICE_PATH` | `SERVICE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` of instances |
-| `SSH_AUTH_SOCK` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit; otherwise omitted |
-| `CLAUDE_BIN` | `SERVICE_HOME/.local/bin/claude` | Claude executable used in `ExecStart`. Must be an absolute path: systemd does not search `PATH` for `ExecStart` (startup error otherwise) |
-| `CLAUDE_RC_ARGS` | `--spawn same-dir --no-create-session-in-dir` | Whitespace-separated args after `remote-control --name <name>`; operator-only |
-| `NAME_PREFIX` | empty | Prefix for the default `--name` (prefix + directory basename). Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` (no leading `-`, so a name cannot become a CLI flag) |
+| `mode` | `hub` | `hub` (node mode is not available yet) |
+| `name` | hostname | Display name of this host |
+| `port` | `8080` | Listen port |
+| `host` | `0.0.0.0` | Listen address (use `127.0.0.1` if the proxy is local) |
+| `public_url` | required | External URL; redirect URI is `public_url/auth/callback`; cookie is `Secure` when https |
+| `user_auth.mode` | required | `oidc`. There is no unauthenticated mode |
+| `user_auth.allowed_users` | unset | Usernames or emails allowed to log in; omit = anyone the IdP admits; `[]` is an error |
+| `user_auth.session_secret_file` | required | At least 32 chars: `openssl rand -hex 32` |
+| `user_auth.oidc.issuer` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `allow_insecure = true` |
+| `user_auth.oidc.allow_insecure` | `false` | Permits a non-loopback `http://` issuer. INSECURE: ID tokens are not signature-verified, a network attacker can forge logins. Do not use in production |
+| `user_auth.oidc.client_id` / `client_secret_file` | required | From the provider |
+| `instance.roots` | `[service_home]` | Allowed directories; every entry must be absolute. Symlinks resolved; escapes refused |
+| `instance.scope` | `system` | `system`, or `user` (`systemctl --user`; see "User scope" below; unverified on a real host) |
+| `instance.unit_dir` | `/etc/systemd/system`, or `<service_home>/.config/systemd/user` for user scope | Where unit files are written |
+| `instance.service_user` | `root` | `User=` of generated units |
+| `instance.service_home` | `/root` or `/home/<service_user>` | `HOME` of instances |
+| `instance.service_path` | `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` of instances |
+| `instance.ssh_auth_sock` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit |
+| `instance.claude_bin` | `<service_home>/.local/bin/claude` | Claude executable used in `ExecStart`. Must be absolute |
+| `instance.claude_rc_args` | `["--spawn","same-dir","--no-create-session-in-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
+| `instance.name_prefix` | empty | Prefix for the default `--name`. Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` |
 
-### User scope (`SYSTEMD_SCOPE=user`)
+### User scope (`instance.scope = "user"`)
 
 In user scope generated units omit `User=` (a user manager cannot switch users) and use
 `WantedBy=default.target`. The launcher itself must run as that user, with `loginctl enable-linger <user>`
@@ -162,20 +172,20 @@ WantedBy=multi-user.target
 
 1. Applications > Providers > Create > **OAuth2/OpenID Provider**.
 2. Client type: **Confidential**. Note the client ID and secret.
-3. Redirect URI (strict): `https://rc.example.com/auth/callback` (i.e. `PUBLIC_URL/auth/callback`).
+3. Redirect URI (strict): `https://rc.example.com/auth/callback` (i.e. `public_url/auth/callback`).
 4. Scopes: `openid`, `email`, `profile`.
 5. Create an **Application** using that provider; its slug gives the issuer URL
-   `https://<authentik>/application/o/<slug>/` (use this as `OIDC_ISSUER`).
+   `https://<authentik>/application/o/<slug>/` (use this as `user_auth.oidc.issuer`).
 6. **Bind the application to the intended users/groups** (Application > Policy / Group / User
-   Bindings). This is the only access control.
+   Bindings). This (and optionally `allowed_users`) is the access control.
 
 ## Reverse proxy
 
-The proxy must terminate TLS and forward the original `Host`. `TRUST_PROXY` is currently a no-op, so
-`X-Forwarded-*` headers are not used. Instead, `PUBLIC_URL` must be the external https URL that
+The proxy must terminate TLS and forward the original `Host`. `X-Forwarded-*` headers are not used;
+`public_url` must be the external https URL that
 browsers use: the `Secure` cookie flag, the CSRF Origin check and the OIDC redirect URI all derive
 from it. State-changing `/api` requests need `Content-Type: application/json` (415 otherwise) and are
-rejected with 403 when an `Origin` header is present and does not match the origin of `PUBLIC_URL`
+rejected with 403 when an `Origin` header is present and does not match the origin of `public_url`
 (a request with no `Origin` header is allowed).
 
 ### nginx

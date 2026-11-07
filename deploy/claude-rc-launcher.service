@@ -7,12 +7,11 @@ Wants=network-online.target
 Type=simple
 # User defaults to root, which is needed to write /etc/systemd/system.
 # You may change it (uncomment and edit) e.g. to a dedicated user together with
-# SYSTEMD_SCOPE=user and linger enabled; see the README. User scope additionally needs
+# scope = "user" in config.toml and linger enabled; see the README. User scope additionally needs
 # `loginctl enable-linger <user>` and Environment=XDG_RUNTIME_DIR=/run/user/<uid> here so that
 # `systemctl --user` can reach the user bus. Not verified on a real host.
 #User=root
-EnvironmentFile=/etc/claude-rc-launcher.env
-ExecStart=/usr/local/bin/claude-rc-launcher
+ExecStart=/usr/local/bin/claude-rc-launcher --config /etc/claude-rc-launcher/config.toml
 Restart=always
 RestartSec=5
 

@@ -48,7 +48,7 @@ echo "==> Installing web dependencies"
 
 # Runtime prerequisites. These only warn: the build itself does not need them.
 command -v systemctl >/dev/null 2>&1 || echo "warning: systemctl not found; the launcher needs systemd to run instances." >&2
-command -v claude >/dev/null 2>&1 || echo "warning: 'claude' not on PATH for this user; it must be installed for SERVICE_USER (set CLAUDE_BIN)." >&2
+command -v claude >/dev/null 2>&1 || echo "warning: 'claude' not on PATH for this user; it must be installed for the service user (set instance.claude_bin)." >&2
 
 if [ "$BUILD" -eq 1 ]; then
   echo "==> Building"
