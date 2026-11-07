@@ -12,6 +12,8 @@ Type=simple
 # `systemctl --user` can reach the user bus. Not verified on a real host.
 #User=root
 ExecStart=/usr/local/bin/claude-rc-launcher --config /etc/claude-rc-launcher/config.toml
+StateDirectory=claude-rc-launcher
+StateDirectoryMode=0700
 Restart=always
 RestartSec=5
 

@@ -58,3 +58,41 @@ describe.skipIf(process.platform === "win32")("install-binary.sh --service", () 
     expect(existsSync(path.join(env.CONFIG_DIR, "session.secret"))).toBe(true);
   });
 });
+
+describe.skipIf(process.platform === "win32")("install-binary.sh --service --node", () => {
+  test("installs the node config, no session.secret; unit has StateDirectory; placeholders block enabling", () => {
+    const { bin, env } = setup();
+    const r = run(["--service", "--node", bin], env);
+    expect(r.code).toBe(0);
+    const conf = readFileSync(path.join(env.CONFIG_DIR, "config.toml"), "utf8");
+    expect(conf).toContain('mode = "node"');
+    expect(conf).toContain("[tls]");
+    expect(existsSync(path.join(env.CONFIG_DIR, "session.secret"))).toBe(false);
+    const unit = readFileSync(path.join(env.SYSTEMD_DIR, "claude-rc-launcher.service"), "utf8");
+    expect(unit).toContain("StateDirectory=claude-rc-launcher");
+    expect(r.out).toContain("Not enabling the service yet");
+    expect(r.out).toContain("node-cert.pem");
+    expect(r.out).toContain("fingerprint");
+  });
+
+  test("second run leaves the config byte-identical", () => {
+    const { bin, env } = setup();
+    run(["--service", "--node", bin], env);
+    const f = path.join(env.CONFIG_DIR, "config.toml");
+    const before = readFileSync(f, "utf8");
+    run(["--service", "--node", bin], env);
+    expect(readFileSync(f, "utf8")).toBe(before);
+  });
+
+  test("a filled-in config with a node_auth method lets it proceed; none does not", () => {
+    const { bin, env } = setup();
+    run(["--service", "--node", bin], env);
+    const f = path.join(env.CONFIG_DIR, "config.toml");
+    const head = ['mode = "node"', "[tls]", 'names = ["pi.internal"]'];
+    writeFileSync(f, head.join("\n") + "\n");
+    expect(run(["--service", "--node", bin], env).out).toContain("node_auth");
+    writeFileSync(f, [...head, "[[node_auth.secret]]", `sha256 = "${"a".repeat(64)}"`].join("\n") + "\n");
+    const r = run(["--service", "--node", bin], env);
+    expect(r.out).not.toContain("Not enabling");
+  });
+});

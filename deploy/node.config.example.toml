@@ -1,0 +1,36 @@
+# claude-rc-launcher NODE configuration: this host is managed by a hub; it has no UI and no user login.
+# Secrets are never written here. Placeholder values (example.com, replace-with-...) must be replaced
+# before the service starts.
+
+mode = "node"
+# name = "pi"                             # display name; default: hostname
+port = 8443
+host = "10.0.0.9"                         # bind a PRIVATE interface, not 0.0.0.0 on a public host
+
+[instance]
+# roots = ["/home/pi/projects"]           # absolute directories the hub may browse/start in; default [service_home]
+# scope = "system"
+# service_user = "root"
+# service_home = "/root"
+# claude_bin = "/root/.local/bin/claude"
+
+[tls]
+# Holds node-cert.pem (copy this to the hub as its ca_file) and node-key.pem (never leaves this host).
+# The certificate is generated on first start and reused afterwards so the hub's pin stays valid.
+state_dir = "/var/lib/claude-rc-launcher"
+names = ["pi.example.com", "10.0.0.9"]    # certificate SANs: the DNS names / IPs the hub connects to
+
+# Enable at least one of the two methods below.
+
+# Shared secret: run `claude-rc-launcher gen-secret`, put the secret on the hub, the sha256 here.
+# Repeat the table to accept two secrets during rotation.
+# [[node_auth.secret]]
+# sha256 = "replace-with-64-hex-chars-from-gen-secret"
+
+# OIDC client credentials (Authentik service account for the hub):
+# [node_auth.oidc]
+# jwks_url = "https://auth.example.com/application/o/rc-node/jwks/"
+# issuer = "https://auth.example.com/application/o/rc-node/"
+# audience = "replace-with-audience"
+# caller_claim = "sub"                    # default "sub"
+# caller_value = "replace-with-the-hub-service-account-identity"

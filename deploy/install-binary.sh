@@ -2,12 +2,13 @@
 # Installs the compiled claude-rc-launcher binary onto the system PATH, optionally sets up the
 # systemd service, and restarts the service if it is running.
 #
-#   sudo deploy/install-binary.sh [--service] [path/to/binary]
+#   sudo deploy/install-binary.sh [--service [--node]] [path/to/binary]
 #
 # The binary defaults to ./dist/claude-rc-launcher (from `./install.sh --build`); pass the path of
 # a downloaded release binary instead if you used that.
 #
 #   --service   also install the systemd unit and /etc/claude-rc-launcher/config.toml (see below)
+#   --node      with --service: set this host up as a NODE (managed by a hub) instead of a hub
 #
 # The binary is COPIED to $PREFIX/bin (never symlinked into a build tree: the service runs as
 # root, so it must not execute a file somebody else can modify) and replaced atomically, so
@@ -18,9 +19,11 @@
 #     unit is left alone (you may have edited it) and a warning is printed
 #   * /etc/claude-rc-launcher/config.toml is created from deploy/config.example.toml (mode 644, no
 #     secrets) and session.secret is generated next to it (mode 600). Existing files are NEVER modified.
+#     With --node the node example config is used and no session.secret is created.
 #   * systemd is reloaded, but the service is only enabled and started once config.toml has no
-#     placeholders left and oidc-client.secret exists and is non-empty. Otherwise it prints what to
-#     fill in; run the same command again afterwards.
+#     placeholders left and oidc-client.secret exists and is non-empty (node: at least one
+#     [node_auth.*] method is enabled). Otherwise it prints what to fill in; run the same command
+#     again afterwards.
 #
 # Environment (mainly for testing): PREFIX (default /usr/local), SYSTEMD_DIR (default
 # /etc/systemd/system), CONFIG_DIR (default /etc/claude-rc-launcher), SKIP_SYSTEMCTL=1.
@@ -35,16 +38,19 @@ DEST_DIR="$PREFIX/bin"
 DEST="$DEST_DIR/$NAME"
 
 SERVICE=0
+NODE=0
 SRC=""
 for arg in "$@"; do
   case "$arg" in
-    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --service) SERVICE=1 ;;
+    --node) NODE=1 ;;
     -*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     *) [ -z "$SRC" ] || { echo "error: more than one binary path given" >&2; exit 2; }; SRC=$arg ;;
   esac
 done
 SRC=${SRC:-"$HERE/../dist/claude-rc-launcher"}
+[ "$NODE" -eq 0 ] || [ "$SERVICE" -eq 1 ] || { echo "error: --node requires --service" >&2; exit 2; }
 
 [ -f "$SRC" ] || { echo "error: binary not found: $SRC (build it with ./install.sh --build, or pass a path)" >&2; exit 1; }
 
@@ -85,7 +91,7 @@ fi
 
 # ---- --service ------------------------------------------------------------------------------
 UNIT_SRC="$HERE/$NAME.service"
-CONF_SRC="$HERE/config.example.toml"
+if [ "$NODE" -eq 1 ]; then CONF_SRC="$HERE/node.config.example.toml"; else CONF_SRC="$HERE/config.example.toml"; fi
 [ -f "$UNIT_SRC" ] && [ -f "$CONF_SRC" ] || { echo "error: $UNIT_SRC or $CONF_SRC missing (run from a full checkout)" >&2; exit 1; }
 
 # Unit: render with the real binary path, never clobber a different existing unit.
@@ -114,33 +120,52 @@ if [ ! -e "$CONF" ]; then
 else
   echo "Keeping existing $CONF"
 fi
-if [ ! -e "$SESSION_SECRET_FILE" ]; then
-  if command -v openssl >/dev/null 2>&1; then
-    SECRET=$(openssl rand -hex 32)
+if [ "$NODE" -eq 0 ]; then
+  if [ ! -e "$SESSION_SECRET_FILE" ]; then
+    if command -v openssl >/dev/null 2>&1; then
+      SECRET=$(openssl rand -hex 32)
+    else
+      SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' 
+  ')
+    fi
+    ( umask 077; printf '%s
+  ' "$SECRET" > "$SESSION_SECRET_FILE" )
+    chmod 600 "$SESSION_SECRET_FILE"
+    echo "Created $SESSION_SECRET_FILE (mode 600)"
   else
-    SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' 
-')
+    echo "Keeping existing $SESSION_SECRET_FILE"
   fi
-  ( umask 077; printf '%s
-' "$SECRET" > "$SESSION_SECRET_FILE" )
-  chmod 600 "$SESSION_SECRET_FILE"
-  echo "Created $SESSION_SECRET_FILE (mode 600)"
-else
-  echo "Keeping existing $SESSION_SECRET_FILE"
 fi
 
 if [ "$HAVE_SYSTEMCTL" -eq 1 ]; then systemctl daemon-reload; fi
 
-# Readiness: no placeholders left in config.toml, and the OIDC client secret file is present.
+# Readiness: no placeholders left in config.toml, plus the auth material the role needs.
 MISSING=()
 if grep -qE 'example\.com|replace-with' "$CONF"; then MISSING+=("placeholder values in $CONF"); fi
-if [ ! -s "$CONFIG_DIR/oidc-client.secret" ]; then MISSING+=("$CONFIG_DIR/oidc-client.secret (mode 600)"); fi
+if [ "$NODE" -eq 1 ]; then
+  if ! grep -qE '^\[(\[node_auth\.secret\]|node_auth\.oidc)\]' "$CONF"; then
+    MISSING+=("a node_auth method in $CONF ([[node_auth.secret]] with the sha256 from 'claude-rc-launcher gen-secret', or [node_auth.oidc])")
+  fi
+elif [ ! -s "$CONFIG_DIR/oidc-client.secret" ]; then
+  MISSING+=("$CONFIG_DIR/oidc-client.secret (mode 600)")
+fi
 
+if [ "$NODE" -eq 1 ]; then
+  STATE_DIR=$(grep -E '^[[:space:]]*state_dir[[:space:]]*=' "$CONF" | tail -n1 | sed 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*#.*$//; s/"//g' || true)
+  STATE_DIR=${STATE_DIR:-/var/lib/claude-rc-launcher}
+  echo
+  echo "Node setup: on first start the node generates its TLS certificate in $STATE_DIR."
+  echo "  * certificate to pin on the hub: $STATE_DIR/node-cert.pem (copy it to the hub as the host's ca_file)"
+  echo "  * compare the SHA-256 fingerprint with the one logged at start:"
+  echo "      journalctl -u $NAME | grep 'node certificate fingerprint'"
+fi
+
+FLAGS="--service"; [ "$NODE" -eq 0 ] || FLAGS="--service --node"
 if [ "${#MISSING[@]}" -gt 0 ]; then
   echo
   echo "Not enabling the service yet. Fill in:"
   for m in "${MISSING[@]}"; do echo "  - $m"; done
-  echo "(see README.md, 'Authentik setup'), then run again:  sudo $0 --service"
+  echo "(see README.md, 'Authentik setup'), then run again:  sudo $0 $FLAGS"
   exit 0
 fi
 
@@ -155,7 +180,11 @@ systemctl restart "$NAME"
 # Tell the user where to check, using the port/host actually configured (defaults: 8080, all
 # interfaces -> use loopback).
 get() { grep -E "^$1[[:space:]]*=" "$CONF" | tail -n1 | sed 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*#.*$//; s/"//g' || true; }
-PORT=$(get port); PORT=${PORT:-8080}
+PORT=$(get port); if [ "$NODE" -eq 1 ]; then PORT=${PORT:-8443}; else PORT=${PORT:-8080}; fi
 HOST=$(get host)
 case "$HOST" in ""|0.0.0.0|::|"[::]") HOST=127.0.0.1 ;; esac
-echo "Enabled and started $NAME. Check: curl http://$HOST:$PORT/healthz"
+if [ "$NODE" -eq 1 ]; then
+  echo "Enabled and started $NAME (node). Check: curl --cacert $STATE_DIR/node-cert.pem https://<tls name>:$PORT/healthz"
+else
+  echo "Enabled and started $NAME. Check: curl http://$HOST:$PORT/healthz"
+fi
