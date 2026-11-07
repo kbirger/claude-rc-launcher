@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch server/src/index.ts",
-    "test": "bun test server web/src",
+    "test": "bun test server web/src ./cli",
     "typecheck": "tsc --noEmit",
     "start": "bun server/src/index.ts",
     "build:web": "bun run --cwd web build",

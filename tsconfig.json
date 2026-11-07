@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["server"]
+  "include": ["server", "cli"]
 }

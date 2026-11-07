@@ -1,0 +1,54 @@
+import { ExitError, LOGIN_MESSAGE, type Credentials } from "./creds";
+
+export type Renew = (c: Credentials) => Promise<Credentials>;
+
+const RENEW_WINDOW_S = 60;
+
+/** Calls the hub's `/cli/api` with the ID token, renewing it before it expires and once after a 401. */
+export function hubClient(o: { creds: Credentials; save: (c: Credentials) => void; renew: Renew; fetch?: typeof fetch; now?: () => number }) {
+  const doFetch = o.fetch ?? fetch;
+  const now = o.now ?? (() => Date.now() / 1000);
+  let creds = o.creds;
+
+  const refresh = async () => {
+    try {
+      creds = await o.renew(creds);
+    } catch (e) {
+      throw e instanceof ExitError && e.code === 2 ? e : new ExitError(LOGIN_MESSAGE, 2);
+    }
+    o.save(creds);
+  };
+
+  const send = async (method: string, path: string, body: unknown): Promise<Response> => {
+    const headers: Record<string, string> = { authorization: `Bearer ${creds.idToken}`, accept: "application/json" };
+    if (method !== "GET") headers["content-type"] = "application/json";
+    try {
+      return await doFetch(new URL(path, creds.hub), { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: "manual" });
+    } catch (e) {
+      throw new ExitError(`cannot reach ${creds.hub}: ${(e as Error).message}`, 1);
+    }
+  };
+
+  return {
+    async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+      if (creds.expiresAt - now() < RENEW_WINDOW_S) await refresh();
+      let res = await send(method, path, body);
+      if (res.status === 401) {
+        await refresh();
+        res = await send(method, path, body);
+        if (res.status === 401) throw new ExitError(LOGIN_MESSAGE, 2);
+      }
+      if (res.status === 204) return undefined as T;
+      let parsed: any = undefined;
+      try {
+        parsed = await res.json();
+      } catch {
+        /* handled below */
+      }
+      if (!res.ok) throw new ExitError(typeof parsed?.error === "string" ? parsed.error : `HTTP ${res.status}`, 1);
+      return parsed as T;
+    },
+  };
+}
+
+export type HubClient = ReturnType<typeof hubClient>;
