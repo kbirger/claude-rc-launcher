@@ -41,15 +41,14 @@ export function buildHostClients(cfg: Config): Map<string, HostClient> {
 }
 
 /** Managed hosts always authenticate with the hub's OIDC client credential. */
-function managedClientFactory(cfg: Config): (h: HostConfig) => HostClient {
-  const oidcToken = cfg.hubAuth ? createTokenSource(cfg.hubAuth) : undefined;
+function managedClientFactory(oidcToken: TokenSource | undefined): (h: HostConfig) => HostClient {
   return (h) =>
     createHostClient(h, oidcToken ?? (async () => {
       throw new Error("hub_auth.oidc is not configured");
     }));
 }
 
-function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) => HostClient): CliDeps | undefined {
+function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) => HostClient, oidcToken: TokenSource | undefined): CliDeps | undefined {
   const c = cfg.cliAuth;
   if (!c) return undefined;
   const verify = deps.cliVerify ?? createJwtVerifier({ keys: remoteKeys(c.jwksUrl), issuer: c.issuer, audience: c.clientId });
@@ -59,6 +58,7 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
     auth: cliBearerAuth({ verify, ...(cfg.userAuth?.allowedUsers ? { allowedUsers: cfg.userAuth.allowedUsers } : {}) }),
     makeClient,
     hasHubAuth: !!cfg.hubAuth,
+    enrollment: { ...(oidcToken ? { token: oidcToken } : {}), clientId: cfg.hubAuth?.clientId ?? "" },
   };
 }
 
@@ -75,8 +75,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
   const userAuth = await buildUserAuth(cfg, deps);
   // Forwarded headers are not consulted: the secure-cookie decision comes from public_url (https: => Secure).
-  const makeClient = managedClientFactory(cfg);
-  const cli = buildCliDeps(cfg, deps, makeClient);
+  const oidcToken = cfg.hubAuth ? createTokenSource(cfg.hubAuth) : undefined;
+  const makeClient = managedClientFactory(oidcToken);
+  const cli = buildCliDeps(cfg, deps, makeClient, oidcToken);
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg), makeClient });
   const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });

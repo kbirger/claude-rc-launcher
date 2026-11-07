@@ -3,6 +3,8 @@ import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
 import { listDirs, makeDir, type DirOwner } from "./fsapi";
+import { enrollmentApi } from "./enrollment";
+import type { TokenSource } from "./clientcreds";
 import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
 import type { HostClient, HostConfig } from "./hostclient";
@@ -11,7 +13,7 @@ import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
-export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; hasHubAuth: boolean };
+export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; hasHubAuth: boolean; enrollment?: { token?: TokenSource; clientId: string; fetch?: typeof fetch } };
 
 export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number };
 
@@ -162,6 +164,7 @@ export function createApp(deps: Deps): Hono {
     cliApi.use("*", cli.auth);
     cliApi.use("*", csrf(cfg));
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
+    cliApi.route("/node-enrollment", enrollmentApi(cli.enrollment ?? { clientId: "" }));
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient, hasHubAuth: cli.hasHubAuth }));
     cliApi.route("/hosts", forwarding());

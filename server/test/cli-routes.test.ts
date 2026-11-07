@@ -58,7 +58,10 @@ async function setup(o: { cli?: boolean } = {}) {
   const local: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, logs: async (_: string, n: number) => `local log ${n}` };
   const makeClient = (h: HostConfig) => createHostClient(h, async () => node.secret);
   const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [], clients: new Map(), makeClient });
-  const cli = { issuer: ISS, clientId: AUD, auth: cliBearerAuth({ verify: k.verify }), makeClient, hasHubAuth: true };
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const hubToken = `${b64({ alg: "RS256" })}.${b64({ iss: "https://auth.example.com/o/hub/", aud: "hub-client", sub: "svc-1" })}.sig`;
+  const enrollment = { token: async () => hubToken, clientId: "hub-client", fetch: (async () => new Response("no", { status: 404 })) as unknown as typeof fetch };
+  const cli = { issuer: ISS, clientId: AUD, auth: cliBearerAuth({ verify: k.verify }), makeClient, hasHubAuth: true, enrollment };
   const app = createApp({ cfg, instances: local, userAuth: browserAuth, hosts: registry, ...(o.cli === false ? {} : { cli }) });
   const token = await k.sign();
   const call = (method: string, p: string, body?: unknown, headers: Record<string, string> = { authorization: `Bearer ${token}` }) =>
@@ -96,7 +99,7 @@ describe("/cli", () => {
   test("every /cli/api route needs a token (401 without one), and unknown /cli paths are 404", async () => {
     const s = await setup();
     const routes: [string, string][] = [
-      ["GET", "/cli/api/me"], ["GET", "/cli/api/hosts"], ["POST", "/cli/api/hosts/probe"], ["POST", "/cli/api/hosts"], ["DELETE", "/cli/api/hosts/pi"],
+      ["GET", "/cli/api/me"], ["GET", "/cli/api/node-enrollment"], ["GET", "/cli/api/hosts"], ["POST", "/cli/api/hosts/probe"], ["POST", "/cli/api/hosts"], ["DELETE", "/cli/api/hosts/pi"],
       ["GET", "/cli/api/hosts/local/instances"], ["POST", "/cli/api/hosts/local/instances"], ["DELETE", `/cli/api/hosts/local/instances/${ID}`],
       ["GET", `/cli/api/hosts/local/instances/${ID}/logs`], ["GET", "/cli/api/hosts/local/fs"], ["POST", "/cli/api/hosts/local/fs/mkdir"], ["GET", "/cli/api/nope"],
     ];
@@ -109,6 +112,15 @@ describe("/cli", () => {
     expect((await s.call("GET", "/cli/api/hosts", undefined, { "x-browser": "1", cookie: "session=abc", "X-authentik-jwt": s.token })).status).toBe(401);
     expect((await s.call("GET", "/api/hosts")).status).toBe(401);
     expect((await s.call("GET", "/api/hosts", undefined, { "x-browser": "1" })).status).toBe(200);
+  });
+
+  test("/cli/api/node-enrollment returns the values for [node_auth.oidc]", async () => {
+    const s = await setup();
+    const r = await s.call("GET", "/cli/api/node-enrollment");
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({
+      oidc: { issuer: "https://auth.example.com/o/hub/", jwks_url: "https://auth.example.com/o/hub/jwks/", audience: "hub-client", caller_claim: "sub", caller_value: "svc-1" },
+    });
   });
 
   test("/cli/api/me returns the token user", async () => {
