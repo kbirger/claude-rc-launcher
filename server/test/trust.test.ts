@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, readdir, readFile, readlink, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
+import { link, mkdtemp, readdir, readFile, readlink, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileTrust, isTrustedIn } from "../src/trust";
@@ -160,6 +160,18 @@ describe("a .claude.json that is not a regular file", () => {
     expect(err.message).toContain("symlink");
     expect(await readlink(file())).toBe(target);
     expect(await readFile(target, "utf8")).toBe(text);
+  });
+
+  test("a hard link to another file is not read and not replaced", async () => {
+    const target = join(other, "root.json");
+    const text = JSON.stringify({ secret: "s", projects: { "/opt": { hasTrustDialogAccepted: true } } });
+    await writeFile(target, text);
+    try { await link(target, file()); } catch { return; } // the temp dirs are on different file systems
+    expect((await fileTrust().checker(home))("/opt")).toBe(false);
+    const err = await expectRefused();
+    expect(err.message).toContain("more than one link");
+    expect(await readFile(target, "utf8")).toBe(text);
+    expect((await stat(target)).nlink).toBe(2);
   });
 
   test("a symlink to /dev/zero is refused without reading it", async () => {

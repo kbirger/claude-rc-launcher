@@ -11,7 +11,7 @@ export interface TrustStore {
   checker(home: string): Promise<(absPath: string) => boolean>;
   /**
    * uid/gid are the owner of the written file (new or replaced); undefined when the user is not in passwd
-   * (the file is then not chowned). A `.claude.json` that is a symlink or not a regular file is refused.
+   * (the file is then not chowned). A `.claude.json` that is a symlink, a hard link or not a regular file is refused.
    */
   add(user: TrustOwner, absPath: string): Promise<void>;
 }
@@ -62,6 +62,8 @@ async function readDoc(file: string): Promise<ReadResult> {
   try {
     const st = await fh.stat();
     if (!st.isFile()) return { kind: "invalid", reason: "it is not a regular file" };
+    // A hard link could be another user's file. The copy written back would then belong to this user.
+    if (st.nlink !== 1) return { kind: "invalid", reason: "it has more than one link" };
     if (st.size > MAX_DOC_BYTES) return { kind: "invalid", reason: "it is too large" };
     mode = st.mode & 0o777;
     // Read at most one byte over the cap, so a file that grows after the stat still cannot pass it.
