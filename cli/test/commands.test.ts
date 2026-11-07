@@ -133,6 +133,25 @@ describe("commands", () => {
     expect(r.err.join("\n")).toContain("folder is not trusted. Use --force to trust it");
   });
 
+  test("an empty --user fails before any request", async () => {
+    for (const argv of [["start", "/srv/p", "--user", ""], ["ls", "/srv", "--user", ""], ["ls", "--user="]]) {
+      const s = setup();
+      const r = await s.run(...argv);
+      expect(r.code).toBe(1);
+      expect(r.err.join("\n")).toContain("--user must not be empty");
+      expect(s.seen).toHaveLength(0);
+    }
+  });
+
+  test("start --force with a 428 says the host did not accept --force", async () => {
+    const s = setup({ "POST /cli/api/hosts/local/instances": () => Response.json({ error: "folder is not trusted", code: "untrusted" }, { status: 428 }) });
+    const r = await s.run("start", "/srv/p", "--force");
+    expect(r.code).toBe(1);
+    const msg = r.err.join("\n");
+    expect(msg).toContain("folder is not trusted. The host did not accept --force. Update the hub and the node.");
+    expect(msg).not.toContain("Use --force");
+  });
+
   test("start --force sends addTrust true", async () => {
     const s = setup({ "POST /cli/api/hosts/local/instances": () => new Response(JSON.stringify({ id: ID, name: "x", path: "/srv/p", state: "active", startedAt: null }), { status: 201 }) });
     expect((await s.run("start", "/srv/p", "--force")).code).toBe(0);

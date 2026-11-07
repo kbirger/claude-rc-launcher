@@ -16,6 +16,7 @@ const need = (args: string[], n: number, usage: string) => {
 /** Runs one instance, filesystem or host-list command against the hub. */
 export async function runCommand(name: CommandName, args: string[], flags: Flags, hub: HubClient, out: (s: string) => void): Promise<void> {
   const host = `/cli/api/hosts/${encodeURIComponent(flags.host ?? "local")}`;
+  if (flags.user === "") throw new ExitError("--user must not be empty", 1);
   const show = (value: unknown, plain: () => string) => out(flags.json ? JSON.stringify(value, null, 2) : plain());
 
   switch (name) {
@@ -36,7 +37,7 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
     }
     case "start": {
       need(args, 1, "start <path> [--name <n>] [--user <u>] [--force]");
-      if (flags.user) {
+      if (flags.user !== undefined) {
         try {
           await hub.request("GET", `${host}/users`);
         } catch (e) {
@@ -44,12 +45,16 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
           throw e;
         }
       }
-      const body = { path: args[0], ...(flags.name ? { name: flags.name } : {}), ...(flags.user ? { user: flags.user } : {}), ...(flags.force ? { addTrust: true } : {}) };
+      const body = { path: args[0], ...(flags.name ? { name: flags.name } : {}), ...(flags.user !== undefined ? { user: flags.user } : {}), ...(flags.force ? { addTrust: true } : {}) };
       let inst: Instance;
       try {
         inst = await hub.request<Instance>("POST", `${host}/instances`, body);
       } catch (e) {
-        if (e instanceof HubError && e.status === 428) throw new ExitError(`${e.message}. Use --force to trust it`, 1);
+        if (e instanceof HubError && e.status === 428) {
+          // An older hub drops addTrust, so --force can still end in a 428.
+          if (flags.force) throw new ExitError(`${e.message}. The host did not accept --force. Update the hub and the node.`, 1);
+          throw new ExitError(`${e.message}. Use --force to trust it`, 1);
+        }
         throw e;
       }
       show(inst, () => inst.id);
@@ -70,7 +75,7 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       return;
     }
     case "ls": {
-      const query = [args[0] !== undefined ? `path=${encodeURIComponent(args[0])}` : "", flags.user ? `user=${encodeURIComponent(flags.user)}` : ""].filter(Boolean).join("&");
+      const query = [args[0] !== undefined ? `path=${encodeURIComponent(args[0])}` : "", flags.user !== undefined ? `user=${encodeURIComponent(flags.user)}` : ""].filter(Boolean).join("&");
       const r = await hub.request<DirListing>("GET", `${host}/fs${query ? `?${query}` : ""}`);
       show(r, () => r.dirs.map((d) => (d.trusted === false ? `${d.path} \u{1F512}` : d.path)).join("\n"));
       return;
