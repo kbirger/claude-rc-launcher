@@ -12,6 +12,11 @@ export interface OidcClient {
   exchange(p: { redirectUri: string; callbackUrl: URL; state: string; codeVerifier: string }): Promise<User>;
 }
 
+function oidcOf(cfg: Config): OidcUserAuth {
+  if (cfg.userAuth.mode !== "oidc") throw new Error("user_auth.mode is not oidc");
+  return cfg.userAuth;
+}
+
 const SESSION_COOKIE = "session";
 const STATE_COOKIE = "oidc_state";
 const SESSION_TTL_S = 12 * 60 * 60;
@@ -24,7 +29,7 @@ const isSecure = (cfg: Config) => cfg.publicUrl.startsWith("https:");
  * Thin openid-client v6 adapter. NOT unit-tested: needs a live IdP.
  */
 export async function createOidcClient(cfg: Config): Promise<OidcClient> {
-  const issuer = new URL(cfg.userAuth.oidc.issuer);
+  const issuer = new URL(oidcOf(cfg).oidc.issuer);
   // Discovery is lazy (first login) and cached on success, so the server starts without the IdP.
   // A failed discovery is not cached; the next login retries. Auth is never bypassed.
   let pending: Promise<client.Configuration> | undefined;
@@ -32,8 +37,8 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
     pending ??= client
       .discovery(
         issuer,
-        cfg.userAuth.oidc.clientId,
-        cfg.userAuth.oidc.clientSecret,
+        oidcOf(cfg).oidc.clientId,
+        oidcOf(cfg).oidc.clientSecret,
         undefined,
         issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined, // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
       )
@@ -94,7 +99,7 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
         502,
       );
     }
-    await setSignedCookie(c, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), cfg.userAuth.sessionSecret, {
+    await setSignedCookie(c, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), oidcOf(cfg).sessionSecret, {
       path: "/auth",
       httpOnly: true,
       sameSite: "Lax",
@@ -109,7 +114,7 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
       clearState(c);
       return c.json({ error: msg }, 400);
     };
-    const raw = await getSignedCookie(c, cfg.userAuth.sessionSecret, STATE_COOKIE);
+    const raw = await getSignedCookie(c, oidcOf(cfg).sessionSecret, STATE_COOKIE);
     let saved: { state?: unknown; codeVerifier?: unknown } = {};
     try {
       if (raw) saved = JSON.parse(raw);
@@ -130,9 +135,9 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
       return fail("login failed");
     }
     clearState(c);
-    if (!isAllowed(user, (cfg.userAuth as OidcUserAuth).allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
+    if (!isAllowed(user, oidcOf(cfg).allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
     const payload = { user, exp: now() + SESSION_TTL_S * 1000 };
-    await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), cfg.userAuth.sessionSecret, {
+    await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), oidcOf(cfg).sessionSecret, {
       path: "/",
       httpOnly: true,
       sameSite: "Lax",
@@ -170,12 +175,12 @@ export function oidcUserAuth(cfg: Config, oidc: OidcClient, now: () => number = 
 /** Test helper: returns a `Cookie` header value carrying a validly signed session. */
 export async function mintSessionCookie(cfg: Config, user: User, exp: number): Promise<string> {
   const { serializeSigned } = await import("hono/utils/cookie");
-  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), cfg.userAuth.sessionSecret, { path: "/" });
+  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), oidcOf(cfg).sessionSecret, { path: "/" });
   return sc.split(";")[0]!;
 }
 
 async function readSession(c: Parameters<typeof getSignedCookie>[0], cfg: Config, now: () => number): Promise<User | null> {
-  const raw = await getSignedCookie(c, cfg.userAuth.sessionSecret, SESSION_COOKIE);
+  const raw = await getSignedCookie(c, oidcOf(cfg).sessionSecret, SESSION_COOKIE);
   if (!raw) return null;
   try {
     const p = JSON.parse(raw);

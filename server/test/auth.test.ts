@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { createOidcClient, oidcUserAuth, type OidcClient, type User } from "../src/auth";
-import type { Config } from "../src/config";
+import type { Config, OidcUserAuth } from "../src/config";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
-const withSecret = (c: Config, s: string): Config => ({ ...c, userAuth: { ...c.userAuth, sessionSecret: s } });
+const withSecret = (c: Config, s: string): Config => ({ ...c, userAuth: { ...(c.userAuth as OidcUserAuth), sessionSecret: s } });
 const mkCfg = (publicUrl = "https://rc.example.com"): Config =>
   ({ publicUrl, userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" } } }) as Config;
 
@@ -88,7 +88,7 @@ describe("login", () => {
 describe("allowed_users", () => {
   const withAllowed = (allowed: string[]): Config => {
     const c = mkCfg();
-    return { ...c, userAuth: { ...c.userAuth, allowedUsers: allowed } } as Config;
+    return { ...c, userAuth: { ...(c.userAuth as OidcUserAuth), allowedUsers: allowed } } as Config;
   };
   test("user not on the list -> 403 and no session cookie", async () => {
     const s = stub();
@@ -249,7 +249,7 @@ describe("requireUser", () => {
 
 test("createOidcClient does not contact the IdP until first use", async () => {
   const cfg = mkCfg();
-  cfg.userAuth.oidc.issuer = "http://127.0.0.1:1/";
+  (cfg.userAuth as OidcUserAuth).oidc.issuer = "http://127.0.0.1:1/";
   const c = await createOidcClient(cfg);
   await expect(c.authorizationUrl({ redirectUri: "http://x/cb", state: "s", codeVerifier: "v".repeat(43) })).rejects.toThrow();
 });

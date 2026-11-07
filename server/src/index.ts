@@ -1,6 +1,8 @@
 import type { Config } from "./config";
 import { createApp } from "./app";
 import { createOidcClient, oidcUserAuth } from "./auth";
+import { createJwtVerifier, remoteKeys } from "./jwt";
+import { proxyJwtUserAuth } from "./proxyauth";
 import { ConfigError } from "./config";
 import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner, InstanceService } from "./instances";
@@ -21,7 +23,7 @@ try {
 const files = await loadWebFiles();
 if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
 
-if (cfg.userAuth.oidc.issuer.startsWith("http:")) {
+if (cfg.userAuth.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {
   console.warn(
     "warning: user_auth.oidc.issuer uses plain http; ID tokens are not signature-verified, so a network attacker could forge logins. Use https in production.",
   );
@@ -44,9 +46,13 @@ async function resolveDirOwner(): Promise<{ uid: number; gid: number } | undefin
 const dirOwner = await resolveDirOwner();
 
 const instances = new InstanceService(cfg, bunRunner);
-const oidc = await createOidcClient(cfg);
+const ua = cfg.userAuth;
+const userAuth =
+  ua.mode === "oidc"
+    ? oidcUserAuth(cfg, await createOidcClient(cfg))
+    : proxyJwtUserAuth({ settings: ua, verify: createJwtVerifier({ keys: remoteKeys(ua.jwksUrl), issuer: ua.issuer, audience: ua.audience }) });
 // Forwarded headers are not consulted: the secure-cookie decision comes from PUBLIC_URL (https: => Secure).
-const app = createApp({ cfg, instances, userAuth: oidcUserAuth(cfg, oidc), staticHandler: staticHandler(files), dirOwner });
+const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner });
 
 const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });
 console.log(`listening on ${cfg.host}:${server.port}`);

@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError, parseConfig, type ConfigIo } from "../src/config";
+import { ConfigError, parseConfig, type Config, type ConfigIo, type OidcUserAuth } from "../src/config";
 import { loadConfigFile, resolveConfigPath } from "../src/configfile";
 
+const oa = (c: Config) => c.userAuth as OidcUserAuth;
 const io: ConfigIo = { readFile: () => "x".repeat(40) };
 
 const base = () => ({
@@ -45,8 +46,8 @@ describe("parseConfig", () => {
     expect(c.serviceHome).toBe("/root");
     expect(c.namePrefix).toBe("");
     expect(c.sshAuthSock).toBeUndefined();
-    expect(c.userAuth.oidc.allowInsecure).toBe(false);
-    expect(c.userAuth.oidc.clientSecret).toHaveLength(40);
+    expect(oa(c).oidc.allowInsecure).toBe(false);
+    expect(oa(c).oidc.clientSecret).toHaveLength(40);
   });
 
   test("[instance] keys map to fields; user scope defaults unit dir; home defaults to /home/<user>", () => {
@@ -102,9 +103,9 @@ describe("parseConfig", () => {
 
   test("allowed_users: array of strings; empty array rejected naming the key", () => {
     const b = base();
-    expect(parseConfig({ ...b, user_auth: { ...b.user_auth, allowed_users: ["kir"] } }, io).userAuth.allowedUsers).toEqual(["kir"]);
+    expect(oa(parseConfig({ ...b, user_auth: { ...b.user_auth, allowed_users: ["kir"] } }, io)).allowedUsers).toEqual(["kir"]);
     expect(problems({ ...b, user_auth: { ...b.user_auth, allowed_users: [] } })).toContain("user_auth.allowed_users");
-    expect(parseConfig(b, io).userAuth.allowedUsers).toBeUndefined();
+    expect(oa(parseConfig(b, io)).allowedUsers).toBeUndefined();
   });
 
   test("short session secret", () => {
@@ -116,9 +117,9 @@ describe("parseConfig", () => {
     expect(problems(withOidc({ issuer: "http://auth.example.com" }))).toMatch(/user_auth\.oidc\.issuer must be https.*allow_insecure/);
     expect(problems(withOidc({ issuer: "ftp://auth.example.com" }))).toContain("issuer");
     for (const u of ["http://localhost:9000", "http://127.0.0.1:9000/x", "http://[::1]:9000"])
-      expect(parseConfig(withOidc({ issuer: u }), io).userAuth.oidc.issuer).toBe(u);
+      expect(oa(parseConfig(withOidc({ issuer: u }), io)).oidc.issuer).toBe(u);
     const c = parseConfig(withOidc({ issuer: "http://auth.example.com", allow_insecure: true }), io);
-    expect(c.userAuth.oidc.allowInsecure).toBe(true);
+    expect(oa(c).oidc.allowInsecure).toBe(true);
     expect(problems(withOidc({ issuer: "http://localhost.evil.com" }))).toContain("issuer");
   });
 
@@ -154,8 +155,8 @@ client_secret_file = "oidc.secret"
   test("parses TOML, resolves relative files against the config dir, trims one trailing newline", () => {
     const d = setup();
     const c = loadConfigFile(path.join(d, "config.toml"));
-    expect(c.userAuth.oidc.clientSecret).toBe("client-secret");
-    expect(c.userAuth.sessionSecret).toBe("s".repeat(40));
+    expect(oa(c).oidc.clientSecret).toBe("client-secret");
+    expect(oa(c).sessionSecret).toBe("s".repeat(40));
   });
 
   test.skipIf(process.platform === "win32")("rejects a group-readable secret file naming that file", () => {

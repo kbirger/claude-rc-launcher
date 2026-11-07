@@ -1,10 +1,22 @@
 import os from "node:os";
 import path from "node:path";
+import { validPeer } from "./proxyauth";
 
 export type OidcUserAuth = {
   mode: "oidc";
   oidc: { issuer: string; clientId: string; clientSecret: string; allowInsecure: boolean };
   sessionSecret: string;
+  allowedUsers?: string[];
+};
+
+export type ProxyJwtUserAuth = {
+  mode: "proxy-jwt";
+  header: string;
+  jwksUrl: string;
+  issuer: string;
+  audience: string;
+  trustedPeers: string[];
+  logoutUrl?: string;
   allowedUsers?: string[];
 };
 
@@ -24,7 +36,7 @@ export type Config = {
   claudeBin: string;
   claudeRcArgs: string[];
   namePrefix: string;
-  userAuth: OidcUserAuth;
+  userAuth: OidcUserAuth | ProxyJwtUserAuth;
 };
 
 export class ConfigError extends Error {
@@ -193,13 +205,18 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   const namePrefix = inst?.str("name_prefix") ?? "";
   inst?.finish();
 
-  let userAuth: OidcUserAuth | undefined;
+  let userAuth: OidcUserAuth | ProxyJwtUserAuth | undefined;
   const ua = t.table("user_auth");
   if (!ua) problems.push("user_auth is required");
   else {
     const m = ua.str("mode", { req: true });
     const allowedUsers = ua.strs("allowed_users", { nonEmpty: true });
+    const forbid = (...ks: string[]) => {
+      for (const k of ks) if (ua.has(k)) problems.push(`user_auth.${k} is not allowed when user_auth.mode = "${m}"`);
+    };
     if (m === "oidc") {
+      forbid("proxy_jwt");
+      ua.skip("proxy_jwt");
       const oi = ua.table("oidc");
       if (!oi) problems.push("user_auth.oidc is required when user_auth.mode = \"oidc\"");
       const allowInsecure = oi?.bool("allow_insecure") ?? false;
@@ -216,6 +233,22 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
       const sessionSecret = ua.file("session_secret_file", "secret", { req: true }) ?? "";
       if (sessionSecret && sessionSecret.length < 32) problems.push("user_auth.session_secret_file must contain at least 32 characters");
       userAuth = { mode: "oidc", oidc: { issuer, clientId, clientSecret, allowInsecure }, sessionSecret, ...(allowedUsers ? { allowedUsers } : {}) };
+    } else if (m === "proxy-jwt") {
+      forbid("oidc", "session_secret_file");
+      ua.skip("oidc", "session_secret_file");
+      const pj = ua.table("proxy_jwt");
+      if (!pj) problems.push('user_auth.proxy_jwt is required when user_auth.mode = "proxy-jwt"');
+      const header = pj?.str("header", { req: true }) ?? "";
+      if (header && !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)) problems.push("user_auth.proxy_jwt.header must be a valid HTTP header name");
+      const jwksUrl = pj?.str("jwks_url", { req: true }) ?? "";
+      if (pj && jwksUrl) checkUrl(pj, "jwks_url", jwksUrl);
+      const issuer = pj?.str("issuer", { req: true }) ?? "";
+      const audience = pj?.str("audience", { req: true }) ?? "";
+      const trustedPeers = pj?.strs("trusted_peers") ?? [];
+      for (const e of trustedPeers) if (!validPeer(e)) problems.push(`user_auth.proxy_jwt.trusted_peers entry is not an IP address or CIDR: ${e}`);
+      const logoutUrl = pj?.str("logout_url");
+      pj?.finish();
+      userAuth = { mode: "proxy-jwt", header, jwksUrl, issuer, audience, trustedPeers, ...(logoutUrl ? { logoutUrl } : {}), ...(allowedUsers ? { allowedUsers } : {}) };
     } else if (m !== undefined) {
       problems.push(`user_auth.mode must be "oidc" or "proxy-jwt" (got ${JSON.stringify(m)})`);
       ua.skip("oidc", "session_secret_file", "proxy_jwt");
