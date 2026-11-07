@@ -16,6 +16,7 @@ export type Flags = {
   port?: string;
   names?: string;
   roots?: string;
+  output?: string;
   help?: boolean;
 };
 
@@ -40,6 +41,7 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         port: { type: "string" },
         names: { type: "string" },
         roots: { type: "string" },
+        output: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });

@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
@@ -44,10 +47,48 @@ export function renderNodeConfig(o: {
   ].join("\n");
 }
 
-/** `claude-rc node config`: prints the node configuration for this machine. Hints go to stderr, the file to stdout. */
-export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClient; out: (s: string) => void; err: (s: string) => void }): Promise<void> {
-  const usage = "usage: claude-rc node config --listen <address> --names <name,name,...> [--port <n>] [--name <n>] [--roots </dir,/dir>]";
+export const DEFAULT_NODE_CONFIG = "/etc/claude-rc-launcher/config.toml";
+
+/** The file operations of `node config`, so that tests do not touch /etc or run sudo. */
+export interface NodeFs {
+  exists(path: string): boolean;
+  /** Creates the parent directory and writes the file. Throws on any error. */
+  write(path: string, text: string): void;
+  /** Copies the file to `<path>.bak`. */
+  backup(path: string): void;
+  /** The same as backup (when asked) and write, run through `sudo`. */
+  sudoWrite(path: string, text: string, backup: boolean): void;
+  isRoot(): boolean;
+}
+
+export const realNodeFs: NodeFs = {
+  exists: (p) => existsSync(p),
+  write(p, text) {
+    mkdirSync(path.dirname(p), { recursive: true });
+    writeFileSync(p, text, { mode: 0o644 });
+  },
+  backup: (p) => copyFileSync(p, `${p}.bak`),
+  sudoWrite(p, text, backup) {
+    const run = (args: string[], input?: string) => {
+      const r = spawnSync("sudo", args, { ...(input !== undefined ? { input } : {}), stdio: [input !== undefined ? "pipe" : "inherit", "ignore", "inherit"] });
+      if (r.error) throw new ExitError(`cannot run sudo: ${r.error.message}`, 1);
+      if (r.status !== 0) throw new ExitError(`"sudo ${args[0]}" failed (exit ${r.status})`, 1);
+    };
+    run(["mkdir", "-p", path.dirname(p)]);
+    if (backup) run(["cp", "-p", p, `${p}.bak`]);
+    run(["tee", p], text);
+  },
+  isRoot: () => process.getuid?.() === 0,
+};
+
+/**
+ * `claude-rc node config`: writes the node configuration for this machine. The file is written by this command
+ * (through sudo when the directory is not writable), and a single status line is printed. `--output -` prints it.
+ */
+export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClient; out: (s: string) => void; fs?: NodeFs }): Promise<void> {
+  const usage = "usage: claude-rc node config --listen <address> --names <name,name,...> [--port <n>] [--name <n>] [--roots </dir,/dir>] [--output <file>|-] [--force]";
   const { flags } = o;
+  const fs = o.fs ?? realNodeFs;
   if (!flags.listen) throw new ExitError(`--listen is required: the private address this node binds. ${usage}`, 1);
   const names = csv(flags.names ?? "");
   if (names.length === 0) throw new ExitError(`--names is required: the DNS names and IP addresses that the hub will use in --url. ${usage}`, 1);
@@ -55,8 +96,25 @@ export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClie
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ExitError("--port must be a number from 1 to 65535", 1);
   const roots = flags.roots === undefined ? undefined : csv(flags.roots);
   for (const r of roots ?? []) if (!isAbs(r)) throw new ExitError(`--roots entries must be absolute paths: ${r}`, 1);
+  const file = flags.output ?? DEFAULT_NODE_CONFIG;
+  if (file !== "-" && !isAbs(file)) throw new ExitError(`--output must be an absolute path or "-": ${file}`, 1);
+  const exists = file !== "-" && fs.exists(file);
+  if (exists && !flags.force) throw new ExitError(`${file} already exists. Use --force to replace it (the old file is kept as ${file}.bak)`, 1);
 
   const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
-  o.out(renderNodeConfig({ hub: o.hubUrl, enrollment, listen: flags.listen, port, names, ...(flags.name ? { name: flags.name } : {}), ...(roots?.length ? { roots } : {}) }));
-  o.err("Save this as /etc/claude-rc-launcher/config.toml on the node, then run: sudo deploy/install-binary.sh --service --node");
+  const text = renderNodeConfig({ hub: o.hubUrl, enrollment, listen: flags.listen, port, names, ...(flags.name ? { name: flags.name } : {}), ...(roots?.length ? { roots } : {}) });
+  if (file === "-") return o.out(text);
+
+  try {
+    if (exists) fs.backup(file);
+    fs.write(file, text);
+    o.out(`wrote ${file}`);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if ((code !== "EACCES" && code !== "EPERM") || fs.isRoot() || process.platform === "win32") {
+      throw new ExitError(`cannot write ${file}: ${(e as Error).message}`, 1);
+    }
+    fs.sudoWrite(file, text, exists);
+    o.out(`wrote ${file} (with sudo)`);
+  }
 }

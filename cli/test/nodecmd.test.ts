@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseConfig } from "../../server/src/config";
 import { saveCreds } from "../src/creds";
 import { main, type Env } from "../src/index";
-import { renderNodeConfig } from "../src/nodecmd";
+import { renderNodeConfig, type NodeFs } from "../src/nodecmd";
 
 const stops: (() => void)[] = [];
 afterAll(() => stops.forEach((s) => s()));
@@ -44,7 +44,7 @@ describe("renderNodeConfig", () => {
 });
 
 type Seen = { method: string; path: string };
-function setup(routes: Record<string, () => Response | unknown>) {
+function setup(routes: Record<string, () => Response | unknown>, nodeFs?: NodeFs) {
   const seen: Seen[] = [];
   const server = Bun.serve({
     port: 0, hostname: "127.0.0.1",
@@ -60,17 +60,19 @@ function setup(routes: Record<string, () => Response | unknown>) {
   stops.push(() => server.stop(true));
   const credsFile = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-node-")), "c.json");
   saveCreds(credsFile, { hub: `http://127.0.0.1:${server.port}`, issuer: "i", clientId: "c", tokenEndpoint: "t", idToken: "tok", refreshToken: "r", expiresAt: Math.floor(Date.now() / 1000) + 3600 });
-  const env: Env = { credsFile, open: async () => {}, readLine: async () => "" };
+  const env: Env = { credsFile, open: async () => {}, readLine: async () => "", ...(nodeFs ? { nodeFs } : {}) };
   const out: string[] = [];
   const err: string[] = [];
   const run = async (...argv: string[]) => ({ code: await main(argv, { out: (s) => out.push(s), err: (s) => err.push(s) }, env) });
   return { seen, run, out, err };
 }
 
+const flagsOk = ["--listen", "10.0.0.9", "--names", "pi.internal,10.0.0.9"];
+
 describe("claude-rc node config", () => {
-  test("prints a valid node configuration on stdout and nothing else", async () => {
+  test("--output - prints a valid node configuration on stdout and nothing else", async () => {
     const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
-    const r = await s.run("node", "config", "--listen", "10.0.0.9", "--names", "pi.internal,10.0.0.9", "--name", "pi", "--roots", "/srv/a,/srv/b");
+    const r = await s.run("node", "config", ...flagsOk, "--name", "pi", "--roots", "/srv/a,/srv/b", "--output", "-");
     expect(r.code).toBe(0);
     expect(s.out).toHaveLength(1);
     const cfg = parse(s.out[0]!);
@@ -78,9 +80,70 @@ describe("claude-rc node config", () => {
     expect(cfg.node!.tls.names).toEqual(["pi.internal", "10.0.0.9"]);
   });
 
+  test("by default it writes the file itself and prints one status line, not instructions", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "rc-out-"));
+    const file = path.join(dir, "etc", "config.toml");
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    const r = await s.run("node", "config", ...flagsOk, "--output", file);
+    expect(r.code).toBe(0);
+    expect(parse(readFileSync(file, "utf8")).mode).toBe("node");
+    expect(s.out).toEqual([`wrote ${file}`]);
+    expect(s.err).toEqual([]);
+  });
+
+  test("the default path is /etc/claude-rc-launcher/config.toml", async () => {
+    const writes: string[] = [];
+    const nodeFs: NodeFs = { exists: () => false, write: (p) => void writes.push(p), backup: () => {}, sudoWrite: () => { throw new Error("no sudo"); }, isRoot: () => true };
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment }, nodeFs);
+    await s.run("node", "config", ...flagsOk);
+    expect(writes).toEqual(["/etc/claude-rc-launcher/config.toml"]);
+  });
+
+  test("an existing file is refused without --force and left unchanged", async () => {
+    const file = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-out-")), "config.toml");
+    writeFileSync(file, "old\n");
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    const r = await s.run("node", "config", ...flagsOk, "--output", file);
+    expect(r.code).toBe(1);
+    expect(s.err[0]).toContain("--force");
+    expect(readFileSync(file, "utf8")).toBe("old\n");
+    expect(s.seen).toHaveLength(0);
+  });
+
+  test("--force replaces the file and keeps the old one as .bak", async () => {
+    const file = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-out-")), "config.toml");
+    writeFileSync(file, "old\n");
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    expect((await s.run("node", "config", ...flagsOk, "--output", file, "--force")).code).toBe(0);
+    expect(readFileSync(`${file}.bak`, "utf8")).toBe("old\n");
+    expect(parse(readFileSync(file, "utf8")).mode).toBe("node");
+  });
+
+  test("when the file cannot be written and the user is not root, it writes through sudo", async () => {
+    const sudo: { path: string; text: string }[] = [];
+    const eacces = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    const nodeFs: NodeFs = { exists: () => false, write: () => { throw eacces; }, backup: () => {}, sudoWrite: (p, t) => void sudo.push({ path: p, text: t }), isRoot: () => false };
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment }, nodeFs);
+    const r = await s.run("node", "config", ...flagsOk, "--output", "/etc/claude-rc-launcher/config.toml");
+    expect(r.code).toBe(0);
+    expect(sudo).toHaveLength(1);
+    expect(sudo[0]!.path).toBe("/etc/claude-rc-launcher/config.toml");
+    expect(parse(sudo[0]!.text).mode).toBe("node");
+    expect(s.out).toEqual(["wrote /etc/claude-rc-launcher/config.toml (with sudo)"]);
+  });
+
+  test("as root a write error is reported and sudo is not tried", async () => {
+    const eacces = Object.assign(new Error("EROFS: read-only file system"), { code: "EROFS" });
+    const nodeFs: NodeFs = { exists: () => false, write: () => { throw eacces; }, backup: () => {}, sudoWrite: () => { throw new Error("must not run sudo"); }, isRoot: () => true };
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment }, nodeFs);
+    const r = await s.run("node", "config", ...flagsOk);
+    expect(r.code).toBe(1);
+    expect(s.err[0]).toContain("EROFS");
+  });
+
   test("--port overrides the default", async () => {
     const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
-    await s.run("node", "config", "--listen", "10.0.0.9", "--names", "pi", "--port", "9443");
+    await s.run("node", "config", ...flagsOk.slice(0, 2), "--names", "pi", "--port", "9443", "--output", "-");
     expect(parse(s.out[0]!).port).toBe(9443);
   });
 
@@ -93,6 +156,7 @@ describe("claude-rc node config", () => {
       ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--port", "99999"],
       ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--port", "abc"],
       ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--roots", "relative/dir"],
+      ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--output", "relative/config.toml"],
       ["node", "bogus"],
       ["node"],
     ];
@@ -101,11 +165,14 @@ describe("claude-rc node config", () => {
     expect(s.out).toHaveLength(0);
   });
 
-  test("a hub error prints its text on stderr and nothing on stdout", async () => {
-    const s = setup({ "GET /cli/api/node-enrollment": () => Response.json({ error: "hub_auth.oidc is not configured" }, { status: 400 }) });
-    const r = await s.run("node", "config", "--listen", "10.0.0.9", "--names", "pi");
+  test("a hub error prints its text on stderr and writes nothing", async () => {
+    const writes: string[] = [];
+    const nodeFs: NodeFs = { exists: () => false, write: (p) => void writes.push(p), backup: () => {}, sudoWrite: () => {}, isRoot: () => true };
+    const s = setup({ "GET /cli/api/node-enrollment": () => Response.json({ error: "hub_auth.oidc is not configured" }, { status: 400 }) }, nodeFs);
+    const r = await s.run("node", "config", ...flagsOk);
     expect(r.code).toBe(1);
     expect(s.err[0]).toContain("hub_auth.oidc");
     expect(s.out).toHaveLength(0);
+    expect(writes).toEqual([]);
   });
 });

@@ -354,14 +354,17 @@ On the node machine, install the CLI, run `claude-rc login --hub <url>`, and let
 node's `config.toml` that identifies the hub:
 
 ```sh
-claude-rc node config --listen 10.0.0.9 --names pi.internal,10.0.0.9 --name pi --roots /home/pi/projects \
-  | sudo tee /etc/claude-rc-launcher/config.toml
+claude-rc node config --listen 10.0.0.9 --names pi.internal,10.0.0.9 --name pi --roots /home/pi/projects
 sudo deploy/install-binary.sh --service --node   # installs the unit and starts the service: the file has no placeholders
 ```
 
 `--listen` is the private address that the node binds. `--names` are the DNS names and IP addresses that the hub will
 use in `--url`, because they go into the node's certificate. `--port` defaults to 8443. `--name` and `--roots` are
-optional. The command prints a complete file on stdout, and a hint on stderr.
+optional. The command writes `/etc/claude-rc-launcher/config.toml` itself and prints one line, `wrote <path>`.
+`--output <file>` writes somewhere else, and `--output -` prints the file on stdout. If the file already exists the
+command stops. `--force` replaces it and keeps the old file as `<file>.bak`. If you are not root and the directory is
+not writable, the command writes the file through `sudo`, so sudo asks for your password. Do not run the whole command
+with `sudo`, because then it looks for your login in root's home directory.
 
 The hub supplies the `[node_auth.oidc]` values: the issuer, the JWKS URL, the audience (the hub's client id) and
 `caller_value` (the `sub` of the hub's service account). It reads them from a token that it gets for its own

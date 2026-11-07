@@ -222,9 +222,14 @@ caller_claim: "sub", caller_value}}`. The `jwks_url` comes from OIDC discovery o
 `<issuer>jwks/`. The token is never returned. The route answers 400 without `[hub_auth.oidc]`, and 502 if the token
 is opaque or has no `iss`, `aud` or `sub`.
 
-`claude-rc node config --listen <addr> --names <a,b> [--port n] [--name n] [--roots /a,/b]` prints a complete node
-`config.toml` on stdout. `--listen` and `--names` are required, because a wrong bind address or certificate name
-is unsafe to guess. The port defaults to 8443. The output has no placeholders. A later step, `node setup`, can
+`claude-rc node config --listen <addr> --names <a,b> [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]`
+writes a complete node `config.toml`, by default `/etc/claude-rc-launcher/config.toml`, and prints `wrote <path>`.
+`--output -` prints the file on stdout instead. `--listen` and `--names` are required, because a wrong bind address
+or certificate name is unsafe to guess. The port defaults to 8443. The output has no placeholders. The command
+refuses to replace an existing file. `--force` replaces it and keeps the old one as `<file>.bak`, in the same spirit
+as the installer, which never modifies an existing config. When the write fails with a permission error and the user
+is not root, the command runs `sudo mkdir -p`, `sudo cp -p` (for the backup) and `sudo tee` with fixed arguments, so
+that the login stays in the user's home directory. It does not ask the user to run the whole CLI with `sudo`. A later step, `node setup`, can
 install the binary and the unit and register the node. It is not built.
 
 ### Deployment
