@@ -100,6 +100,13 @@ describe("parseConfig", () => {
     expect(problems({ ...base(), mode: "x" })).toContain("mode");
   });
 
+  test("allowed_users: array of strings; empty array rejected naming the key", () => {
+    const b = base();
+    expect(parseConfig({ ...b, user_auth: { ...b.user_auth, allowed_users: ["kir"] } }, io).userAuth.allowedUsers).toEqual(["kir"]);
+    expect(problems({ ...b, user_auth: { ...b.user_auth, allowed_users: [] } })).toContain("user_auth.allowed_users");
+    expect(parseConfig(b, io).userAuth.allowedUsers).toBeUndefined();
+  });
+
   test("short session secret", () => {
     const short: ConfigIo = { readFile: (p) => (p.includes("session") ? "short" : "x".repeat(40)) };
     expect(() => parseConfig(base(), short)).toThrow(/session_secret_file.*32/);

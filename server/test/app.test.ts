@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
-import { mintSessionCookie, type OidcClient, type User } from "../src/auth";
+import { mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../src/auth";
+import type { UserAuthStrategy } from "../src/userauth";
 import type { Config } from "../src/config";
 import { HttpError, type Instance } from "../src/instances";
 import { PathError } from "../src/paths";
@@ -41,7 +42,7 @@ function fake(over: Record<string, any> = {}) {
 }
 const mk = (over: Record<string, any> = {}, staticHandler?: any) => {
   const f = fake(over);
-  return { app: createApp({ cfg, instances: f.svc, oidc, staticHandler }), calls: f.calls };
+  return { app: createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), staticHandler }), calls: f.calls };
 };
 const H = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "application/json", ...extra });
 const post = (app: any, body: unknown, headers = H()) =>
@@ -254,11 +255,25 @@ describe("mkdir owner", () => {
     if (process.platform === "win32") return; // chown is a no-op on Windows
     // A non-root test process cannot chown to another uid; a failing chown must yield 500.
     const f = fake();
-    const app = createApp({ cfg, instances: f.svc, oidc, dirOwner: { uid: 0x7ffffff0, gid: 0x7ffffff0 } });
+    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), dirOwner: { uid: 0x7ffffff0, gid: 0x7ffffff0 } });
     const r = await app.request("/api/fs/mkdir", {
       method: "POST", headers: H(), body: JSON.stringify({ parent: root, name: "ownedtest" }),
     });
     if (process.getuid?.() === 0) expect(r.status).toBe(201);
     else expect(r.status).toBe(500);
+  });
+});
+
+describe("/api/me logoutUrl", () => {
+  const strategy = (logoutUrl?: string): UserAuthStrategy => ({
+    middleware: async (c, next) => { c.set("user" as never, user as never); await next(); },
+    ...(logoutUrl ? { logoutUrl } : {}),
+  });
+  test("included only when the strategy sets it", async () => {
+    const f = fake();
+    const withUrl = createApp({ cfg, instances: f.svc, userAuth: strategy("https://x/logout") });
+    expect(await (await withUrl.request("/api/me")).json()).toEqual({ ...user, logoutUrl: "https://x/logout" });
+    const without = createApp({ cfg, instances: f.svc, userAuth: strategy() });
+    expect(await (await without.request("/api/me")).json()).toEqual(user);
   });
 });

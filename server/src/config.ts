@@ -5,6 +5,7 @@ export type OidcUserAuth = {
   mode: "oidc";
   oidc: { issuer: string; clientId: string; clientSecret: string; allowInsecure: boolean };
   sessionSecret: string;
+  allowedUsers?: string[];
 };
 
 export type Config = {
@@ -197,6 +198,7 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   if (!ua) problems.push("user_auth is required");
   else {
     const m = ua.str("mode", { req: true });
+    const allowedUsers = ua.strs("allowed_users", { nonEmpty: true });
     if (m === "oidc") {
       const oi = ua.table("oidc");
       if (!oi) problems.push("user_auth.oidc is required when user_auth.mode = \"oidc\"");
@@ -213,10 +215,10 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
       oi?.finish();
       const sessionSecret = ua.file("session_secret_file", "secret", { req: true }) ?? "";
       if (sessionSecret && sessionSecret.length < 32) problems.push("user_auth.session_secret_file must contain at least 32 characters");
-      userAuth = { mode: "oidc", oidc: { issuer, clientId, clientSecret, allowInsecure }, sessionSecret };
+      userAuth = { mode: "oidc", oidc: { issuer, clientId, clientSecret, allowInsecure }, sessionSecret, ...(allowedUsers ? { allowedUsers } : {}) };
     } else if (m !== undefined) {
       problems.push(`user_auth.mode must be "oidc" or "proxy-jwt" (got ${JSON.stringify(m)})`);
-      ua.skip("oidc", "session_secret_file", "proxy_jwt", "allowed_users");
+      ua.skip("oidc", "session_secret_file", "proxy_jwt");
     }
     ua.finish();
   }

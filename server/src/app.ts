@@ -1,11 +1,11 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { authRoutes, requireUser, type OidcClient, type User } from "./auth";
+import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { listDirs, makeDir, type DirOwner } from "./fsapi";
 import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
 
-export type Deps = { cfg: Config; instances: InstanceService; oidc: OidcClient; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner };
+export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -37,17 +37,17 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 export function createApp(deps: Deps): Hono {
-  const { cfg, instances, oidc, staticHandler, dirOwner } = deps;
+  const { cfg, instances, userAuth, staticHandler, dirOwner } = deps;
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
-  app.route("/auth", authRoutes(cfg, oidc));
+  if (userAuth.routes) app.route("/auth", userAuth.routes);
 
   const api = new Hono();
-  api.use("*", requireUser(cfg));
+  api.use("*", userAuth.middleware);
   api.use("*", csrf(cfg));
 
-  api.get("/me", (c) => c.json(c.get("user" as never) as User));
+  api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
 
   api.get("/instances", async (c) => c.json(await instances.list()));
   api.post("/instances", async (c) => {
@@ -88,7 +88,7 @@ export function createApp(deps: Deps): Hono {
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
 
-  if (staticHandler) app.get("*", requireUser(cfg), staticHandler);
+  if (staticHandler) app.get("*", userAuth.middleware, staticHandler);
 
   app.onError((err, c) => {
     if (err instanceof HttpError || err instanceof PathError) {

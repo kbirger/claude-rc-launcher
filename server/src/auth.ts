@@ -2,9 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
-import type { Config } from "./config";
+import type { Config, OidcUserAuth } from "./config";
+import { isAllowed, userFromClaims, type User, type UserAuthStrategy } from "./userauth";
 
-export type User = { sub: string; name: string; email?: string };
+export type { User };
 
 export interface OidcClient {
   authorizationUrl(p: { redirectUri: string; state: string; codeVerifier: string }): Promise<string>;
@@ -62,10 +63,7 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
       });
       const claims = tokens.claims();
       if (!claims || typeof claims.sub !== "string" || !claims.sub) throw new Error("ID token missing sub");
-      const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
-      const email = str(claims.email);
-      const name = str(claims.name) ?? str(claims.preferred_username) ?? email ?? claims.sub;
-      return email ? { sub: claims.sub, name, email } : { sub: claims.sub, name };
+      return userFromClaims(claims)!;
     },
   };
 }
@@ -76,7 +74,7 @@ function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
-export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now): Hono {
+function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now): Hono {
   const app = new Hono();
   const secure = isSecure(cfg);
   const redirectUri = redirectUriOf(cfg);
@@ -132,6 +130,7 @@ export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Da
       return fail("login failed");
     }
     clearState(c);
+    if (!isAllowed(user, (cfg.userAuth as OidcUserAuth).allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
     const payload = { user, exp: now() + SESSION_TTL_S * 1000 };
     await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), cfg.userAuth.sessionSecret, {
       path: "/",
@@ -151,7 +150,7 @@ export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Da
   return app;
 }
 
-export function requireUser(cfg: Config, now: () => number = Date.now): MiddlewareHandler {
+function requireUser(cfg: Config, now: () => number = Date.now): MiddlewareHandler {
   return async (c, next) => {
     const user = await readSession(c, cfg, now);
     if (!user) {
@@ -162,6 +161,10 @@ export function requireUser(cfg: Config, now: () => number = Date.now): Middlewa
     c.set("user", user);
     await next();
   };
+}
+
+export function oidcUserAuth(cfg: Config, oidc: OidcClient, now: () => number = Date.now): UserAuthStrategy {
+  return { routes: authRoutes(cfg, oidc, now), middleware: requireUser(cfg, now) };
 }
 
 /** Test helper: returns a `Cookie` header value carrying a validly signed session. */
@@ -179,7 +182,10 @@ async function readSession(c: Parameters<typeof getSignedCookie>[0], cfg: Config
     if (typeof p?.exp !== "number" || p.exp <= now()) return null;
     const u = p.user;
     if (typeof u?.sub !== "string" || typeof u?.name !== "string") return null;
-    return typeof u.email === "string" ? { sub: u.sub, name: u.name, email: u.email } : { sub: u.sub, name: u.name };
+    const out: User = { sub: u.sub, name: u.name };
+    if (typeof u.email === "string") out.email = u.email;
+    if (typeof u.username === "string") out.username = u.username;
+    return out;
   } catch {
     return null;
   }

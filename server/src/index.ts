@@ -1,6 +1,6 @@
 import type { Config } from "./config";
 import { createApp } from "./app";
-import { createOidcClient } from "./auth";
+import { createOidcClient, oidcUserAuth } from "./auth";
 import { ConfigError } from "./config";
 import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner, InstanceService } from "./instances";
@@ -46,7 +46,7 @@ const dirOwner = await resolveDirOwner();
 const instances = new InstanceService(cfg, bunRunner);
 const oidc = await createOidcClient(cfg);
 // Forwarded headers are not consulted: the secure-cookie decision comes from PUBLIC_URL (https: => Secure).
-const app = createApp({ cfg, instances, oidc, staticHandler: staticHandler(files), dirOwner });
+const app = createApp({ cfg, instances, userAuth: oidcUserAuth(cfg, oidc), staticHandler: staticHandler(files), dirOwner });
 
 const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });
 console.log(`listening on ${cfg.host}:${server.port}`);

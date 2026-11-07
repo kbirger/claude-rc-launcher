@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { authRoutes, createOidcClient, requireUser, type OidcClient, type User } from "../src/auth";
+import { createOidcClient, oidcUserAuth, type OidcClient, type User } from "../src/auth";
 import type { Config } from "../src/config";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
@@ -25,9 +25,10 @@ function stub(fail = false) {
 }
 
 function build(cfg = mkCfg(), oidc = stub().oidc, now = () => 1_000_000) {
+  const ua = oidcUserAuth(cfg, oidc, now);
   const app = new Hono();
-  app.route("/auth", authRoutes(cfg, oidc, now));
-  app.use("*", requireUser(cfg, now));
+  app.route("/auth", ua.routes!);
+  app.use("*", ua.middleware);
   app.get("/", (c) => c.json({ user: c.get("user" as never) }));
   app.get("/api/x", (c) => c.json({ ok: true }));
   return app;
@@ -81,6 +82,29 @@ describe("login", () => {
     const s = stub();
     await build(mkCfg("https://rc.example.com/"), s.oidc).request("/auth/login");
     expect(s.calls[0][1].redirectUri).toBe("https://rc.example.com/auth/callback");
+  });
+});
+
+describe("allowed_users", () => {
+  const withAllowed = (allowed: string[]): Config => {
+    const c = mkCfg();
+    return { ...c, userAuth: { ...c.userAuth, allowedUsers: allowed } } as Config;
+  };
+  test("user not on the list -> 403 and no session cookie", async () => {
+    const s = stub();
+    const app = build(withAllowed(["someone-else"]), s.oidc);
+    const { sc, state } = await login(app);
+    const r = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
+    expect(r.status).toBe(403);
+    expect(find(r, "session")).toBeUndefined();
+  });
+  test("listed user (by email) gets a session", async () => {
+    const s = stub();
+    const app = build(withAllowed(["a@x.io"]), s.oidc);
+    const { sc, state } = await login(app);
+    const r = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
+    expect(r.status).toBe(302);
+    expect(find(r, "session")).toBeDefined();
   });
 });
 
