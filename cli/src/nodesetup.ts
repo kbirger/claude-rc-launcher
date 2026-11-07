@@ -1,0 +1,221 @@
+import { createHash, X509Certificate } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+import UNIT_TEXT from "../../deploy/claude-rc-launcher.service" with { type: "text" };
+import type { Flags } from "./args";
+import { ExitError } from "./creds";
+import type { HubClient } from "./hub";
+import { nodeFlags, renderNodeConfig, type Enrollment } from "./nodecmd";
+
+/** The same file as `deploy/claude-rc-launcher.service`, compiled into the CLI. */
+export const UNIT: string = UNIT_TEXT;
+
+const REPO = "kbirger/claude-rc-launcher";
+const NAME = "claude-rc-launcher";
+const BIN = `/usr/local/bin/${NAME}`;
+const CONFIG_DIR = "/etc/claude-rc-launcher";
+const CONFIG = `${CONFIG_DIR}/config.toml`;
+const UNIT_PATH = `/etc/systemd/system/${NAME}.service`;
+const STATE_DIR = "/var/lib/claude-rc-launcher";
+const CERT = `${STATE_DIR}/node-cert.pem`;
+const HEALTH_WAIT_MS = 30_000;
+const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+type Result = { code: number; stdout: string; stderr: string };
+
+/** Everything that touches the machine, so that tests can run the whole flow without root or systemd. */
+export interface Sys {
+  platform: string;
+  arch: string;
+  isRoot(): boolean;
+  hasCommand(name: string): boolean;
+  localAddresses(): string[];
+  exists(path: string): boolean;
+  /** Runs a command without sudo. */
+  run(args: string[]): { code: number; stdout: string };
+  /** Runs a command with sudo (without it, for root). Input goes to stdin. */
+  sudo(args: string[], input?: string | Uint8Array): Result;
+  readFile(path: string): Uint8Array;
+  writeTemp(name: string, data: Uint8Array): string;
+  removeTemp(path: string): void;
+  fetch: typeof fetch;
+  sleep(ms: number): Promise<void>;
+  now(): number;
+}
+
+export const realSys: Sys = {
+  platform: process.platform,
+  arch: process.arch,
+  isRoot: () => process.getuid?.() === 0,
+  hasCommand: (n) => Bun.which(n) !== null,
+  localAddresses: () => Object.values(os.networkInterfaces()).flatMap((l) => (l ?? []).map((a) => a.address)),
+  exists: (p) => existsSync(p),
+  run(args) {
+    const r = spawnSync(args[0]!, args.slice(1), { encoding: "utf8" });
+    return { code: r.status ?? 1, stdout: r.stdout ?? "" };
+  },
+  sudo(args, input) {
+    const argv = process.getuid?.() === 0 ? args : ["sudo", ...args];
+    const r = spawnSync(argv[0]!, argv.slice(1), {
+      ...(input !== undefined ? { input } : {}),
+      encoding: "utf8",
+      stdio: [input !== undefined ? "pipe" : "inherit", "pipe", "inherit"],
+    });
+    if (r.error) return { code: 127, stdout: "", stderr: r.error.message };
+    return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: "" };
+  },
+  readFile: (p) => readFileSync(p),
+  writeTemp(name, data) {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "claude-rc-setup-"));
+    const file = path.join(dir, name);
+    writeFileSync(file, data, { mode: 0o600 });
+    return file;
+  },
+  removeTemp(p) {
+    const dir = path.dirname(p);
+    if (path.basename(dir).startsWith("claude-rc-setup-")) rmSync(dir, { recursive: true, force: true });
+  },
+  fetch: globalThis.fetch,
+  sleep: (ms) => Bun.sleep(ms),
+  now: () => Date.now(),
+};
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
+const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+
+/**
+ * `claude-rc node setup`: installs this machine as a node and registers it with the hub. Nothing on the machine
+ * changes until the checks, the hub's answer and the download have all succeeded.
+ */
+export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClient; out: (s: string) => void; sys?: Sys }): Promise<void> {
+  const sys = o.sys ?? realSys;
+  const { flags, out } = o;
+  const usage = "usage: claude-rc node setup --listen <address> [--hub <url>] [--name <n>] [--id <id>] [--port <n>] [--names <a,b>] [--roots </a,/b>] [--service-user <user>] [--url <https-url>] [--binary <file>] [--release <tag>] [--force]";
+  const nf = nodeFlags(flags, usage);
+  const wildcard = nf.listen === "0.0.0.0" || nf.listen === "::";
+
+  // 1. Checks
+  if (sys.platform !== "linux") throw new ExitError(`node setup works on Linux with systemd only (this is ${sys.platform})`, 1);
+  const cpu = sys.arch === "x64" ? "x64" : sys.arch === "arm64" ? "arm64" : undefined;
+  if (!cpu) throw new ExitError(`unsupported CPU architecture: ${sys.arch}. Use --binary with a build for this machine`, 1);
+  if (!sys.hasCommand("systemctl")) throw new ExitError("systemctl was not found. The node runs as a systemd service", 1);
+  if (wildcard && !flags.url) throw new ExitError("--url is required when --listen is a wildcard address: the https URL that the hub will use for this node", 1);
+  if (!wildcard && !sys.localAddresses().includes(nf.listen)) {
+    throw new ExitError(`${nf.listen} is not an address of this machine (its IPv4 addresses: ${sys.localAddresses().filter((a) => !a.includes(":")).slice(0, 8).join(", ")})`, 1);
+  }
+  const url = flags.url ?? `https://${nf.listen}:${nf.port}`;
+  let origin: URL;
+  try {
+    origin = new URL(url);
+  } catch {
+    throw new ExitError(`--url is not a valid URL: ${url}`, 1);
+  }
+  if (origin.protocol !== "https:" || origin.pathname !== "/" || origin.search || origin.hash || origin.username) {
+    throw new ExitError(`--url must be an https:// origin without a path (for example https://10.0.0.5:8443): ${url}`, 1);
+  }
+  if (nf.serviceUser && sys.run(["id", "-u", nf.serviceUser]).code !== 0) throw new ExitError(`the user ${nf.serviceUser} does not exist on this machine`, 1);
+  const id = flags.id ?? slug(flags.name ?? os.hostname());
+  if (!HOST_ID_RE.test(id) || id === "local") throw new ExitError(`the host id ${JSON.stringify(id)} is not valid: use --id with lower-case letters, digits and hyphens (up to 32)`, 1);
+
+  const present = [sys.exists(CONFIG) && CONFIG, sys.exists(UNIT_PATH) && UNIT_PATH].filter(Boolean) as string[];
+  const active = sys.run(["systemctl", "is-active", NAME]).code === 0;
+  if ((present.length || active) && !flags.force) {
+    const what = [...present, ...(active ? [`a running ${NAME} service`] : [])].join(", ");
+    throw new ExitError(`this machine is already set up (${what}). Use --force to replace it. Old files are kept as .bak`, 1);
+  }
+
+  // 2. The hub's values
+  const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
+
+  // 3. The server binary
+  let binary: Uint8Array;
+  if (flags.binary) {
+    binary = sys.readFile(flags.binary);
+  } else {
+    const base = `https://github.com/${REPO}/releases/${flags.release ? `download/${flags.release}` : "latest/download"}`;
+    const asset = `${NAME}-linux-${cpu}`;
+    out(`downloading ${asset} (${flags.release ?? "latest release"})`);
+    const [bin, sums] = await Promise.all([get(sys, `${base}/${asset}`), get(sys, `${base}/SHA256SUMS`)]);
+    const line = new TextDecoder().decode(sums).split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset);
+    if (!line || line[0] !== sha256(bin)) throw new ExitError(`the checksum of ${asset} does not match SHA256SUMS. Nothing was installed`, 1);
+    binary = bin;
+  }
+  const config = renderNodeConfig({ hub: o.hubUrl, enrollment, ...nf });
+
+  // 4. Install
+  const sudo = (args: string[], what: string, input?: string | Uint8Array) => {
+    const r = sys.sudo(args, input);
+    if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
+    return r;
+  };
+  const tmp = sys.writeTemp(NAME, binary);
+  try {
+    sudo(["install", "-m", "755", tmp, `${BIN}.new`], "installing the binary");
+    sudo(["mv", "-f", `${BIN}.new`, BIN], "installing the binary");
+  } finally {
+    sys.removeTemp(tmp);
+  }
+  sudo(["mkdir", "-p", CONFIG_DIR], "creating the configuration directory");
+  for (const [file, text] of [[CONFIG, config], [UNIT_PATH, UNIT]] as const) {
+    if (sys.exists(file)) sudo(["cp", "-p", file, `${file}.bak`], `backing up ${file}`);
+    sudo(["tee", file], `writing ${file}`, text);
+  }
+  out(`installed ${BIN}, ${CONFIG} and ${UNIT_PATH}`);
+  if (nf.serviceUser && !sys.exists(`/home/${nf.serviceUser}/.local/bin/claude`)) {
+    out(`warning: /home/${nf.serviceUser}/.local/bin/claude was not found. Instances run as ${nf.serviceUser}, so claude must be installed for that user`);
+  }
+
+  // 5. Start and wait
+  sudo(["systemctl", "daemon-reload"], "systemctl daemon-reload");
+  sudo(["systemctl", "enable", "--now", NAME], "starting the service");
+  if (active) sudo(["systemctl", "restart", NAME], "restarting the service");
+  let pem = "";
+  const deadline = sys.now() + HEALTH_WAIT_MS;
+  for (let healthy = false; !healthy; ) {
+    if (sys.now() >= deadline) {
+      const log = sys.sudo(["journalctl", "-u", NAME, "-n", "15", "--no-pager"]).stdout.trim();
+      throw new ExitError(`the node did not become healthy within ${HEALTH_WAIT_MS / 1000} seconds. Last log lines:\n${log}`, 1);
+    }
+    const r = sys.sudo(["cat", CERT]);
+    if (r.code === 0 && r.stdout.includes("BEGIN CERTIFICATE")) {
+      pem = r.stdout;
+      try {
+        healthy = (await sys.fetch(`${origin.origin}/healthz`, { tls: { ca: pem }, signal: AbortSignal.timeout(3000) } as RequestInit)).ok;
+      } catch {
+        /* not up yet */
+      }
+    }
+    if (!healthy) await sys.sleep(500);
+  }
+
+  // 6. Register: the fingerprint comes from the node's own certificate file
+  const fingerprint = `sha256:${sha256(new X509Certificate(pem).raw)}`;
+  try {
+    await o.hub.request("POST", "/cli/api/hosts", { id, ...(flags.name ? { name: flags.name } : {}), url, fingerprint });
+  } catch (e) {
+    if (!(e instanceof ExitError)) throw e;
+    throw new ExitError(
+      `${e.message}. The node is installed and running at ${url}. After fixing the cause, register it with: claude-rc host add ${id} --url ${url} --fingerprint ${fingerprint}`,
+      e.code,
+    );
+  }
+
+  // 7. Summary
+  out(`registered host ${id} at ${url}`);
+  out(`  fingerprint: ${fingerprint}`);
+  out(`  config:      ${CONFIG}`);
+  out(`To remove it: claude-rc host remove ${id}   and on this machine: sudo systemctl disable --now ${NAME}`);
+}
+
+async function get(sys: Sys, url: string): Promise<Uint8Array> {
+  let res: Response;
+  try {
+    res = await sys.fetch(url);
+  } catch (e) {
+    throw new ExitError(`cannot download ${url}: ${(e as Error).message}`, 1);
+  }
+  if (!res.ok) throw new ExitError(`cannot download ${url}: HTTP ${res.status}`, 1);
+  return new Uint8Array(await res.arrayBuffer());
+}

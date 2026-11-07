@@ -7,6 +7,7 @@ import { ExitError, LOGIN_MESSAGE, credsPath, deleteCreds, loadCreds, saveCreds 
 import { hostAdd, hostRemove } from "./hostcmd";
 import { hubClient } from "./hub";
 import { nodeConfig, type NodeFs } from "./nodecmd";
+import { nodeSetup, type Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
@@ -26,6 +27,8 @@ Commands:
   mkdir <parent> <name>              make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
+  node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force]
+                                     install, start and register this machine as a node
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
                                      write this node's config.toml with the hub's values filled in
 
@@ -37,6 +40,7 @@ export type Env = {
   open: (url: string) => Promise<void>;
   readLine: (prompt: string, signal?: AbortSignal) => Promise<string>;
   nodeFs?: NodeFs;
+  sys?: Sys;
 };
 
 function openBrowser(url: string): Promise<void> {
@@ -96,7 +100,13 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
 
     if (name !== "host" && name !== "node" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
 
-    const creds = loadCreds(env.credsFile);
+    let creds = loadCreds(env.credsFile);
+    if (!creds && name === "node" && args[0] === "setup" && flags.hub) {
+      // A new node has no login yet: sign in first, then continue with the setup.
+      const c = await login({ hub: flags.hub, noBrowser: !!flags["no-browser"], open: env.open, readLine: env.readLine, log: io.out, ...(env.fetch ? { fetch: env.fetch } : {}) });
+      saveCreds(env.credsFile, c);
+      creds = c;
+    }
     if (!creds) throw new ExitError(LOGIN_MESSAGE, 2);
     if (flags.hub && flags.hub.replace(/\/+$/, "") !== creds.hub) {
       throw new ExitError(`the saved login is for ${creds.hub}. Run "claude-rc login --hub ${flags.hub}" first`, 1);
@@ -107,7 +117,11 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       if (args.length > 1) {
         throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. A space after a comma in --names splits it into a separate argument: write the names without spaces, like --names a,b`, 1);
       }
-      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>]", 1);
+      if (args[0] === "setup") {
+        await nodeSetup({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+        return 0;
+      }
+      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>]", 1);
       await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.nodeFs ? { fs: env.nodeFs } : {}) });
       return 0;
     }

@@ -100,6 +100,7 @@ All commands accept `--hub <url>` (the saved value is the default), `--host <id>
 | `stop <id>` | `DELETE /cli/api/hosts/:host/instances/:id` |
 | `logs <id> [--lines n]` | `GET /cli/api/hosts/:host/instances/:id/logs` |
 | `host add <id> --url <https-url> ...` | See "Adding a host" |
+| `node setup --listen <ip> ...` | See "Node setup" |
 | `node config --listen <addr> --names <a,b> ...` | `GET /cli/api/node-enrollment`. See "Node configuration" |
 | `host remove <id>` | `DELETE /cli/api/hosts/:id` |
 

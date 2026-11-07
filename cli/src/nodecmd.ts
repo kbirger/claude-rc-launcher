@@ -22,6 +22,7 @@ export function renderNodeConfig(o: {
   names: string[];
   name?: string;
   roots?: string[];
+  serviceUser?: string;
   stateDir?: string;
 }): string {
   const e = o.enrollment.oidc;
@@ -32,7 +33,9 @@ export function renderNodeConfig(o: {
     ...(o.name ? [`name = ${q(o.name)}`] : []),
     `port = ${o.port}`,
     `host = ${q(o.listen)}`,
-    ...(o.roots?.length ? ["", "[instance]", `roots = ${list(o.roots)}`] : []),
+    ...(o.roots?.length || o.serviceUser
+      ? ["", "[instance]", ...(o.serviceUser ? [`service_user = ${q(o.serviceUser)}`] : []), ...(o.roots?.length ? [`roots = ${list(o.roots)}`] : [])]
+      : []),
     "",
     "[tls]",
     `state_dir = ${q(o.stateDir ?? "/var/lib/claude-rc-launcher")}`,
@@ -82,14 +85,10 @@ export const realNodeFs: NodeFs = {
   isRoot: () => process.getuid?.() === 0,
 };
 
-/**
- * `claude-rc node config`: writes the node configuration for this machine. The file is written by this command
- * (through sudo when the directory is not writable), and a single status line is printed. `--output -` prints it.
- */
-export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClient; out: (s: string) => void; fs?: NodeFs }): Promise<void> {
-  const usage = "usage: claude-rc node config --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] [--output <file>|-] [--force]";
-  const { flags } = o;
-  const fs = o.fs ?? realNodeFs;
+export type NodeFlags = { listen: string; port: number; names: string[]; roots?: string[]; name?: string; serviceUser?: string };
+
+/** Validates the flags that `node config` and `node setup` share. */
+export function nodeFlags(flags: Flags, usage: string): NodeFlags {
   if (!flags.listen) throw new ExitError(`--listen is required: the private address this node binds. ${usage}`, 1);
   const names = csv(flags.names ?? "");
   const bad = names.find((n) => !isIP(n) && !/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(n));
@@ -101,13 +100,27 @@ export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClie
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ExitError("--port must be a number from 1 to 65535", 1);
   const roots = flags.roots === undefined ? undefined : csv(flags.roots);
   for (const r of roots ?? []) if (!isAbs(r)) throw new ExitError(`--roots entries must be absolute paths: ${r}`, 1);
+  const serviceUser = flags["service-user"];
+  if (serviceUser !== undefined && !/^[a-z_][a-z0-9_-]{0,31}$/.test(serviceUser)) throw new ExitError(`--service-user is not a valid user name: ${serviceUser}`, 1);
+  return { listen: flags.listen, port, names, ...(roots?.length ? { roots } : {}), ...(flags.name ? { name: flags.name } : {}), ...(serviceUser ? { serviceUser } : {}) };
+}
+
+/**
+ * `claude-rc node config`: writes the node configuration for this machine. The file is written by this command
+ * (through sudo when the directory is not writable), and a single status line is printed. `--output -` prints it.
+ */
+export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClient; out: (s: string) => void; fs?: NodeFs }): Promise<void> {
+  const usage = "usage: claude-rc node config --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] [--service-user <user>] [--output <file>|-] [--force]";
+  const { flags } = o;
+  const fs = o.fs ?? realNodeFs;
+  const nf = nodeFlags(flags, usage);
   const file = flags.output ?? DEFAULT_NODE_CONFIG;
   if (file !== "-" && !isAbs(file)) throw new ExitError(`--output must be an absolute path or "-": ${file}`, 1);
   const exists = file !== "-" && fs.exists(file);
   if (exists && !flags.force) throw new ExitError(`${file} already exists. Use --force to replace it (the old file is kept as ${file}.bak)`, 1);
 
   const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
-  const text = renderNodeConfig({ hub: o.hubUrl, enrollment, listen: flags.listen, port, names, ...(flags.name ? { name: flags.name } : {}), ...(roots?.length ? { roots } : {}) });
+  const text = renderNodeConfig({ hub: o.hubUrl, enrollment, ...nf });
   if (file === "-") return o.out(text);
 
   try {

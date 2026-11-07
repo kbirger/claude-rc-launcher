@@ -23,6 +23,13 @@ describe("renderNodeConfig", () => {
     expect(cfg.node!.auth.oidc).toEqual({ jwksUrl: "https://auth.example.com/o/hub/jwks/", issuer: "https://auth.example.com/o/hub/", audience: "hub-client", callerClaim: "sub", callerValue: "svc-1" });
   });
 
+  test("a service user is written to [instance] and parses", () => {
+    const cfg = parse(renderNodeConfig({ ...base, serviceUser: "kir", roots: ["/home/kir/p"] }));
+    expect(cfg).toMatchObject({ serviceUser: "kir", serviceHome: "/home/kir", roots: ["/home/kir/p"] });
+    const noRoots = parse(renderNodeConfig({ ...base, serviceUser: "kir" }));
+    expect(noRoots.roots).toEqual(["/home/kir"]);
+  });
+
   test("name and roots are left out when not given, so the defaults apply", () => {
     const text = renderNodeConfig(base);
     expect(text).not.toMatch(/^name\s*=/m);

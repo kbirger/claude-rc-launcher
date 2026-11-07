@@ -348,6 +348,38 @@ you must log in again. The login is saved in `~/.config/claude-rc/credentials.js
 honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
 reads no other environment variable.
 
+### Set up a node with one command
+
+On the machine that should become a node, with the CLI installed (a release asset, see above):
+
+```sh
+claude-rc node setup --hub https://rc.example.com --listen 192.168.1.111 --name kirhub \
+  --service-user kir --roots /home/kir/projects
+```
+
+It signs you in first if you are not signed in, and then runs these steps. Nothing on the machine changes until the
+first four have succeeded.
+
+1. It checks the machine: Linux with `systemctl`, `--listen` is an address of this machine, the service user exists,
+   and no node is installed yet (`--force` replaces one and keeps the old files as `.bak`).
+2. It asks the hub for the values in `[node_auth.oidc]`.
+3. It downloads `claude-rc-launcher-linux-<x64|arm64>` from the latest release (`--release v0.1.0` picks another one)
+   and checks it against `SHA256SUMS`. `--binary <file>` installs a file you already have.
+4. It writes `/etc/claude-rc-launcher/config.toml`, the systemd unit and the binary, through `sudo`. You run the
+   command as yourself and sudo asks for your password.
+5. It starts the service and waits up to 30 seconds for the node to answer over its own certificate. If it does not,
+   it prints the last log lines and stops.
+6. It reads the fingerprint from the node's own `node-cert.pem` and registers the node with the hub. The hub reads the
+   certificate itself, requires the same fingerprint, tests the node with its service account and saves the host.
+   Nobody types a fingerprint, because it comes from a file on the machine where you are signed in.
+
+If registration fails, the node stays installed and running, and the message gives the `claude-rc host add ...` command
+that retries it. `--id` sets the host id (default: the `--name`, in lower case). `--port` (default 8443), `--names`,
+`--url` and `--roots` work as in `node config`. With `--service-user`, instances run as that user, and `claude` must be
+installed for that user; the command only warns when it is missing.
+
+The command does not create the Authentik service account, and it does not change a firewall.
+
 ### Write a node's configuration
 
 On the node machine, install the CLI, run `claude-rc login --hub <url>`, and let the hub fill in the part of the

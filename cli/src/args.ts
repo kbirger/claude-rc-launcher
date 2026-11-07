@@ -17,6 +17,10 @@ export type Flags = {
   names?: string;
   roots?: string;
   output?: string;
+  "service-user"?: string;
+  id?: string;
+  release?: string;
+  binary?: string;
   help?: boolean;
 };
 
@@ -42,6 +46,10 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         names: { type: "string" },
         roots: { type: "string" },
         output: { type: "string" },
+        "service-user": { type: "string" },
+        id: { type: "string" },
+        release: { type: "string" },
+        binary: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });
