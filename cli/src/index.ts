@@ -20,10 +20,11 @@ Commands:
   whoami                             show the signed-in user
   hosts                              list hosts
   list                               list instances      (--host <id>)
-  start <path> [--name <n>]          start an instance   (--host <id>)
+  start <path> [--name <n>] [--user <u>] [--force]
+                                     start an instance   (--host <id>)
   stop <id>                          stop an instance    (--host <id>)
   logs <id> [--lines <n>]            show instance logs  (--host <id>)
-  ls [path]                          list directories    (--host <id>)
+  ls [path] [--user <u>]             list directories    (--host <id>)
   mkdir <parent> <name>              make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>

@@ -1,11 +1,11 @@
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import { table } from "./format";
-import type { HubClient } from "./hub";
+import { HubError, type HubClient } from "./hub";
 
 type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null };
 type HostInfo = { id: string; name: string; status: string; error?: string };
-type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string }[] };
+type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
 
 export type CommandName = "whoami" | "hosts" | "ls" | "mkdir" | "list" | "start" | "stop" | "logs";
 
@@ -35,8 +35,23 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       return;
     }
     case "start": {
-      need(args, 1, "start <path> [--name <n>]");
-      const inst = await hub.request<Instance>("POST", `${host}/instances`, flags.name ? { path: args[0], name: flags.name } : { path: args[0] });
+      need(args, 1, "start <path> [--name <n>] [--user <u>] [--force]");
+      if (flags.user) {
+        try {
+          await hub.request("GET", `${host}/users`);
+        } catch (e) {
+          if (e instanceof HubError && e.status === 404) throw new ExitError("this host does not support --user. Update the node.", 1);
+          throw e;
+        }
+      }
+      const body = { path: args[0], ...(flags.name ? { name: flags.name } : {}), ...(flags.user ? { user: flags.user } : {}), ...(flags.force ? { addTrust: true } : {}) };
+      let inst: Instance;
+      try {
+        inst = await hub.request<Instance>("POST", `${host}/instances`, body);
+      } catch (e) {
+        if (e instanceof HubError && e.status === 428) throw new ExitError(`${e.message}. Use --force to trust it`, 1);
+        throw e;
+      }
       show(inst, () => inst.id);
       return;
     }
@@ -55,9 +70,9 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       return;
     }
     case "ls": {
-      const q = args[0] !== undefined ? `?path=${encodeURIComponent(args[0])}` : "";
-      const r = await hub.request<DirListing>("GET", `${host}/fs${q}`);
-      show(r, () => r.dirs.map((d) => d.path).join("\n"));
+      const query = [args[0] !== undefined ? `path=${encodeURIComponent(args[0])}` : "", flags.user ? `user=${encodeURIComponent(flags.user)}` : ""].filter(Boolean).join("&");
+      const r = await hub.request<DirListing>("GET", `${host}/fs${query ? `?${query}` : ""}`);
+      show(r, () => r.dirs.map((d) => (d.trusted === false ? `${d.path} \u{1F512}` : d.path)).join("\n"));
       return;
     }
     case "mkdir": {
