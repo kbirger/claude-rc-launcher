@@ -2,10 +2,12 @@ import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { listDirs, makeDir, type DirOwner } from "./fsapi";
+import { hostsApi } from "./hosts";
+import type { HostClient } from "./hostclient";
 import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
 
-export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner };
+export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; probeTimeoutMs?: number; requestTimeoutMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -83,8 +85,6 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   return r;
 }
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
-
 function onError(err: Error, c: Context) {
   if (err instanceof HttpError || err instanceof PathError) {
     const extra = err instanceof HttpError ? err.extra : undefined;
@@ -136,9 +136,16 @@ export function createApp(deps: Deps): Hono {
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
 
-  api.get("/hosts", (c) => c.json([{ id: "local", name: cfg.name, status: "ok" } satisfies HostInfo]));
-  api.route("/hosts/local", instanceApi({ cfg, instances, dirOwner }));
-  api.all("/hosts/:host/*", (c) => c.json({ error: "unknown host" }, 404));
+  api.route(
+    "/hosts",
+    hostsApi({
+      cfg,
+      local: instanceApi({ cfg, instances, dirOwner }),
+      clients: deps.hostClients ?? new Map(),
+      probeTimeoutMs: deps.probeTimeoutMs,
+      requestTimeoutMs: deps.requestTimeoutMs,
+    }),
+  );
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
 

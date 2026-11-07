@@ -1,0 +1,138 @@
+import { Hono, type Context } from "hono";
+import type { Config } from "./config";
+import { HostError, type HostClient, type HostFailure } from "./hostclient";
+import { HttpError } from "./instances";
+import type { User } from "./userauth";
+
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
+
+const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const ID_RE = /^[0-9a-f]{12}$/;
+const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
+
+async function readJson(c: Context): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch {
+    throw new HttpError(400, "invalid JSON body");
+  }
+}
+
+/**
+ * `/api/hosts`: the host list, `local` (the hub's own instance API) and an allow-listed proxy to nodes.
+ * Nothing of the inbound request is forwarded except the validated values below; the node is called with the
+ * hub's own credential.
+ */
+export function hostsApi(o: {
+  cfg: Config;
+  local: Hono;
+  clients: Map<string, HostClient>;
+  probeTimeoutMs?: number;
+  requestTimeoutMs?: number;
+}): Hono {
+  const { cfg, local } = o;
+  const probeTimeoutMs = o.probeTimeoutMs ?? 3_000;
+  const requestTimeoutMs = o.requestTimeoutMs ?? 10_000;
+  const remotes = cfg.hosts.filter((h) => h.id !== "local" && HOST_ID_RE.test(h.id) && o.clients.has(h.id));
+  const app = new Hono();
+
+  app.get("/", async (c) => {
+    const rest = await Promise.all(
+      remotes.map(async (h): Promise<HostInfo> => {
+        try {
+          const r = await o.clients.get(h.id)!.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
+          if (r.status === 200) return { id: h.id, name: h.name, status: "ok" };
+          return { id: h.id, name: h.name, status: "error", error: "bad response" };
+        } catch (e) {
+          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response" };
+          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason };
+        }
+      }),
+    );
+    return c.json([{ id: "local", name: cfg.name, status: "ok" } satisfies HostInfo, ...rest]);
+  });
+
+  // Audit every state-changing request, local or remote.
+  app.use("/:host/*", async (c, next) => {
+    await next();
+    if (isWrite(c.req.method)) {
+      const u = c.get("user" as never) as User | undefined;
+      const pathname = new URL(c.req.url).pathname;
+      const hostId = /\/hosts\/([^/]+)/.exec(pathname)?.[1] ?? "unknown";
+      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} ${c.req.method} ${pathname} ${c.res.status}`);
+    }
+  });
+
+  app.route("/local", local);
+
+  const remote = new Hono();
+  const clientOf = (c: Context): { id: string; client: HostClient } => {
+    const id = c.req.param("host") ?? "";
+    const client = HOST_ID_RE.test(id) && id !== "local" ? o.clients.get(id) : undefined;
+    if (!client || !remotes.some((h) => h.id === id)) throw new HttpError(404, "unknown host");
+    return { id, client };
+  };
+  /** Runs a forward, turning a HostError into the hub's 502. */
+  const forward = (fn: (c: Context, client: HostClient) => Promise<{ status: number; body: unknown }>) => async (c: Context) => {
+    const { id, client } = clientOf(c);
+    try {
+      const r = await fn(c, client);
+      return r.status === 204 ? c.body(null, 204) : c.json(r.body, r.status as 200);
+    } catch (e) {
+      if (e instanceof HostError) return c.json({ error: e.message, host: id }, 502);
+      throw e;
+    }
+  };
+  const instanceId = (c: Context) => {
+    const id = c.req.param("id") ?? "";
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    return id;
+  };
+
+  remote.get("/instances", forward((_c, k) => k.call("GET", "/api/instances", { timeoutMs: requestTimeoutMs })));
+  remote.post(
+    "/instances",
+    forward(async (c, k) => {
+      const body = await readJson(c);
+      if (!isObject(body)) throw new HttpError(400, "body must be an object");
+      if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
+      if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
+      const json = body.name === undefined ? { path: body.path } : { path: body.path, name: body.name };
+      return k.call("POST", "/api/instances", { json, timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.delete("/instances/:id", forward((c, k) => k.call("DELETE", `/api/instances/${instanceId(c)}`, { timeoutMs: requestTimeoutMs })));
+  remote.get(
+    "/instances/:id/logs",
+    forward((c, k) => {
+      const id = instanceId(c);
+      const lines = c.req.query("lines");
+      if (lines !== undefined && !/^-?\d+$/.test(lines)) throw new HttpError(400, "lines must be an integer");
+      return k.call("GET", `/api/instances/${id}/logs`, { ...(lines !== undefined ? { query: { lines } } : {}), timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get(
+    "/fs",
+    forward((c, k) => {
+      const p = c.req.query("path");
+      return k.call("GET", "/api/fs", { ...(p !== undefined ? { query: { path: p } } : {}), timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.post(
+    "/fs/mkdir",
+    forward(async (c, k) => {
+      const body = await readJson(c);
+      if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
+        throw new HttpError(400, "parent and name are required strings");
+      }
+      return k.call("POST", "/api/fs/mkdir", { json: { parent: body.parent, name: body.name }, timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.all("*", (c) => c.json({ error: "not found" }, 404));
+
+  app.route("/:host", remote);
+  return app;
+}

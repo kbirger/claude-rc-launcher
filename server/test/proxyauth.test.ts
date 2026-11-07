@@ -8,7 +8,7 @@ import { cidrContains, proxyJwtUserAuth } from "../src/proxyauth";
 const ISS = "https://auth.example.com/o/proxy/";
 const AUD = "rc-proxy";
 const HEADER = "X-authentik-jwt";
-const cfg = { publicUrl: "https://rc.example.com", roots: [] } as unknown as Config;
+const cfg = { publicUrl: "https://rc.example.com", roots: [], hosts: [] } as unknown as Config;
 const instances: any = { list: async () => [], start: async () => ({}) };
 
 async function kit() {
