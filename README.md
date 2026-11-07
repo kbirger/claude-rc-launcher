@@ -208,8 +208,17 @@ a parent folder is trusted.
 - The node makes sure that the folder is trusted before it starts an instance. An untrusted start never succeeds silently.
 - The web dialog shows untrusted folders in gray with a lock. You can still select one. The dialog asks before it trusts the folder.
 - The CLI needs `--force` to add trust. Without it, the start fails.
-- The selected user runs the unit (`User=`) and owns the trust file. The node keeps the file owner and mode when it writes.
-- The list has `root` and every account with UID 1000 or higher, a real login shell and an existing home. The configured `service_user` is always listed.
+- The selected user runs the unit (`User=`) and owns the trust file. When the node writes the file, it keeps the file mode.
+  It gives the file to the UID and GID of that user in `/etc/passwd`.
+- Only the node writes the trust file into the home of another user, and only when it runs as root. For its `local`
+  host, the hub is the node.
+- The node refuses a `~/.claude.json` that is a symlink, is not a regular file, or is larger than 1 MiB. The folders
+  then show as not trusted, and "Trust and start" fails with a 500. The node does not change the file or the target of the link.
+- A new folder from the web dialog belongs to the selected user. Without a user, it belongs to the configured
+  `service_user` when the node runs as root.
+- The roots do not follow the selected user. They come from `instance.roots`, and the default is `service_home`. If the
+  selected user cannot read the folder, the unit fails.
+- The list always has `root`. It also has every account with UID 1000 or higher, a real login shell and an existing home. The configured `service_user` is always listed.
 - One folder has one instance, whatever the user. A second start gets a 409 that names the first user.
 - Switching users needs a node that runs as root in system scope. Otherwise the selector is hidden.
 
@@ -389,8 +398,13 @@ claude-rc stop <id>
 claude-rc logout
 ```
 
-`start` fails when the folder is not trusted for the chosen user. Pass `--force` to add trust and start. `--user`
-needs a node that runs as root in system scope. In `ls`, a lock after a path means that the folder is not trusted.
+`start` fails when the folder is not trusted for the chosen user. `--force` adds the folder to the `~/.claude.json`
+of that user and then starts the instance. If the host is too old to accept `--force`, the CLI stops with `The host
+did not accept --force. Update the hub and the node.`
+
+`--user` needs a node that runs as root in system scope. If the node is too old to know `--user`, the CLI stops with
+`this host does not support --user. Update the node.` and starts nothing. An empty `--user` is an error. In `ls`, a
+lock after a path means that the folder is not trusted.
 
 Add `--json` to any command for machine-readable output. Exit code 0 is success, 1 is an error, and 2 means that
 you must log in again. The login is saved in `~/.config/claude-rc/credentials.json` (`$XDG_CONFIG_HOME` is
@@ -613,19 +627,23 @@ The command-line client uses the same handlers under `/cli/api` with `Authorizat
 
 `GET /instances`, `POST /instances {path, name?, user?, addTrust?}` (201), `DELETE /instances/:id`,
 `GET /instances/:id/logs`, `GET /users`, `GET /fs?path=&user=`,
-`POST /fs/mkdir {parent, name}`, and `GET /api/me`. Unauthenticated `GET /healthz` for liveness.
+`POST /fs/mkdir {parent, name, user?}`, and `GET /api/me`. Unauthenticated `GET /healthz` for liveness.
 
 - `GET /users` returns `{selectable, default, users: [{name}]}`. `selectable` is false when the node cannot switch users.
 - `user` on `POST /instances` is the user that runs the unit. It defaults to the configured `service_user`. An unknown user, or any
   other user when `selectable` is false, gets a 400.
 - `addTrust: true` adds the folder to that user's trust file. The server never adds trust unless the request says so.
-- `user` on `GET /fs` picks whose trust to check. Each directory entry then carries `trusted`, true or false.
+- `user` on `GET /fs` selects the user whose trust is shown. Each directory entry always carries `trusted`, true or
+  false. Without `user`, `trusted` is for the configured `service_user`.
+- `user` on `POST /fs/mkdir` is the user that owns the new folder. The rules are the same as for `user` on
+  `POST /instances`. Without it, the folder belongs to the configured `service_user` when the node runs as root.
+  The roots do not follow `user`.
 - A start in an untrusted folder gets `428 {error, code: "untrusted", user, path}`. Retry with `addTrust: true` to trust it.
 - A start in a folder that already has an instance gets `409 {error, instance}`. The `error` names the user that runs it,
   for example `already running in this directory as alice`.
 
 Since multi-host support these instance and filesystem routes live under a host:
-`/api/hosts/<id>/instances`, `/api/hosts/<id>/fs`, ... (use `local` for the hub's own host), and
+`/api/hosts/<id>/instances`, `/api/hosts/<id>/users`, `/api/hosts/<id>/fs`, ... (use `local` for the hub's own host), and
 `GET /api/hosts` lists the hosts. A node serves the same routes at `/api/...` plus `GET /api/node`,
 authenticated by bearer token only. The CLI reaches the same routes at `/cli/api/hosts/<id>/instances`,
 `/cli/api/hosts/<id>/users` and `/cli/api/hosts/<id>/fs`. A node that is too old to serve `/users` returns 404. The web
