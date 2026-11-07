@@ -86,6 +86,17 @@ export class InstanceService {
     return { selectable: true, default: def, users: names.map((name) => ({ name })) };
   }
 
+  /**
+   * The owner of a folder made for `user`, checked as `start` checks it.
+   * undefined means "use the existing dirOwner" (no user, or the service user).
+   */
+  async dirOwnerFor(user?: string): Promise<{ uid: number; gid: number } | undefined> {
+    if (user === undefined) return undefined;
+    const t = await this.target(user);
+    if (t.isDefault || t.uid === undefined || t.gid === undefined) return undefined;
+    return { uid: t.uid, gid: t.gid };
+  }
+
   async trustFilter(user?: string): Promise<(absPath: string) => boolean> {
     const t = await this.target(user);
     return this.trust.checker(t.runAs.home);

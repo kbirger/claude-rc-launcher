@@ -452,3 +452,24 @@ describe("trustFilter", () => {
     expect(e.message).toBe("unknown user");
   });
 });
+
+describe("dirOwnerFor", () => {
+  test("no user or the service user means the existing dirOwner", async () => {
+    expect(await svc().dirOwnerFor()).toBeUndefined();
+    expect(await svc({ serviceUser: "svc" }).dirOwnerFor("svc")).toBeUndefined();
+  });
+  test("another user gives that user's passwd uid and gid", async () => {
+    expect(await svc().dirOwnerFor("alice")).toEqual({ uid: 1000, gid: 1001 });
+    expect(await svc({ serviceUser: "svc" }).dirOwnerFor("root")).toEqual({ uid: 0, gid: 0 });
+  });
+  test("unknown user is 400", async () => {
+    const e = await caught(svc().dirOwnerFor("mallory"));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("unknown user");
+  });
+  test("another user is 400 when the host cannot switch users", async () => {
+    const e = await caught(svc({}, { canSwitchUser: false }).dirOwnerFor("alice"));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("this host cannot run instances as another user");
+  });
+});

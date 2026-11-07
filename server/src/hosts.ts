@@ -142,7 +142,12 @@ export function hostsApi(o: {
       if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
         throw new HttpError(400, "parent and name are required strings");
       }
-      return k.call("POST", "/api/fs/mkdir", { json: { parent: body.parent, name: body.name }, timeoutMs: requestTimeoutMs });
+      if (body.user !== undefined) {
+        if (typeof body.user !== "string") throw new HttpError(400, "user must be a string");
+        if (!body.user) throw new HttpError(400, "user must not be empty");
+      }
+      const json = { parent: body.parent, name: body.name, ...(body.user !== undefined ? { user: body.user } : {}) };
+      return k.call("POST", "/api/fs/mkdir", { json, timeoutMs: requestTimeoutMs });
     }),
   );
   remote.all("*", (c) => c.json({ error: "not found" }, 404));

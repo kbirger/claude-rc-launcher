@@ -100,7 +100,11 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
       throw new HttpError(400, "parent and name are required strings");
     }
-    return c.json(await makeDir(body.parent, body.name, cfg.roots, dirOwner), 201);
+    if (body.user !== undefined && typeof body.user !== "string") throw new HttpError(400, "user must be a string");
+    if (body.user === "") throw new HttpError(400, "user must not be empty");
+    // The owner is resolved first, so an unknown user makes no folder.
+    const owner = body.user === undefined ? dirOwner : ((await instances.dirOwnerFor(body.user)) ?? dirOwner);
+    return c.json(await makeDir(body.parent, body.name, cfg.roots, owner), 201);
   });
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));

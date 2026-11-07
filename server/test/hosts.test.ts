@@ -248,6 +248,21 @@ describe("what is and is not forwarded", () => {
     expect(f.calls[1][3]).toEqual({ parent: "/p", name: "d" });
   });
 
+  test("mkdir forwards a valid user exactly and refuses a bad one", async () => {
+    const f = fake();
+    const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
+    const r = await app.request("/api/hosts/nas/fs/mkdir", { method: "POST", headers: JSON_H, body: JSON.stringify({ parent: "/p", name: "d", user: "alice", extra: 1 }) });
+    expect(f.calls[0].slice(0, 2)).toEqual(["POST", "/api/fs/mkdir"]);
+    expect(f.calls[0][3]).toEqual({ parent: "/p", name: "d", user: "alice" });
+    expect(r.status).not.toBe(400);
+    for (const [user, msg] of [[5, "user must be a string"], ["", "user must not be empty"]] as const) {
+      const bad = await app.request("/api/hosts/nas/fs/mkdir", { method: "POST", headers: JSON_H, body: JSON.stringify({ parent: "/p", name: "d", user }) });
+      expect(bad.status).toBe(400);
+      expect(((await bad.json()) as any).error).toBe(msg);
+    }
+    expect(f.calls.length).toBe(1);
+  });
+
   test("invalid bodies are 400 and nothing is forwarded", async () => {
     const f = fake();
     const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));

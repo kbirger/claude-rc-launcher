@@ -65,7 +65,7 @@
     if (!listing || !folderName.trim()) return;
     error = "";
     try {
-      const r = await mkdir(host, listing.path, folderName.trim());
+      const r = await mkdir(host, listing.path, folderName.trim(), chosenUser);
       creating = false;
       folderName = "";
       await go(r.path);

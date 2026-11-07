@@ -55,6 +55,6 @@ export const browse = (host: string, path?: string, user?: string) => {
   const q = [path ? `path=${encodeURIComponent(path)}` : "", user ? `user=${encodeURIComponent(user)}` : ""].filter(Boolean).join("&");
   return request<DirListing>("GET", q ? `${h(host)}/fs?${q}` : `${h(host)}/fs`);
 };
-export const mkdir = (host: string, parent: string, name: string) =>
-  request<{ path: string }>("POST", `${h(host)}/fs/mkdir`, { parent, name });
+export const mkdir = (host: string, parent: string, name: string, user?: string) =>
+  request<{ path: string }>("POST", `${h(host)}/fs/mkdir`, { parent, name, ...(user ? { user } : {}) });
 export const getMe = () => request<Me>("GET", "/api/me");

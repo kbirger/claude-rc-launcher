@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
@@ -328,6 +329,55 @@ describe("mkdir owner", () => {
     });
     if (process.getuid?.() === 0) expect(r.status).toBe(201);
     else expect(r.status).toBe(500);
+  });
+});
+
+describe("mkdir user", () => {
+  const ownerSvc = (seen: (string | undefined)[]) => ({
+    dirOwnerFor: async (u?: string) => {
+      seen.push(u);
+      if (u === "nobody") throw new HttpError(400, "unknown user");
+      return undefined;
+    },
+  });
+  const mkdirReq = (app: any, body: unknown) =>
+    app.request("/api/hosts/local/fs/mkdir", { method: "POST", headers: H(), body: JSON.stringify(body) });
+
+  test("user is passed to dirOwnerFor", async () => {
+    const seen: (string | undefined)[] = [];
+    const r = await mkdirReq(mk(ownerSvc(seen)).app, { parent: root, name: "useddir", user: "alice" });
+    expect(r.status).toBe(201);
+    expect(seen).toEqual(["alice"]);
+  });
+
+  test("without user, dirOwnerFor is not called", async () => {
+    const seen: (string | undefined)[] = [];
+    const r = await mkdirReq(mk(ownerSvc(seen)).app, { parent: root, name: "nouserdir" });
+    expect(r.status).toBe(201);
+    expect(seen).toEqual([]);
+  });
+
+  test("the owner from dirOwnerFor replaces dirOwner", async () => {
+    if (process.platform === "win32") return;
+    // dirOwner is an owner nobody can chown to here. The process's own ids always work.
+    const own = { uid: process.getuid!(), gid: process.getgid!() };
+    const f = fake({ dirOwnerFor: async () => own });
+    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), dirOwner: { uid: 0x7ffffff0, gid: 0x7ffffff0 } });
+    const r = await mkdirReq(app, { parent: root, name: "aliceowned", user: "alice" });
+    expect(r.status).toBe(201);
+    expect((await stat(join(root, "aliceowned"))).uid).toBe(own.uid);
+  });
+
+  test("bad user is 400 and no folder is made", async () => {
+    const seen: (string | undefined)[] = [];
+    const app = mk(ownerSvc(seen)).app;
+    for (const [user, msg] of [[5, "user must be a string"], ["", "user must not be empty"], ["nobody", "unknown user"]] as const) {
+      const r = await mkdirReq(app, { parent: root, name: "baduserdir", user });
+      expect(r.status).toBe(400);
+      expect(((await r.json()) as any).error).toBe(msg);
+    }
+    expect(seen).toEqual(["nobody"]);
+    expect(existsSync(join(root, "baduserdir"))).toBe(false);
   });
 });
 

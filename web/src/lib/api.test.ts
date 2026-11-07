@@ -124,3 +124,14 @@ test("428 yields an ApiError with body.code untrusted", async () => {
   expect(err.status).toBe(428);
   expect(err.body.code).toBe("untrusted");
 });
+
+test("mkdir sends user only when given", async () => {
+  stub(201, { path: "/p/n" });
+  await mkdir("local", "/p", "n", "alice");
+  await mkdir("local", "/p", "n");
+  await mkdir("local", "/p", "n", "");
+  expect(calls[0]!.url).toBe("/api/hosts/local/fs/mkdir");
+  expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({ parent: "/p", name: "n", user: "alice" });
+  expect(JSON.parse(String(calls[1]!.init!.body))).toEqual({ parent: "/p", name: "n" });
+  expect(JSON.parse(String(calls[2]!.init!.body))).toEqual({ parent: "/p", name: "n" });
+});
