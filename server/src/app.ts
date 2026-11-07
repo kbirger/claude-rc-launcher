@@ -1,14 +1,19 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
+import { cliConfigRoute } from "./cliauth";
 import { listDirs, makeDir, type DirOwner } from "./fsapi";
+import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
-import type { HostClient } from "./hostclient";
+import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
 
-export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; probeTimeoutMs?: number; requestTimeoutMs?: number };
+/** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
+export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; hasHubAuth: boolean };
+
+export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -137,18 +142,33 @@ export function createApp(deps: Deps): Hono {
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
 
-  api.route(
-    "/hosts",
+  const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
+  const forwarding = () =>
     hostsApi({
       cfg,
       local: instanceApi({ cfg, instances, dirOwner }),
-      registry: deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map()),
+      registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
-    }),
-  );
+    });
+  api.route("/hosts", forwarding());
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
+
+  if (deps.cli) {
+    const cli = deps.cli;
+    app.route("/cli/config", cliConfigRoute(cli));
+    const cliApi = new Hono();
+    cliApi.use("*", cli.auth);
+    cliApi.use("*", csrf(cfg));
+    cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
+    // Host management first, so that `probe` is never read as a host id by the forwarding routes.
+    cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient, hasHubAuth: cli.hasHubAuth }));
+    cliApi.route("/hosts", forwarding());
+    cliApi.all("*", (c) => c.json({ error: "not found" }, 404));
+    app.route("/cli/api", cliApi);
+    app.all("/cli/*", (c) => c.json({ error: "not found" }, 404));
+  }
 
   if (staticHandler) app.get("*", userAuth.middleware, staticHandler);
 

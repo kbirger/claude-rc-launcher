@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { PeekError, peekCertificate } from "./certpeek";
 import { HOST_ID_RE, hostUrlProblem } from "./config";
 import { HostError, type HostClient, type HostConfig } from "./hostclient";
@@ -56,16 +56,13 @@ export function hostAdminApi(o: {
     }
   };
 
-  // Audit every add and remove (not the read-only probe).
-  r.use("*", async (c, next) => {
+  // Audit every add and remove. Attached per route, because this router is mounted next to the forwarding routes.
+  const audit: MiddlewareHandler = async (c, next) => {
     await next();
-    const pathname = new URL(c.req.url).pathname;
-    if (c.req.method === "DELETE" || (c.req.method === "POST" && !pathname.endsWith("/probe"))) {
-      const u = c.get("user" as never) as User | undefined;
-      const host = (c.get("auditHost" as never) as string | undefined) ?? "unknown";
-      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${host} ${c.req.method} ${pathname} ${c.res.status}`);
-    }
-  });
+    const u = c.get("user" as never) as User | undefined;
+    const host = (c.get("auditHost" as never) as string | undefined) ?? "unknown";
+    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${host} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+  };
 
   r.post("/probe", async (c) => {
     const body = await readObject(c);
@@ -74,7 +71,7 @@ export function hostAdminApi(o: {
     return c.json({ fingerprint: p.fingerprint, names: p.names, subject: p.subject, not_after: p.notAfter, pem: p.pem });
   });
 
-  r.post("/", async (c) => {
+  r.post("/", audit, async (c) => {
     const body = await readObject(c);
     const id = body.id;
     if (typeof id === "string") c.set("auditHost" as never, id as never);
@@ -114,7 +111,7 @@ export function hostAdminApi(o: {
     return c.json({ id, name: host.name, url, source: "managed" }, 201);
   });
 
-  r.delete("/:id", async (c) => {
+  r.delete("/:id", audit, async (c) => {
     const id = c.req.param("id");
     c.set("auditHost" as never, id as never);
     await o.registry.remove(id);
