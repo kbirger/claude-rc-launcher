@@ -110,3 +110,17 @@ test("startInstance sends user and addTrust only when set", async () => {
   expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({ path: "/p", name: "n", user: "alice", addTrust: true });
   expect(JSON.parse(String(calls[2]!.init?.body))).toEqual({ path: "/p", user: "alice" });
 });
+
+test("addTrust false is omitted from the body", async () => {
+  stub(201, {});
+  await startInstance("local", "/p", undefined, { addTrust: false });
+  expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ path: "/p" });
+});
+
+test("428 yields an ApiError with body.code untrusted", async () => {
+  stub(428, { error: "not trusted", code: "untrusted", user: "alice", path: "/p" });
+  const err = await startInstance("local", "/p").catch((e) => e);
+  expect(err).toBeInstanceOf(ApiError);
+  expect(err.status).toBe(428);
+  expect(err.body.code).toBe("untrusted");
+});

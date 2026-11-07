@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { trustStartArgs, type TrustPrompt } from "./trustprompt";
   import { ApiError, browse, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "./api";
 
   let { host, onclose, onstarted }: { host: string; onclose: () => void; onstarted: () => void } = $props();
@@ -12,7 +13,8 @@
   let folderName = $state("");
   let usersInfo = $state<UsersInfo | null>(null);
   let user = $state("");
-  let trustPrompt = $state<{ path: string; user: string } | null>(null);
+  let trustPrompt = $state<TrustPrompt | null>(null);
+  let reqId = 0;
   // Only pass a user when the selector is shown.
   const chosenUser = $derived(usersInfo?.selectable ? user : undefined);
 
@@ -28,10 +30,16 @@
   });
 
   async function go(path?: string) {
+    const id = ++reqId;
     error = "";
+    trustPrompt = null;
     try {
-      listing = await browse(host, path, chosenUser);
+      const l = await browse(host, path, chosenUser);
+      if (id === reqId) listing = l;
     } catch (e) {
+      if (id !== reqId) return;
+      // Do not keep a listing that belongs to another user or folder: Start would use it.
+      listing = null;
       error = e instanceof ApiError ? e.message : "Failed to browse";
     }
   }
@@ -50,7 +58,6 @@
 
   function changeUser(e: Event) {
     user = (e.currentTarget as HTMLSelectElement).value;
-    trustPrompt = null;
     go(listing && listing.path ? listing.path : undefined);
   }
 
@@ -69,13 +76,15 @@
 
   async function start(addTrust = false) {
     if (!listing || atTop) return;
+    const a = trustStartArgs(trustPrompt, listing, chosenUser, addTrust);
     busy = true;
     error = "";
     try {
-      await startInstance(host, listing.path, name.trim() || undefined, { user: chosenUser, addTrust });
+      await startInstance(host, a.path, name.trim() || undefined, { user: a.user, addTrust: a.addTrust });
       trustPrompt = null;
       onstarted();
     } catch (e) {
+      trustPrompt = null;
       if (e instanceof ApiError && e.status === 428 && e.body?.code === "untrusted") {
         trustPrompt = { path: e.body.path ?? listing.path, user: e.body.user ?? chosenUser ?? "" };
       } else error = e instanceof ApiError ? e.message : "Failed to start";
@@ -93,7 +102,7 @@
     </div>
     {#if usersInfo}
       <label class="runas">Run as
-        <select bind:value={user} onchange={changeUser}>
+        <select value={user} onchange={changeUser}>
           {#each usersInfo.users as u (u.name)}<option value={u.name}>{u.name}</option>{/each}
         </select>
       </label>
@@ -116,7 +125,7 @@
     {/if}
     <ul>
       {#each listing?.dirs ?? [] as d (d.path)}
-        <li><button class="dir" class:untrusted={d.trusted === false} onclick={() => go(d.path)}>{d.name}{#if d.trusted === false}<span class="lock" aria-label="not trusted">🔒</span>{/if}</button></li>
+        <li><button class="dir" class:untrusted={d.trusted === false} onclick={() => go(d.path)}>{d.name}{#if d.trusted === false}<span class="lock" role="img" aria-label="not trusted">🔒</span>{/if}</button></li>
       {/each}
       {#if listing && listing.dirs.length === 0}<li class="muted pad">No subfolders</li>{/if}
     </ul>
@@ -128,7 +137,7 @@
           <p><code>{trustPrompt.path}</code> is not trusted for <code>{trustPrompt.user}</code>.</p>
           <div class="bar">
             <button class="primary" disabled={busy} onclick={() => start(true)}>Trust and start</button>
-            <button onclick={() => (trustPrompt = null)}>Cancel</button>
+            <button disabled={busy} onclick={() => (trustPrompt = null)}>Cancel</button>
           </div>
         </div>
       {/if}
