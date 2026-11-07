@@ -192,10 +192,12 @@ export class InstanceService {
         }
         let { uid, gid } = t;
         if (t.isDefault) {
-          const u = await this.userDir.get(this.cfg.serviceUser);
+          // Raw lookup: a service account (uid < 1000, nologin) fails the list rules but still owns its file.
+          const u = await this.userDir.lookup(this.cfg.serviceUser);
           uid = u?.uid;
           gid = u?.gid;
         }
+        // The trust is kept on purpose if a later step fails: the person asked to trust this folder.
         await this.trust.add({ home: t.runAs.home, uid, gid }, real);
       }
       await mkdir(this.cfg.unitDir, { recursive: true });

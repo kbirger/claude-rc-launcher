@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, readdir, readFile, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile, rm, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpError, InstanceService, type Runner } from "../src/instances";
@@ -49,9 +49,12 @@ const USERS: SystemUser[] = [
   { name: "root", uid: 0, gid: 0, home: "/root" },
   { name: "alice", uid: 1000, gid: 1001, home: "/home/alice" },
 ];
+// `svc` is a service account: in passwd, but it fails the list rules (uid < 1000, nologin).
+const SERVICE_ACCOUNT: SystemUser = { name: "svc", uid: 999, gid: 998, home: "/var/lib/svc" };
 const users: UserDirectory = {
   list: async () => USERS,
   get: async (n) => USERS.find((u) => u.name === n),
+  lookup: async (n) => [...USERS, SERVICE_ACCOUNT].find((u) => u.name === n),
 };
 type Deps = ConstructorParameters<typeof InstanceService>[3];
 const svc = (over: Partial<Config> = {}, deps: Deps = {}) =>
@@ -325,7 +328,51 @@ describe("start as a user, with trust", () => {
     expect(trustLog).toEqual(["check /root", "add /root 0 0 /srv/proj"]);
     trustLog = [];
     await tsvc({ serviceUser: "svc", serviceHome: "/var/lib/svc" }).start({ path: "/srv/other", addTrust: true });
-    expect(trustLog).toEqual(["check /var/lib/svc", "add /var/lib/svc undefined undefined /srv/other"]);
+    expect(trustLog).toEqual(["check /var/lib/svc", "add /var/lib/svc 999 998 /srv/other"]);
+  });
+
+  test("addTrust for a service user with no passwd entry passes no ids", async () => {
+    await tsvc({ serviceUser: "ghost", serviceHome: "/var/lib/ghost" }).start({ path: "/srv/proj", addTrust: true });
+    expect(trustLog).toEqual(["check /var/lib/ghost", "add /var/lib/ghost undefined undefined /srv/proj"]);
+  });
+
+  test("a concurrent start for the same folder is 409 and names the first user", async () => {
+    trusted.add("/srv/proj");
+    let release!: () => void;
+    gate = new Promise<void>((r) => { release = r; });
+    const s = tsvc();
+    const first = s.start({ path: "/srv/proj", user: "alice" });
+    while (!calls.some((c) => c.args.includes("enable"))) await new Promise((r) => setTimeout(r, 1));
+    await unlink(join(dir, unitName(instanceId("/srv/proj")))); // force the in-flight path, not the file path
+    const e = await caught(s.start({ path: "/srv/proj", user: "root" }));
+    expect(e.status).toBe(409);
+    expect(e.message).toBe("already running in this directory as alice");
+    expect((e.extra as { instance: { user?: string } }).instance.user).toBe("alice");
+    release();
+    await first;
+  });
+
+  test("a concurrent start while the unit file exists is 409 and names the first user", async () => {
+    trusted.add("/srv/proj");
+    let release!: () => void;
+    gate = new Promise<void>((r) => { release = r; });
+    const s = tsvc();
+    const first = s.start({ path: "/srv/proj", user: "alice" });
+    while (!calls.some((c) => c.args.includes("enable"))) await new Promise((r) => setTimeout(r, 1));
+    const e = await caught(s.start({ path: "/srv/proj", user: "root" }));
+    expect(e.status).toBe(409);
+    expect(e.message).toBe("already running in this directory as alice");
+    release();
+    await first;
+  });
+
+  test("enable failure after addTrust removes the unit file and keeps the trust", async () => {
+    failEnable = true;
+    const e = await caught(tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true }));
+    expect(e.status).toBe(500);
+    expect(await readdir(dir)).toEqual([]);
+    expect(trustLog).toEqual(["check /home/alice", "add /home/alice 1000 1001 /srv/proj"]);
+    expect(trusted.has("/srv/proj")).toBe(true);
   });
 
   test("addTrust on a trusted folder does not call add", async () => {
@@ -368,7 +415,7 @@ describe("start as a user, with trust", () => {
 
 describe("users", () => {
   test("users(): selectable is false in user scope", async () => {
-    const s = new InstanceService(cfg({ scope: "user", serviceUser: "me" }), fake, fakeResolve, { trust: allTrusted, users });
+    const s = new InstanceService(cfg({ scope: "user", serviceUser: "me" }), fake, fakeResolve, { trust: allTrusted, users, canSwitchUser: true });
     expect(await s.users()).toEqual({ selectable: false, default: "me", users: [{ name: "me" }] });
   });
   test("not selectable when canSwitchUser is false", async () => {
@@ -378,6 +425,9 @@ describe("users", () => {
     expect(await svc().users()).toEqual({ selectable: true, default: "root", users: [{ name: "root" }, { name: "alice" }] });
   });
   test("lists the service user even when it fails the rules", async () => {
+    // svc is in the directory (lookup finds it) but list() leaves it out, as passwdDirectory does.
+    expect(await users.lookup("svc")).toBeDefined();
+    expect((await users.list()).map((u) => u.name)).not.toContain("svc");
     const r = await svc({ serviceUser: "svc" }).users();
     expect(r.default).toBe("svc");
     expect(r.users.map((u) => u.name).sort()).toEqual(["alice", "root", "svc"]);

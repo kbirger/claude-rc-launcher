@@ -9,6 +9,7 @@ const PASSWD = [
   "bob:x:1001:1001::/home/bob:/usr/sbin/nologin",
   "carol:x:1002:1002::/home/carol:/bin/false",
   "dave:x:1003:1003::/home/dave:/bin/bash",
+  "claude-rc:x:999:998::/var/lib/claude-rc:/usr/sbin/nologin",
 ].join("\n");
 const homeExists = async (h: string) => h !== "/home/dave";
 const dir = (text = PASSWD) => passwdDirectory({ readPasswd: async () => text, homeExists });
@@ -36,5 +37,18 @@ describe("passwdDirectory", () => {
     for (const n of ["a b", "x\ny", "a=b"]) expect(USER_NAME_RE.test(n)).toBe(false);
     const d = dir("john.doe:x:1000:1000::/home/john.doe:/bin/bash\n");
     expect((await d.get("john.doe"))?.name).toBe("john.doe");
+  });
+
+  test("lookup finds a service account that fails the list rules", async () => {
+    const d = dir();
+    expect(await d.lookup("claude-rc")).toEqual({ name: "claude-rc", uid: 999, gid: 998, home: "/var/lib/claude-rc" });
+    expect(await d.get("claude-rc")).toBeUndefined();
+    expect((await d.list()).map((u) => u.name)).not.toContain("claude-rc");
+    expect((await d.lookup("dave"))?.uid).toBe(1003);
+  });
+
+  test("lookup returns undefined for invalid and unknown names", async () => {
+    const d = dir("broken\nfoo:x:abc:1::/home/foo:/bin/sh\n");
+    for (const n of ["nobody", "a b", "x\ny", "a=b", "foo"]) expect(await d.lookup(n)).toBeUndefined();
   });
 });
