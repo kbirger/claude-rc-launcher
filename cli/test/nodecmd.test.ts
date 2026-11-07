@@ -5,7 +5,7 @@ import path from "node:path";
 import { parseConfig } from "../../server/src/config";
 import { saveCreds } from "../src/creds";
 import { main, type Env } from "../src/index";
-import { renderNodeConfig, type NodeFs } from "../src/nodecmd";
+import { realNodeFs, renderNodeConfig, type NodeFs } from "../src/nodecmd";
 
 const stops: (() => void)[] = [];
 afterAll(() => stops.forEach((s) => s()));
@@ -44,7 +44,21 @@ describe("renderNodeConfig", () => {
 });
 
 type Seen = { method: string; path: string };
-function setup(routes: Record<string, () => Response | unknown>, nodeFs?: NodeFs) {
+// Tests never touch /etc or run sudo: unless a test passes its own, every write goes to this fake.
+const safeFs: NodeFs & { writes: string[] } = {
+  writes: [],
+  exists: () => false,
+  write(p) {
+    this.writes.push(p);
+  },
+  backup: () => {},
+  sudoWrite: () => {
+    throw new Error("a test ran sudo");
+  },
+  isRoot: () => true,
+};
+
+function setup(routes: Record<string, () => Response | unknown>, nodeFs: NodeFs = safeFs) {
   const seen: Seen[] = [];
   const server = Bun.serve({
     port: 0, hostname: "127.0.0.1",
@@ -60,7 +74,7 @@ function setup(routes: Record<string, () => Response | unknown>, nodeFs?: NodeFs
   stops.push(() => server.stop(true));
   const credsFile = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-node-")), "c.json");
   saveCreds(credsFile, { hub: `http://127.0.0.1:${server.port}`, issuer: "i", clientId: "c", tokenEndpoint: "t", idToken: "tok", refreshToken: "r", expiresAt: Math.floor(Date.now() / 1000) + 3600 });
-  const env: Env = { credsFile, open: async () => {}, readLine: async () => "", ...(nodeFs ? { nodeFs } : {}) };
+  const env: Env = { credsFile, open: async () => {}, readLine: async () => "", nodeFs };
   const out: string[] = [];
   const err: string[] = [];
   const run = async (...argv: string[]) => ({ code: await main(argv, { out: (s) => out.push(s), err: (s) => err.push(s) }, env) });
@@ -83,7 +97,7 @@ describe("claude-rc node config", () => {
   test("by default it writes the file itself and prints one status line, not instructions", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "rc-out-"));
     const file = path.join(dir, "etc", "config.toml");
-    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment }, realNodeFs);
     const r = await s.run("node", "config", ...flagsOk, "--output", file);
     expect(r.code).toBe(0);
     expect(parse(readFileSync(file, "utf8")).mode).toBe("node");
@@ -102,7 +116,7 @@ describe("claude-rc node config", () => {
   test("an existing file is refused without --force and left unchanged", async () => {
     const file = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-out-")), "config.toml");
     writeFileSync(file, "old\n");
-    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment }, realNodeFs);
     const r = await s.run("node", "config", ...flagsOk, "--output", file);
     expect(r.code).toBe(1);
     expect(s.err[0]).toContain("--force");
@@ -113,7 +127,7 @@ describe("claude-rc node config", () => {
   test("--force replaces the file and keeps the old one as .bak", async () => {
     const file = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-out-")), "config.toml");
     writeFileSync(file, "old\n");
-    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment }, realNodeFs);
     expect((await s.run("node", "config", ...flagsOk, "--output", file, "--force")).code).toBe(0);
     expect(readFileSync(`${file}.bak`, "utf8")).toBe("old\n");
     expect(parse(readFileSync(file, "utf8")).mode).toBe("node");
@@ -141,6 +155,48 @@ describe("claude-rc node config", () => {
     expect(s.err[0]).toContain("EROFS");
   });
 
+  test("a stray argument is refused, because a space after a comma in --names splits it", async () => {
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    const r = await s.run("node", "config", "--listen", "10.0.0.9", "--names", "pi.internal,", "10.0.0.1", "--output", "-");
+    expect(r.code).toBe(1);
+    expect(s.err[0]).toContain("unexpected argument");
+    expect(s.err[0]).toContain("10.0.0.1");
+    expect(s.err[0]).toContain("comma");
+    expect(s.seen).toHaveLength(0);
+  });
+
+  test("the listen address is added to the certificate names when it is an IP that is missing", async () => {
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    await s.run("node", "config", "--listen", "192.168.1.111", "--names", "kirhub", "--output", "-");
+    expect(parse(s.out[0]!).node!.tls.names).toEqual(["kirhub", "192.168.1.111"]);
+    s.out.length = 0;
+    await s.run("node", "config", "--listen", "192.168.1.111", "--names", "192.168.1.111,kirhub", "--output", "-");
+    expect(parse(s.out[0]!).node!.tls.names).toEqual(["192.168.1.111", "kirhub"]);
+  });
+
+  test("a hostname or wildcard listen address is not added to the names", async () => {
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    await s.run("node", "config", "--listen", "0.0.0.0", "--names", "kirhub", "--output", "-");
+    expect(parse(s.out[0]!).node!.tls.names).toEqual(["kirhub"]);
+    s.out.length = 0;
+    await s.run("node", "config", "--listen", "kirhub.lan", "--names", "kirhub", "--output", "-");
+    expect(parse(s.out[0]!).node!.tls.names).toEqual(["kirhub"]);
+  });
+
+  test("a name with a space or an invalid character is refused", async () => {
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    for (const names of ["a b", "x/y", "ok,bad name"]) {
+      expect([names, (await s.run("node", "config", "--listen", "10.0.0.9", "--names", names, "--output", "-")).code]).toEqual([names, 1]);
+    }
+    expect(s.seen).toHaveLength(0);
+  });
+
+  test("--names is optional when --listen is an IP address, because the certificate then covers that address", async () => {
+    const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
+    expect((await s.run("node", "config", "--listen", "192.168.1.111", "--output", "-")).code).toBe(0);
+    expect(parse(s.out[0]!).node!.tls.names).toEqual(["192.168.1.111"]);
+  });
+
   test("--port overrides the default", async () => {
     const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
     await s.run("node", "config", ...flagsOk.slice(0, 2), "--names", "pi", "--port", "9443", "--output", "-");
@@ -151,8 +207,8 @@ describe("claude-rc node config", () => {
     const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
     const bad = [
       ["node", "config", "--names", "pi"],
-      ["node", "config", "--listen", "10.0.0.9"],
-      ["node", "config", "--listen", "10.0.0.9", "--names", ""],
+      ["node", "config", "--listen", "0.0.0.0"],
+      ["node", "config", "--listen", "kirhub.lan"],
       ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--port", "99999"],
       ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--port", "abc"],
       ["node", "config", "--listen", "10.0.0.9", "--names", "pi", "--roots", "relative/dir"],

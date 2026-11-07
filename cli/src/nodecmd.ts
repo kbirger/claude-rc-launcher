@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
@@ -86,12 +87,16 @@ export const realNodeFs: NodeFs = {
  * (through sudo when the directory is not writable), and a single status line is printed. `--output -` prints it.
  */
 export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClient; out: (s: string) => void; fs?: NodeFs }): Promise<void> {
-  const usage = "usage: claude-rc node config --listen <address> --names <name,name,...> [--port <n>] [--name <n>] [--roots </dir,/dir>] [--output <file>|-] [--force]";
+  const usage = "usage: claude-rc node config --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] [--output <file>|-] [--force]";
   const { flags } = o;
   const fs = o.fs ?? realNodeFs;
   if (!flags.listen) throw new ExitError(`--listen is required: the private address this node binds. ${usage}`, 1);
   const names = csv(flags.names ?? "");
-  if (names.length === 0) throw new ExitError(`--names is required: the DNS names and IP addresses that the hub will use in --url. ${usage}`, 1);
+  const bad = names.find((n) => !isIP(n) && !/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(n));
+  if (bad) throw new ExitError(`--names has an invalid name: ${JSON.stringify(bad)}. Names are DNS names or IP addresses, separated by commas without spaces`, 1);
+  // The hub will almost always connect to the address that the node binds, so the certificate must cover it.
+  if (isIP(flags.listen) && flags.listen !== "0.0.0.0" && flags.listen !== "::" && !names.includes(flags.listen)) names.push(flags.listen);
+  if (names.length === 0) throw new ExitError(`--names is required when --listen is not an IP address: the DNS names and IP addresses of THIS node that the hub will use in --url. ${usage}`, 1);
   const port = flags.port === undefined ? 8443 : Number(flags.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ExitError("--port must be a number from 1 to 65535", 1);
   const roots = flags.roots === undefined ? undefined : csv(flags.roots);

@@ -224,8 +224,10 @@ is opaque or has no `iss`, `aud` or `sub`.
 
 `claude-rc node config --listen <addr> --names <a,b> [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]`
 writes a complete node `config.toml`, by default `/etc/claude-rc-launcher/config.toml`, and prints `wrote <path>`.
-`--output -` prints the file on stdout instead. `--listen` and `--names` are required, because a wrong bind address
-or certificate name is unsafe to guess. The port defaults to 8443. The output has no placeholders. The command
+`--output -` prints the file on stdout instead. `--listen` is required, because a wrong bind address is unsafe to guess. `--names` lists this node's own DNS names
+and IP addresses for the certificate. An IP `--listen` address is added to the names, because the hub will almost always
+connect to it, and then `--names` is optional. The command refuses stray positional arguments, because a space after
+a comma in `--names` otherwise drops the second name without a trace. The port defaults to 8443. The output has no placeholders. The command
 refuses to replace an existing file. `--force` replaces it and keeps the old one as `<file>.bak`, in the same spirit
 as the installer, which never modifies an existing config. When the write fails with a permission error and the user
 is not root, the command runs `sudo mkdir -p`, `sudo cp -p` (for the backup) and `sudo tee` with fixed arguments, so

@@ -358,8 +358,10 @@ claude-rc node config --listen 10.0.0.9 --names pi.internal,10.0.0.9 --name pi -
 sudo deploy/install-binary.sh --service --node   # installs the unit and starts the service: the file has no placeholders
 ```
 
-`--listen` is the private address that the node binds. `--names` are the DNS names and IP addresses that the hub will
-use in `--url`, because they go into the node's certificate. `--port` defaults to 8443. `--name` and `--roots` are
+`--listen` is the private address that the node binds. `--names` are the DNS names and IP addresses **of this node**
+that the hub will use in `--url`, because they go into the node's certificate. Separate them with commas and no
+spaces (a space splits the argument, and the command then refuses the stray part). If `--listen` is an IP address, it
+is added to the names for you, so `--names` is then optional. `--port` defaults to 8443. `--name` and `--roots` are
 optional. The command writes `/etc/claude-rc-launcher/config.toml` itself and prints one line, `wrote <path>`.
 `--output <file>` writes somewhere else, and `--output -` prints the file on stdout. If the file already exists the
 command stops. `--force` replaces it and keeps the old file as `<file>.bak`. If you are not root and the directory is

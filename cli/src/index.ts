@@ -26,7 +26,7 @@ Commands:
   mkdir <parent> <name>              make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
-  node config --listen <addr> --names <a,b> [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
+  node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
                                      write this node's config.toml with the hub's values filled in
 
 Flags for every command: --host <id> (default local), --json, --help`;
@@ -104,7 +104,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     const hub = hubClient({ creds, save: (c) => saveCreds(env.credsFile, c), renew: (c) => renew(c, env.fetch), ...(env.fetch ? { fetch: env.fetch } : {}) });
 
     if (name === "node") {
-      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config --listen <address> --names <name,name,...> [--port <n>] [--name <n>] [--roots </dir,/dir>]", 1);
+      if (args.length > 1) {
+        throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. A space after a comma in --names splits it into a separate argument: write the names without spaces, like --names a,b`, 1);
+      }
+      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>]", 1);
       await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.nodeFs ? { fs: env.nodeFs } : {}) });
       return 0;
     }
