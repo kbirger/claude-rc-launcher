@@ -297,7 +297,7 @@ certificate mismatch | rejected our credentials | bad response`. State-changing 
 `claude-rc` is a separate program that does what the UI does, and it can add and remove hosts. It runs on any
 machine and talks to the hub over HTTPS.
 
-**Install it with one line** (Linux x64 and arm64, tested; macOS x64 and arm64, built but not tested on a real Mac):
+**Install it with one line** (Linux x64 is tested; Linux arm64 and macOS x64 and arm64 are built but have not been run on real hardware):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh | sh
