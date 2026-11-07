@@ -100,6 +100,7 @@ All commands accept `--hub <url>` (the saved value is the default), `--host <id>
 | `stop <id>` | `DELETE /cli/api/hosts/:host/instances/:id` |
 | `logs <id> [--lines n]` | `GET /cli/api/hosts/:host/instances/:id/logs` |
 | `host add <id> --url <https-url> ...` | See "Adding a host" |
+| `node config --listen <addr> --names <a,b> ...` | `GET /cli/api/node-enrollment`. See "Node configuration" |
 | `host remove <id>` | `DELETE /cli/api/hosts/:id` |
 
 The CLI renews the ID token before a call when the token has less than 60 seconds left. The hub can still answer 401,
@@ -120,6 +121,7 @@ The handlers are the same, so the CLI and the UI cannot drift apart. New routes 
 | POST | `/cli/api/hosts/probe` | Body `{url, server_name?}`. Returns the node certificate details. |
 | POST | `/cli/api/hosts` | Adds a managed host. |
 | DELETE | `/cli/api/hosts/:id` | Removes a managed host. |
+| GET | `/cli/api/node-enrollment` | Returns the `[node_auth.oidc]` values for this hub. See "Node configuration". |
 
 The host management routes are not mounted under `/api`. A browser session cannot reach them.
 The bearer-only middleware is not mounted under `/api` either. A CLI token cannot reach the browser routes.
@@ -211,6 +213,19 @@ claude-rc host add pi  --url https://pi.internal:8443 --server-name pi.internal
 Input rules: `id` matches `^[a-z0-9][a-z0-9-]{0,31}$` and is not `local`. `url` is `https:` with no path, query,
 or credentials. The hub needs `[hub_auth.oidc]` in `config.toml`. Without it, the hub
 answers 400 and says so. If `server_name` is present, it must be a valid DNS name or IP address.
+
+### Node configuration
+
+Added after the first release, so that a node does not need hand-copied values. The hub gets a token for its own
+service account (the one in `[hub_auth.oidc]`), reads the claims, and returns `{oidc: {issuer, jwks_url, audience,
+caller_claim: "sub", caller_value}}`. The `jwks_url` comes from OIDC discovery of the issuer and falls back to
+`<issuer>jwks/`. The token is never returned. The route answers 400 without `[hub_auth.oidc]`, and 502 if the token
+is opaque or has no `iss`, `aud` or `sub`.
+
+`claude-rc node config --listen <addr> --names <a,b> [--port n] [--name n] [--roots /a,/b]` prints a complete node
+`config.toml` on stdout. `--listen` and `--names` are required, because a wrong bind address or certificate name
+is unsafe to guess. The port defaults to 8443. The output has no placeholders. A later step, `node setup`, can
+install the binary and the unit and register the node. It is not built.
 
 ### Deployment
 

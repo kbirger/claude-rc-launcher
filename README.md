@@ -248,6 +248,7 @@ implicit host `local`.
 The easy way is `claude-rc host add` (see [Command-line client](#command-line-client)). It reads the node's
 certificate through the hub, asks you to type the fingerprint that the node logged, and pins the certificate. The
 manual way below needs a restart of the hub, and it is the only way to use a shared secret.
+`claude-rc node config` writes the node side of the OIDC setup for you.
 
 #### Pairing a node by hand
 
@@ -346,6 +347,27 @@ Add `--json` to any command for machine-readable output. Exit code 0 is success,
 you must log in again. The login is saved in `~/.config/claude-rc/credentials.json` (`$XDG_CONFIG_HOME` is
 honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
 reads no other environment variable.
+
+### Write a node's configuration
+
+On the node machine, install the CLI, run `claude-rc login --hub <url>`, and let the hub fill in the part of the
+node's `config.toml` that identifies the hub:
+
+```sh
+claude-rc node config --listen 10.0.0.9 --names pi.internal,10.0.0.9 --name pi --roots /home/pi/projects \
+  | sudo tee /etc/claude-rc-launcher/config.toml
+sudo deploy/install-binary.sh --service --node   # installs the unit and starts the service: the file has no placeholders
+```
+
+`--listen` is the private address that the node binds. `--names` are the DNS names and IP addresses that the hub will
+use in `--url`, because they go into the node's certificate. `--port` defaults to 8443. `--name` and `--roots` are
+optional. The command prints a complete file on stdout, and a hint on stderr.
+
+The hub supplies the `[node_auth.oidc]` values: the issuer, the JWKS URL, the audience (the hub's client id) and
+`caller_value` (the `sub` of the hub's service account). It reads them from a token that it gets for its own
+service account, and it never returns the token. This needs `[hub_auth.oidc]` on the hub, and an identity provider
+that issues JWT access tokens. The route is `GET /cli/api/node-enrollment`. A node that uses a shared secret does not
+need this command.
 
 ### Add a node
 
