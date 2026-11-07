@@ -235,6 +235,16 @@ is not root, the command runs `sudo mkdir -p`, `sudo cp -p` (for the backup) and
 that the login stays in the user's home directory. It does not ask the user to run the whole CLI with `sudo`. A later step, `node setup`, can
 install the binary and the unit and register the node. It is not built.
 
+### Installing the CLI
+
+`install-cli.sh` is a POSIX shell script that is also attached to each release, so that one line installs the CLI:
+`curl -fsSL .../releases/latest/download/install-cli.sh | sh`. It maps `uname` to the release asset, downloads the asset
+and `SHA256SUMS`, compares the checksum, and installs under a temporary name that it then moves into place, through
+`sudo` only when the directory is not writable. `CLAUDE_RC_VERSION` and `CLAUDE_RC_PREFIX` are the only settings,
+because every argument belongs to `claude-rc`: arguments after `sh -s --` run `claude-rc` after the install, with
+`/dev/tty` as its standard input, so the sign-in prompt and the sudo prompt still work in a pipe. The checksum catches
+a damaged download but not a compromised release, and the script says so.
+
 ### Node setup
 
 `claude-rc node setup --listen <ip> [--hub <url>] [--name n] [--id id] [--port n] [--names a,b] [--roots /a,/b]

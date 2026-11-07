@@ -35,6 +35,7 @@ jobs:
             bun build --compile --target=bun-$target cli/src/index.ts \
               --outfile dist/claude-rc-$target$ext
           done
+          cp install-cli.sh dist/install-cli.sh
           (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish release
         env:

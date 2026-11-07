@@ -295,8 +295,30 @@ certificate mismatch | rejected our credentials | bad response`. State-changing 
 ## Command-line client
 
 `claude-rc` is a separate program that does what the UI does, and it can add and remove hosts. It runs on any
-machine and talks to the hub over HTTPS. Download `claude-rc-<os>-<arch>` from the release (linux, darwin or
-windows, x64 or arm64) and check it against `SHA256SUMS`. To build it from a clone, run `bun run build:cli`.
+machine and talks to the hub over HTTPS.
+
+**Install it with one line** (Linux and macOS, x64 and arm64):
+
+```sh
+curl -fsSL https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install-cli.sh | sh
+```
+
+The script downloads `claude-rc-<os>-<arch>` from the latest release, checks it against that release's `SHA256SUMS`,
+and installs it to `/usr/local/bin` (through `sudo` when needed). Set `CLAUDE_RC_PREFIX=$HOME/.local/bin` to install
+without sudo, and `CLAUDE_RC_VERSION=v0.2.0` to pick a release. The checksum catches a damaged download. It does not
+protect you from a compromised release, so read the script first if that matters to you
+(`install-cli.sh` in this repository).
+
+Every argument after `sh -s --` goes to `claude-rc` once it is installed, with your terminal attached, so one line can
+install the CLI **and** set up a node (see "Set up a node with one command"):
+
+```sh
+curl -fsSL https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install-cli.sh \
+  | sh -s -- node setup --hub https://rc.example.com --listen 192.168.1.111 --name kirhub --service-user kir
+```
+
+On Windows, download `claude-rc-windows-x64.exe` from the release. To build the CLI from a clone, run
+`bun run build:cli`.
 
 ### Enable CLI login on the hub
 
