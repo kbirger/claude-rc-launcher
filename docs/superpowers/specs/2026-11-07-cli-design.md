@@ -237,8 +237,10 @@ install the binary and the unit and register the node. It is not built.
 
 ### Installing the CLI
 
-`install-cli.sh` is a POSIX shell script that is also attached to each release, so that one line installs the CLI:
-`curl -fsSL .../releases/latest/download/install-cli.sh | sh`. It maps `uname` to the release asset, downloads the asset
+`install-cli.sh` is a POSIX shell script that lives on `main`, so that one line installs the CLI:
+`curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh | sh`. The script is
+version-agnostic (it installs the latest release unless `CLAUDE_RC_VERSION` pins one), so an evergreen URL works and an
+installer fix needs no release. Each release also carries the script of its version for audits and pinned installs. It maps `uname` to the release asset, downloads the asset
 and `SHA256SUMS`, compares the checksum, and installs under a temporary name that it then moves into place, through
 `sudo` only when the directory is not writable. `CLAUDE_RC_VERSION` and `CLAUDE_RC_PREFIX` are the only settings,
 because every argument belongs to `claude-rc`: arguments after `sh -s --` run `claude-rc` after the install, with

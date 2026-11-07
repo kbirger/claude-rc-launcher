@@ -1,11 +1,11 @@
 #!/bin/sh
 # Installs the claude-rc command-line client from a GitHub release. Safe to run again: it replaces the old copy.
 #
-#   curl -fsSL https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install-cli.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh | sh
 #
 # Every argument is passed on to claude-rc after the install, so one line can also set up a node:
 #
-#   curl -fsSL .../install-cli.sh | sh -s -- node setup --hub https://rc.example.com --listen 10.0.0.5 --name pi
+#   curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh | sh -s -- node setup --hub https://rc.example.com --listen 10.0.0.5 --name pi
 #
 # Settings are environment variables, because the arguments belong to claude-rc:
 #   CLAUDE_RC_VERSION   release tag, for example v0.2.0 (default: the latest release)

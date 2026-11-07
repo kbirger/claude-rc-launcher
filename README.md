@@ -300,20 +300,21 @@ machine and talks to the hub over HTTPS.
 **Install it with one line** (Linux and macOS, x64 and arm64):
 
 ```sh
-curl -fsSL https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install-cli.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh | sh
 ```
 
 The script downloads `claude-rc-<os>-<arch>` from the latest release, checks it against that release's `SHA256SUMS`,
 and installs it to `/usr/local/bin` (through `sudo` when needed). Set `CLAUDE_RC_PREFIX=$HOME/.local/bin` to install
 without sudo, and `CLAUDE_RC_VERSION=v0.2.0` to pick a release. The checksum catches a damaged download. It does not
 protect you from a compromised release, so read the script first if that matters to you
-(`install-cli.sh` in this repository).
+(`install-cli.sh` in this repository). The URL above always serves the script on `main`. Each release also carries the script of
+that version, for example `https://github.com/kbirger/claude-rc-launcher/releases/download/v0.2.0/install-cli.sh`.
 
 Every argument after `sh -s --` goes to `claude-rc` once it is installed, with your terminal attached, so one line can
 install the CLI **and** set up a node (see "Set up a node with one command"):
 
 ```sh
-curl -fsSL https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install-cli.sh \
+curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh \
   | sh -s -- node setup --hub https://rc.example.com --listen 192.168.1.111 --name kirhub --service-user kir
 ```
 
