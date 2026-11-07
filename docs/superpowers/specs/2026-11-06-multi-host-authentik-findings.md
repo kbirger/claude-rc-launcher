@@ -54,18 +54,27 @@ Irrelevant to safety, the JWT is verified and plain headers are ignored, but wor
 
 ## 4. Command-line client (public client)
 
-Template for the open points in `2026-11-07-cli-design.md`. Nothing here is verified yet.
+Checked on 2026-11-07 against Authentik 2026.8.4 (provider created through the API).
 
 | Item | Assumption | Observed |
 |---|---|---|
-| A public client (no secret) can be created, with a regular expression redirect `^http://127\.0\.0\.1:\d+/callback$` | yes | ____ |
-| The `offline_access` scope returns a refresh token | yes | ____ |
-| The ID token holds `sub`, `preferred_username`, `email` | yes | ____ |
-| The ID token `aud` equals the client id and `iss` equals the provider issuer | yes | ____ |
-| The `jwks_url` of the provider verifies the ID token | `<issuer>jwks/` | ____ |
-| The ID token lifetime | minutes | ____ s |
-| The proxy provider lets `^/cli/` through without its login (proxy-jwt mode) | yes | ____ |
-| The provider supports token revocation (`logout` is best effort) | unknown | ____ |
+| A public client (no secret) can be created, with a regular expression redirect `^http://127\.0\.0\.1:\d+/callback$` | yes | Yes. A loopback request with a random port is accepted and sent to the login flow. |
+| The `offline_access` scope returns a refresh token | yes | Not tested yet (needs a real browser login). |
+| The ID token holds `sub`, `preferred_username`, `email` | yes | Not tested yet (needs a real browser login). |
+| The ID token `aud` equals the client id and `iss` equals the provider issuer | yes | Not tested yet. The discovery document shows `issuer` = `https://auth.undisclosed.work/application/o/claude-rc-cli/`. |
+| The `jwks_url` of the provider verifies the ID token | `<issuer>jwks/` | The JWKS exists and holds one RS256 signing key. Requires a signing key on the provider. |
+| The ID token lifetime | minutes | Set to 5 minutes (`access_token_validity`). |
+| The proxy provider lets `^/cli/` through without its login (proxy-jwt mode) | yes | Not applicable on this deployment (oidc mode). |
+| The provider supports token revocation (`logout` is best effort) | unknown | Yes. The discovery document lists `revocation_endpoint`. |
+
+Gotchas:
+
+- A provider created through the API in 2026.8 has **no allowed grant types** unless you set them. The authorize
+  endpoint then answers every request with `invalid_request: The request is otherwise malformed`, even with a
+  valid client id and redirect. Set `grant_types` to `["authorization_code", "refresh_token"]` (in the UI, select
+  the "Authorization Code" and "Refresh Token" grants).
+- The provider needs a **signing key** (a certificate). Without one Authentik signs ID tokens with HS256 and the
+  hub rejects them, because it accepts only RS256, ES256 and EdDSA.
 
 Already verified by the tests of this repository: `node:tls` with certificate validation off reads the peer
 certificate inside a `bun build --compile` binary on Linux (used only by `host add` to show the fingerprint).

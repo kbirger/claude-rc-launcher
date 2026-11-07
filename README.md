@@ -315,7 +315,9 @@ hub does not store any CLI session. The identity provider decides how long a tok
 
 In Authentik, create an OAuth2/OpenID provider for the CLI. Set the client type to **Public**. Add a redirect
 URI in regular expression mode: `^http://127\.0\.0\.1:\d+/callback$`. Allow the scopes `openid`, `email`,
-`profile` and `offline_access`. Keep the ID token lifetime short. This works the same in `oidc` and `proxy-jwt`
+`profile` and `offline_access`. Select the grant types "Authorization Code" and "Refresh Token" (a provider
+created through the API has none, and then every login fails with `invalid_request`). Select a signing key, because
+the hub accepts only RS256, ES256 and EdDSA. Keep the ID token lifetime short. This works the same in `oidc` and `proxy-jwt`
 mode. In `proxy-jwt` mode you must also let paths that start with `/cli/` through the proxy without its login
 (in the Authentik proxy provider, add `^/cli/` to the unauthenticated paths). The hub still requires a valid token
 on every `/cli/api` route.
