@@ -1,7 +1,7 @@
 # Command-Line Client - Design
 
 Extends `2026-11-06-multi-host-design.md`. Anything this document does not change stays as described there.
-Status: draft, waiting for approval. Nothing is built yet.
+Status: implemented. The plan is `docs/superpowers/plans/2026-11-07-cli.md`.
 
 ## Intent
 

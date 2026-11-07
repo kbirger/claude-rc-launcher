@@ -21,6 +21,14 @@ public_url = "https://rc.example.com"
 # claude_rc_args = ["--spawn", "same-dir", "--no-create-session-in-dir"]
 # name_prefix = "myhost-"
 
+# state_dir = "/var/lib/claude-rc-launcher"   # hosts added with `claude-rc host add` are stored here. The hub owns them: do not edit by hand
+
+# Command-line client login. Off unless this table exists. Needs a PUBLIC OIDC client (no secret).
+# [cli_auth.oidc]
+# issuer = "https://auth.example.com/application/o/claude-rc-cli/"
+# client_id = "replace-with-cli-client-id"
+# jwks_url = "https://auth.example.com/application/o/claude-rc-cli/jwks/"
+
 [user_auth]                               # mode is REQUIRED; there is no unauthenticated mode
 mode = "oidc"
 # allowed_users = ["kir"]                 # optional; username or email; [] is an error

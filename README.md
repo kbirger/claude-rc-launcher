@@ -35,7 +35,13 @@ instances on other Linux hosts (**nodes**); see [Multiple hosts](#multiple-hosts
 - A node can only be impersonated to the hub with its private key (the hub pins the node's certificate),
   and the hub can only be impersonated to a node with its credential.
 - Access tokens are replayable by anyone who can read the hub-to-node channel, hence TLS is mandatory.
-- There is no unauthenticated mode and only `/healthz` is open.
+- **Command-line client:** a CLI login gives the same access as a browser login, which is root-equivalent
+  execution on the hub and every node. The CLI keeps a refresh token in `credentials.json` (mode 600) on the
+  user's machine. Revoke it at the identity provider to end that login. The hub cannot revoke it.
+- `host add` makes the hub open a connection to any address that the user names, and send it the hub's
+  credential after the user confirms the certificate fingerprint. The user already has full control through the
+  hub, so this adds no new level of access, but it is a new way to make the hub connect somewhere.
+- There is no unauthenticated mode. Only `/healthz` and `GET /cli/config` (two public values) are open.
 
 ## Install
 
@@ -237,7 +243,13 @@ The hub serves the UI and proxies the instance API of each node. A host picker a
 more than one host is configured; offline hosts are listed but not selectable. The hub's own host is the
 implicit host `local`.
 
-### Pairing a node (manual)
+### Pairing a node
+
+The easy way is `claude-rc host add` (see [Command-line client](#command-line-client)). It reads the node's
+certificate through the hub, asks you to type the fingerprint that the node logged, and pins the certificate. The
+manual way below needs a restart of the hub, and it is the only way to use a shared secret.
+
+#### Pairing a node by hand
 
 1. On the node: `sudo deploy/install-binary.sh --service --node`, then edit
    `/etc/claude-rc-launcher/config.toml` (`host`, `tls.names`, `instance.roots`, a `node_auth` method) and
@@ -278,6 +290,80 @@ Instance and filesystem routes are under a host prefix: `GET /api/hosts` and
 failure on the hub side is `502 {error, host}` with `error` one of `host <id>: unreachable | timeout |
 certificate mismatch | rejected our credentials | bad response`. State-changing requests are audit-logged
 (`audit user=... host=... METHOD path status` on the hub, `audit caller=... METHOD path status` on a node).
+
+## Command-line client
+
+`claude-rc` is a separate program that does what the UI does, and it can add and remove hosts. It runs on any
+machine and talks to the hub over HTTPS. Download `claude-rc-<os>-<arch>` from the release (linux, darwin or
+windows, x64 or arm64) and check it against `SHA256SUMS`. To build it from a clone, run `bun run build:cli`.
+
+### Enable CLI login on the hub
+
+CLI login is off until you add a `[cli_auth.oidc]` table to the hub's `config.toml`. It needs a public OIDC
+client (a client without a secret, protected by PKCE) in your identity provider.
+
+```toml
+[cli_auth.oidc]
+issuer = "https://auth.example.com/application/o/claude-rc-cli/"
+client_id = "..."
+jwks_url = "https://auth.example.com/application/o/claude-rc-cli/jwks/"
+```
+
+The hub accepts an ID token of that client on `/cli/api`, and only there. Cookies and proxy headers do not work
+on `/cli/api`, and a CLI token does not work on `/api`. `user_auth.allowed_users` applies to CLI logins. The
+hub does not store any CLI session. The identity provider decides how long a token lives and can revoke a login.
+
+In Authentik, create an OAuth2/OpenID provider for the CLI. Set the client type to **Public**. Add a redirect
+URI in regular expression mode: `^http://127\.0\.0\.1:\d+/callback$`. Allow the scopes `openid`, `email`,
+`profile` and `offline_access`. Keep the ID token lifetime short. This works the same in `oidc` and `proxy-jwt`
+mode. In `proxy-jwt` mode you must also let paths that start with `/cli/` through the proxy without its login
+(in the Authentik proxy provider, add `^/cli/` to the unauthenticated paths). The hub still requires a valid token
+on every `/cli/api` route.
+
+### Use it
+
+```sh
+claude-rc login --hub https://rc.example.com     # opens the browser; add --no-browser to paste a URL instead
+claude-rc whoami
+claude-rc hosts                                  # id, name and status of every host
+claude-rc list --host nas                        # instances (--host defaults to local)
+claude-rc ls /srv                                # directories you can start in
+claude-rc mkdir /srv new-project
+claude-rc start /srv/new-project --name demo     # prints the instance id
+claude-rc logs <id> --lines 50
+claude-rc stop <id>
+claude-rc logout
+```
+
+Add `--json` to any command for machine-readable output. Exit code 0 is success, 1 is an error, and 2 means that
+you must log in again. The login is saved in `~/.config/claude-rc/credentials.json` (`$XDG_CONFIG_HOME` is
+honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
+reads no other environment variable.
+
+### Add a node
+
+Start the node first. It logs `node certificate fingerprint sha256:<hex>` at every start.
+
+```sh
+claude-rc host add nas --url https://10.0.0.5:8443 --name NAS
+claude-rc host add pi  --url https://pi.internal:8443 --server-name pi.internal
+claude-rc host remove nas
+```
+
+1. The hub connects to the node only to read its certificate. It sends no data and no credential.
+2. The CLI shows the certificate and asks you to type the fingerprint that the node printed in its own log. This
+   is the only protection for the first connection, so compare it with the node's log and not with the screen.
+   Scripts can pass `--fingerprint sha256:<hex>`.
+3. The hub reads the certificate again, requires the same fingerprint, and pins the certificate that it read
+   itself. Then it calls the node with the hub's OIDC credential. If that call fails, nothing is saved. `--force`
+   saves the host anyway.
+
+Added hosts use the hub's `[hub_auth.oidc]` credential, so that table must exist. No secret passes through the CLI.
+The hub keeps these hosts in `state_dir` (default `/var/lib/claude-rc-launcher`): `managed-hosts.json` and
+`pins/<id>.pem`. **The hub owns those files. Do not edit them by hand.** The hub does not re-read them while it
+runs, and it overwrites them on the next change. Hosts that you write by hand, and hosts that use a shared
+secret, belong in `config.toml`. Those hosts show `source: config` and cannot be removed with the CLI. A new
+managed host works at once, without a restart.
 
 ## Authentik setup
 
@@ -392,6 +478,11 @@ labels:
 ```
 
 ## API (all under `/api`, session required)
+
+The command-line client uses the same handlers under `/cli/api` with `Authorization: Bearer <ID token>`:
+`GET /cli/api/me`, the host routes below, and the host management routes `POST /cli/api/hosts/probe
+{url, server_name?}`, `POST /cli/api/hosts {id, name?, url, server_name?, fingerprint, force?}` and
+`DELETE /cli/api/hosts/:id`. `GET /cli/config` returns `{issuer, client_id}` and needs no token.
 
 `GET /instances`, `POST /instances {path, name?}` (201, or 409 if one exists for that
 directory), `DELETE /instances/:id`, `GET /instances/:id/logs`, `GET /fs?path=`,

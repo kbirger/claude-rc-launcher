@@ -51,3 +51,21 @@ Irrelevant to safety, the JWT is verified and plain headers are ignored, but wor
 # audience     = "____"
 # jwks_url     = "____"
 ```
+
+## 4. Command-line client (public client)
+
+Template for the open points in `2026-11-07-cli-design.md`. Nothing here is verified yet.
+
+| Item | Assumption | Observed |
+|---|---|---|
+| A public client (no secret) can be created, with a regular expression redirect `^http://127\.0\.0\.1:\d+/callback$` | yes | ____ |
+| The `offline_access` scope returns a refresh token | yes | ____ |
+| The ID token holds `sub`, `preferred_username`, `email` | yes | ____ |
+| The ID token `aud` equals the client id and `iss` equals the provider issuer | yes | ____ |
+| The `jwks_url` of the provider verifies the ID token | `<issuer>jwks/` | ____ |
+| The ID token lifetime | minutes | ____ s |
+| The proxy provider lets `^/cli/` through without its login (proxy-jwt mode) | yes | ____ |
+| The provider supports token revocation (`logout` is best effort) | unknown | ____ |
+
+Already verified by the tests of this repository: `node:tls` with certificate validation off reads the peer
+certificate inside a `bun build --compile` binary on Linux (used only by `host add` to show the fingerprint).

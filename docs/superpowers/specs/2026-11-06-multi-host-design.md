@@ -1,5 +1,8 @@
 # Multi-Host Launcher — Design
 
+Later work: the command-line client (`2026-11-07-cli-design.md`) adds `claude-rc host add`, which replaces most
+of the manual pairing described below, and managed hosts that the hub stores in its state directory.
+
 Extends `2026-11-06-claude-rc-launcher-design.md`. Anything not changed here is unchanged there.
 
 ## Intent
