@@ -1,5 +1,6 @@
 export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null };
-export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string }[] };
+export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
+export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 export type Me = { sub: string; name: string; email?: string; username?: string; logoutUrl?: string };
 export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
 
@@ -39,13 +40,21 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 const h = (host: string) => `/api/hosts/${encodeURIComponent(host)}`;
 export const listHosts = () => request<HostInfo[]>("GET", "/api/hosts");
 export const listInstances = (host: string) => request<Instance[]>("GET", `${h(host)}/instances`);
-export const startInstance = (host: string, path: string, name?: string) =>
-  request<Instance>("POST", `${h(host)}/instances`, name ? { path, name } : { path });
+export const startInstance = (host: string, path: string, name?: string, opts?: { user?: string; addTrust?: boolean }) =>
+  request<Instance>("POST", `${h(host)}/instances`, {
+    path,
+    ...(name ? { name } : {}),
+    ...(opts?.user ? { user: opts.user } : {}),
+    ...(opts?.addTrust ? { addTrust: true } : {}),
+  });
+export const listUsers = (host: string) => request<UsersInfo>("GET", `${h(host)}/users`);
 export const stopInstance = (host: string, id: string) => request<void>("DELETE", `${h(host)}/instances/${encodeURIComponent(id)}`);
 export const getLogs = async (host: string, id: string, lines = 100) =>
   (await request<{ log: string }>("GET", `${h(host)}/instances/${encodeURIComponent(id)}/logs?lines=${lines}`)).log;
-export const browse = (host: string, path?: string) =>
-  request<DirListing>("GET", path ? `${h(host)}/fs?path=${encodeURIComponent(path)}` : `${h(host)}/fs`);
+export const browse = (host: string, path?: string, user?: string) => {
+  const q = [path ? `path=${encodeURIComponent(path)}` : "", user ? `user=${encodeURIComponent(user)}` : ""].filter(Boolean).join("&");
+  return request<DirListing>("GET", q ? `${h(host)}/fs?${q}` : `${h(host)}/fs`);
+};
 export const mkdir = (host: string, parent: string, name: string) =>
   request<{ path: string }>("POST", `${h(host)}/fs/mkdir`, { parent, name });
 export const getMe = () => request<Me>("GET", "/api/me");

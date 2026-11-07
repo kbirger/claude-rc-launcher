@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { ApiError, browse, getLogs, listHosts, listInstances, mkdir, startInstance, stopInstance } from "./api";
+import { ApiError, browse, getLogs, listHosts, listInstances, listUsers, mkdir, startInstance, stopInstance } from "./api";
 
 const realFetch = globalThis.fetch;
 const realLoc = (globalThis as any).location;
@@ -82,4 +82,31 @@ test("a 502 body's error becomes the ApiError message", async () => {
   expect(err).toBeInstanceOf(ApiError);
   expect(err.status).toBe(502);
   expect(err.message).toBe("host nas: unreachable");
+});
+
+test("listUsers calls /users", async () => {
+  stub(200, { selectable: true, default: "a", users: [{ name: "a" }] });
+  const r = await listUsers("a/b");
+  expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/users");
+  expect(r.default).toBe("a");
+});
+
+test("browse adds the user query", async () => {
+  stub(200, {});
+  await browse("local", "/x", "al ice");
+  await browse("local", undefined, "bob");
+  await browse("local", "/x");
+  expect(calls[0]!.url).toBe("/api/hosts/local/fs?path=%2Fx&user=al%20ice");
+  expect(calls[1]!.url).toBe("/api/hosts/local/fs?user=bob");
+  expect(calls[2]!.url).toBe("/api/hosts/local/fs?path=%2Fx");
+});
+
+test("startInstance sends user and addTrust only when set", async () => {
+  stub(201, {});
+  await startInstance("local", "/p");
+  await startInstance("local", "/p", "n", { user: "alice", addTrust: true });
+  await startInstance("local", "/p", undefined, { user: "alice" });
+  expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ path: "/p" });
+  expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({ path: "/p", name: "n", user: "alice", addTrust: true });
+  expect(JSON.parse(String(calls[2]!.init?.body))).toEqual({ path: "/p", user: "alice" });
 });
