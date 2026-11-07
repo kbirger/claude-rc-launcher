@@ -78,13 +78,23 @@ export async function login(o: {
   const hub = o.hub.replace(/\/+$/, "");
   requireSecure("the hub URL", hub);
 
+  const NOT_ENABLED =
+    `${hub}/cli/config did not return the CLI settings. Make sure that the hub runs a version with CLI support and that ` +
+    `config.toml has a [cli_auth.oidc] table. If the hub is behind an authenticating proxy (proxy-jwt mode), ` +
+    `the proxy must let paths that start with /cli/ through without its own login.`;
   let cfg: any;
   try {
-    const r = await f(`${hub}/cli/config`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}. Is CLI login enabled on the hub ([cli_auth])?`);
-    cfg = await r.json();
+    const r = await f(`${hub}/cli/config`, { redirect: "manual" });
+    if (r.status >= 300 && r.status < 400) throw new ExitError(`${NOT_ENABLED} The hub answered with a redirect to ${r.headers.get("location") ?? "another page"}.`, 1);
+    if (!r.ok) throw new ExitError(`${NOT_ENABLED} The hub answered HTTP ${r.status}.`, 1);
+    try {
+      cfg = await r.json();
+    } catch {
+      throw new ExitError(`${NOT_ENABLED} The hub answered with a web page, not JSON.`, 1);
+    }
   } catch (e) {
-    throw new ExitError(`cannot read the CLI settings from ${hub}: ${(e as Error).message}`, 1);
+    if (e instanceof ExitError) throw e;
+    throw new ExitError(`cannot reach ${hub}: ${(e as Error).message}`, 1);
   }
   if (typeof cfg?.issuer !== "string" || typeof cfg?.client_id !== "string") throw new ExitError(`${hub}/cli/config returned an unexpected answer`, 1);
 

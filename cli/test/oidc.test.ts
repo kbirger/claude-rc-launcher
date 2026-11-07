@@ -138,6 +138,19 @@ describe("login", () => {
     await expect(login({ ...o, hub: "https://hub.example.com", fetch: g })).rejects.toThrow("https");
   });
 
+  test("a hub that answers /cli/config with a web page or a redirect gets an explanation", async () => {
+    const o = { hub: "https://hub.example.com", noBrowser: false, open: openViaFetch, readLine: async () => "", log: () => {}, timeoutMs: 200 };
+    const html = (async () => new Response("<!doctype html><title>login</title>", { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+    const redirect = (async () => new Response(null, { status: 302, headers: { location: "/auth/login" } })) as unknown as typeof fetch;
+    for (const f of [html, redirect]) {
+      const e = await login({ ...o, fetch: f }).catch((x) => x);
+      expect(e).toBeInstanceOf(ExitError);
+      expect(e.message).toContain("[cli_auth");
+      expect(e.message).toContain("/cli/");
+      expect(e.message).not.toContain("JSON Parse");
+    }
+  });
+
   test("a login that nobody completes times out", async () => {
     const idp = fakeIdp();
     await expect(login(base(idp, { open: async () => {}, timeoutMs: 200 }))).rejects.toThrow("timed out");
