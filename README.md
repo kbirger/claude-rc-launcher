@@ -451,6 +451,18 @@ the hub's `[hub_auth.oidc]`, and on each node set `[node_auth.oidc]` with that p
 audience and the service account's `sub` as `caller_value`. Whether `private_key_jwt` can be registered for a
 hub-held key depends on your Authentik version; the probe (`client-credentials` / `private-key-jwt`) tells you.
 
+A setup that is verified on Authentik 2026.8.4 (see `2026-11-06-multi-host-authentik-findings.md`, section 1):
+
+1. Create a service account user, for example `rc-hub`. Authentik shows its app-password token once.
+2. Create an OAuth2/OpenID provider, client type **Confidential**, with the grant type **Client Credentials** only
+   (a provider created through the API has no grant types and rejects everything), an RS256 signing key, and an
+   access token lifetime of about 10 minutes. Create an application for it and bind the service account to it.
+3. In the hub's `[hub_auth.oidc]` use `auth_method = "client_secret"` with `client_secret_file` (the provider's
+   secret), **and** `username` and `password_file` (the service account's name and app-password token). The client
+   secret alone is refused with `invalid_grant`.
+4. On the hub run `claude-rc node config` (see [Command-line client](#command-line-client)) to get the matching
+   `[node_auth.oidc]` values for each node.
+
 ## Reverse proxy
 
 The proxy must terminate TLS and forward the original `Host`. `X-Forwarded-*` headers are not used;

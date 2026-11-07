@@ -24,6 +24,21 @@ Command: `bun scripts/authentik-probe.ts client-credentials` (and `private-key-j
 
 Decision if `private_key_jwt` is not available: use `client_secret`, or shared secrets.
 
+### Observed on 2026-11-07 (Authentik 2026.8.4, hub-to-node client credentials)
+
+| Item | Observed |
+|---|---|
+| Access token is a JWT | Yes (RS256, signing key set on the provider) |
+| `iss` | `https://auth.undisclosed.work/application/o/<provider-slug>/` |
+| `aud` | the provider's client id |
+| `sub` | a hash of the service account's `uid` (not its username). Read it from a real token, as `GET /cli/api/node-enrollment` does |
+| Token lifetime | `expires_in` 600 (the provider's `access_token_validity`) |
+| `jwks_url` | `<iss>jwks/` (also in OIDC discovery) |
+| `client_secret` with the service account `username` and app-password `password` | Works |
+| `client_secret` alone | Refused: `invalid_grant` |
+| `private_key_jwt` | Not tested |
+| The application must be bound to the service account user | Done; not tested without it |
+
 ## 2. Proxy outpost JWT (`X-authentik-jwt`)
 
 Command: `bun scripts/authentik-probe.ts proxy-jwt < token.txt`
