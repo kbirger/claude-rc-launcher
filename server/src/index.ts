@@ -1,13 +1,17 @@
-import type { Config } from "./config";
-import { createApp } from "./app";
-import { createOidcClient, oidcUserAuth } from "./auth";
-import { createJwtVerifier, remoteKeys } from "./jwt";
-import { proxyJwtUserAuth } from "./proxyauth";
-import { ConfigError } from "./config";
+import { ConfigError, type Config } from "./config";
 import { loadConfigFile, resolveConfigPath } from "./configfile";
-import { bunRunner, InstanceService } from "./instances";
-import { staticHandler } from "./static";
-import { loadWebFiles } from "./webfiles";
+import { startHub } from "./hubmain";
+import { generateSecret } from "./nodeauth";
+import { startNode } from "./nodemain";
+
+if (process.argv[2] === "gen-secret") {
+  const { secret, sha256 } = generateSecret();
+  console.log(`secret: ${secret}`);
+  console.log(`sha256: ${sha256}`);
+  console.log("# Hub: put the secret in a mode-600 file and reference it as hosts[].auth.secret_file.");
+  console.log("# Node: add the sha256 as a [[node_auth.secret]] entry. Never put the secret on the node.");
+  process.exit(0);
+}
 
 let cfg: Config;
 try {
@@ -20,50 +24,16 @@ try {
   throw e;
 }
 
-const files = await loadWebFiles();
-if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
-
-if (cfg.userAuth?.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {
-  console.warn(
-    "warning: user_auth.oidc.issuer uses plain http; ID tokens are not signature-verified, so a network attacker could forge logins. Use https in production.",
-  );
-}
-
-// Folders created via the UI must be owned by SERVICE_USER when we run as root for another user.
-async function resolveDirOwner(): Promise<{ uid: number; gid: number } | undefined> {
-  if (process.getuid?.() !== 0 || cfg.serviceUser === "root") return undefined;
-  const num = async (flag: "-u" | "-g") => {
-    const r = await bunRunner("id", [flag, cfg.serviceUser]);
-    const n = Number(r.stdout.trim());
-    if (r.code !== 0 || !Number.isInteger(n) || n < 0) {
-      console.error(`cannot resolve SERVICE_USER "${cfg.serviceUser}" (id ${flag}): ${r.stderr.trim() || r.stdout.trim()}`);
-      process.exit(1);
-    }
-    return n;
-  };
-  return { uid: await num("-u"), gid: await num("-g") };
-}
-const dirOwner = await resolveDirOwner();
-
-const instances = new InstanceService(cfg, bunRunner);
-const ua = cfg.userAuth;
-if (cfg.mode !== "hub" || !ua) {
-  console.error("node mode is not wired up yet");
+let running: { stop(): void };
+try {
+  running = cfg.mode === "node" ? await startNode(cfg) : await startHub(cfg);
+} catch (e) {
+  console.error(`startup failed: ${(e as Error).message}`);
   process.exit(1);
 }
-const userAuth =
-  ua.mode === "oidc"
-    ? oidcUserAuth(cfg, await createOidcClient(cfg))
-    : proxyJwtUserAuth({ settings: ua, verify: createJwtVerifier({ keys: remoteKeys(ua.jwksUrl), issuer: ua.issuer, audience: ua.audience }) });
-// Forwarded headers are not consulted: the secure-cookie decision comes from PUBLIC_URL (https: => Secure).
-const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner });
-
-const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });
-console.log(`listening on ${cfg.host}:${server.port}`);
-console.log(`public URL: ${cfg.publicUrl}`);
 
 const shutdown = () => {
-  server.stop();
+  running.stop();
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);
