@@ -60,6 +60,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
     if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
     if (body.user !== undefined && typeof body.user !== "string") throw new HttpError(400, "user must be a string");
+    if (body.user === "") throw new HttpError(400, "user must not be empty");
     if (body.addTrust !== undefined && typeof body.addTrust !== "boolean") throw new HttpError(400, "addTrust must be a boolean");
     const input = {
       path: body.path,
@@ -89,7 +90,9 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
 
   r.get("/users", async (c) => c.json(await instances.users()));
   r.get("/fs", async (c) => {
-    const trusted = await instances.trustFilter(c.req.query("user"));
+    const user = c.req.query("user");
+    if (user === "") throw new HttpError(400, "user must not be empty");
+    const trusted = await instances.trustFilter(user);
     return c.json(await listDirs(c.req.query("path"), cfg.roots, false, trusted));
   });
   r.post("/fs/mkdir", async (c) => {

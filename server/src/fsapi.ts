@@ -37,7 +37,7 @@ export async function listDirs(
   trusted?: (absPath: string) => boolean,
 ): Promise<DirListing> {
   if (path === undefined) {
-    const dirs = (await realRoots(roots)).map((r) => ({ name: r, path: r }));
+    const dirs = (await realRoots(roots)).map((r) => (trusted ? { name: r, path: r, trusted: trusted(r) } : { name: r, path: r }));
     return { path: "", parent: null, dirs };
   }
   const resolved = await resolveChecked(path, roots);
@@ -48,15 +48,18 @@ export async function listDirs(
     throw new HttpError(400, "cannot read directory");
   }
   const dirs: { name: string; path: string; trusted?: boolean }[] = [];
+  // Trust is judged on the real path, as `start` does, so a link shares its target's flag.
+  const entry = (name: string, full: string, real: string) =>
+    trusted ? { name, path: full, trusted: trusted(real) } : { name, path: full };
   for (const e of entries) {
     if (!showHidden && e.name.startsWith(".")) continue;
     const full = join(resolved, e.name);
     if (e.isDirectory()) {
-      dirs.push(trusted ? { name: e.name, path: full, trusted: trusted(full) } : { name: e.name, path: full });
+      dirs.push(entry(e.name, full, full));
     } else if (e.isSymbolicLink()) {
       try {
-        await resolveWithinRoots(full, roots); // must be a dir inside the roots
-        dirs.push(trusted ? { name: e.name, path: full, trusted: trusted(full) } : { name: e.name, path: full });
+        const real = await resolveWithinRoots(full, roots); // must be a dir inside the roots
+        dirs.push(entry(e.name, full, real));
       } catch {
         // omit links that escape the roots, dangle, or are not directories
       }

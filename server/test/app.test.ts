@@ -209,6 +209,21 @@ describe("users and trust", () => {
     expect(j.dirs[0].trusted).toBe(false);
     expect(calls).toContainEqual(["trustFilter", undefined]);
   });
+  test("GET /fs without path marks the roots", async () => {
+    const r = await mk().app.request("/api/hosts/local/fs", { headers: H() });
+    const j: any = await r.json();
+    expect(j.dirs).toEqual([{ name: root, path: root, trusted: false }]);
+  });
+  test("empty user is 400 on GET /fs and POST /instances", async () => {
+    const { app, calls } = mk();
+    const a = await app.request(`/api/hosts/local/fs?user=`, { headers: H() });
+    expect(a.status).toBe(400);
+    expect(await a.json()).toEqual({ error: "user must not be empty" });
+    const b = await post(app, { path: "/p", user: "" });
+    expect(b.status).toBe(400);
+    expect(await b.json()).toEqual({ error: "user must not be empty" });
+    expect(calls.length).toBe(0);
+  });
   test("GET /fs?user=nobody is 400", async () => {
     const r = await mk().app.request(`/api/hosts/local/fs?path=${encodeURIComponent(root)}&user=nobody`, { headers: H() });
     expect(r.status).toBe(400);
