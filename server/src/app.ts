@@ -86,7 +86,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   return r;
 }
 
-function onError(err: Error, c: Context) {
+export function onError(err: Error, c: Context) {
   if (err instanceof HttpError || err instanceof PathError) {
     const extra = err instanceof HttpError ? err.extra : undefined;
     return c.json({ ...(isObject(extra) ? extra : {}), error: err.message }, err.status as 400);

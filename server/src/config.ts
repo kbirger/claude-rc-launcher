@@ -251,7 +251,21 @@ function parseCliAuth(t: Tbl): CliAuthSettings | undefined {
   return issuer && clientId && jwksUrl ? { issuer, clientId, jwksUrl } : undefined;
 }
 
-const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+export const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** `undefined` when `url` is an https origin without a path, query, fragment or credentials. */
+export function hostUrlProblem(url: string): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return `is not a valid URL: ${url}`;
+  }
+  if (u.protocol !== "https:" || u.pathname !== "/" || u.search || u.hash || u.username || u.password || url.replace(/\/$/, "").split("/").length > 3) {
+    return "must be an https:// origin without a path (e.g. https://10.0.0.5:8443)";
+  }
+  return undefined;
+}
 
 function parseHosts(t: Tbl, hubAuth: ClientCredsSettings | undefined): HostConfig[] {
   const out: HostConfig[] = [];
@@ -267,15 +281,8 @@ function parseHosts(t: Tbl, hubAuth: ClientCredsSettings | undefined): HostConfi
     const name = h.str("name") ?? id ?? "";
     const url = h.str("url", { req: true });
     if (url !== undefined) {
-      let u: URL | undefined;
-      try {
-        u = new URL(url);
-      } catch {
-        t.problems.push(`${h.path("url")} is not a valid URL: ${url}`);
-      }
-      if (u && (u.protocol !== "https:" || u.pathname !== "/" || u.search || u.hash || u.username || u.password || url.replace(/\/$/, "").split("/").length > 3)) {
-        t.problems.push(`${h.path("url")} must be an https:// origin without a path (e.g. https://10.0.0.5:8443)`);
-      }
+      const problem = hostUrlProblem(url);
+      if (problem) t.problems.push(`${h.path("url")} ${problem}`);
     }
     const ca = h.file("ca_file", "public", { req: true });
     if (ca !== undefined) {
