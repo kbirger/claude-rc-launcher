@@ -57,6 +57,18 @@ describe("cliBearerAuth", () => {
     for (const t of bad) expect((await get(m.app, { authorization: `Bearer ${t}` })).status).toBe(401);
   });
 
+  test("a signed token without an expiry gives 401", async () => {
+    const k = await kit();
+    const { privateKey, publicKey } = await generateKeyPair("ES256");
+    const keys = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: "k", alg: "ES256" }] });
+    const app = new Hono();
+    app.use("*", cliBearerAuth({ verify: createJwtVerifier({ keys, issuer: ISS, audience: AUD }) }));
+    app.get("/who", (c) => c.json({}));
+    const forever = await new SignJWT({ sub: "u1" }).setProtectedHeader({ alg: "ES256", kid: "k" }).setIssuer(ISS).setAudience(AUD).sign(privateKey);
+    expect((await get(app, { authorization: `Bearer ${forever}` })).status).toBe(401);
+    void k;
+  });
+
   test("a token without sub gives 401", async () => {
     const m = await mk();
     expect((await get(m.app, { authorization: `Bearer ${await m.sign({ sub: undefined })}` })).status).toBe(401);

@@ -4,6 +4,19 @@ import { ExitError, LOGIN_MESSAGE, type Credentials } from "./creds";
 const SCOPE = "openid email profile offline_access";
 const SUCCESS_PAGE = "<!doctype html><meta charset=utf-8><title>claude-rc</title><p>You are signed in. You can close this tab.</p>";
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Tokens and codes travel on these URLs, so they must be https. Plain http is accepted only for the local machine. */
+function requireSecure(what: string, url: string): void {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new ExitError(`${what} is not a valid URL: ${url}`, 1);
+  }
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && LOOPBACK.has(u.hostname))) throw new ExitError(`${what} must use https: ${url}`, 1);
+}
+
 const rand = () => randomBytes(32).toString("base64url");
 const challengeOf = (verifier: string) => createHash("sha256").update(verifier).digest("base64url");
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -63,6 +76,7 @@ export async function login(o: {
 }): Promise<Credentials> {
   const f = o.fetch ?? fetch;
   const hub = o.hub.replace(/\/+$/, "");
+  requireSecure("the hub URL", hub);
 
   let cfg: any;
   try {
@@ -74,6 +88,7 @@ export async function login(o: {
   }
   if (typeof cfg?.issuer !== "string" || typeof cfg?.client_id !== "string") throw new ExitError(`${hub}/cli/config returned an unexpected answer`, 1);
 
+  requireSecure("the issuer", cfg.issuer);
   let disco: any;
   try {
     const r = await f(`${cfg.issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`);
@@ -84,6 +99,8 @@ export async function login(o: {
   }
   if (typeof disco?.authorization_endpoint !== "string" || typeof disco?.token_endpoint !== "string") throw new ExitError("the OIDC discovery document has no authorization or token endpoint", 1);
 
+  requireSecure("the authorization endpoint", disco.authorization_endpoint);
+  requireSecure("the token endpoint", disco.token_endpoint);
   const state = rand();
   const nonce = rand();
   const verifier = rand();

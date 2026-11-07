@@ -128,6 +128,16 @@ describe("login", () => {
     expect(printed.some((l) => l.startsWith(`${idp.base}/authorize?`))).toBe(true);
   });
 
+  test("a hub URL or issuer that is plain http on a non-loopback host is refused before anything is sent", async () => {
+    let calls = 0;
+    const f = (async () => (calls++, Response.json({}))) as unknown as typeof fetch;
+    const o = { noBrowser: false, open: openViaFetch, readLine: async () => "", log: () => {}, timeoutMs: 200, fetch: f };
+    await expect(login({ ...o, hub: "http://hub.example.com" })).rejects.toThrow("https");
+    expect(calls).toBe(0);
+    const g = (async (url: string) => (String(url).endsWith("/cli/config") ? Response.json({ issuer: "http://idp.example.com/o/", client_id: "c" }) : Response.json({}))) as unknown as typeof fetch;
+    await expect(login({ ...o, hub: "https://hub.example.com", fetch: g })).rejects.toThrow("https");
+  });
+
   test("a login that nobody completes times out", async () => {
     const idp = fakeIdp();
     await expect(login(base(idp, { open: async () => {}, timeoutMs: 200 }))).rejects.toThrow("timed out");

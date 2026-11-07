@@ -18,6 +18,7 @@ export function cliBearerAuth(o: { verify: JwtVerifier; allowedUsers?: string[] 
     } catch {
       return unauthenticated(c);
     }
+    if (typeof claims.exp !== "number") return unauthenticated(c); // a token that never expires is never accepted
     const user = userFromClaims(claims as Record<string, unknown>);
     if (!user) return unauthenticated(c);
     if (!isAllowed(user, o.allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
