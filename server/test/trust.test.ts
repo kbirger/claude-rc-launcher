@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, readdir, readFile, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, readlink, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileTrust, isTrustedIn } from "../src/trust";
@@ -86,13 +86,20 @@ describe("add", () => {
     expect(await readdir(home)).toEqual([".claude.json"]);
   });
 
-  test("existing file keeps its owner when chown runs", async () => {
+  test("an existing file is chowned to the given user, not to its current owner", async () => {
     await writeFile(file(), "{}");
-    const st = await stat(file());
     const calls: [number, number][] = [];
     await fileTrust({ isRoot: () => true, chown: async (_fh, u, g) => { calls.push([u, g]); } })
       .add({ home, uid: 4321, gid: 8765 }, "/x");
-    expect(calls).toEqual([[st.uid, st.gid]]);
+    expect(calls).toEqual([[4321, 8765]]);
+  });
+
+  test("as root with no ids given, chown is skipped for an existing file", async () => {
+    await writeFile(file(), "{}");
+    let n = 0;
+    await fileTrust({ isRoot: () => true, chown: async () => { n++; } }).add({ home }, "/x");
+    expect(n).toBe(0);
+    expect((await fileTrust().checker(home))("/x")).toBe(true);
   });
 
   test("chown is skipped when not root", async () => {
@@ -120,18 +127,71 @@ describe("add", () => {
     expect(await readFile(file(), "utf8")).toBe("{}");
   });
 
-  test("a planted symlink at a guessed temp name is not followed", async () => {
-    const target = join(home, "victim");
-    await writeFile(target, "keep");
-    await symlink(target, join(home, `.claude.json.${process.pid}.tmp`));
-    await fileTrust({ chown: async () => {} }).add({ home, uid: 1, gid: 1 }, "/x");
-    expect(await readFile(target, "utf8")).toBe("keep");
-  });
 
   test("parallel adds for one home both land", async () => {
     const store = fileTrust({ chown: async () => {} });
     await Promise.all(["/a", "/b", "/c", "/d"].map((p) => store.add({ home, uid: 1, gid: 1 }, p)));
     const check = await store.checker(home);
     expect(["/a", "/b", "/c", "/d"].map(check)).toEqual([true, true, true, true]);
+  });
+});
+
+describe("a .claude.json that is not a regular file", () => {
+  let other: string;
+  beforeEach(async () => { other = await mkdtemp(join(tmpdir(), "trust-other-")); });
+  afterEach(async () => { await rm(other, { recursive: true, force: true }); });
+
+  /** add must fail with 500, write nothing, and leave the link and its target as they were. */
+  async function expectRefused(store = fileTrust({ isRoot: () => true, chown: async () => { throw new Error("chown must not run"); } })) {
+    const err = await store.add({ home, uid: 1, gid: 1 }, "/opt").catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).status).toBe(500);
+    expect(await readdir(home)).toEqual([".claude.json"]);
+    return err as HttpError;
+  }
+
+  test("a symlink to a regular file is not read and not replaced", async () => {
+    const target = join(other, "root.json");
+    const text = JSON.stringify({ secret: "s", projects: { "/opt": { hasTrustDialogAccepted: true } } });
+    await writeFile(target, text);
+    await symlink(target, file());
+    expect((await fileTrust().checker(home))("/opt")).toBe(false);
+    const err = await expectRefused();
+    expect(err.message).toContain("symlink");
+    expect(await readlink(file())).toBe(target);
+    expect(await readFile(target, "utf8")).toBe(text);
+  });
+
+  test("a symlink to /dev/zero is refused without reading it", async () => {
+    await symlink("/dev/zero", file());
+    expect((await fileTrust().checker(home))("/opt")).toBe(false);
+    await expectRefused();
+    expect(await readlink(file())).toBe("/dev/zero");
+  }, 2000);
+
+  test("a FIFO is refused without blocking", async () => {
+    const mkfifo = Bun.which("mkfifo");
+    if (!mkfifo) return; // no mkfifo on this system: nothing to test
+    expect(Bun.spawnSync([mkfifo, file()]).exitCode).toBe(0);
+    expect((await fileTrust().checker(home))("/opt")).toBe(false);
+    const err = await expectRefused();
+    expect(err.message).toContain("not a regular file");
+    expect((await stat(file())).isFIFO()).toBe(true);
+  }, 2000);
+
+  test("a directory is refused", async () => {
+    await (await import("node:fs/promises")).mkdir(file());
+    expect((await fileTrust().checker(home))("/opt")).toBe(false);
+    const err = await expectRefused();
+    expect(err.message).toContain("not a regular file");
+  });
+
+  test("a file over 1 MiB is refused and left unchanged", async () => {
+    const text = JSON.stringify({ projects: { "/opt": { hasTrustDialogAccepted: true } }, pad: "x".repeat(1024 * 1024) });
+    await writeFile(file(), text);
+    expect((await fileTrust().checker(home))("/opt")).toBe(false);
+    const err = await expectRefused();
+    expect(err.message).toContain("too large");
+    expect(await readFile(file(), "utf8")).toBe(text);
   });
 });

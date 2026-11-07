@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { open, readFile, rename, rm, stat, type FileHandle } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, rename, rm, type FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
 import type { SystemUser } from "./users";
@@ -8,7 +9,10 @@ export type TrustOwner = Pick<SystemUser, "home"> & { uid?: number; gid?: number
 
 export interface TrustStore {
   checker(home: string): Promise<(absPath: string) => boolean>;
-  /** uid/gid are the owner for a new file; undefined when the user is not in passwd (the file is then not chowned). */
+  /**
+   * uid/gid are the owner of the written file (new or replaced); undefined when the user is not in passwd
+   * (the file is then not chowned). A `.claude.json` that is a symlink or not a regular file is refused.
+   */
   add(user: TrustOwner, absPath: string): Promise<void>;
 }
 
@@ -31,21 +35,55 @@ export function isTrustedIn(doc: unknown, absPath: string): boolean {
   }
 }
 
-type ReadResult = { kind: "missing" } | { kind: "invalid" } | { kind: "ok"; doc: Record<string, unknown> };
+type ReadResult =
+  | { kind: "missing" }
+  | { kind: "invalid"; reason: string }
+  | { kind: "ok"; doc: Record<string, unknown>; mode: number };
 
+/** Larger than any real `.claude.json`. A bigger file is refused, not read. */
+const MAX_DOC_BYTES = 1024 * 1024;
+
+/**
+ * Reads the trust file without following a symlink and without blocking on a FIFO or a device.
+ * As root, this file is in another user's home, so the user controls what is at this path.
+ */
 async function readDoc(file: string): Promise<ReadResult> {
-  let text: string;
+  let fh: FileHandle;
   try {
-    text = await readFile(file, "utf8");
+    fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
-    return { kind: "invalid" };
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { kind: "missing" };
+    if (code === "ELOOP") return { kind: "invalid", reason: "it is a symlink" };
+    return { kind: "invalid", reason: "it cannot be opened" };
+  }
+  let text: string;
+  let mode: number;
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) return { kind: "invalid", reason: "it is not a regular file" };
+    if (st.size > MAX_DOC_BYTES) return { kind: "invalid", reason: "it is too large" };
+    mode = st.mode & 0o777;
+    // Read at most one byte over the cap, so a file that grows after the stat still cannot pass it.
+    const buf = Buffer.alloc(MAX_DOC_BYTES + 1);
+    let n = 0;
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
+      if (bytesRead === 0) break;
+      n += bytesRead;
+      if (n === buf.length) return { kind: "invalid", reason: "it is too large" };
+    }
+    text = buf.toString("utf8", 0, n);
+  } catch {
+    return { kind: "invalid", reason: "it cannot be read" };
+  } finally {
+    await fh.close().catch(() => {});
   }
   try {
     const doc = JSON.parse(text);
-    return isObject(doc) ? { kind: "ok", doc } : { kind: "invalid" };
+    return isObject(doc) ? { kind: "ok", doc, mode } : { kind: "invalid", reason: "it is not a JSON object" };
   } catch {
-    return { kind: "invalid" };
+    return { kind: "invalid", reason: "it is not valid JSON" };
   }
 }
 
@@ -81,22 +119,17 @@ export function fileTrust(o: {
   async function addOne(user: TrustOwner, absPath: string): Promise<void> {
       const file = join(user.home, ".claude.json");
       const r = await readDoc(file);
-      if (r.kind === "invalid") throw new HttpError(500, "cannot read the user's .claude.json");
+      if (r.kind === "invalid") throw new HttpError(500, `cannot read the user's .claude.json: ${r.reason}`);
       const doc = r.kind === "ok" ? r.doc : {};
       const projects = isObject(doc.projects) ? doc.projects : {};
       const prev = projects[absPath];
       projects[absPath] = { ...(isObject(prev) ? prev : {}), hasTrustDialogAccepted: true };
       doc.projects = projects;
 
-      let mode = 0o600;
-      let uid: number | undefined = user.uid;
-      let gid: number | undefined = user.gid;
-      if (r.kind === "ok") {
-        const st = await stat(file);
-        mode = st.mode & 0o7777;
-        uid = st.uid;
-        gid = st.gid;
-      }
+      // The mode comes from the handle that was read. The owner is always the target user from passwd,
+      // never the owner of what was found at the path.
+      const mode = r.kind === "ok" ? r.mode : 0o600;
+      const { uid, gid } = user;
 
       // Random name plus O_EXCL ("wx"): never follows a symlink planted by the user.
       // All permission and owner changes go through the open handle, never the path.
