@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Config } from "./config";
+import { USER_NAME_RE, type SystemUser } from "./users";
 
 const MARKER = "# managed-by: claude-rc-launcher path=";
 const NAME_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/; // no leading "-": it would be parsed as a CLI flag
@@ -42,15 +43,36 @@ function envLine(key: string, value: string): string {
   return `Environment="${key}=${esc}"`;
 }
 
-export function renderUnit(cfg: Config, absPath: string, name: string): string {
+export type RunAs = { user: string; home: string; path: string; claudeBin: string };
+
+export function defaultRunAs(cfg: Config): RunAs {
+  return { user: cfg.serviceUser, home: cfg.serviceHome, path: cfg.servicePath, claudeBin: cfg.claudeBin };
+}
+
+export function runAsFor(_cfg: Config, u: SystemUser): RunAs {
+  if (!USER_NAME_RE.test(u.name)) throw new Error("invalid service user");
+  return {
+    user: u.name,
+    home: u.home,
+    path: `${u.home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+    claudeBin: `${u.home}/.local/bin/claude`,
+  };
+}
+
+export function parseUnitUser(content: string): string | null {
+  const m = /^User=(.+)$/m.exec(content);
+  return m ? m[1] : null;
+}
+
+export function renderUnit(cfg: Config, absPath: string, name: string, runAs: RunAs = defaultRunAs(cfg)): string {
   if (!isValidName(name)) throw new Error("invalid instance name");
   safe("path", absPath);
   if (!absPath.startsWith("/")) throw new Error("path must be absolute");
   if (absPath.includes("\\")) throw new Error("path must not contain backslashes");
   if (absPath !== absPath.trim()) throw new Error("path must not have leading or trailing whitespace");
   const userScope = cfg.scope === "user";
-  const user = safe("User", cfg.serviceUser);
-  if (/\s/.test(user) || user.includes("\\")) throw new Error("invalid service user");
+  const user = safe("User", runAs.user);
+  if (/\s/.test(user) || user.includes("\\") || user.includes("=")) throw new Error("invalid service user");
 
   const lines = [
     `${MARKER}${absPath}`,
@@ -63,11 +85,11 @@ export function renderUnit(cfg: Config, absPath: string, name: string): string {
     "Type=simple",
     ...(userScope ? [] : [`User=${user}`]),
     `WorkingDirectory=${absPath.replace(/%/g, "%%")}`,
-    envLine("HOME", cfg.serviceHome),
-    envLine("PATH", cfg.servicePath),
+    envLine("HOME", runAs.home),
+    envLine("PATH", runAs.path),
   ];
   if (cfg.sshAuthSock) lines.push(envLine("SSH_AUTH_SOCK", cfg.sshAuthSock));
-  const exec = [cfg.claudeBin, "remote-control", "--name", name, ...cfg.claudeRcArgs].map(execWord).join(" ");
+  const exec = [runAs.claudeBin, "remote-control", "--name", name, ...cfg.claudeRcArgs].map(execWord).join(" ");
   lines.push(
     `ExecStart=${exec}`,
     "StandardOutput=null",
