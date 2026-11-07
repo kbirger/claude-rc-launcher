@@ -51,7 +51,12 @@ export type Config = {
   node?: NodeConfig; // node
   hubAuth?: ClientCredsSettings; // hub
   hosts: HostConfig[]; // hub; [] otherwise
+  stateDir: string; // hub: holds managed hosts. Node: unused (see node.tls.stateDir)
+  cliAuth?: CliAuthSettings; // hub: present when CLI login is enabled
 };
+
+/** The public OIDC client that the command-line client signs in with. It has no secret. */
+export type CliAuthSettings = { issuer: string; clientId: string; jwksUrl: string };
 
 export class ConfigError extends Error {
   constructor(public problems: string[]) {
@@ -230,6 +235,22 @@ function parseHubAuth(t: Tbl): ClientCredsSettings | undefined {
   return clientAuth ? { tokenUrl, clientId, ...(scope ? { scope } : {}), clientAuth } : undefined;
 }
 
+function parseCliAuth(t: Tbl): CliAuthSettings | undefined {
+  const ca = t.table("cli_auth");
+  if (!ca) return undefined;
+  const oi = ca.table("oidc");
+  if (!oi) t.problems.push("cli_auth.oidc is required");
+  const allowInsecure = oi?.bool("allow_insecure") ?? false;
+  const issuer = oi?.str("issuer", { req: true });
+  const clientId = oi?.str("client_id", { req: true });
+  const jwksUrl = oi?.str("jwks_url", { req: true });
+  if (oi && issuer) checkUrl(oi, "issuer", issuer, { allowInsecure, hint: ", or when cli_auth.oidc.allow_insecure = true is set" });
+  if (oi && jwksUrl) checkUrl(oi, "jwks_url", jwksUrl);
+  oi?.finish();
+  ca.finish();
+  return issuer && clientId && jwksUrl ? { issuer, clientId, jwksUrl } : undefined;
+}
+
 const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 function parseHosts(t: Tbl, hubAuth: ClientCredsSettings | undefined): HostConfig[] {
@@ -365,14 +386,16 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   let userAuth: OidcUserAuth | ProxyJwtUserAuth | undefined;
   let node: NodeConfig | undefined;
   if (mode === "node") {
-    for (const k of ["user_auth", "hub_auth", "hosts"]) if (t.has(k)) problems.push(`${k} is not allowed in node mode`);
-    t.skip("user_auth", "hub_auth", "hosts");
+    for (const k of ["user_auth", "hub_auth", "hosts", "cli_auth", "state_dir"]) if (t.has(k)) problems.push(`${k} is not allowed in node mode`);
+    t.skip("user_auth", "hub_auth", "hosts", "cli_auth", "state_dir");
     node = parseNode(t);
   } else {
     for (const k of ["tls", "node_auth"]) if (t.has(k)) problems.push(`${k} is only allowed in node mode`);
     t.skip("tls", "node_auth");
   }
   const hubAuth = mode === "hub" ? parseHubAuth(t) : undefined;
+  const stateDir = (mode === "hub" ? t.absStr("state_dir") : undefined) ?? "/var/lib/claude-rc-launcher";
+  const cliAuth = mode === "hub" ? parseCliAuth(t) : undefined;
   const hosts = mode === "hub" ? parseHosts(t, hubAuth) : [];
   const ua = mode === "hub" ? t.table("user_auth") : undefined;
   if (mode === "hub" && !ua) problems.push("user_auth is required");
@@ -446,6 +469,8 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
     ...(userAuth ? { userAuth } : {}),
     ...(node ? { node } : {}),
     ...(hubAuth ? { hubAuth } : {}),
+    ...(cliAuth ? { cliAuth } : {}),
+    stateDir,
     hosts,
   };
 }

@@ -224,3 +224,50 @@ describe("resolveConfigPath", () => {
     expect(resolveConfigPath(["bun", "x"], {})).toBe("/etc/claude-rc-launcher/config.toml");
   });
 });
+
+describe("hub state_dir and [cli_auth]", () => {
+  const cli = (o: Record<string, unknown> = {}) => ({
+    ...base(),
+    cli_auth: { oidc: { issuer: "https://auth.example.com/application/o/cli/", client_id: "cli", jwks_url: "https://auth.example.com/application/o/cli/jwks/", ...o } },
+  });
+  test("state_dir defaults to /var/lib/claude-rc-launcher and is read when set", () => {
+    expect(parseConfig(base(), io).stateDir).toBe("/var/lib/claude-rc-launcher");
+    expect(parseConfig({ ...base(), state_dir: "/x" }, io).stateDir).toBe("/x");
+  });
+  test("a relative state_dir is a problem naming state_dir", () => {
+    expect(problems({ ...base(), state_dir: "rel" })).toContain("state_dir must be an absolute path");
+  });
+  test("[cli_auth.oidc] parses issuer, client_id and jwks_url; absent means undefined", () => {
+    expect(parseConfig(base(), io).cliAuth).toBeUndefined();
+    expect(parseConfig(cli(), io).cliAuth).toEqual({
+      issuer: "https://auth.example.com/application/o/cli/",
+      clientId: "cli",
+      jwksUrl: "https://auth.example.com/application/o/cli/jwks/",
+    });
+  });
+  test("cli_auth needs all three keys", () => {
+    for (const k of ["issuer", "client_id", "jwks_url"]) {
+      const c = cli() as any;
+      delete c.cli_auth.oidc[k];
+      expect(problems(c)).toContain(`cli_auth.oidc.${k} is required`);
+    }
+    expect(problems({ ...base(), cli_auth: {} })).toContain("cli_auth.oidc is required");
+  });
+  test("cli_auth rejects secret keys", () => {
+    expect(problems(cli({ client_secret_file: "x" }))).toContain("unknown key cli_auth.oidc.client_secret_file");
+    expect(problems({ ...cli(), cli_auth: { ...(cli() as any).cli_auth, token_secret_file: "x" } })).toContain("unknown key cli_auth.token_secret_file");
+  });
+  test("cli_auth.oidc.issuer must be https; loopback http and allow_insecure are the only exceptions", () => {
+    expect(problems(cli({ issuer: "http://auth.example.com/o/" }))).toContain("cli_auth.oidc.issuer must be https");
+    expect(parseConfig(cli({ issuer: "http://127.0.0.1:9000/o/" }), io).cliAuth?.issuer).toBe("http://127.0.0.1:9000/o/");
+    expect(parseConfig(cli({ issuer: "http://auth.example.com/o/", allow_insecure: true }), io).cliAuth).toBeDefined();
+  });
+  test("cli_auth.oidc.jwks_url must be https", () => {
+    expect(problems(cli({ jwks_url: "http://auth.example.com/jwks/" }))).toContain("cli_auth.oidc.jwks_url must be https");
+  });
+  test("node mode rejects cli_auth and top-level state_dir", () => {
+    const node = { mode: "node", tls: { names: ["n"] }, node_auth: { secret: [{ sha256: "a".repeat(64) }] } };
+    expect(problems({ ...node, cli_auth: {} })).toContain("cli_auth is not allowed in node mode");
+    expect(problems({ ...node, state_dir: "/x" })).toContain("state_dir is not allowed in node mode");
+  });
+});
