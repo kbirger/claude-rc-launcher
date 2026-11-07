@@ -324,8 +324,13 @@ on every `/cli/api` route.
 
 ### Use it
 
+`login` always prints the sign-in URL. If the browser runs on the same machine, it finishes by itself. Over ssh, open
+the URL in a browser on your own machine and sign in. The browser then ends on an error page for `127.0.0.1`,
+because nothing listens there on your machine. Copy the URL from the address bar and paste it into the terminal.
+`--no-browser` skips the attempt to open a browser.
+
 ```sh
-claude-rc login --hub https://rc.example.com     # opens the browser; add --no-browser to paste a URL instead
+claude-rc login --hub https://rc.example.com     # prints the sign-in URL and tries to open a browser
 claude-rc whoami
 claude-rc hosts                                  # id, name and status of every host
 claude-rc list --host nas                        # instances (--host defaults to local)

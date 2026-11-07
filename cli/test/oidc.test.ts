@@ -128,6 +128,43 @@ describe("login", () => {
     expect(printed.some((l) => l.startsWith(`${idp.base}/authorize?`))).toBe(true);
   });
 
+  test("browser mode always prints the URL, and a pasted redirect URL completes the login when the browser cannot reach the listener", async () => {
+    const idp = fakeIdp();
+    const printed: string[] = [];
+    let opened = 0;
+    const c = await login(
+      base(idp, {
+        open: async () => void opened++, // like xdg-open over ssh: succeeds and shows nothing
+        log: (s) => printed.push(s),
+        readLine: async () => {
+          const url = new URL(printed.find((l) => l.startsWith("http"))!);
+          await fetch(url).catch(() => {}); // the user's browser visit
+          // The browser ended on a connection error page for 127.0.0.1, and the user pastes the address bar.
+          return `${url.searchParams.get("redirect_uri")}?code=C1&state=${url.searchParams.get("state")}`;
+        },
+      }),
+    );
+    expect(opened).toBe(1);
+    expect(c.refreshToken).toBe("R1");
+    expect(printed.join("\n")).toContain("paste");
+  });
+
+  test("a pasted line that is not the right URL is refused and the login keeps waiting for the browser", async () => {
+    const idp = fakeIdp();
+    const printed: string[] = [];
+    let lines = ["not a url", "http://127.0.0.1:1/callback?code=evil&state=wrong"];
+    const c = await login(
+      base(idp, {
+        log: (s) => printed.push(s),
+        open: async (url) => void (await fetch(url)), // the browser does reach the listener
+        readLine: async () => lines.shift() ?? "",
+      }),
+    );
+    expect(c.refreshToken).toBe("R1");
+    expect(idp.log.token).toHaveLength(1);
+    expect(idp.log.token[0]!.get("code")).toBe("C1");
+  });
+
   test("a hub URL or issuer that is plain http on a non-loopback host is refused before anything is sent", async () => {
     let calls = 0;
     const f = (async () => (calls++, Response.json({}))) as unknown as typeof fetch;

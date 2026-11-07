@@ -32,7 +32,7 @@ export type Env = {
   credsFile: string;
   fetch?: typeof fetch;
   open: (url: string) => Promise<void>;
-  readLine: (prompt: string) => Promise<string>;
+  readLine: (prompt: string, signal?: AbortSignal) => Promise<string>;
 };
 
 function openBrowser(url: string): Promise<void> {
@@ -52,10 +52,10 @@ export function defaultEnv(): Env {
   return {
     credsFile: credsPath(),
     open: openBrowser,
-    async readLine(prompt) {
+    async readLine(prompt, signal) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
       try {
-        return await rl.question(prompt);
+        return await rl.question(prompt, signal ? { signal } : {});
       } finally {
         rl.close();
       }

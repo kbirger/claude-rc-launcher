@@ -79,8 +79,9 @@ laptop, and talks to the hub over HTTPS. It does not need access to the hub mach
    needs a shared secret stays in `config.toml`, because the secret must be in a file on the hub anyway.
 9. **A host is saved only after a test call succeeds.** The hub calls `GET /api/node` on the node with the pinned
    certificate and the credential. If it fails, the hub rejects the request and saves nothing. The flag `--force` saves anyway.
-10. **Headless login.** `login --no-browser` prints the URL. The user opens it anywhere and pastes the final
-    redirect URL back into the terminal.
+10. **Headless login.** `login` always prints the URL and always waits for two things at once: the redirect on the
+    loopback listener, and a redirect URL that the user pastes into the terminal. Over ssh the browser is on another
+    machine, so only the paste can finish the login. `--no-browser` only skips the attempt to open a browser.
 
 ## Commands
 
@@ -133,6 +134,7 @@ The CLI talks to the identity provider directly. The hub takes no part until the
    `redirect_uri = http://127.0.0.1:<port>/callback` and the scopes `openid email profile offline_access`.
 4. The user signs in. The identity provider redirects to the loopback address.
 5. The CLI compares the returned `state` with its own copy, shows a "you can close this tab" page, and closes the listener.
+   Instead of the listener, the user can paste the redirect URL into the terminal. The CLI applies the same `state` rule to it.
 6. The CLI exchanges the code at the token endpoint. It sends the PKCE verifier and no client secret.
 7. The CLI compares the nonce in the ID token with its own copy, then saves the ID token, the refresh token and the expiry time.
 

@@ -69,7 +69,7 @@ export async function login(o: {
   hub: string;
   noBrowser: boolean;
   open: (url: string) => Promise<void>;
-  readLine: (prompt: string) => Promise<string>;
+  readLine: (prompt: string, signal?: AbortSignal) => Promise<string>;
   log: (s: string) => void;
   fetch?: typeof fetch;
   timeoutMs?: number;
@@ -114,15 +114,10 @@ export async function login(o: {
   const state = rand();
   const nonce = rand();
   const verifier = rand();
-  const listener = o.noBrowser ? undefined : listen(state);
-  let port: number;
-  if (listener) port = listener.port;
-  else {
-    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
-    port = probe.port!;
-    probe.stop(true);
-  }
-  const redirectUri = `http://127.0.0.1:${port}/callback`;
+  // The listener is always started: when the browser runs on this machine it catches the redirect. When it does not
+  // (for example over ssh), the user pastes the URL that the browser ended up on.
+  const listener = listen(state);
+  const redirectUri = `http://127.0.0.1:${listener.port}/callback`;
   const auth = new URL(disco.authorization_endpoint);
   for (const [k, v] of Object.entries({
     response_type: "code",
@@ -135,33 +130,47 @@ export async function login(o: {
     code_challenge_method: "S256",
   })) auth.searchParams.set(k, v);
 
+  const stop = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    let callback: URL;
-    if (listener) {
-      timer = setTimeout(() => listener.fail(new ExitError("login timed out", 1)), o.timeoutMs ?? 300_000);
+    o.log("Open this URL in a browser and sign in:");
+    o.log(auth.href);
+    o.log(
+      "If the browser runs on another machine, it will end on an error page for 127.0.0.1 after you sign in. " +
+        "Copy the URL from its address bar and paste it here.",
+    );
+    if (!o.noBrowser) {
       try {
         await o.open(auth.href);
       } catch {
-        o.log(`Open this URL in a browser to sign in:\n${auth.href}`);
+        /* the URL is printed above */
       }
-      o.log("Waiting for the browser sign-in...");
-      callback = await listener.result;
-    } else {
-      o.log("Open this URL in a browser and sign in:");
-      o.log(auth.href);
-      const pasted = await Promise.race([
-        o.readLine("Paste the URL that the browser ended up on: "),
-        new Promise<string>((_, rej) => (timer = setTimeout(() => rej(new ExitError("login timed out", 1)), o.timeoutMs ?? 300_000))),
-      ]);
-      try {
-        callback = new URL(pasted.trim());
-      } catch {
-        throw new ExitError("that is not a URL", 1);
-      }
-      const given = callback.searchParams.get("state");
-      if (!given || !same(given, state)) throw new ExitError("the pasted URL has the wrong state", 1);
     }
+
+    const timeout = new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new ExitError("login timed out", 1)), o.timeoutMs ?? 300_000)));
+    const pasted = (async (): Promise<URL> => {
+      for (;;) {
+        let line = "";
+        try {
+          line = (await o.readLine("Paste the URL here (or wait for the browser): ", stop.signal)).trim();
+        } catch {
+          /* input closed or aborted: treated as nothing typed */
+        }
+        if (!line) return new Promise<never>(() => {}); // nothing typed or stdin closed: wait for the browser
+        let u: URL;
+        try {
+          u = new URL(line);
+        } catch {
+          o.log("That is not a URL.");
+          continue;
+        }
+        const given = u.searchParams.get("state");
+        if (given && same(given, state)) return u;
+        o.log("That URL is not from this login. Paste the URL from the browser that just signed in.");
+      }
+    })();
+    pasted.catch(() => {}); // an aborted read after the login finished
+    const callback = await Promise.race([listener.result, pasted, timeout]);
 
     const err = callback.searchParams.get("error");
     if (err) throw new ExitError(`login failed: ${callback.searchParams.get("error_description") ?? err}`, 1);
@@ -185,7 +194,8 @@ export async function login(o: {
     };
   } finally {
     clearTimeout(timer);
-    listener?.close();
+    stop.abort();
+    listener.close();
   }
 }
 
