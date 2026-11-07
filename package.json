@@ -12,9 +12,11 @@
     "build": "bun run build:bundle && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
   },
   "dependencies": {
+    "@peculiar/x509": "^3.1.0",
     "hono": "^4.13.16",
     "jose": "^6.2.15",
-    "openid-client": "^6.8.9"
+    "openid-client": "^6.8.9",
+    "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
