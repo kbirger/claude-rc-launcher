@@ -21,6 +21,14 @@ describe("passwdDirectory", () => {
     expect(users[1]).toEqual({ name: "alice", uid: 1000, gid: 1000, home: "/home/alice" });
   });
 
+  test("root is listed without the shell and home rules", async () => {
+    const text = "root:x:0:0:root:/root:/usr/sbin/nologin\ntoor:x:0:0::/root:/usr/sbin/nologin\nalice:x:1000:1000::/home/alice:/bin/bash\n";
+    const d = passwdDirectory({ readPasswd: async () => text, homeExists: async (h) => h !== "/root" });
+    expect((await d.list()).map((u) => u.name)).toEqual(["root", "alice"]);
+    expect(await d.get("root")).toEqual({ name: "root", uid: 0, gid: 0, home: "/root" });
+    expect(await d.get("toor")).toBeUndefined();
+  });
+
   test("get returns undefined for invalid and unknown names", async () => {
     const d = dir();
     expect((await d.get("alice"))?.uid).toBe(1000);

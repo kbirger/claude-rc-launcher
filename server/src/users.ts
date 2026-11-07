@@ -42,9 +42,12 @@ export function passwdDirectory(o: {
   async function list(): Promise<SystemUser[]> {
     const out: SystemUser[] = [];
     for (const { name, uid, gid, home, shell } of await entries()) {
-      if (uid !== 0 && uid < 1000) continue;
-      if (NO_LOGIN.test(shell)) continue;
-      if (!home || !(await homeExists(home))) continue;
+      // root is always in the list. The rules below apply to every other account.
+      if (name !== "root") {
+        if (uid !== 0 && uid < 1000) continue;
+        if (NO_LOGIN.test(shell)) continue;
+        if (!home || !(await homeExists(home))) continue;
+      }
       out.push({ name, uid, gid, home });
     }
     return out.sort((a, b) => a.uid - b.uid);
