@@ -11,6 +11,7 @@ const instances: any = {
   start: async () => inst,
   stop: async () => {},
   logs: async () => "log",
+  users: async () => ({ selectable: false, default: "svc", users: [{ name: "svc" }] }),
 };
 const auth: MiddlewareHandler = async (c, next) => {
   if (c.req.header("authorization") !== "Bearer ok") return c.json({ error: "unauthorized" }, 401);
@@ -45,6 +46,11 @@ describe("node app", () => {
     expect((await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) })).status).toBe(201);
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);
     expect(await (await a.request(`/api/instances/${ID}/logs`, { headers: ok })).json()).toEqual({ log: "log" });
+  });
+  test("/api/users needs auth and returns the info", async () => {
+    const a = app();
+    expect((await a.request("/api/users")).status).toBe(401);
+    expect(await (await a.request("/api/users", { headers: ok })).json()).toEqual({ selectable: false, default: "svc", users: [{ name: "svc" }] });
   });
   test("no browser surface: /auth/login and / are 404", async () => {
     const a = app();

@@ -36,6 +36,12 @@ function fake(over: Record<string, any> = {}) {
     start: async (i: any) => { calls.push(["start", i]); return inst; },
     stop: async (id: string) => { calls.push(["stop", id]); },
     logs: async (id: string, n: number) => { calls.push(["logs", id, n]); return "log text"; },
+    users: async () => ({ selectable: true, default: "svc", users: [{ name: "svc" }, { name: "alice" }] }),
+    trustFilter: async (u?: string) => {
+      calls.push(["trustFilter", u]);
+      if (u === "nobody") throw new HttpError(400, "unknown user");
+      return (p: string) => u === "alice" && p.endsWith("sub");
+    },
     ...over,
   };
   return { svc, calls };
@@ -182,6 +188,52 @@ describe("logs", () => {
     expect((await app.request(`/api/hosts/local/instances/${ID}/logs?lines=abc`, { headers: H() })).status).toBe(400);
     expect((await app.request(`/api/hosts/local/instances/zzz/logs`, { headers: H() })).status).toBe(400);
     expect(calls.length).toBe(0);
+  });
+});
+
+describe("users and trust", () => {
+  test("GET /users returns the info", async () => {
+    const r = await mk().app.request("/api/hosts/local/users", { headers: H() });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ selectable: true, default: "svc", users: [{ name: "svc" }, { name: "alice" }] });
+  });
+  test("GET /fs?user=alice marks locks", async () => {
+    const r = await mk().app.request(`/api/hosts/local/fs?path=${encodeURIComponent(root)}&user=alice`, { headers: H() });
+    const j: any = await r.json();
+    expect(j.dirs).toEqual([{ name: "sub", path: join(root, "sub"), trusted: true }]);
+  });
+  test("GET /fs without user marks trust for the default user", async () => {
+    const { app, calls } = mk();
+    const r = await app.request(`/api/hosts/local/fs?path=${encodeURIComponent(root)}`, { headers: H() });
+    const j: any = await r.json();
+    expect(j.dirs[0].trusted).toBe(false);
+    expect(calls).toContainEqual(["trustFilter", undefined]);
+  });
+  test("GET /fs?user=nobody is 400", async () => {
+    const r = await mk().app.request(`/api/hosts/local/fs?path=${encodeURIComponent(root)}&user=nobody`, { headers: H() });
+    expect(r.status).toBe(400);
+  });
+  test("POST /instances forwards user and addTrust", async () => {
+    const { app, calls } = mk();
+    const r = await post(app, { path: "/p", name: "n", user: "alice", addTrust: true, extra: 1 });
+    expect(r.status).toBe(201);
+    expect(calls).toEqual([["start", { path: "/p", name: "n", user: "alice", addTrust: true }]]);
+  });
+  test.each([['{"path":"/p","user":5}'], ['{"path":"/p","user":null}'], ['{"path":"/p","addTrust":"yes"}'], ['{"path":"/p","addTrust":null}']])(
+    "POST /instances rejects bad user/addTrust %s with 400",
+    async (b) => {
+      const { app, calls } = mk();
+      const r = await post(app, b);
+      expect(r.status).toBe(400);
+      expect(calls.length).toBe(0);
+    },
+  );
+  test("a 428 body is passed to the client unchanged", async () => {
+    const extra = { code: "untrusted", user: "alice", path: "/p" };
+    const { app } = mk({ start: async () => { throw new HttpError(428, "folder not trusted", extra); } });
+    const r = await post(app, { path: "/p", user: "alice" });
+    expect(r.status).toBe(428);
+    expect(await r.json()).toEqual({ ...extra, error: "folder not trusted" });
   });
 });
 

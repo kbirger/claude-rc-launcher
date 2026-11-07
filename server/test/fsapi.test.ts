@@ -43,6 +43,14 @@ describe("listDirs", () => {
     expect(r.dirs[0].path).toBe(join(root, "Alpha"));
     expect(r.path).toBe(root);
   });
+  test("listDirs marks each dir trusted from the callback", async () => {
+    const r = await listDirs(root, roots, false, (p) => p.endsWith("beta"));
+    expect(r.dirs.map((d: any) => [d.name, d.trusted])).toEqual([["Alpha", false], ["beta", true], ["charlie", false]]);
+  });
+  test("without a callback entries have no trusted field", async () => {
+    const r = await listDirs(root, roots);
+    for (const d of r.dirs) expect("trusted" in d).toBe(false);
+  });
   test("showHidden", async () => {
     const r = await listDirs(root, roots, true);
     expect(r.dirs.map((d) => d.name)).toContain(".hid");

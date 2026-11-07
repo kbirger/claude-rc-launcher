@@ -23,7 +23,7 @@ const userAuth = {
 };
 const JSON_H = { "content-type": "application/json" };
 
-const localSvc: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, logs: async () => "local log" };
+const localSvc: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async () => "local log" };
 
 type NodeFixture = {
   host: HostConfig;
@@ -50,6 +50,7 @@ async function startNode(id: string, over: { secret?: string } = {}): Promise<No
       return { ...inst, ...i };
     },
     stop: async () => {},
+    trustFilter: async () => () => false,
     logs: async (_id: string, n: number) => `${id} log ${n}`,
   };
   const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ secretHashes: [sec.sha256] }) });

@@ -43,7 +43,7 @@ async function startNode() {
   const sec = generateSecret();
   const cert = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
   const starts: unknown[] = [];
-  const svc: any = { list: async () => [{ ...inst, name: "node-one" }], start: async (i: any) => (starts.push(i), { ...inst, ...i }), stop: async () => {}, logs: async () => "node log" };
+  const svc: any = { list: async () => [{ ...inst, name: "node-one" }], start: async (i: any) => (starts.push(i), { ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async () => "node log" };
   const app = createNodeApp({ cfg: { name: "n", roots: [realpathSync(tmp())] } as unknown as Config, instances: svc, auth: nodeAuth({ secretHashes: [sec.sha256] }) });
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
   stops.push(() => server.stop(true));
@@ -55,7 +55,7 @@ async function setup(o: { cli?: boolean } = {}) {
   const node = await startNode();
   const root = realpathSync(tmp());
   const cfg = { name: "box", hosts: [], roots: [root], publicUrl: "https://rc.example.com" } as unknown as Config;
-  const local: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, logs: async (_: string, n: number) => `local log ${n}` };
+  const local: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async (_: string, n: number) => `local log ${n}` };
   const makeClient = (h: HostConfig) => createHostClient(h, async () => node.secret);
   const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [], clients: new Map(), makeClient });
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
