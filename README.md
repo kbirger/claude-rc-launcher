@@ -297,7 +297,7 @@ certificate mismatch | rejected our credentials | bad response`. State-changing 
 `claude-rc` is a separate program that does what the UI does, and it can add and remove hosts. It runs on any
 machine and talks to the hub over HTTPS.
 
-**Install it with one line** (Linux and macOS, x64 and arm64):
+**Install it with one line** (Linux x64 and arm64, tested; macOS x64 and arm64, built but not tested on a real Mac):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/install-cli.sh | sh
@@ -318,7 +318,7 @@ curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/ins
   | sh -s -- node setup --hub https://rc.example.com --listen 192.168.1.111 --name kirhub --service-user kir
 ```
 
-On Windows, download `claude-rc-windows-x64.exe` from the release. To build the CLI from a clone, run
+On Windows, download `claude-rc-windows-x64.exe` from the release. It is built but has not been run on Windows. To build the CLI from a clone, run
 `bun run build:cli`.
 
 ### Enable CLI login on the hub

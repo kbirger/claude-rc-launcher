@@ -67,7 +67,8 @@ laptop, and talks to the hub over HTTPS. It does not need access to the hub mach
 3. **CLI routes live under their own prefix, `/cli`.** The prefix lets a reverse proxy skip its login for
    exactly those paths. See "Deployment".
 4. **Names.** The binary is `claude-rc`. The source is in `cli/`. The release adds binaries for
-   linux, macOS and Windows, because the CLI runs on laptops.
+   linux, macOS and Windows, because the CLI runs on laptops. Only the Linux x64 binary has been run on a real
+   machine. The macOS and Windows binaries are built and cross-compiled, but untested.
 5. **CLI login is opt-in.** It starts off. The operator turns it on by adding the `[cli_auth]` table.
 6. **The bearer token is the OIDC ID token** of the public client. The identity provider sets its lifetime.
    The CLI renews it with a refresh token. The user signs in again when the refresh token expires or the provider revokes it.
