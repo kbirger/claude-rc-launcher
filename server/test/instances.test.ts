@@ -31,7 +31,7 @@ const fake: Runner = async (cmd, args) => {
 
 function cfg(over: Partial<Config> = {}): Config {
   return {
-    mode: "hub", name: "t", port: 1, host: "h", publicUrl: "http://x", roots: ["/srv"], scope: "system", unitDir: dir,
+    mode: "hub", name: "t", hosts: [], port: 1, host: "h", publicUrl: "http://x", roots: ["/srv"], scope: "system", unitDir: dir,
     serviceUser: "root", serviceHome: "/root", servicePath: "/usr/bin", claudeBin: "/root/.local/bin/claude",
     claudeRcArgs: ["--spawn", "same-dir"], namePrefix: "",
     userAuth: { mode: "oidc", oidc: { issuer: "", clientId: "", clientSecret: "", allowInsecure: false }, sessionSecret: "x".repeat(32) }, ...over,

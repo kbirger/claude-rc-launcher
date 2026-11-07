@@ -1,6 +1,8 @@
 import os from "node:os";
+import { X509Certificate } from "node:crypto";
 import path from "node:path";
 import type { ClientCredsSettings } from "./clientcreds";
+import type { HostConfig } from "./hostclient";
 import { validPeer } from "./proxyauth";
 
 export type OidcUserAuth = {
@@ -48,6 +50,7 @@ export type Config = {
   userAuth?: OidcUserAuth | ProxyJwtUserAuth; // hub
   node?: NodeConfig; // node
   hubAuth?: ClientCredsSettings; // hub
+  hosts: HostConfig[]; // hub; [] otherwise
 };
 
 export class ConfigError extends Error {
@@ -227,6 +230,68 @@ function parseHubAuth(t: Tbl): ClientCredsSettings | undefined {
   return clientAuth ? { tokenUrl, clientId, ...(scope ? { scope } : {}), clientAuth } : undefined;
 }
 
+const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function parseHosts(t: Tbl, hubAuth: ClientCredsSettings | undefined): HostConfig[] {
+  const out: HostConfig[] = [];
+  const seen = new Set<string>();
+  for (const h of t.tables("hosts") ?? []) {
+    const id = h.str("id", { req: true });
+    if (id !== undefined) {
+      if (id === "local") t.problems.push(`${h.path("id")}: "local" is reserved for this host`);
+      else if (!HOST_ID_RE.test(id)) t.problems.push(`${h.path("id")} must match ${HOST_ID_RE.source}`);
+      else if (seen.has(id)) t.problems.push(`${h.path("id")}: duplicate host id ${id}`);
+      seen.add(id);
+    }
+    const name = h.str("name") ?? id ?? "";
+    const url = h.str("url", { req: true });
+    if (url !== undefined) {
+      let u: URL | undefined;
+      try {
+        u = new URL(url);
+      } catch {
+        t.problems.push(`${h.path("url")} is not a valid URL: ${url}`);
+      }
+      if (u && (u.protocol !== "https:" || u.pathname !== "/" || u.search || u.hash || u.username || u.password || url.replace(/\/$/, "").split("/").length > 3)) {
+        t.problems.push(`${h.path("url")} must be an https:// origin without a path (e.g. https://10.0.0.5:8443)`);
+      }
+    }
+    const ca = h.file("ca_file", "public", { req: true });
+    if (ca !== undefined) {
+      try {
+        new X509Certificate(ca);
+      } catch {
+        t.problems.push(`${h.path("ca_file")} is not a valid PEM certificate (copy the node's node-cert.pem)`);
+      }
+    }
+    const serverName = h.str("server_name");
+    let auth: HostConfig["auth"] | undefined;
+    const a = h.table("auth");
+    if (!a) t.problems.push(`${h.path("auth")} is required`);
+    else {
+      const type = a.str("type", { req: true });
+      if (type === "oidc") {
+        if (!hubAuth) t.problems.push(`${a.path("type")} = "oidc" needs [hub_auth.oidc]`);
+        auth = { type: "oidc" };
+        if (a.has("secret_file")) t.problems.push(`${a.path("secret_file")} is only for type = "secret"`);
+        a.skip("secret_file");
+      } else if (type === "secret") {
+        const secret = a.file("secret_file", "secret", { req: true });
+        if (secret !== undefined) auth = { type: "secret", secret };
+      } else if (type !== undefined) {
+        t.problems.push(`${a.path("type")} must be "oidc" or "secret"`);
+        a.skip("secret_file");
+      }
+      a.finish();
+    }
+    h.finish();
+    if (id !== undefined && url !== undefined && ca !== undefined && auth) {
+      out.push({ id, name, url, ca, ...(serverName ? { serverName } : {}), auth });
+    }
+  }
+  return out;
+}
+
 const HEX64 = /^[0-9a-f]{64}$/;
 
 function parseNode(t: Tbl): NodeConfig | undefined {
@@ -308,6 +373,7 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
     t.skip("tls", "node_auth");
   }
   const hubAuth = mode === "hub" ? parseHubAuth(t) : undefined;
+  const hosts = mode === "hub" ? parseHosts(t, hubAuth) : [];
   const ua = mode === "hub" ? t.table("user_auth") : undefined;
   if (mode === "hub" && !ua) problems.push("user_auth is required");
   if (ua) {
@@ -380,5 +446,6 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
     ...(userAuth ? { userAuth } : {}),
     ...(node ? { node } : {}),
     ...(hubAuth ? { hubAuth } : {}),
+    hosts,
   };
 }
