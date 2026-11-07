@@ -9,6 +9,7 @@
     "start": "bun server/src/index.ts",
     "build:web": "bun run --cwd web build",
     "build:bundle": "bun run build:web && bun scripts/gen-embed.ts",
+    "build:cli": "bun build --compile cli/src/index.ts --outfile dist/claude-rc",
     "build": "bun run build:bundle && bun build --compile server/src/index.ts --outfile dist/claude-rc-launcher"
   },
   "dependencies": {

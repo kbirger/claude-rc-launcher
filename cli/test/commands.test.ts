@@ -129,6 +129,14 @@ describe("commands", () => {
     expect(s.err[0]).toContain("claude-rc login");
   });
 
+  test("an unknown command exits 1 even when not signed in", async () => {
+    const s = setup({});
+    s.env.credsFile = path.join(tmp(), "none.json");
+    const r = await s.run("bogus");
+    expect(r.code).toBe(1);
+    expect(s.err[0]).toContain('unknown command "bogus"');
+  });
+
   test("login without --hub or a saved hub is an error; logout deletes the file", async () => {
     const s = setup({});
     s.env.credsFile = path.join(tmp(), "none.json");

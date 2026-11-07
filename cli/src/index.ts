@@ -90,6 +90,8 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       return 0;
     }
 
+    if (name !== "host" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+
     const creds = loadCreds(env.credsFile);
     if (!creds) throw new ExitError(LOGIN_MESSAGE, 2);
     if (flags.hub && flags.hub.replace(/\/+$/, "") !== creds.hub) {
@@ -104,11 +106,8 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       else await hostRemove(id, hub, io.out);
       return 0;
     }
-    if (INSTANCE_COMMANDS.has(name)) {
-      await runCommand(name as CommandName, args, flags, hub, io.out);
-      return 0;
-    }
-    throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+    await runCommand(name as CommandName, args, flags, hub, io.out);
+    return 0;
   } catch (e) {
     if (e instanceof ExitError) {
       io.err(e.message);

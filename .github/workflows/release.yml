@@ -29,7 +29,13 @@ jobs:
             bun build --compile --target=bun-linux-$target server/src/index.ts \
               --outfile dist/claude-rc-launcher-linux-$target
           done
-          (cd dist && sha256sum claude-rc-launcher-linux-* > SHA256SUMS)
+          # The command-line client runs on laptops, so it is built for more platforms than the server.
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
+            ext=""; [ "$target" = "windows-x64" ] && ext=".exe"
+            bun build --compile --target=bun-$target cli/src/index.ts \
+              --outfile dist/claude-rc-$target$ext
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
