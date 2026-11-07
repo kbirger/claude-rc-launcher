@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, readdir, readFile, writeFile, rm, stat, chmod } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileTrust, isTrustedIn } from "../src/trust";
@@ -10,7 +10,6 @@ beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "trust-")); });
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 const file = () => join(home, ".claude.json");
-const isRoot = process.getuid?.() === 0;
 
 describe("isTrustedIn", () => {
   test("exact, parent and root match", () => {
@@ -52,17 +51,13 @@ describe("checker", () => {
 
 describe("add", () => {
   test("creates the file with mode 0600 and calls chown", async () => {
-    const calls: [string, number, number][] = [];
-    const store = fileTrust({ chown: async (p, u, g) => { calls.push([p, u, g]); } });
+    const calls: [number, number][] = [];
+    const store = fileTrust({ isRoot: () => true, chown: async (_fh, u, g) => { calls.push([u, g]); } });
     await store.add({ home, uid: 1234, gid: 5678 }, "/opt/app");
     const doc = JSON.parse(await readFile(file(), "utf8"));
     expect(doc.projects["/opt/app"].hasTrustDialogAccepted).toBe(true);
     expect((await stat(file())).mode & 0o777).toBe(0o600);
-    if (isRoot) expect(calls.length).toBe(1);
-    for (const [p, u, g] of calls) {
-      expect(p.startsWith(home)).toBe(true);
-      expect([u, g]).toEqual([1234, 5678]);
-    }
+    expect(calls).toEqual([[1234, 5678]]);
     expect((await fileTrust().checker(home))("/opt/app/sub")).toBe(true);
   });
 
@@ -89,5 +84,54 @@ describe("add", () => {
   test("leaves no temp file behind", async () => {
     await fileTrust({ chown: async () => {} }).add({ home, uid: 1, gid: 1 }, "/x");
     expect(await readdir(home)).toEqual([".claude.json"]);
+  });
+
+  test("existing file keeps its owner when chown runs", async () => {
+    await writeFile(file(), "{}");
+    const st = await stat(file());
+    const calls: [number, number][] = [];
+    await fileTrust({ isRoot: () => true, chown: async (_fh, u, g) => { calls.push([u, g]); } })
+      .add({ home, uid: 4321, gid: 8765 }, "/x");
+    expect(calls).toEqual([[st.uid, st.gid]]);
+  });
+
+  test("chown is skipped when not root", async () => {
+    let n = 0;
+    await fileTrust({ isRoot: () => false, chown: async () => { n++; } }).add({ home, uid: 1, gid: 1 }, "/x");
+    expect(n).toBe(0);
+  });
+
+  test("valid JSON that is not an object throws 500 and leaves the file unchanged", async () => {
+    for (const text of ["[]", '"x"', "null"]) {
+      await writeFile(file(), text);
+      const err = await fileTrust({ chown: async () => {} }).add({ home, uid: 1, gid: 1 }, "/x").catch((e) => e);
+      expect((err as HttpError).status).toBe(500);
+      expect(await readFile(file(), "utf8")).toBe(text);
+    }
+  });
+
+  test("failed chown removes the temp file and surfaces the original error", async () => {
+    await writeFile(file(), "{}");
+    const boom = new Error("chown boom");
+    const err = await fileTrust({ isRoot: () => true, chown: async () => { throw boom; } })
+      .add({ home, uid: 1, gid: 1 }, "/x").catch((e) => e);
+    expect(err).toBe(boom);
+    expect(await readdir(home)).toEqual([".claude.json"]);
+    expect(await readFile(file(), "utf8")).toBe("{}");
+  });
+
+  test("a planted symlink at a guessed temp name is not followed", async () => {
+    const target = join(home, "victim");
+    await writeFile(target, "keep");
+    await symlink(target, join(home, `.claude.json.${process.pid}.tmp`));
+    await fileTrust({ chown: async () => {} }).add({ home, uid: 1, gid: 1 }, "/x");
+    expect(await readFile(target, "utf8")).toBe("keep");
+  });
+
+  test("parallel adds for one home both land", async () => {
+    const store = fileTrust({ chown: async () => {} });
+    await Promise.all(["/a", "/b", "/c", "/d"].map((p) => store.add({ home, uid: 1, gid: 1 }, p)));
+    const check = await store.checker(home);
+    expect(["/a", "/b", "/c", "/d"].map(check)).toEqual([true, true, true, true]);
   });
 });

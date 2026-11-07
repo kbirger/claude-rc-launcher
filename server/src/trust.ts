@@ -1,4 +1,5 @@
-import { chmod, chown as fsChown, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { open, readFile, rename, rm, stat, type FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
 import type { SystemUser } from "./users";
@@ -45,8 +46,22 @@ async function readDoc(file: string): Promise<ReadResult> {
   }
 }
 
-export function fileTrust(o: { chown?: (p: string, uid: number, gid: number) => Promise<void> } = {}): TrustStore {
-  const chown = o.chown ?? fsChown;
+export function fileTrust(o: {
+  chown?: (fh: FileHandle, uid: number, gid: number) => Promise<void>;
+  isRoot?: () => boolean;
+} = {}): TrustStore {
+  const chown = o.chown ?? ((fh, uid, gid) => fh.chown(uid, gid));
+  const isRoot = o.isRoot ?? (() => process.getuid?.() === 0);
+  const queues = new Map<string, Promise<unknown>>();
+
+  // One add at a time per home, so two parallel read-modify-write cycles cannot lose an update.
+  function serial<T>(home: string, job: () => Promise<T>): Promise<T> {
+    const run = (queues.get(home) ?? Promise.resolve()).then(job, job);
+    const tail = run.catch(() => {});
+    queues.set(home, tail);
+    void tail.then(() => { if (queues.get(home) === tail) queues.delete(home); });
+    return run;
+  }
 
   return {
     async checker(home) {
@@ -55,7 +70,12 @@ export function fileTrust(o: { chown?: (p: string, uid: number, gid: number) => 
       return (absPath) => isTrustedIn(doc, absPath);
     },
 
-    async add(user, absPath) {
+    add(user, absPath) {
+      return serial(user.home, () => addOne(user, absPath));
+    },
+  };
+
+  async function addOne(user: Pick<SystemUser, "home" | "uid" | "gid">, absPath: string): Promise<void> {
       const file = join(user.home, ".claude.json");
       const r = await readDoc(file);
       if (r.kind === "invalid") throw new HttpError(500, "cannot read the user's .claude.json");
@@ -75,16 +95,22 @@ export function fileTrust(o: { chown?: (p: string, uid: number, gid: number) => 
         gid = st.gid;
       }
 
-      const tmp = `${file}.${process.pid}.tmp`;
+      // Random name plus O_EXCL ("wx"): never follows a symlink planted by the user.
+      // All permission and owner changes go through the open handle, never the path.
+      const tmp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
       try {
-        await writeFile(tmp, JSON.stringify(doc, null, 2) + "\n", { mode });
-        await chmod(tmp, mode);
-        if (process.getuid?.() === 0 && uid !== undefined && gid !== undefined) await chown(tmp, uid, gid);
+        const fh = await open(tmp, "wx", 0o600);
+        try {
+          await fh.chmod(mode);
+          if (isRoot() && uid !== undefined && gid !== undefined) await chown(fh, uid, gid);
+          await fh.writeFile(JSON.stringify(doc, null, 2) + "\n");
+        } finally {
+          await fh.close();
+        }
         await rename(tmp, file);
       } catch (e) {
-        await rm(tmp, { force: true });
+        await rm(tmp, { force: true }).catch(() => {});
         throw e;
       }
-    },
-  };
+  }
 }
