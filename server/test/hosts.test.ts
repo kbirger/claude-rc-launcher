@@ -9,6 +9,7 @@ import { HttpError } from "../src/instances";
 import { HostError, createHostClient, type HostClient, type HostConfig } from "../src/hostclient";
 import { generateSecret, nodeAuth } from "../src/nodeauth";
 import { ensureNodeCert } from "../src/tls";
+import { HostRegistry } from "../src/hostregistry";
 
 const ID = "0123456789ab";
 const inst = { id: ID, path: "/srv/p", name: "n", state: "active", startedAt: null };
@@ -99,8 +100,8 @@ describe("host list", () => {
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
       { id: "local", name: "box", status: "ok" },
-      { id: "nas", name: "NAS", status: "ok" },
-      { id: "pi", name: "PI", status: "ok" },
+      { id: "nas", name: "NAS", status: "ok", source: "config" },
+      { id: "pi", name: "PI", status: "ok", source: "config" },
     ]);
   });
 
@@ -117,9 +118,9 @@ describe("host list", () => {
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
       { id: "local", name: "box", status: "ok" },
-      { id: "nas", name: "NAS", status: "ok" },
-      { id: "pi", name: "PI", status: "offline", error: "unreachable" },
-      { id: "slow", name: "SLOW", status: "offline", error: "timeout" },
+      { id: "nas", name: "NAS", status: "ok", source: "config" },
+      { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config" },
+      { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config" },
     ]);
   });
 
@@ -131,9 +132,26 @@ describe("host list", () => {
     const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", wrongPin]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
       { id: "local", name: "box", status: "ok" },
-      { id: "nas", name: "NAS", status: "error", error: "rejected our credentials" },
-      { id: "pi", name: "PI", status: "error", error: "certificate mismatch" },
+      { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config" },
+      { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config" },
     ]);
+  });
+});
+
+describe("live host registry", () => {
+  test("GET /api/hosts shows source and reflects a host added after the app started", async () => {
+    const a = await startNode("nas");
+    const b = await startNode("pi");
+    const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [a.host], clients: new Map([["nas", a.client]]), makeClient: () => b.client });
+    const cfg = { name: "box", hosts: [a.host], roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config;
+    const app = createApp({ cfg, instances: localSvc, userAuth, hosts: registry });
+    expect((await (await get(app, "/api/hosts")).json()).map((h: any) => [h.id, h.source])).toEqual([["local", undefined], ["nas", "config"]]);
+    expect((await get(app, "/api/hosts/pi/instances")).status).toBe(404);
+    await registry.add(b.host);
+    expect((await (await get(app, "/api/hosts")).json()).map((h: any) => [h.id, h.source])).toEqual([["local", undefined], ["nas", "config"], ["pi", "managed"]]);
+    expect(await (await get(app, "/api/hosts/pi/instances")).json()).toEqual([{ ...inst, name: "pi-one" }]);
+    await registry.remove("pi");
+    expect((await get(app, "/api/hosts/pi/instances")).status).toBe(404);
   });
 });
 

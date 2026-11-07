@@ -1,10 +1,11 @@
 import { Hono, type Context } from "hono";
 import type { Config } from "./config";
 import { HostError, type HostClient, type HostFailure } from "./hostclient";
+import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import type { User } from "./userauth";
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed" };
 
 const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const ID_RE = /^[0-9a-f]{12}$/;
@@ -29,26 +30,25 @@ async function readJson(c: Context): Promise<unknown> {
 export function hostsApi(o: {
   cfg: Config;
   local: Hono;
-  clients: Map<string, HostClient>;
+  registry: HostRegistry;
   probeTimeoutMs?: number;
   requestTimeoutMs?: number;
 }): Hono {
   const { cfg, local } = o;
   const probeTimeoutMs = o.probeTimeoutMs ?? 3_000;
   const requestTimeoutMs = o.requestTimeoutMs ?? 10_000;
-  const remotes = cfg.hosts.filter((h) => h.id !== "local" && HOST_ID_RE.test(h.id) && o.clients.has(h.id));
   const app = new Hono();
 
   app.get("/", async (c) => {
     const rest = await Promise.all(
-      remotes.map(async (h): Promise<HostInfo> => {
+      o.registry.list().map(async ({ host: h, client, source }): Promise<HostInfo> => {
         try {
-          const r = await o.clients.get(h.id)!.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
-          if (r.status === 200) return { id: h.id, name: h.name, status: "ok" };
-          return { id: h.id, name: h.name, status: "error", error: "bad response" };
+          const r = await client.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
+          if (r.status === 200) return { id: h.id, name: h.name, status: "ok", source };
+          return { id: h.id, name: h.name, status: "error", error: "bad response", source };
         } catch (e) {
-          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response" };
-          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason };
+          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response", source };
+          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason, source };
         }
       }),
     );
@@ -71,9 +71,9 @@ export function hostsApi(o: {
   const remote = new Hono();
   const clientOf = (c: Context): { id: string; client: HostClient } => {
     const id = c.req.param("host") ?? "";
-    const client = HOST_ID_RE.test(id) && id !== "local" ? o.clients.get(id) : undefined;
-    if (!client || !remotes.some((h) => h.id === id)) throw new HttpError(404, "unknown host");
-    return { id, client };
+    const entry = HOST_ID_RE.test(id) && id !== "local" ? o.registry.get(id) : undefined;
+    if (!entry) throw new HttpError(404, "unknown host");
+    return { id, client: entry.client };
   };
   /** Runs a forward, turning a HostError into the hub's 502. */
   const forward = (fn: (c: Context, client: HostClient) => Promise<{ status: number; body: unknown }>) => async (c: Context) => {

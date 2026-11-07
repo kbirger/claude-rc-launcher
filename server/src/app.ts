@@ -4,10 +4,11 @@ import type { Config } from "./config";
 import { listDirs, makeDir, type DirOwner } from "./fsapi";
 import { hostsApi } from "./hosts";
 import type { HostClient } from "./hostclient";
+import { HostRegistry } from "./hostregistry";
 import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
 
-export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; probeTimeoutMs?: number; requestTimeoutMs?: number };
+export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; probeTimeoutMs?: number; requestTimeoutMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -141,7 +142,7 @@ export function createApp(deps: Deps): Hono {
     hostsApi({
       cfg,
       local: instanceApi({ cfg, instances, dirOwner }),
-      clients: deps.hostClients ?? new Map(),
+      registry: deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map()),
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
     }),
