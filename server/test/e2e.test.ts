@@ -75,7 +75,7 @@ describe("hub + node end to end", () => {
     const s = await setup();
     expect(await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()).toEqual([
       { id: "local", name: "hub", status: "ok" },
-      { id: "nas", name: "NAS", status: "ok" },
+      { id: "nas", name: "NAS", status: "ok", source: "config" },
     ]);
     expect(await (await fetch(s.hubUrl("/api/hosts/nas/instances"), { headers: s.h() })).json()).toMatchObject([{ name: "pi-one" }]);
     const r = await fetch(s.hubUrl("/api/hosts/nas/instances"), { method: "POST", headers: s.h(), body: JSON.stringify({ path: "/proj", name: "x" }) });
