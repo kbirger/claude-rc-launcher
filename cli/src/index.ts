@@ -4,6 +4,7 @@ import readline from "node:readline/promises";
 import { parseCli } from "./args";
 import { runCommand, type CommandName } from "./commands";
 import { ExitError, LOGIN_MESSAGE, credsPath, deleteCreds, loadCreds, saveCreds } from "./creds";
+import { hostAdd, hostRemove } from "./hostcmd";
 import { hubClient } from "./hub";
 import { login, logout, renew } from "./oidc";
 
@@ -96,6 +97,13 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     }
     const hub = hubClient({ creds, save: (c) => saveCreds(env.credsFile, c), renew: (c) => renew(c, env.fetch), ...(env.fetch ? { fetch: env.fetch } : {}) });
 
+    if (name === "host") {
+      const [sub, id] = args;
+      if ((sub !== "add" && sub !== "remove") || !id) throw new ExitError("usage: claude-rc host add <id> --url <https-url> ... | claude-rc host remove <id>", 1);
+      if (sub === "add") await hostAdd({ id, flags, hub, readLine: env.readLine, out: io.out });
+      else await hostRemove(id, hub, io.out);
+      return 0;
+    }
     if (INSTANCE_COMMANDS.has(name)) {
       await runCommand(name as CommandName, args, flags, hub, io.out);
       return 0;
