@@ -23,7 +23,7 @@ const isSecure = (cfg: Config) => cfg.publicUrl.startsWith("https:");
  * Thin openid-client v6 adapter. NOT unit-tested: needs a live IdP.
  */
 export async function createOidcClient(cfg: Config): Promise<OidcClient> {
-  const issuer = new URL(cfg.oidc.issuer);
+  const issuer = new URL(cfg.userAuth.oidc.issuer);
   // Discovery is lazy (first login) and cached on success, so the server starts without the IdP.
   // A failed discovery is not cached; the next login retries. Auth is never bypassed.
   let pending: Promise<client.Configuration> | undefined;
@@ -31,8 +31,8 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
     pending ??= client
       .discovery(
         issuer,
-        cfg.oidc.clientId,
-        cfg.oidc.clientSecret,
+        cfg.userAuth.oidc.clientId,
+        cfg.userAuth.oidc.clientSecret,
         undefined,
         issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined, // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
       )
@@ -96,7 +96,7 @@ export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Da
         502,
       );
     }
-    await setSignedCookie(c, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), cfg.sessionSecret, {
+    await setSignedCookie(c, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), cfg.userAuth.sessionSecret, {
       path: "/auth",
       httpOnly: true,
       sameSite: "Lax",
@@ -111,7 +111,7 @@ export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Da
       clearState(c);
       return c.json({ error: msg }, 400);
     };
-    const raw = await getSignedCookie(c, cfg.sessionSecret, STATE_COOKIE);
+    const raw = await getSignedCookie(c, cfg.userAuth.sessionSecret, STATE_COOKIE);
     let saved: { state?: unknown; codeVerifier?: unknown } = {};
     try {
       if (raw) saved = JSON.parse(raw);
@@ -133,7 +133,7 @@ export function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Da
     }
     clearState(c);
     const payload = { user, exp: now() + SESSION_TTL_S * 1000 };
-    await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), cfg.sessionSecret, {
+    await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), cfg.userAuth.sessionSecret, {
       path: "/",
       httpOnly: true,
       sameSite: "Lax",
@@ -167,12 +167,12 @@ export function requireUser(cfg: Config, now: () => number = Date.now): Middlewa
 /** Test helper: returns a `Cookie` header value carrying a validly signed session. */
 export async function mintSessionCookie(cfg: Config, user: User, exp: number): Promise<string> {
   const { serializeSigned } = await import("hono/utils/cookie");
-  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), cfg.sessionSecret, { path: "/" });
+  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), cfg.userAuth.sessionSecret, { path: "/" });
   return sc.split(";")[0]!;
 }
 
 async function readSession(c: Parameters<typeof getSignedCookie>[0], cfg: Config, now: () => number): Promise<User | null> {
-  const raw = await getSignedCookie(c, cfg.sessionSecret, SESSION_COOKIE);
+  const raw = await getSignedCookie(c, cfg.userAuth.sessionSecret, SESSION_COOKIE);
   if (!raw) return null;
   try {
     const p = JSON.parse(raw);

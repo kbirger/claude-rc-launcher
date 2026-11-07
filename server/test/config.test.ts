@@ -1,85 +1,173 @@
 import { describe, expect, test } from "bun:test";
-import { ConfigError, loadConfig } from "../src/config";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { ConfigError, parseConfig, type ConfigIo } from "../src/config";
+import { loadConfigFile, resolveConfigPath } from "../src/configfile";
 
-const base = {
-  PUBLIC_URL: "https://rc.example.com",
-  OIDC_ISSUER: "https://auth.example.com/application/o/rc/",
-  OIDC_CLIENT_ID: "id",
-  OIDC_CLIENT_SECRET: "secret",
-  SESSION_SECRET: "x".repeat(32),
+const io: ConfigIo = { readFile: () => "x".repeat(40) };
+
+const base = () => ({
+  public_url: "https://rc.example.com",
+  user_auth: {
+    mode: "oidc",
+    session_secret_file: "session.secret",
+    oidc: { issuer: "https://auth.example.com/application/o/rc/", client_id: "id", client_secret_file: "oidc.secret" },
+  },
+});
+const withOidc = (o: Record<string, unknown>) => {
+  const b = base();
+  return { ...b, user_auth: { ...b.user_auth, oidc: { ...b.user_auth.oidc, ...o } } };
+};
+const problems = (raw: unknown): string => {
+  try {
+    parseConfig(raw, io);
+  } catch (e) {
+    expect(e).toBeInstanceOf(ConfigError);
+    return (e as Error).message;
+  }
+  throw new Error("no throw");
 };
 
-describe("loadConfig", () => {
+describe("parseConfig", () => {
   test("defaults", () => {
-    const c = loadConfig(base);
+    const c = parseConfig(base(), io);
+    expect(c.mode).toBe("hub");
+    expect(c.name).toBe(os.hostname());
     expect(c.port).toBe(8080);
     expect(c.host).toBe("0.0.0.0");
     expect(c.scope).toBe("system");
     expect(c.unitDir).toBe("/etc/systemd/system");
     expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir", "--no-create-session-in-dir"]);
     expect(c.claudeBin).toBe("/root/.local/bin/claude");
-    expect(c.oidc.allowInsecure).toBe(false);
-    expect(c.namePrefix).toBe("");
-    expect(c.trustProxy).toBe(false);
+    expect(c.roots).toEqual(["/root"]);
     expect(c.serviceUser).toBe("root");
     expect(c.serviceHome).toBe("/root");
-    expect(c.roots).toEqual(["/root"]);
-    expect(c.servicePath).toBe("/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+    expect(c.namePrefix).toBe("");
     expect(c.sshAuthSock).toBeUndefined();
+    expect(c.userAuth.oidc.allowInsecure).toBe(false);
+    expect(c.userAuth.oidc.clientSecret).toHaveLength(40);
   });
 
-  test("user scope unitDir", () => {
-    const c = loadConfig({ ...base, SYSTEMD_SCOPE: "user", SERVICE_USER: "bob", SERVICE_HOME: "/home/bob" });
-    expect(c.scope).toBe("user");
-    expect(c.unitDir).toBe("/home/bob/.config/systemd/user");
+  test("[instance] keys map to fields; user scope defaults unit dir; home defaults to /home/<user>", () => {
+    const c = parseConfig(
+      {
+        ...base(),
+        name: "box",
+        port: 9000,
+        host: "127.0.0.1",
+        instance: {
+          roots: ["/a", "/b"],
+          scope: "user",
+          service_user: "bob",
+          claude_bin: "/opt/claude",
+          claude_rc_args: ["--x"],
+          name_prefix: "p-",
+          ssh_auth_sock: "/s",
+          service_path: "/bin",
+        },
+      },
+      io,
+    );
+    expect(c).toMatchObject({
+      name: "box", port: 9000, host: "127.0.0.1", roots: ["/a", "/b"], scope: "user", serviceUser: "bob", serviceHome: "/home/bob",
+      unitDir: "/home/bob/.config/systemd/user", claudeBin: "/opt/claude", claudeRcArgs: ["--x"], namePrefix: "p-", sshAuthSock: "/s", servicePath: "/bin",
+    });
   });
 
-  test("home defaults to /home/<user>", () => {
-    expect(loadConfig({ ...base, SERVICE_USER: "bob" }).serviceHome).toBe("/home/bob");
+  test("unknown keys are errors naming the dotted path", () => {
+    expect(problems({ ...base(), instance: { rootz: ["/a"] } })).toContain("instance.rootz");
+    expect(problems({ ...base(), trust_proxy: true })).toContain("trust_proxy");
+    expect(problems(withOidc({ client_secret: "inline" }))).toContain("user_auth.oidc.client_secret");
   });
 
-  test("missing required vars are all named", () => {
-    try {
-      loadConfig({});
-      throw new Error("no throw");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConfigError);
-      for (const k of ["PUBLIC_URL", "OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "SESSION_SECRET"])
-        expect((e as Error).message).toContain(k);
-    }
+  test("missing required keys are all named in one error", () => {
+    const m = problems({});
+    expect(m).toContain("public_url");
+    expect(m).toContain("user_auth");
+    const n = problems({ public_url: "https://x", user_auth: { mode: "oidc", oidc: {} } });
+    for (const k of ["user_auth.oidc.issuer", "user_auth.oidc.client_id", "user_auth.oidc.client_secret_file", "user_auth.session_secret_file"])
+      expect(n).toContain(k);
   });
 
-  test("short SESSION_SECRET throws", () => {
-    expect(() => loadConfig({ ...base, SESSION_SECRET: "short" })).toThrow(ConfigError);
+  test("user_auth.mode is required and has no unauthenticated value", () => {
+    expect(problems({ public_url: "https://x", user_auth: {} })).toContain("user_auth.mode");
+    expect(problems({ public_url: "https://x", user_auth: { mode: "none" } })).toContain("user_auth.mode");
   });
 
-  test("ROOTS and CLAUDE_RC_ARGS", () => {
-    const c = loadConfig({ ...base, ROOTS: "/a:/b", CLAUDE_RC_ARGS: "--x  --y z" });
-    expect(c.roots).toEqual(["/a", "/b"]);
-    expect(c.claudeRcArgs).toEqual(["--x", "--y", "z"]);
+  test("node mode is not supported yet; unknown mode rejected", () => {
+    expect(problems({ ...base(), mode: "node" })).toContain("not supported yet");
+    expect(problems({ ...base(), mode: "x" })).toContain("mode");
+  });
+
+  test("short session secret", () => {
+    const short: ConfigIo = { readFile: (p) => (p.includes("session") ? "short" : "x".repeat(40)) };
+    expect(() => parseConfig(base(), short)).toThrow(/session_secret_file.*32/);
   });
 
   test("OIDC issuer transport", () => {
-    expect(loadConfig(base).oidc.allowInsecure).toBe(false);
-    const http = (o: Record<string, string>) => loadConfig({ ...base, ...o });
-    expect(() => http({ OIDC_ISSUER: "http://auth.example.com" })).toThrow(/OIDC_ISSUER must be https.*OIDC_ALLOW_INSECURE/);
-    expect(() => http({ OIDC_ISSUER: "ftp://auth.example.com" })).toThrow(ConfigError);
-    expect(http({ OIDC_ISSUER: "http://localhost:9000" }).oidc.issuer).toBe("http://localhost:9000");
-    expect(http({ OIDC_ISSUER: "http://127.0.0.1:9000/x" }).oidc.issuer).toBe("http://127.0.0.1:9000/x");
-    expect(http({ OIDC_ISSUER: "http://[::1]:9000" }).oidc.issuer).toBe("http://[::1]:9000");
-    const c = http({ OIDC_ISSUER: "http://auth.example.com", OIDC_ALLOW_INSECURE: "true" });
-    expect(c.oidc.allowInsecure).toBe(true);
-    expect(() => http({ OIDC_ISSUER: "http://localhost.evil.com" })).toThrow(ConfigError);
+    expect(problems(withOidc({ issuer: "http://auth.example.com" }))).toMatch(/user_auth\.oidc\.issuer must be https.*allow_insecure/);
+    expect(problems(withOidc({ issuer: "ftp://auth.example.com" }))).toContain("issuer");
+    for (const u of ["http://localhost:9000", "http://127.0.0.1:9000/x", "http://[::1]:9000"])
+      expect(parseConfig(withOidc({ issuer: u }), io).userAuth.oidc.issuer).toBe(u);
+    const c = parseConfig(withOidc({ issuer: "http://auth.example.com", allow_insecure: true }), io);
+    expect(c.userAuth.oidc.allowInsecure).toBe(true);
+    expect(problems(withOidc({ issuer: "http://localhost.evil.com" }))).toContain("issuer");
   });
 
-  test("CLAUDE_BIN must be absolute; default under SERVICE_HOME", () => {
-    expect(loadConfig({ ...base, SERVICE_USER: "bob" }).claudeBin).toBe("/home/bob/.local/bin/claude");
-    expect(loadConfig({ ...base, CLAUDE_BIN: "/opt/claude" }).claudeBin).toBe("/opt/claude");
-    expect(() => loadConfig({ ...base, CLAUDE_BIN: "claude" })).toThrow(/CLAUDE_BIN/);
+  test("roots and claude_bin must be absolute; claude_rc_args an array of strings", () => {
+    expect(problems({ ...base(), instance: { roots: ["/a", "rel/path"] } })).toContain("rel/path");
+    expect(problems({ ...base(), instance: { claude_bin: "claude" } })).toContain("instance.claude_bin");
+    expect(problems({ ...base(), instance: { claude_rc_args: "--a --b" } })).toContain("instance.claude_rc_args");
+    expect(problems({ ...base(), instance: { claude_rc_args: [1] } })).toContain("instance.claude_rc_args");
+  });
+});
+
+describe("loadConfigFile", () => {
+  const dir = () => mkdtempSync(path.join(os.tmpdir(), "rc-cfg-"));
+  const toml = `
+public_url = "https://rc.example.com"
+[user_auth]
+mode = "oidc"
+session_secret_file = "session.secret"
+[user_auth.oidc]
+issuer = "https://auth.example.com/o/rc/"
+client_id = "id"
+client_secret_file = "oidc.secret"
+`;
+  function setup(secretMode = 0o600) {
+    const d = dir();
+    writeFileSync(path.join(d, "config.toml"), toml);
+    writeFileSync(path.join(d, "session.secret"), "s".repeat(40) + "\n");
+    writeFileSync(path.join(d, "oidc.secret"), "client-secret\n");
+    if (process.platform !== "win32") for (const f of ["session.secret", "oidc.secret"]) chmodSync(path.join(d, f), secretMode);
+    return d;
+  }
+
+  test("parses TOML, resolves relative files against the config dir, trims one trailing newline", () => {
+    const d = setup();
+    const c = loadConfigFile(path.join(d, "config.toml"));
+    expect(c.userAuth.oidc.clientSecret).toBe("client-secret");
+    expect(c.userAuth.sessionSecret).toBe("s".repeat(40));
   });
 
-  test("ROOTS entries must be absolute", () => {
-    expect(() => loadConfig({ ...base, ROOTS: "/a:rel/path" })).toThrow(/ROOTS.*rel\/path/);
-    expect(loadConfig({ ...base, ROOTS: "/a" }).roots).toEqual(["/a"]);
+  test.skipIf(process.platform === "win32")("rejects a group-readable secret file naming that file", () => {
+    const d = setup(0o640);
+    expect(() => loadConfigFile(path.join(d, "config.toml"))).toThrow(/oidc\.secret|session\.secret/);
+  });
+
+  test("invalid TOML and missing file are ConfigErrors", () => {
+    const d = dir();
+    writeFileSync(path.join(d, "bad.toml"), "this is = = not toml [");
+    expect(() => loadConfigFile(path.join(d, "bad.toml"))).toThrow(ConfigError);
+    expect(() => loadConfigFile(path.join(d, "missing.toml"))).toThrow(ConfigError);
+  });
+});
+
+describe("resolveConfigPath", () => {
+  test("--config beats env beats default", () => {
+    expect(resolveConfigPath(["bun", "x", "--config", "a.toml"], { CLAUDE_RC_CONFIG: "b.toml" })).toBe("a.toml");
+    expect(resolveConfigPath(["bun", "x"], { CLAUDE_RC_CONFIG: "b.toml" })).toBe("b.toml");
+    expect(resolveConfigPath(["bun", "x"], {})).toBe("/etc/claude-rc-launcher/config.toml");
   });
 });

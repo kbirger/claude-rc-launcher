@@ -22,8 +22,8 @@ const inst: Instance = { id: ID, path: "/p", name: "n", state: "active", started
 beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "app-")));
   await mkdir(join(root, "sub"));
-  cfg = { publicUrl: "https://rc.example.com", sessionSecret: "s3cret-s3cret-s3cret", roots: [root],
-    oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" } } as Config;
+  cfg = { publicUrl: "https://rc.example.com", roots: [root],
+    userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" } } } as Config;
   cookie = await mintSessionCookie(cfg, user, Date.now() + 3600_000);
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
@@ -91,7 +91,7 @@ describe("auth gate", () => {
     expect((await mk().app.request("/api/me", { headers: { cookie: c } })).status).toBe(401);
   });
   test("session signed with another secret -> 401", async () => {
-    const c = await mintSessionCookie({ ...cfg, sessionSecret: "other-other-other-x" }, user, Date.now() + 1e6);
+    const c = await mintSessionCookie({ ...cfg, userAuth: { ...cfg.userAuth, sessionSecret: "other-other-other-x" } as Config["userAuth"] }, user, Date.now() + 1e6);
     expect((await mk().app.request("/api/me", { headers: { cookie: c } })).status).toBe(401);
   });
   test("unknown /api route -> 404 json", async () => {

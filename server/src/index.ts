@@ -1,14 +1,15 @@
 import type { Config } from "./config";
 import { createApp } from "./app";
 import { createOidcClient } from "./auth";
-import { ConfigError, loadConfig } from "./config";
+import { ConfigError } from "./config";
+import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner, InstanceService } from "./instances";
 import { staticHandler } from "./static";
 import { loadWebFiles } from "./webfiles";
 
 let cfg: Config;
 try {
-  cfg = loadConfig(process.env);
+  cfg = loadConfigFile(resolveConfigPath(process.argv, process.env));
 } catch (e) {
   if (e instanceof ConfigError) {
     console.error(e.message);
@@ -20,9 +21,9 @@ try {
 const files = await loadWebFiles();
 if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
 
-if (cfg.oidc.issuer.startsWith("http:")) {
+if (cfg.userAuth.oidc.issuer.startsWith("http:")) {
   console.warn(
-    "warning: OIDC_ISSUER uses plain http; ID tokens are not signature-verified, so a network attacker could forge logins. Use https in production.",
+    "warning: user_auth.oidc.issuer uses plain http; ID tokens are not signature-verified, so a network attacker could forge logins. Use https in production.",
   );
 }
 

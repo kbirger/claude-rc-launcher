@@ -4,8 +4,9 @@ import { authRoutes, createOidcClient, requireUser, type OidcClient, type User }
 import type { Config } from "../src/config";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
+const withSecret = (c: Config, s: string): Config => ({ ...c, userAuth: { ...c.userAuth, sessionSecret: s } });
 const mkCfg = (publicUrl = "https://rc.example.com"): Config =>
-  ({ publicUrl, sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" } }) as Config;
+  ({ publicUrl, userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" } } }) as Config;
 
 function stub(fail = false) {
   const calls: any[] = [];
@@ -206,7 +207,7 @@ describe("requireUser", () => {
     expect(await r.json()).toEqual({ error: "unauthenticated" });
   });
   test("cookie signed with another secret rejected", async () => {
-    const other = build({ ...mkCfg(), sessionSecret: "different-secret-value" });
+    const other = build(withSecret(mkCfg(), "different-secret-value"));
     const ck = await session(other);
     expect((await build().request("/api/x", { headers: { cookie: ck } })).status).toBe(401);
   });
@@ -224,7 +225,7 @@ describe("requireUser", () => {
 
 test("createOidcClient does not contact the IdP until first use", async () => {
   const cfg = mkCfg();
-  cfg.oidc.issuer = "http://127.0.0.1:1/";
+  cfg.userAuth.oidc.issuer = "http://127.0.0.1:1/";
   const c = await createOidcClient(cfg);
   await expect(c.authorizationUrl({ redirectUri: "http://x/cb", state: "s", codeVerifier: "v".repeat(43) })).rejects.toThrow();
 });

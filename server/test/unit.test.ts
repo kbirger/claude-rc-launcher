@@ -1,12 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { loadConfig } from "../src/config";
+import { parseConfig } from "../src/config";
 import { defaultName, instanceId, isValidName, parseManaged, renderUnit, unitName } from "../src/unit";
 
-const base = {
-  PUBLIC_URL: "https://x", OIDC_ISSUER: "https://i", OIDC_CLIENT_ID: "c", OIDC_CLIENT_SECRET: "s",
-  SESSION_SECRET: "x".repeat(32),
+const KEYS: Record<string, string> = {
+  CLAUDE_BIN: "claude_bin", NAME_PREFIX: "name_prefix", SERVICE_HOME: "service_home", SERVICE_PATH: "service_path",
+  SERVICE_USER: "service_user", SSH_AUTH_SOCK: "ssh_auth_sock", SYSTEMD_SCOPE: "scope",
 };
-const cfg = (extra: Record<string, string> = {}) => loadConfig({ ...base, ...extra });
+const cfg = (extra: Record<string, string> = {}) => {
+  const instance: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(extra)) instance[KEYS[k] ?? (k === "CLAUDE_RC_ARGS" ? "claude_rc_args" : k)] = k === "CLAUDE_RC_ARGS" ? v.split(/\s+/).filter(Boolean) : v;
+  return parseConfig(
+    {
+      public_url: "https://x",
+      instance,
+      user_auth: { mode: "oidc", session_secret_file: "s", oidc: { issuer: "https://i", client_id: "c", client_secret_file: "c" } },
+    },
+    { readFile: () => "x".repeat(32) },
+  );
+};
 const withSock = () => cfg({ SSH_AUTH_SOCK: "/run/ssh-agent.sock" });
 const P = "/srv/claude/projects/monitoring";
 const BS = String.fromCharCode(92);
