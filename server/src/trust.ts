@@ -4,9 +4,12 @@ import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
 import type { SystemUser } from "./users";
 
+export type TrustOwner = Pick<SystemUser, "home"> & { uid?: number; gid?: number };
+
 export interface TrustStore {
   checker(home: string): Promise<(absPath: string) => boolean>;
-  add(user: Pick<SystemUser, "home" | "uid" | "gid">, absPath: string): Promise<void>;
+  /** uid/gid are the owner for a new file; undefined when the user is not in passwd (the file is then not chowned). */
+  add(user: TrustOwner, absPath: string): Promise<void>;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -75,7 +78,7 @@ export function fileTrust(o: {
     },
   };
 
-  async function addOne(user: Pick<SystemUser, "home" | "uid" | "gid">, absPath: string): Promise<void> {
+  async function addOne(user: TrustOwner, absPath: string): Promise<void> {
       const file = join(user.home, ".claude.json");
       const r = await readDoc(file);
       if (r.kind === "invalid") throw new HttpError(500, "cannot read the user's .claude.json");

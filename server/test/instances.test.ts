@@ -6,6 +6,9 @@ import { HttpError, InstanceService, type Runner } from "../src/instances";
 import { PathError } from "../src/paths";
 import { instanceId, renderUnit, unitName } from "../src/unit";
 import type { Config } from "../src/config";
+import type { TrustStore } from "../src/trust";
+import type { SystemUser, UserDirectory } from "../src/users";
+import { allTrusted } from "./helpers";
 
 let dir: string;
 let calls: { cmd: string; args: string[] }[];
@@ -42,7 +45,17 @@ const fakeResolve = async (p: string, roots: string[]) => {
   if (!roots.some((r) => p === r || p.startsWith(r + "/"))) throw new PathError(403, "path outside allowed roots");
   return p;
 };
-const svc = (over: Partial<Config> = {}) => new InstanceService(cfg(over), fake, fakeResolve);
+const USERS: SystemUser[] = [
+  { name: "root", uid: 0, gid: 0, home: "/root" },
+  { name: "alice", uid: 1000, gid: 1001, home: "/home/alice" },
+];
+const users: UserDirectory = {
+  list: async () => USERS,
+  get: async (n) => USERS.find((u) => u.name === n),
+};
+type Deps = ConstructorParameters<typeof InstanceService>[3];
+const svc = (over: Partial<Config> = {}, deps: Deps = {}) =>
+  new InstanceService(cfg(over), fake, fakeResolve, { trust: allTrusted, users, canSwitchUser: true, ...deps });
 const sc = (...a: string[]) => ({ cmd: "systemctl", args: a });
 
 async function status(p: Promise<unknown>): Promise<number | string> {
@@ -122,7 +135,7 @@ describe("start", () => {
     expect(calls.every((c) => c.args[0] === "--user")).toBe(true);
   });
   test.skipIf(process.platform === "win32")("real resolver works with temp dir", async () => {
-    const real = new InstanceService(cfg({ roots: [dir] }), fake);
+    const real = new InstanceService(cfg({ roots: [dir] }), fake, undefined, { trust: allTrusted, users, canSwitchUser: true });
     const proj = join(dir, "proj");
     await mkdir(proj);
     expect((await real.start({ path: proj })).name).toBe("proj");
@@ -136,13 +149,17 @@ async function seed(path: string, name = "n"): Promise<string> {
 }
 
 describe("list", () => {
+  test("list() includes user from User=", async () => {
+    await svc().start({ path: "/srv/a", user: "alice" });
+    expect((await svc().list())[0]).toMatchObject({ path: "/srv/a", user: "alice" });
+  });
   test("only managed claude-rc-*.service files, with state mapping", async () => {
     const id = await seed("/srv/a", "alpha");
     await writeFile(join(dir, "other.service"), renderUnit(cfg(), "/srv/b", "x"));
     await writeFile(join(dir, "claude-rc-abcdef012345.service"), "[Unit]\n");
     await writeFile(join(dir, `claude-rc-${id}.txt`), renderUnit(cfg(), "/srv/c", "x"));
     const l = await svc().list();
-    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", state: "active", startedAt: "2024-11-06T10:00:00.000Z" }]);
+    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", user: "root", state: "active", startedAt: "2024-11-06T10:00:00.000Z" }]);
     expect(calls).toEqual([sc("show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id))]);
   });
   test("garbage or empty timestamp -> null", async () => {
@@ -221,5 +238,167 @@ describe("logs", () => {
     await svc().logs(id, 0);
     expect(calls[0]).toEqual({ cmd: "journalctl", args: ["--user", "-u", unitName(id), "-n", "500", "--no-pager", "-o", "cat"] });
     expect(calls[1]!.args).toEqual(["-u", unitName(id), "-n", "1", "--no-pager", "-o", "cat"]);
+  });
+});
+
+// Recording trust stub: `trusted` holds trusted paths; every call is logged.
+let trustLog: string[] = [];
+let trusted = new Set<string>();
+let addFail: Error | null = null;
+const recTrust: TrustStore = {
+  checker: async (home) => {
+    trustLog.push(`check ${home}`);
+    return (p) => trusted.has(p);
+  },
+  add: async (u, p) => {
+    trustLog.push(`add ${u.home} ${u.uid} ${u.gid} ${p}`);
+    if (addFail) throw addFail;
+    trusted.add(p);
+  },
+};
+const tsvc = (over: Partial<Config> = {}, deps: Deps = {}) => svc(over, { trust: recTrust, ...deps });
+
+async function caught(p: Promise<unknown>): Promise<HttpError> {
+  try { await p; } catch (e) { if (e instanceof HttpError) return e; throw e; }
+  throw new Error("no throw");
+}
+
+describe("start as a user, with trust", () => {
+  beforeEach(() => { trustLog = []; trusted = new Set(); addFail = null; });
+
+  test("start as alice writes User=alice and her HOME", async () => {
+    trusted.add("/srv/proj");
+    const inst = await tsvc().start({ path: "/srv/proj", user: "alice" });
+    expect(inst.user).toBe("alice");
+    const content = await readFile(join(dir, unitName(instanceId("/srv/proj"))), "utf8");
+    expect(content).toContain("User=alice\n");
+    expect(content).toContain('Environment="HOME=/home/alice"');
+    expect(content).toContain("ExecStart=/home/alice/.local/bin/claude remote-control");
+    expect(trustLog).toEqual(["check /home/alice"]);
+  });
+
+  test("omitted user or the service user runs with the configured service values", async () => {
+    trusted.add("/srv/a");
+    trusted.add("/srv/b");
+    const s = tsvc({ serviceUser: "svc", serviceHome: "/var/lib/svc" });
+    expect((await s.start({ path: "/srv/a" })).user).toBe("svc");
+    expect((await s.start({ path: "/srv/b", user: "svc" })).user).toBe("svc");
+    const content = await readFile(join(dir, unitName(instanceId("/srv/b"))), "utf8");
+    expect(content).toContain('Environment="HOME=/var/lib/svc"');
+    expect(content).toContain("ExecStart=/root/.local/bin/claude remote-control");
+    expect(trustLog).toEqual(["check /var/lib/svc", "check /var/lib/svc"]);
+  });
+
+  test("start rejects an unknown user with 400", async () => {
+    const e = await caught(tsvc().start({ path: "/srv/proj", user: "mallory" }));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("unknown user");
+    expect(await readdir(dir)).toEqual([]);
+    expect(trustLog).toEqual([]);
+  });
+
+  test("rejects another user when canSwitchUser is false", async () => {
+    const e = await caught(tsvc({}, { canSwitchUser: false }).start({ path: "/srv/proj", user: "alice" }));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("this host cannot run instances as another user");
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  test("untrusted start throws 428 with code untrusted, user and path, and writes no unit file", async () => {
+    const e = await caught(tsvc().start({ path: "/srv/proj", user: "alice" }));
+    expect(e.status).toBe(428);
+    expect(e.message).toBe("folder is not trusted for alice");
+    expect(e.extra).toEqual({ code: "untrusted", user: "alice", path: "/srv/proj" });
+    expect(await readdir(dir)).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  test("addTrust writes the trust then starts", async () => {
+    const inst = await tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true });
+    expect(inst.user).toBe("alice");
+    expect(trustLog).toEqual(["check /home/alice", "add /home/alice 1000 1001 /srv/proj"]);
+    expect(await readdir(dir)).toEqual([unitName(instanceId("/srv/proj"))]);
+  });
+
+  test("addTrust for the default user uses the service home and its passwd ids", async () => {
+    await tsvc().start({ path: "/srv/proj", addTrust: true });
+    expect(trustLog).toEqual(["check /root", "add /root 0 0 /srv/proj"]);
+    trustLog = [];
+    await tsvc({ serviceUser: "svc", serviceHome: "/var/lib/svc" }).start({ path: "/srv/other", addTrust: true });
+    expect(trustLog).toEqual(["check /var/lib/svc", "add /var/lib/svc undefined undefined /srv/other"]);
+  });
+
+  test("addTrust on a trusted folder does not call add", async () => {
+    trusted.add("/srv/proj");
+    await tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true });
+    expect(trustLog).toEqual(["check /home/alice"]);
+  });
+
+  test("a second start for the same folder by another user is 409, names the first user, and never calls add or check", async () => {
+    trusted.add("/srv/proj");
+    const s = tsvc();
+    await s.start({ path: "/srv/proj", user: "alice" });
+    trustLog = [];
+    const e = await caught(s.start({ path: "/srv/proj", user: "root", addTrust: true }));
+    expect(e.status).toBe(409);
+    expect(e.message).toBe("already running in this directory as alice");
+    expect((e.extra as { instance: { user?: string } }).instance.user).toBe("alice");
+    expect(trustLog).toEqual([]);
+  });
+
+  test("409 keeps the old text when the unit has no User= line", async () => {
+    const s = tsvc({ scope: "user" });
+    trusted.add("/srv/proj");
+    await s.start({ path: "/srv/proj" });
+    trustLog = [];
+    const e = await caught(s.start({ path: "/srv/proj" }));
+    expect(e.status).toBe(409);
+    expect(e.message).toBe("instance already exists");
+    expect(trustLog).toEqual([]);
+  });
+
+  test("trust failure leaves no unit file", async () => {
+    addFail = new HttpError(500, "cannot read the user's .claude.json");
+    const e = await caught(tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true }));
+    expect(e.status).toBe(500);
+    expect(await readdir(dir)).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("users", () => {
+  test("users(): selectable is false in user scope", async () => {
+    const s = new InstanceService(cfg({ scope: "user", serviceUser: "me" }), fake, fakeResolve, { trust: allTrusted, users });
+    expect(await s.users()).toEqual({ selectable: false, default: "me", users: [{ name: "me" }] });
+  });
+  test("not selectable when canSwitchUser is false", async () => {
+    expect(await svc({}, { canSwitchUser: false }).users()).toEqual({ selectable: false, default: "root", users: [{ name: "root" }] });
+  });
+  test("lists the passwd users when selectable", async () => {
+    expect(await svc().users()).toEqual({ selectable: true, default: "root", users: [{ name: "root" }, { name: "alice" }] });
+  });
+  test("lists the service user even when it fails the rules", async () => {
+    const r = await svc({ serviceUser: "svc" }).users();
+    expect(r.default).toBe("svc");
+    expect(r.users.map((u) => u.name).sort()).toEqual(["alice", "root", "svc"]);
+  });
+});
+
+describe("trustFilter", () => {
+  beforeEach(() => { trustLog = []; trusted = new Set(["/srv/a"]); });
+  test("trustFilter uses the default user's home when user is omitted", async () => {
+    const f = await tsvc({ serviceHome: "/var/lib/svc" }).trustFilter();
+    expect(trustLog).toEqual(["check /var/lib/svc"]);
+    expect(f("/srv/a")).toBe(true);
+    expect(f("/srv/b")).toBe(false);
+  });
+  test("uses the chosen user's home", async () => {
+    await tsvc().trustFilter("alice");
+    expect(trustLog).toEqual(["check /home/alice"]);
+  });
+  test("unknown user is 400", async () => {
+    const e = await caught(tsvc().trustFilter("mallory"));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("unknown user");
   });
 });
