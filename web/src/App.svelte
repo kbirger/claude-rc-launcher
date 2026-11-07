@@ -16,14 +16,15 @@
 <header>
   <h1>Claude RC</h1>
   <span class="user">{me?.name ?? ""}</span>
-  <a class="logout" href="/auth/logout">Logout</a>
+  <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>
 </header>
 <main>
   <button class="primary new" onclick={() => (showNew = true)}>+ New</button>
-  <InstanceList {refreshKey} />
+  <InstanceList host="local" {refreshKey} />
 </main>
 {#if showNew}
   <NewDialog
+    host="local"
     onclose={() => (showNew = false)}
     onstarted={() => {
       showNew = false;

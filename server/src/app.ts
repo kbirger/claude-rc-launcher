@@ -36,6 +36,55 @@ function csrf(cfg: Config): MiddlewareHandler {
   };
 }
 
+export type InstanceApiDeps = { cfg: Config; instances: InstanceService; dirOwner?: DirOwner };
+
+/** The instance and filesystem routes of one host (served for `local` by the hub and by a node). */
+export function instanceApi(deps: InstanceApiDeps): Hono {
+  const { cfg, instances, dirOwner } = deps;
+  const r = new Hono();
+
+  r.get("/instances", async (c) => c.json(await instances.list()));
+  r.post("/instances", async (c) => {
+    const body = await readJson(c);
+    if (!isObject(body)) throw new HttpError(400, "body must be an object");
+    if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
+    if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
+    const input = body.name === undefined ? { path: body.path } : { path: body.path, name: body.name };
+    return c.json(await instances.start(input), 201);
+  });
+  r.delete("/instances/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    await instances.stop(id);
+    return c.body(null, 204);
+  });
+  r.get("/instances/:id/logs", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    const raw = c.req.query("lines");
+    let lines = 100;
+    if (raw !== undefined) {
+      if (!/^-?\d+$/.test(raw)) throw new HttpError(400, "lines must be an integer");
+      lines = Number.parseInt(raw, 10);
+    }
+    return c.json({ log: await instances.logs(id, lines) });
+  });
+
+  r.get("/fs", async (c) => c.json(await listDirs(c.req.query("path"), cfg.roots)));
+  r.post("/fs/mkdir", async (c) => {
+    const body = await readJson(c);
+    if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
+      throw new HttpError(400, "parent and name are required strings");
+    }
+    return c.json(await makeDir(body.parent, body.name, cfg.roots, dirOwner), 201);
+  });
+
+  r.all("*", (c) => c.json({ error: "not found" }, 404));
+  return r;
+}
+
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
+
 export function createApp(deps: Deps): Hono {
   const { cfg, instances, userAuth, staticHandler, dirOwner } = deps;
   const app = new Hono();
@@ -49,42 +98,9 @@ export function createApp(deps: Deps): Hono {
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
 
-  api.get("/instances", async (c) => c.json(await instances.list()));
-  api.post("/instances", async (c) => {
-    const body = await readJson(c);
-    if (!isObject(body)) throw new HttpError(400, "body must be an object");
-    if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
-    if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
-    const input = body.name === undefined ? { path: body.path } : { path: body.path, name: body.name };
-    return c.json(await instances.start(input), 201);
-  });
-  api.delete("/instances/:id", async (c) => {
-    const id = c.req.param("id");
-    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
-    await instances.stop(id);
-    return c.body(null, 204);
-  });
-  api.get("/instances/:id/logs", async (c) => {
-    const id = c.req.param("id");
-    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
-    const raw = c.req.query("lines");
-    let lines = 100;
-    if (raw !== undefined) {
-      if (!/^-?\d+$/.test(raw)) throw new HttpError(400, "lines must be an integer");
-      lines = Number.parseInt(raw, 10);
-    }
-    return c.json({ log: await instances.logs(id, lines) });
-  });
-
-  api.get("/fs", async (c) => c.json(await listDirs(c.req.query("path"), cfg.roots)));
-  api.post("/fs/mkdir", async (c) => {
-    const body = await readJson(c);
-    if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
-      throw new HttpError(400, "parent and name are required strings");
-    }
-    return c.json(await makeDir(body.parent, body.name, cfg.roots, dirOwner), 201);
-  });
-
+  api.get("/hosts", (c) => c.json([{ id: "local", name: cfg.name, status: "ok" } satisfies HostInfo]));
+  api.route("/hosts/local", instanceApi({ cfg, instances, dirOwner }));
+  api.all("/hosts/:host/*", (c) => c.json({ error: "unknown host" }, 404));
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
 

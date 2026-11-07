@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { ApiError, getLogs, listInstances, stopInstance, type Instance } from "./api";
 
-  let { refreshKey = 0 }: { refreshKey?: number } = $props();
+  let { host, refreshKey = 0 }: { host: string; refreshKey?: number } = $props();
 
   let instances = $state<Instance[]>([]);
   let loaded = $state(false);
@@ -19,7 +19,7 @@
     }
     inflight = true;
     try {
-      instances = await listInstances();
+      instances = await listInstances(host);
       error = "";
       loaded = true;
     } catch (e) {
@@ -62,7 +62,7 @@
   async function stop(i: Instance) {
     if (!confirm(`Stop ${i.name}?`)) return;
     try {
-      await stopInstance(i.id);
+      await stopInstance(host, i.id);
       error = "";
     } catch (e) {
       error = e instanceof ApiError ? e.message : "Failed to stop";
@@ -77,7 +77,7 @@
       return;
     }
     try {
-      logs = { ...logs, [i.id]: await getLogs(i.id, 100) };
+      logs = { ...logs, [i.id]: await getLogs(host, i.id, 100) };
     } catch (e) {
       error = e instanceof ApiError ? e.message : "Failed to load logs";
     }

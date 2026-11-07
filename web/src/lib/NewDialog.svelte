@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { ApiError, browse, mkdir, startInstance, type DirListing } from "./api";
 
-  let { onclose, onstarted }: { onclose: () => void; onstarted: () => void } = $props();
+  let { host, onclose, onstarted }: { host: string; onclose: () => void; onstarted: () => void } = $props();
 
   let listing = $state<DirListing | null>(null);
   let name = $state("");
@@ -25,7 +25,7 @@
   async function go(path?: string) {
     error = "";
     try {
-      listing = await browse(path);
+      listing = await browse(host, path);
     } catch (e) {
       error = e instanceof ApiError ? e.message : "Failed to browse";
     }
@@ -38,7 +38,7 @@
     if (!listing || !folderName.trim()) return;
     error = "";
     try {
-      const r = await mkdir(listing.path, folderName.trim());
+      const r = await mkdir(host, listing.path, folderName.trim());
       creating = false;
       folderName = "";
       await go(r.path);
@@ -52,7 +52,7 @@
     busy = true;
     error = "";
     try {
-      await startInstance(listing.path, name.trim() || undefined);
+      await startInstance(host, listing.path, name.trim() || undefined);
       onstarted();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) error = "Already running in this directory";
