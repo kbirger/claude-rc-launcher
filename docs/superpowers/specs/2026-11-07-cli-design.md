@@ -234,6 +234,36 @@ is not root, the command runs `sudo mkdir -p`, `sudo cp -p` (for the backup) and
 that the login stays in the user's home directory. It does not ask the user to run the whole CLI with `sudo`. A later step, `node setup`, can
 install the binary and the unit and register the node. It is not built.
 
+### Node setup
+
+`claude-rc node setup --listen <ip> [--hub <url>] [--name n] [--id id] [--port n] [--names a,b] [--roots /a,/b]
+[--service-user u] [--url <https-url>] [--binary path] [--release tag] [--force]` turns the machine that it runs on
+into a registered node, in one command, as the signed-in user. It signs in first when `--hub` is given and there is
+no login. The privileged steps run through `sudo` with fixed arguments, so the login stays in the user's home.
+
+Order, and the rule that nothing changes before step 4:
+
+1. Check. The platform is Linux with `systemctl`. The listen address belongs to this machine, and `--url` is given
+   when the listen address is a wildcard. The service user exists. With no `--force`, none of the config file, the
+   unit file or a running `claude-rc-launcher` service exists yet.
+2. Ask the hub for the `[node_auth.oidc]` values (`GET /cli/api/node-enrollment`).
+3. Get the server binary: `--binary`, or `claude-rc-launcher-linux-<x64|arm64>` from the GitHub release (`latest`
+   or `--release`), checked against `SHA256SUMS`. A checksum mismatch stops the command.
+4. Install: the binary to `/usr/local/bin/claude-rc-launcher` (written under a temporary name and moved into place),
+   the unit (the same file as `deploy/claude-rc-launcher.service`, compiled into the CLI), and `config.toml` as
+   `node config` writes it, plus `service_user` when given. With `--force` the old files are kept as `.bak`.
+5. `systemctl daemon-reload`, then `enable --now`. Wait up to 30 seconds for `node-cert.pem` and for `/healthz` over
+   the pinned certificate. On a timeout, print the last journal lines and stop without registering.
+6. Register: read the fingerprint from the node's own `node-cert.pem` (through `sudo cat`, because the state
+   directory is mode 700) and send `POST /cli/api/hosts {id, name, url, fingerprint}`. The hub reads the certificate
+   itself, requires the same fingerprint, tests the node with its service-account token and saves the host. Nobody
+   types the fingerprint, because it comes from a file on the machine where the signed-in user runs the command.
+7. Print the host id, the URL, the fingerprint and how to remove the node.
+
+If step 6 fails, the node stays installed and running. The message says why, and gives the `host add` command to
+retry. A missing `claude` for the service user is a warning, not an error. The command does not create the
+Authentik service account, change a firewall, or install `claude`.
+
 ### Deployment
 
 This is the same in `oidc` and `proxy-jwt` modes.
