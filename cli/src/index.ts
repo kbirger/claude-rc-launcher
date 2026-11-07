@@ -6,6 +6,7 @@ import { runCommand, type CommandName } from "./commands";
 import { ExitError, LOGIN_MESSAGE, credsPath, deleteCreds, loadCreds, saveCreds } from "./creds";
 import { hostAdd, hostRemove } from "./hostcmd";
 import { hubClient } from "./hub";
+import { nodeConfig } from "./nodecmd";
 import { login, logout, renew } from "./oidc";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
@@ -25,6 +26,8 @@ Commands:
   mkdir <parent> <name>              make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
+  node config --listen <addr> --names <a,b> [--port n] [--name n] [--roots /a,/b]
+                                     print a node config.toml with the hub's values filled in
 
 Flags for every command: --host <id> (default local), --json, --help`;
 
@@ -90,7 +93,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       return 0;
     }
 
-    if (name !== "host" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+    if (name !== "host" && name !== "node" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
 
     const creds = loadCreds(env.credsFile);
     if (!creds) throw new ExitError(LOGIN_MESSAGE, 2);
@@ -99,6 +102,11 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     }
     const hub = hubClient({ creds, save: (c) => saveCreds(env.credsFile, c), renew: (c) => renew(c, env.fetch), ...(env.fetch ? { fetch: env.fetch } : {}) });
 
+    if (name === "node") {
+      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config --listen <address> --names <name,name,...> [--port <n>] [--name <n>] [--roots </dir,/dir>]", 1);
+      await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, err: io.err });
+      return 0;
+    }
     if (name === "host") {
       const [sub, id] = args;
       if ((sub !== "add" && sub !== "remove") || !id) throw new ExitError("usage: claude-rc host add <id> --url <https-url> ... | claude-rc host remove <id>", 1);

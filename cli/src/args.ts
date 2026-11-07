@@ -12,6 +12,10 @@ export type Flags = {
   fingerprint?: string;
   force?: boolean;
   "no-browser"?: boolean;
+  listen?: string;
+  port?: string;
+  names?: string;
+  roots?: string;
   help?: boolean;
 };
 
@@ -32,6 +36,10 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         fingerprint: { type: "string" },
         force: { type: "boolean" },
         "no-browser": { type: "boolean" },
+        listen: { type: "string" },
+        port: { type: "string" },
+        names: { type: "string" },
+        roots: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });
