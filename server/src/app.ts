@@ -85,6 +85,44 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
 
 export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
 
+function onError(err: Error, c: Context) {
+  if (err instanceof HttpError || err instanceof PathError) {
+    const extra = err instanceof HttpError ? err.extra : undefined;
+    return c.json({ ...(isObject(extra) ? extra : {}), error: err.message }, err.status as 400);
+  }
+  console.error(err);
+  return c.json({ error: "internal error" }, 500);
+}
+
+const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
+
+/** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
+export function createNodeApp(deps: { cfg: Config; instances: InstanceService; auth: MiddlewareHandler; dirOwner?: DirOwner }): Hono {
+  const { cfg, instances, auth, dirOwner } = deps;
+  const app = new Hono();
+  app.get("/healthz", (c) => c.json({ ok: true }));
+
+  const api = new Hono();
+  api.use("*", auth);
+  api.use("*", async (c, next) => {
+    if (!isWrite(c.req.method)) return next();
+    const media = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (media !== "application/json") return c.json({ error: "content-type must be application/json" }, 415);
+    await next();
+  });
+  api.use("*", async (c, next) => {
+    await next();
+    if (isWrite(c.req.method)) {
+      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+    }
+  });
+  api.get("/node", (c) => c.json({ ok: true, name: cfg.name }));
+  api.route("/", instanceApi({ cfg, instances, dirOwner }));
+  app.route("/api", api);
+  app.onError(onError);
+  return app;
+}
+
 export function createApp(deps: Deps): Hono {
   const { cfg, instances, userAuth, staticHandler, dirOwner } = deps;
   const app = new Hono();
@@ -106,14 +144,7 @@ export function createApp(deps: Deps): Hono {
 
   if (staticHandler) app.get("*", userAuth.middleware, staticHandler);
 
-  app.onError((err, c) => {
-    if (err instanceof HttpError || err instanceof PathError) {
-      const extra = err instanceof HttpError ? err.extra : undefined;
-      return c.json({ ...(isObject(extra) ? extra : {}), error: err.message }, err.status as 400);
-    }
-    console.error(err);
-    return c.json({ error: "internal error" }, 500);
-  });
+  app.onError(onError);
 
   return app;
 }

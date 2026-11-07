@@ -13,7 +13,7 @@ export interface OidcClient {
 }
 
 function oidcOf(cfg: Config): OidcUserAuth {
-  if (cfg.userAuth.mode !== "oidc") throw new Error("user_auth.mode is not oidc");
+  if (cfg.userAuth?.mode !== "oidc") throw new Error("user_auth.mode is not oidc");
   return cfg.userAuth;
 }
 

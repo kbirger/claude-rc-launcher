@@ -23,7 +23,7 @@ try {
 const files = await loadWebFiles();
 if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
 
-if (cfg.userAuth.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {
+if (cfg.userAuth?.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {
   console.warn(
     "warning: user_auth.oidc.issuer uses plain http; ID tokens are not signature-verified, so a network attacker could forge logins. Use https in production.",
   );
@@ -47,6 +47,10 @@ const dirOwner = await resolveDirOwner();
 
 const instances = new InstanceService(cfg, bunRunner);
 const ua = cfg.userAuth;
+if (cfg.mode !== "hub" || !ua) {
+  console.error("node mode is not wired up yet");
+  process.exit(1);
+}
 const userAuth =
   ua.mode === "oidc"
     ? oidcUserAuth(cfg, await createOidcClient(cfg))

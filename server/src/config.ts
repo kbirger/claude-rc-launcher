@@ -20,8 +20,16 @@ export type ProxyJwtUserAuth = {
   allowedUsers?: string[];
 };
 
+export type NodeConfig = {
+  tls: { stateDir: string; names: string[] };
+  auth: {
+    oidc?: { jwksUrl: string; issuer: string; audience: string; callerClaim: string; callerValue: string };
+    secretHashes: string[];
+  };
+};
+
 export type Config = {
-  mode: "hub";
+  mode: "hub" | "node";
   name: string;
   port: number;
   host: string;
@@ -36,7 +44,8 @@ export type Config = {
   claudeBin: string;
   claudeRcArgs: string[];
   namePrefix: string;
-  userAuth: OidcUserAuth | ProxyJwtUserAuth;
+  userAuth?: OidcUserAuth | ProxyJwtUserAuth; // hub
+  node?: NodeConfig; // node
 };
 
 export class ConfigError extends Error {
@@ -175,19 +184,59 @@ export function checkUrl(t: Tbl, k: string, value: string, o: { allowInsecure?: 
   return false;
 }
 
+const HEX64 = /^[0-9a-f]{64}$/;
+
+function parseNode(t: Tbl): NodeConfig | undefined {
+  const tls = t.table("tls");
+  if (!tls) t.problems.push("tls is required in node mode");
+  const stateDir = tls?.absStr("state_dir") ?? "/var/lib/claude-rc-launcher";
+  const names = tls?.strs("names", { nonEmpty: true });
+  if (tls && !tls.has("names")) t.problems.push("tls.names is required (certificate SANs, at least one)");
+  tls?.finish();
+
+  const na = t.table("node_auth");
+  if (!na) t.problems.push("node_auth is required in node mode (at least one of node_auth.oidc or node_auth.secret)");
+  let oidc: NodeConfig["auth"]["oidc"];
+  const oi = na?.table("oidc");
+  if (oi) {
+    const jwksUrl = oi.str("jwks_url", { req: true }) ?? "";
+    if (jwksUrl) checkUrl(oi, "jwks_url", jwksUrl);
+    const issuer = oi.str("issuer", { req: true }) ?? "";
+    const audience = oi.str("audience", { req: true }) ?? "";
+    const callerClaim = oi.str("caller_claim") ?? "sub";
+    const callerValue = oi.str("caller_value", { req: true }) ?? "";
+    oi.finish();
+    oidc = { jwksUrl, issuer, audience, callerClaim, callerValue };
+  }
+  const secretHashes: string[] = [];
+  for (const row of na?.tables("secret") ?? []) {
+    const h = row.str("sha256", { req: true });
+    if (h !== undefined) {
+      if (HEX64.test(h)) secretHashes.push(h);
+      else t.problems.push(`${row.path("sha256")} must be 64 lowercase hex characters (the sha256 printed by gen-secret)`);
+    }
+    row.finish();
+  }
+  if (na && !oi && !na.has("secret")) t.problems.push("node_auth needs at least one of node_auth.oidc or node_auth.secret");
+  na?.finish();
+  if (!tls || !names) return undefined;
+  return { tls: { stateDir, names }, auth: { ...(oidc ? { oidc } : {}), secretHashes } };
+}
+
 export function parseConfig(raw: unknown, io: ConfigIo): Config {
   const problems: string[] = [];
   if (!isObject(raw)) throw new ConfigError(["config must be a TOML table"]);
   const t = new Tbl(raw, "", problems, io);
 
-  const mode = t.str("mode") ?? "hub";
-  if (mode === "node") problems.push(`mode = "node" is not supported yet`);
-  else if (mode !== "hub") problems.push(`mode must be "hub" or "node"`);
+  const modeRaw = t.str("mode") ?? "hub";
+  if (modeRaw !== "hub" && modeRaw !== "node") problems.push(`mode must be "hub" or "node"`);
+  const mode: "hub" | "node" = modeRaw === "node" ? "node" : "hub";
 
   const name = t.str("name") ?? os.hostname();
   const port = t.port("port") ?? 8080;
   const host = t.str("host") ?? "0.0.0.0";
-  const publicUrl = t.str("public_url", { req: true }) ?? "";
+  const publicUrl = t.str("public_url", { req: mode === "hub" }) ?? "";
+  if (mode === "node" && publicUrl) problems.push("public_url is not allowed in node mode");
 
   const inst = t.table("instance");
   const scopeRaw = inst?.str("scope") ?? "system";
@@ -206,9 +255,18 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   inst?.finish();
 
   let userAuth: OidcUserAuth | ProxyJwtUserAuth | undefined;
-  const ua = t.table("user_auth");
-  if (!ua) problems.push("user_auth is required");
-  else {
+  let node: NodeConfig | undefined;
+  if (mode === "node") {
+    for (const k of ["user_auth", "hub_auth", "hosts"]) if (t.has(k)) problems.push(`${k} is not allowed in node mode`);
+    t.skip("user_auth", "hub_auth", "hosts");
+    node = parseNode(t);
+  } else {
+    for (const k of ["tls", "node_auth"]) if (t.has(k)) problems.push(`${k} is only allowed in node mode`);
+    t.skip("tls", "node_auth");
+  }
+  const ua = mode === "hub" ? t.table("user_auth") : undefined;
+  if (mode === "hub" && !ua) problems.push("user_auth is required");
+  if (ua) {
     const m = ua.str("mode", { req: true });
     const allowedUsers = ua.strs("allowed_users", { nonEmpty: true });
     const forbid = (...ks: string[]) => {
@@ -257,10 +315,10 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   }
 
   t.finish();
-  if (problems.length || !userAuth) throw new ConfigError(problems);
+  if (problems.length) throw new ConfigError(problems);
 
   return {
-    mode: "hub",
+    mode,
     name,
     port,
     host,
@@ -275,6 +333,7 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
     claudeBin,
     claudeRcArgs,
     namePrefix,
-    userAuth,
+    ...(userAuth ? { userAuth } : {}),
+    ...(node ? { node } : {}),
   };
 }

@@ -96,11 +96,6 @@ describe("parseConfig", () => {
     expect(problems({ public_url: "https://x", user_auth: { mode: "none" } })).toContain("user_auth.mode");
   });
 
-  test("node mode is not supported yet; unknown mode rejected", () => {
-    expect(problems({ ...base(), mode: "node" })).toContain("not supported yet");
-    expect(problems({ ...base(), mode: "x" })).toContain("mode");
-  });
-
   test("allowed_users: array of strings; empty array rejected naming the key", () => {
     const b = base();
     expect(oa(parseConfig({ ...b, user_auth: { ...b.user_auth, allowed_users: ["kir"] } }, io)).allowedUsers).toEqual(["kir"]);
@@ -128,6 +123,56 @@ describe("parseConfig", () => {
     expect(problems({ ...base(), instance: { claude_bin: "claude" } })).toContain("instance.claude_bin");
     expect(problems({ ...base(), instance: { claude_rc_args: "--a --b" } })).toContain("instance.claude_rc_args");
     expect(problems({ ...base(), instance: { claude_rc_args: [1] } })).toContain("instance.claude_rc_args");
+  });
+});
+
+describe("node mode config", () => {
+  const nodeBase = () => ({
+    mode: "node",
+    tls: { state_dir: "/var/lib/rc", names: ["pi.internal", "10.0.0.9"] },
+    node_auth: { secret: [{ sha256: "a".repeat(64) }] },
+  });
+  const node = (o: Record<string, unknown> = {}) => ({ ...nodeBase(), ...o });
+
+  test("a valid node file parses; caller_claim defaults to sub", () => {
+    const c = parseConfig(
+      node({ node_auth: { oidc: { jwks_url: "https://a/jwks", issuer: "https://a/", audience: "n", caller_value: "svc" }, secret: [{ sha256: "b".repeat(64) }] } }),
+      io,
+    );
+    expect(c.mode).toBe("node");
+    expect(c.publicUrl).toBe("");
+    expect(c.userAuth).toBeUndefined();
+    expect(c.node).toEqual({
+      tls: { stateDir: "/var/lib/rc", names: ["pi.internal", "10.0.0.9"] },
+      auth: { oidc: { jwksUrl: "https://a/jwks", issuer: "https://a/", audience: "n", callerClaim: "sub", callerValue: "svc" }, secretHashes: ["b".repeat(64)] },
+    });
+  });
+  test("state_dir defaults to /var/lib/claude-rc-launcher", () => {
+    const n = nodeBase();
+    expect(parseConfig({ ...n, tls: { names: ["x"] } }, io).node!.tls.stateDir).toBe("/var/lib/claude-rc-launcher");
+  });
+  test("[tls] and names are required and non-empty; a node_auth method is required", () => {
+    expect(problems({ mode: "node", node_auth: nodeBase().node_auth })).toContain("tls");
+    expect(problems(node({ tls: { names: [] } }))).toContain("tls.names");
+    expect(problems(node({ tls: { state_dir: "/x" } }))).toContain("tls.names");
+    expect(problems({ mode: "node", tls: nodeBase().tls })).toContain("node_auth");
+    expect(problems(node({ node_auth: {} }))).toContain("node_auth");
+  });
+  test("node_auth validation: sha256 is 64 hex, jwks_url https/loopback, caller_value required", () => {
+    expect(problems(node({ node_auth: { secret: [{ sha256: "xyz" }] } }))).toContain("node_auth.secret[0].sha256");
+    expect(problems(node({ node_auth: { oidc: { jwks_url: "http://a.example.com/j", issuer: "i", audience: "a", caller_value: "c" } } }))).toContain("node_auth.oidc.jwks_url");
+    expect(problems(node({ node_auth: { oidc: { jwks_url: "https://a/j", issuer: "i", audience: "a" } } }))).toContain("node_auth.oidc.caller_value");
+  });
+  test("hub-only keys in a node file name each key", () => {
+    for (const [k, v] of [["public_url", "https://x"], ["user_auth", {}], ["hub_auth", {}], ["hosts", []]] as const)
+      expect(problems(node({ [k]: v }))).toContain(k);
+  });
+  test("[tls] or [node_auth] in a hub file is an error", () => {
+    expect(problems({ ...base(), tls: { names: ["x"] } })).toContain("tls");
+    expect(problems({ ...base(), node_auth: {} })).toContain("node_auth");
+  });
+  test("mode other than hub/node is an error", () => {
+    expect(problems({ ...base(), mode: "relay" })).toContain("mode");
   });
 });
 

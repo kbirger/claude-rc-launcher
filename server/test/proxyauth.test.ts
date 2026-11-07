@@ -145,7 +145,7 @@ describe("proxy-jwt config", () => {
   test("header must be an HTTP token; jwks_url https/loopback; peers must parse", () => {
     expect(fails(raw({ proxy_jwt: pj({ header: "bad header" }) }))).toContain("user_auth.proxy_jwt.header");
     expect(fails(raw({ proxy_jwt: pj({ jwks_url: "http://a.example.com/jwks" }) }))).toContain("user_auth.proxy_jwt.jwks_url");
-    expect(parseConfig(raw({ proxy_jwt: pj({ jwks_url: "http://127.0.0.1:9/jwks" }) }), io).userAuth.mode).toBe("proxy-jwt");
+    expect(parseConfig(raw({ proxy_jwt: pj({ jwks_url: "http://127.0.0.1:9/jwks" }) }), io).userAuth?.mode).toBe("proxy-jwt");
     expect(fails(raw({ proxy_jwt: pj({ trusted_peers: ["10.0.0.0/99"] }) }))).toContain("user_auth.proxy_jwt.trusted_peers");
     expect(fails(raw({ proxy_jwt: pj({ trusted_peers: ["nonsense"] }) }))).toContain("trusted_peers");
   });
