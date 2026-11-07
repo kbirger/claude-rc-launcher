@@ -100,7 +100,17 @@ export function hostsApi(o: {
       if (!isObject(body)) throw new HttpError(400, "body must be an object");
       if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
       if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
-      const json = body.name === undefined ? { path: body.path } : { path: body.path, name: body.name };
+      if (body.user !== undefined) {
+        if (typeof body.user !== "string") throw new HttpError(400, "user must be a string");
+        if (!body.user) throw new HttpError(400, "user must not be empty");
+      }
+      if (body.addTrust !== undefined && typeof body.addTrust !== "boolean") throw new HttpError(400, "addTrust must be a boolean");
+      const json = {
+        path: body.path,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.user !== undefined ? { user: body.user } : {}),
+        ...(body.addTrust !== undefined ? { addTrust: body.addTrust } : {}),
+      };
       return k.call("POST", "/api/instances", { json, timeoutMs: requestTimeoutMs });
     }),
   );
@@ -118,9 +128,13 @@ export function hostsApi(o: {
     "/fs",
     forward((c, k) => {
       const p = c.req.query("path");
-      return k.call("GET", "/api/fs", { ...(p !== undefined ? { query: { path: p } } : {}), timeoutMs: requestTimeoutMs });
+      const u = c.req.query("user");
+      if (u === "") throw new HttpError(400, "user must not be empty");
+      const query = { ...(p !== undefined ? { path: p } : {}), ...(u !== undefined ? { user: u } : {}) };
+      return k.call("GET", "/api/fs", { ...(Object.keys(query).length ? { query } : {}), timeoutMs: requestTimeoutMs });
     }),
   );
+  remote.get("/users", forward((_c, k) => k.call("GET", "/api/users", { timeoutMs: requestTimeoutMs })));
   remote.post(
     "/fs/mkdir",
     forward(async (c, k) => {
