@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseConfig } from "../src/config";
-import { defaultName, instanceId, isValidName, parseManaged, renderUnit, unitName } from "../src/unit";
+import { defaultName, instanceId, isValidName, parseManaged, parseUnitUser, renderUnit, runAsFor, unitName } from "../src/unit";
 
 const KEYS: Record<string, string> = {
   CLAUDE_BIN: "claude_bin", NAME_PREFIX: "name_prefix", SERVICE_HOME: "service_home", SERVICE_PATH: "service_path",
@@ -173,5 +173,34 @@ describe("flag injection and scope", () => {
     expect(out).toContain("WantedBy=default.target");
     expect(out).not.toContain("multi-user.target");
     expect(out.split("\n").some((l) => l.startsWith("User="))).toBe(false);
+  });
+});
+
+describe("renderUnit run-as user", () => {
+  const alice = { name: "alice", uid: 1000, gid: 1000, home: "/home/alice" };
+  test("uses the user, HOME, PATH and claude binary of runAs", () => {
+    const out = renderUnit(cfg(), P, "n", runAsFor(cfg(), alice));
+    expect(out).toContain("\nUser=alice\n");
+    expect(out).toContain('Environment="HOME=/home/alice"');
+    expect(out).toContain('Environment="PATH=/home/alice/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"');
+    expect(out).toContain("\nExecStart=/home/alice/.local/bin/claude remote-control");
+  });
+  test("rejects a user name with a space, newline or equals sign", () => {
+    for (const bad of ["a b", "a\nb", "a=b"]) {
+      const ra = { user: bad, home: "/home/x", path: "/bin", claudeBin: "/home/x/.local/bin/claude" };
+      expect(() => renderUnit(cfg(), P, "n", ra)).toThrow();
+      expect(() => runAsFor(cfg(), { ...alice, name: bad })).toThrow();
+    }
+  });
+  test("omits User= in user scope for any runAs", () => {
+    const out = renderUnit(cfg({ SYSTEMD_SCOPE: "user" }), P, "n", runAsFor(cfg(), alice));
+    expect(out).not.toContain("User=");
+  });
+});
+
+describe("parseUnitUser", () => {
+  test("returns the name, or null when there is no User= line", () => {
+    expect(parseUnitUser("[Service]\nUser=alice\nType=simple\n")).toBe("alice");
+    expect(parseUnitUser("[Service]\nType=simple\n")).toBeNull();
   });
 });

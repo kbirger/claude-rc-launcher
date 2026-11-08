@@ -1,5 +1,12 @@
 import { ExitError, LOGIN_MESSAGE, type Credentials } from "./creds";
 
+/** A non-2xx answer from the hub, keeping the status and parsed body so callers can react to it. */
+export class HubError extends ExitError {
+  constructor(message: string, readonly status: number, readonly body: unknown) {
+    super(message, 1);
+  }
+}
+
 export type Renew = (c: Credentials) => Promise<Credentials>;
 
 const RENEW_WINDOW_S = 60;
@@ -45,7 +52,7 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
       } catch {
         /* handled below */
       }
-      if (!res.ok) throw new ExitError(typeof parsed?.error === "string" ? parsed.error : `HTTP ${res.status}`, 1);
+      if (!res.ok) throw new HubError(typeof parsed?.error === "string" ? parsed.error : `HTTP ${res.status}`, res.status, parsed);
       return parsed as T;
     },
   };

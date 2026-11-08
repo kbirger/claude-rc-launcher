@@ -89,6 +89,75 @@ describe("commands", () => {
     expect(s.out.join("\n")).toBe("/srv/a\n/srv/b");
   });
 
+  test("ls --user sends the user query", async () => {
+    const s = setup({ "GET /cli/api/hosts/local/fs": () => ({ path: "/srv", parent: null, dirs: [] }) });
+    await s.run("ls", "/srv", "--user", "al ice");
+    expect(s.seen[0]!.path).toBe("/cli/api/hosts/local/fs?path=%2Fsrv&user=al%20ice");
+    s.seen.length = 0;
+    await s.run("ls", "--user", "alice");
+    expect(s.seen[0]!.path).toBe("/cli/api/hosts/local/fs?user=alice");
+  });
+
+  test("ls prints a lock after untrusted paths", async () => {
+    const listing = { path: "/srv", parent: null, dirs: [{ name: "a", path: "/srv/a", trusted: true }, { name: "b", path: "/srv/b", trusted: false }] };
+    const s = setup({ "GET /cli/api/hosts/local/fs": () => listing });
+    await s.run("ls", "/srv");
+    expect(s.out.join("\n")).toBe("/srv/a\n/srv/b \u{1F512}");
+    s.out.length = 0;
+    await s.run("ls", "/srv", "--json");
+    expect(JSON.parse(s.out.join(""))).toEqual(listing);
+  });
+
+  test("start --user alice sends user and first calls GET /users", async () => {
+    const s = setup({
+      "GET /cli/api/hosts/local/users": () => ({ selectable: true, default: "alice", users: [{ name: "alice" }] }),
+      "POST /cli/api/hosts/local/instances": () => new Response(JSON.stringify({ id: ID, name: "x", path: "/srv/p", state: "active", startedAt: null }), { status: 201 }),
+    });
+    expect((await s.run("start", "/srv/p", "--user", "alice")).code).toBe(0);
+    expect(s.seen.map((x) => `${x.method} ${x.path}`)).toEqual(["GET /cli/api/hosts/local/users", "POST /cli/api/hosts/local/instances"]);
+    expect(JSON.parse(s.seen[1]!.body)).toEqual({ path: "/srv/p", user: "alice" });
+  });
+
+  test("start --user fails clearly when /users is 404 and sends no POST", async () => {
+    const s = setup({ "POST /cli/api/hosts/local/instances": () => ({}) });
+    const r = await s.run("start", "/srv/p", "--user", "alice");
+    expect(r.code).toBe(1);
+    expect(r.err.join("\n")).toContain("this host does not support --user. Update the node.");
+    expect(s.seen.filter((x) => x.method === "POST")).toHaveLength(0);
+  });
+
+  test("start without --force explains a 428", async () => {
+    const s = setup({ "POST /cli/api/hosts/local/instances": () => Response.json({ error: "folder is not trusted", code: "untrusted", user: "alice", path: "/srv/p" }, { status: 428 }) });
+    const r = await s.run("start", "/srv/p");
+    expect(r.code).toBe(1);
+    expect(r.err.join("\n")).toContain("folder is not trusted. Use --force to trust it");
+  });
+
+  test("an empty --user fails before any request", async () => {
+    for (const argv of [["start", "/srv/p", "--user", ""], ["ls", "/srv", "--user", ""], ["ls", "--user="]]) {
+      const s = setup();
+      const r = await s.run(...argv);
+      expect(r.code).toBe(1);
+      expect(r.err.join("\n")).toContain("--user must not be empty");
+      expect(s.seen).toHaveLength(0);
+    }
+  });
+
+  test("start --force with a 428 says the host did not accept --force", async () => {
+    const s = setup({ "POST /cli/api/hosts/local/instances": () => Response.json({ error: "folder is not trusted", code: "untrusted" }, { status: 428 }) });
+    const r = await s.run("start", "/srv/p", "--force");
+    expect(r.code).toBe(1);
+    const msg = r.err.join("\n");
+    expect(msg).toContain("folder is not trusted. The host did not accept --force. Update the hub and the node.");
+    expect(msg).not.toContain("Use --force");
+  });
+
+  test("start --force sends addTrust true", async () => {
+    const s = setup({ "POST /cli/api/hosts/local/instances": () => new Response(JSON.stringify({ id: ID, name: "x", path: "/srv/p", state: "active", startedAt: null }), { status: 201 }) });
+    expect((await s.run("start", "/srv/p", "--force")).code).toBe(0);
+    expect(JSON.parse(s.seen[0]!.body)).toEqual({ path: "/srv/p", addTrust: true });
+  });
+
   test("mkdir sends parent and name and prints the new path", async () => {
     const s = setup({ "POST /cli/api/hosts/local/fs/mkdir": () => new Response(JSON.stringify({ path: "/srv/new" }), { status: 201 }) });
     await s.run("mkdir", "/srv", "new");

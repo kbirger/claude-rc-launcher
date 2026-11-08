@@ -23,7 +23,7 @@ const userAuth = {
 };
 const JSON_H = { "content-type": "application/json" };
 
-const localSvc: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, logs: async () => "local log" };
+const localSvc: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async () => "local log" };
 
 type NodeFixture = {
   host: HostConfig;
@@ -50,6 +50,7 @@ async function startNode(id: string, over: { secret?: string } = {}): Promise<No
       return { ...inst, ...i };
     },
     stop: async () => {},
+    trustFilter: async () => () => false,
     logs: async (_id: string, n: number) => `${id} log ${n}`,
   };
   const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ secretHashes: [sec.sha256] }) });
@@ -247,6 +248,21 @@ describe("what is and is not forwarded", () => {
     expect(f.calls[1][3]).toEqual({ parent: "/p", name: "d" });
   });
 
+  test("mkdir forwards a valid user exactly and refuses a bad one", async () => {
+    const f = fake();
+    const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
+    const r = await app.request("/api/hosts/nas/fs/mkdir", { method: "POST", headers: JSON_H, body: JSON.stringify({ parent: "/p", name: "d", user: "alice", extra: 1 }) });
+    expect(f.calls[0].slice(0, 2)).toEqual(["POST", "/api/fs/mkdir"]);
+    expect(f.calls[0][3]).toEqual({ parent: "/p", name: "d", user: "alice" });
+    expect(r.status).not.toBe(400);
+    for (const [user, msg] of [[5, "user must be a string"], ["", "user must not be empty"]] as const) {
+      const bad = await app.request("/api/hosts/nas/fs/mkdir", { method: "POST", headers: JSON_H, body: JSON.stringify({ parent: "/p", name: "d", user }) });
+      expect(bad.status).toBe(400);
+      expect(((await bad.json()) as any).error).toBe(msg);
+    }
+    expect(f.calls.length).toBe(1);
+  });
+
   test("invalid bodies are 400 and nothing is forwarded", async () => {
     const f = fake();
     const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
@@ -289,6 +305,66 @@ describe("what is and is not forwarded", () => {
     const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
     expect((await get(app, `/api/hosts/nas/instances/${ID}/logs?lines=x`)).status).toBe(400);
     expect(f.calls.length).toBe(0);
+  });
+
+  test("forwards GET /users", async () => {
+    const f = fake();
+    const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
+    const r = await get(app, "/api/hosts/nas/users?evil=1");
+    expect(r.status).toBe(200);
+    expect(f.calls[0].slice(0, 3)).toEqual(["GET", "/api/users", undefined]);
+  });
+
+  test("forwards user in the fs query", async () => {
+    const f = fake();
+    const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
+    await get(app, "/api/hosts/nas/fs?path=%2Fsrv&user=alice&evil=1");
+    await get(app, "/api/hosts/nas/fs?user=bob");
+    expect(f.calls[0].slice(0, 3)).toEqual(["GET", "/api/fs", { path: "/srv", user: "alice" }]);
+    expect(f.calls[1].slice(0, 3)).toEqual(["GET", "/api/fs", { user: "bob" }]);
+    const r = await get(app, "/api/hosts/nas/fs?path=%2Fsrv&user=");
+    expect(r.status).toBe(400);
+    expect(await r.json()).toEqual({ error: "user must not be empty" });
+    expect(f.calls.length).toBe(2);
+  });
+
+  test("forwards user and addTrust in the start body, and nothing else", async () => {
+    const f = fake();
+    const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
+    await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p", name: "n", user: "alice", addTrust: true, extra: "x" }) });
+    await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p", addTrust: false }) });
+    expect(f.calls[0][3]).toEqual({ path: "/p", name: "n", user: "alice", addTrust: true });
+    expect(f.calls[1][3]).toEqual({ path: "/p", addTrust: false });
+  });
+
+  test("rejects a non-string user and a non-boolean addTrust with 400", async () => {
+    const f = fake();
+    const app = hub([hostCfg("nas")], new Map([["nas", f.client]]));
+    const post = async (b: unknown) => {
+      const r = await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify(b) });
+      return [r.status, (await r.json()).error];
+    };
+    expect(await post({ path: "/p", user: 5 })).toEqual([400, "user must be a string"]);
+    expect(await post({ path: "/p", user: "" })).toEqual([400, "user must not be empty"]);
+    expect(await post({ path: "/p", addTrust: "yes" })).toEqual([400, "addTrust must be a boolean"]);
+    expect(f.calls.length).toBe(0);
+  });
+
+  test("passes a node 428 body and status through", async () => {
+    const body = { error: "untrusted", code: "untrusted", user: "alice", path: "/p" };
+    const client: HostClient = { call: async () => ({ status: 428, body }) };
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]));
+    const r = await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p", user: "alice" }) });
+    expect(r.status).toBe(428);
+    expect(await r.json()).toEqual(body);
+  });
+
+  test("a node 404 on /users reaches the client as 404", async () => {
+    const client: HostClient = { call: async () => ({ status: 404, body: { error: "not found" } }) };
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]));
+    const r = await get(app, "/api/hosts/nas/users");
+    expect(r.status).toBe(404);
+    expect(await r.json()).toEqual({ error: "not found" });
   });
 
   test("`local` can never be a remote", async () => {

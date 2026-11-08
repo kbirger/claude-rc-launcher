@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { ExitError, type Credentials } from "../src/creds";
-import { hubClient } from "../src/hub";
+import { hubClient, HubError } from "../src/hub";
 import { parseCli } from "../src/args";
 
 type Req = { method: string; path: string; auth: string | null; ctype: string | null; body: string };
@@ -72,6 +72,14 @@ describe("hubClient.request", () => {
     const h = fakeHub(() => json({ error: "already running" }, 409));
     const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async (x) => x, now: () => 0 });
     await expect(c.request("POST", "/cli/api/hosts/local/instances", {})).rejects.toMatchObject({ code: 1, message: "already running" });
+  });
+  test("request throws HubError with status and body", async () => {
+    const h = fakeHub(() => json({ error: "untrusted folder", code: "untrusted" }, 428));
+    const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async (x) => x, now: () => 0 });
+    const e = await c.request("POST", "/x", {}).catch((x) => x);
+    expect(e).toBeInstanceOf(HubError);
+    expect(e).toBeInstanceOf(ExitError);
+    expect(e).toMatchObject({ status: 428, code: 1, message: "untrusted folder", body: { error: "untrusted folder", code: "untrusted" } });
   });
   test("204 returns undefined", async () => {
     const h = fakeHub(() => new Response(null, { status: 204 }));

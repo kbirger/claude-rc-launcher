@@ -36,6 +36,7 @@ function fakeInstances(tag: string) {
     },
     stop: async () => {},
     logs: async () => "",
+    trustFilter: async () => () => false,
   };
   return { svc, started };
 }

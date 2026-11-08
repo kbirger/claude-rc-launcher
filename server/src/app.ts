@@ -59,7 +59,15 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     if (!isObject(body)) throw new HttpError(400, "body must be an object");
     if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
     if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
-    const input = body.name === undefined ? { path: body.path } : { path: body.path, name: body.name };
+    if (body.user !== undefined && typeof body.user !== "string") throw new HttpError(400, "user must be a string");
+    if (body.user === "") throw new HttpError(400, "user must not be empty");
+    if (body.addTrust !== undefined && typeof body.addTrust !== "boolean") throw new HttpError(400, "addTrust must be a boolean");
+    const input = {
+      path: body.path,
+      ...(body.name === undefined ? {} : { name: body.name }),
+      ...(body.user === undefined ? {} : { user: body.user }),
+      ...(body.addTrust === undefined ? {} : { addTrust: body.addTrust }),
+    };
     return c.json(await instances.start(input), 201);
   });
   r.delete("/instances/:id", async (c) => {
@@ -80,13 +88,23 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     return c.json({ log: await instances.logs(id, lines) });
   });
 
-  r.get("/fs", async (c) => c.json(await listDirs(c.req.query("path"), cfg.roots)));
+  r.get("/users", async (c) => c.json(await instances.users()));
+  r.get("/fs", async (c) => {
+    const user = c.req.query("user");
+    if (user === "") throw new HttpError(400, "user must not be empty");
+    const trusted = await instances.trustFilter(user);
+    return c.json(await listDirs(c.req.query("path"), cfg.roots, false, trusted));
+  });
   r.post("/fs/mkdir", async (c) => {
     const body = await readJson(c);
     if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
       throw new HttpError(400, "parent and name are required strings");
     }
-    return c.json(await makeDir(body.parent, body.name, cfg.roots, dirOwner), 201);
+    if (body.user !== undefined && typeof body.user !== "string") throw new HttpError(400, "user must be a string");
+    if (body.user === "") throw new HttpError(400, "user must not be empty");
+    // The owner is resolved first, so an unknown user makes no folder.
+    const owner = body.user === undefined ? dirOwner : ((await instances.dirOwnerFor(body.user)) ?? dirOwner);
+    return c.json(await makeDir(body.parent, body.name, cfg.roots, owner), 201);
   });
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));

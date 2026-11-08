@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
 import { PathError, resolveWithinRoots } from "./paths";
 
-export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string }[] };
+export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
 
 async function resolveChecked(input: string, roots: string[]): Promise<string> {
   try {
@@ -30,9 +30,14 @@ function sameDir(a: string, b: string): boolean {
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-export async function listDirs(path: string | undefined, roots: string[], showHidden = false): Promise<DirListing> {
+export async function listDirs(
+  path: string | undefined,
+  roots: string[],
+  showHidden = false,
+  trusted?: (absPath: string) => boolean,
+): Promise<DirListing> {
   if (path === undefined) {
-    const dirs = (await realRoots(roots)).map((r) => ({ name: r, path: r }));
+    const dirs = (await realRoots(roots)).map((r) => (trusted ? { name: r, path: r, trusted: trusted(r) } : { name: r, path: r }));
     return { path: "", parent: null, dirs };
   }
   const resolved = await resolveChecked(path, roots);
@@ -42,16 +47,19 @@ export async function listDirs(path: string | undefined, roots: string[], showHi
   } catch {
     throw new HttpError(400, "cannot read directory");
   }
-  const dirs: { name: string; path: string }[] = [];
+  const dirs: { name: string; path: string; trusted?: boolean }[] = [];
+  // Trust is judged on the real path, as `start` does, so a link shares its target's flag.
+  const entry = (name: string, full: string, real: string) =>
+    trusted ? { name, path: full, trusted: trusted(real) } : { name, path: full };
   for (const e of entries) {
     if (!showHidden && e.name.startsWith(".")) continue;
     const full = join(resolved, e.name);
     if (e.isDirectory()) {
-      dirs.push({ name: e.name, path: full });
+      dirs.push(entry(e.name, full, full));
     } else if (e.isSymbolicLink()) {
       try {
-        await resolveWithinRoots(full, roots); // must be a dir inside the roots
-        dirs.push({ name: e.name, path: full });
+        const real = await resolveWithinRoots(full, roots); // must be a dir inside the roots
+        dirs.push(entry(e.name, full, real));
       } catch {
         // omit links that escape the roots, dangle, or are not directories
       }

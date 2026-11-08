@@ -43,6 +43,29 @@ describe("listDirs", () => {
     expect(r.dirs[0].path).toBe(join(root, "Alpha"));
     expect(r.path).toBe(root);
   });
+  test("listDirs marks each dir trusted from the callback", async () => {
+    const r = await listDirs(root, roots, false, (p) => p.endsWith("beta"));
+    expect(r.dirs.map((d: any) => [d.name, d.trusted])).toEqual([["Alpha", false], ["beta", true], ["charlie", false]]);
+  });
+  test("without a callback entries have no trusted field", async () => {
+    const r = await listDirs(root, roots);
+    for (const d of r.dirs) expect("trusted" in d).toBe(false);
+  });
+  test("root listing carries trusted too", async () => {
+    const r = await listDirs(undefined, roots, false, (p) => p === root);
+    expect(r.dirs).toEqual([{ name: root, path: root, trusted: true }]);
+  });
+  test.skipIf(win)("symlink trust follows the real path", async () => {
+    await symlink(join(root, "beta"), join(root, "lnk-t"));
+    try {
+      const a = await listDirs(root, roots, false, (p) => p === join(root, "beta"));
+      expect(a.dirs.find((d: any) => d.name === "lnk-t")).toEqual({ name: "lnk-t", path: join(root, "lnk-t"), trusted: true });
+      const b = await listDirs(root, roots, false, (p) => p === join(root, "lnk-t"));
+      expect((b.dirs.find((d: any) => d.name === "lnk-t") as any).trusted).toBe(false);
+    } finally {
+      await rm(join(root, "lnk-t"));
+    }
+  });
   test("showHidden", async () => {
     const r = await listDirs(root, roots, true);
     expect(r.dirs.map((d) => d.name)).toContain(".hid");
