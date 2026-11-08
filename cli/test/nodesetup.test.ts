@@ -13,7 +13,8 @@ const CONFIG = "/etc/claude-rc-launcher/config.toml";
 const UNIT_PATH = "/etc/systemd/system/claude-rc-launcher.service";
 const BIN = "/usr/local/bin/claude-rc-launcher";
 const CERT = "/var/lib/claude-rc-launcher/node-cert.pem";
-const enrollment = { oidc: { issuer: "https://auth.example.com/o/hub/", jwks_url: "https://auth.example.com/o/hub/jwks/", audience: "hub-client", caller_claim: "sub", caller_value: "svc-1" } };
+const KEY = Buffer.alloc(32, 7).toString("base64url");
+const enrollment = { hub_keys: [{ public_key: KEY }] };
 const ASSET = "claude-rc-launcher-linux-x64";
 const RELEASE = "https://github.com/kbirger/claude-rc-launcher/releases";
 const BINARY = new TextEncoder().encode("#!fake-binary");
@@ -127,7 +128,7 @@ describe("nodeSetup", () => {
     const cfg = parse(String(w.written.get(CONFIG)));
     expect(cfg).toMatchObject({ mode: "node", name: "kirhub", port: 8443, host: "192.168.1.111", serviceUser: "kir", roots: ["/home/kir/p"] });
     expect(cfg.node!.tls.names).toEqual(["kirhub", "192.168.1.111"]);
-    expect((cfg.node!.auth as { oidc?: any }).oidc!.callerValue).toBe("svc-1");
+    expect(cfg.node!.auth.hubKeys).toEqual([KEY]);
   });
 
   test("the unit is the shipped unit", async () => {

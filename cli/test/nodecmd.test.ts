@@ -9,7 +9,8 @@ import { realNodeFs, renderNodeConfig, type NodeFs } from "../src/nodecmd";
 
 const stops: (() => void)[] = [];
 afterAll(() => stops.forEach((s) => s()));
-const enrollment = { oidc: { issuer: "https://auth.example.com/o/hub/", jwks_url: "https://auth.example.com/o/hub/jwks/", audience: "hub-client", caller_claim: "sub", caller_value: "svc-1" } };
+const key = (n: number) => Buffer.alloc(32, n).toString("base64url"); // valid: 32 raw bytes
+const enrollment = { hub_keys: [{ public_key: key(1) }, { public_key: key(2) }] };
 const parse = (toml: string) => parseConfig(Bun.TOML.parse(toml), { readFile: () => "x" });
 
 describe("renderNodeConfig", () => {
@@ -20,7 +21,16 @@ describe("renderNodeConfig", () => {
     expect(cfg.mode).toBe("node");
     expect(cfg).toMatchObject({ name: "pi", port: 8443, host: "10.0.0.9", roots: ["/home/pi/projects"] });
     expect(cfg.node!.tls).toEqual({ stateDir: "/var/lib/claude-rc-launcher", names: ["pi.internal", "10.0.0.9"] });
-    expect((cfg.node!.auth as { oidc?: any }).oidc).toEqual({ jwksUrl: "https://auth.example.com/o/hub/jwks/", issuer: "https://auth.example.com/o/hub/", audience: "hub-client", callerClaim: "sub", callerValue: "svc-1" });
+    expect(cfg.node!.auth.hubKeys).toEqual([key(1), key(2)]);
+  });
+
+  test("one [[node_auth.hub_key]] table per key, in order, and no oidc table", () => {
+    const text = renderNodeConfig(base);
+    expect(text.match(/^\[\[node_auth\.hub_key\]\]$/gm)).toHaveLength(2);
+    expect(text).toContain(`public_key = "${key(1)}"`);
+    expect(text.indexOf(key(1))).toBeLessThan(text.indexOf(key(2)));
+    expect(text).not.toContain("node_auth.oidc");
+    expect(text).toMatch(/hub key is a public key.*not secret/i);
   });
 
   test("a service user is written to [instance] and parses", () => {
@@ -38,9 +48,9 @@ describe("renderNodeConfig", () => {
   });
 
   test("quotes, backslashes and newlines in values are escaped", () => {
-    const cfg = parse(renderNodeConfig({ ...base, name: 'a"b\\c\nd', enrollment: { oidc: { ...enrollment.oidc, caller_value: 'x"y\\z' } } }));
+    const cfg = parse(renderNodeConfig({ ...base, name: 'a"b\\c\nd', enrollment: { hub_keys: [{ public_key: key(3) }] } }));
     expect(cfg.name).toBe('a"b\\c\nd');
-    expect((cfg.node!.auth as { oidc?: any }).oidc!.callerValue).toBe('x"y\\z');
+    expect(cfg.node!.auth.hubKeys).toEqual([key(3)]);
   });
 
   test("the header says where the file came from and has no placeholder text", () => {
@@ -231,10 +241,10 @@ describe("claude-rc node config", () => {
   test("a hub error prints its text on stderr and writes nothing", async () => {
     const writes: string[] = [];
     const nodeFs: NodeFs = { exists: () => false, write: (p) => void writes.push(p), backup: () => {}, sudoWrite: () => {}, isRoot: () => true };
-    const s = setup({ "GET /cli/api/node-enrollment": () => Response.json({ error: "hub_auth.oidc is not configured" }, { status: 400 }) }, nodeFs);
+    const s = setup({ "GET /cli/api/node-enrollment": () => Response.json({ error: "the hub is not ready" }, { status: 400 }) }, nodeFs);
     const r = await s.run("node", "config", ...flagsOk);
     expect(r.code).toBe(1);
-    expect(s.err[0]).toContain("hub_auth.oidc");
+    expect(s.err[0]).toContain("the hub is not ready");
     expect(s.out).toHaveLength(0);
     expect(writes).toEqual([]);
   });
