@@ -8,7 +8,7 @@ import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
-import { HttpError, type InstanceService } from "./instances";
+import { HttpError, type Instances } from "./instances";
 import { PathError } from "./paths";
 import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type UpdateReport } from "./serviceupdate";
@@ -20,7 +20,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -41,7 +41,7 @@ function csrf(cfg: Config): MiddlewareHandler {
   };
 }
 
-export type InstanceApiDeps = { cfg: Config; instances: InstanceService; dirOwner?: DirOwner; update?: Updater };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; dirOwner?: DirOwner; update?: Updater };
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
@@ -118,7 +118,7 @@ export function onError(err: Error, c: Context) {
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: InstanceService; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater }): Hono {
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater }): Hono {
   const { cfg, instances, auth, dirOwner, update } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));

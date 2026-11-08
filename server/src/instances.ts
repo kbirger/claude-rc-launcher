@@ -16,6 +16,20 @@ export type Instance = { id: string; path: string; name: string; state: string; 
 
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 
+/**
+ * What the HTTP layer needs from an instance backend. `InstanceService` is the systemd one;
+ * another platform supplies its own and passes it in at start-up.
+ */
+export interface Instances {
+  list(): Promise<Instance[]>;
+  start(input: { path: string; name?: string; user?: string; addTrust?: boolean }): Promise<Instance>;
+  stop(id: string): Promise<void>;
+  logs(id: string, lines: number): Promise<string>;
+  users(): Promise<UsersInfo>;
+  trustFilter(user?: string): Promise<(absPath: string) => boolean>;
+  dirOwnerFor(user?: string): Promise<{ uid: number; gid: number } | undefined>;
+}
+
 /** The user an instance runs as: its unit values, and where its trust file lives. */
 type Target = { runAs: RunAs; uid?: number; gid?: number; isDefault: boolean };
 
@@ -46,7 +60,7 @@ function parseUnixTimestamp(v: string | undefined): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-export class InstanceService {
+export class InstanceService implements Instances {
   /** In-flight ids, with the user of an in-flight start when known (for the 409 message). */
   private inflight = new Map<string, string | undefined>();
   private userDir: UserDirectory;

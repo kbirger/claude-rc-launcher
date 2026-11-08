@@ -1,6 +1,6 @@
 import { createNodeApp, type Updater } from "./app";
 import type { Config } from "./config";
-import { bunRunner, InstanceService } from "./instances";
+import { bunRunner, InstanceService, type Instances } from "./instances";
 import { nodeAuth } from "./nodeauth";
 import { resolveDirOwner } from "./owner";
 import { realUpdateEnv } from "./realupdate";
@@ -8,7 +8,7 @@ import { withLongUpdates, type ServeLimits } from "./serve";
 import { createServiceUpdater } from "./serviceupdate";
 import { ensureNodeCert } from "./tls";
 
-export type NodeDeps = { instances?: InstanceService; update?: Updater; limits?: ServeLimits };
+export type NodeDeps = { instances?: Instances; update?: Updater; limits?: ServeLimits };
 
 export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ port: number; fingerprint: string; stop(): void }> {
   const node = cfg.node;

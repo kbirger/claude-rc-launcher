@@ -5,7 +5,7 @@ import type { Config } from "./config";
 import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
 import { loadOrCreateHubKey, type HubKey } from "./hubproof";
 import { HostRegistry } from "./hostregistry";
-import { bunRunner, InstanceService } from "./instances";
+import { bunRunner, InstanceService, type Instances } from "./instances";
 import { createJwtVerifier, remoteKeys, type JwtVerifier } from "./jwt";
 import { resolveDirOwner } from "./owner";
 import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
@@ -16,7 +16,7 @@ import { staticHandler } from "./static";
 import type { UserAuthStrategy } from "./userauth";
 import { loadWebFiles } from "./webfiles";
 
-export type HubDeps = { instances?: InstanceService; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits };
+export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits };
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
