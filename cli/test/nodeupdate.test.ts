@@ -25,6 +25,9 @@ type Opts = {
   /** What `systemctl is-active` answers, one entry per call. The last one repeats. */
   active?: boolean[];
   files?: Record<string, Uint8Array>;
+  /** Makes a sudo call fail. It gets the command line and how many times that same line was run before. */
+  fail?: (cmd: string, nth: number) => boolean;
+  journal?: string;
 };
 
 function fake(o: Opts = {}) {
@@ -33,6 +36,7 @@ function fake(o: Opts = {}) {
   const written = new Map<string, Uint8Array>();
   let clock = 0;
   let polls = 0;
+  const seen = new Map<string, number>();
   const existing = new Set(o.installed === false ? [] : [BIN, UNIT_PATH]);
   const sys: Sys = {
     platform: o.platform ?? "linux",
@@ -51,8 +55,12 @@ function fake(o: Opts = {}) {
       return { code: 0, stdout: "" };
     },
     sudo(args) {
-      calls.push(`sudo ${args.join(" ")}`);
-      if (args[0] === "journalctl") return { code: 0, stdout: "Nov 07 node[1]: boom: port in use", stderr: "" };
+      const cmd = args.join(" ");
+      calls.push(`sudo ${cmd}`);
+      const nth = seen.get(cmd) ?? 0;
+      seen.set(cmd, nth + 1);
+      if (o.fail?.(cmd, nth)) return { code: 1, stdout: "", stderr: "denied" };
+      if (args[0] === "journalctl") return { code: 0, stdout: o.journal ?? "Nov 07 node[1]: boom: port in use", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     },
     readFile: (p) => (p === BIN ? OLD : (o.files?.[p] ?? new Uint8Array())),
@@ -68,7 +76,10 @@ function fake(o: Opts = {}) {
       if (u.endsWith("/SHA256SUMS")) return new Response(o.sums ?? `${sha(NEW)}  ${ASSET}\n`);
       return new Response("nope", { status: 404 });
     }) as unknown as typeof fetch,
-    sleep: async (ms) => void (clock += ms),
+    sleep: async (ms) => {
+      calls.push(`sleep ${ms}`);
+      clock += ms;
+    },
     now: () => clock,
   };
   return { sys, calls, fetched, written, clock: () => clock };
@@ -92,13 +103,12 @@ describe("nodeUpdate", () => {
       `mv -f ${BIN}.new ${BIN}`,
       "systemctl restart claude-rc-launcher",
     ];
-    const sudo = sudoCalls(f.calls);
-    let at = -1;
-    for (const step of steps) {
-      const i = sudo.indexOf(step);
-      expect([step, i > at]).toEqual([step, true]);
-      at = i;
-    }
+    expect(sudoCalls(f.calls)).toEqual(steps);
+    expect(f.calls.slice(f.calls.indexOf("sudo systemctl restart claude-rc-launcher") + 1)).toEqual([
+      "run systemctl is-active claude-rc-launcher",
+      "sleep 2000",
+      "run systemctl is-active claude-rc-launcher",
+    ]);
     expect(f.written.get("/tmp/fake/claude-rc-launcher")).toEqual(NEW);
     const restart = f.calls.indexOf("sudo systemctl restart claude-rc-launcher");
     expect(f.calls.slice(restart + 1).some((c) => c === "run systemctl is-active claude-rc-launcher")).toBe(true);
@@ -106,11 +116,12 @@ describe("nodeUpdate", () => {
     expect(out.at(-1)).toBe(`updated ${BIN} (the previous binary is kept as ${BIN}.prev) and restarted claude-rc-launcher`);
   });
 
-  test("the service must still be active after a further 2 seconds", async () => {
+  test("a service that is active and then inactive within the 2 second window fails and rolls back", async () => {
     const f = fake({ active: [true, false] });
     const e = await fails(update(f.sys));
     expect(e).toBeInstanceOf(ExitError);
-    expect(f.clock()).toBeGreaterThanOrEqual(2000);
+    const i = f.calls.indexOf("sleep 2000");
+    expect(f.calls.slice(i - 1, i + 2)).toEqual(["run systemctl is-active claude-rc-launcher", "sleep 2000", "run systemctl is-active claude-rc-launcher"]);
     expect(sudoCalls(f.calls)).toContain(`mv -f ${BIN}.prev ${BIN}`);
   });
 
@@ -136,6 +147,64 @@ describe("nodeUpdate", () => {
     expect(sudo.slice(restore + 1)).toContain("systemctl restart claude-rc-launcher");
     expect(sudo.at(-1)).toBe("journalctl -u claude-rc-launcher -n 15 --no-pager");
     expect(out.join("\n")).toContain("boom: port in use");
+  });
+
+  describe("failures during the install", () => {
+    const noReplace = (f: ReturnType<typeof fake>) => {
+      expect(f.calls.some((c) => c.includes("systemctl restart"))).toBe(false);
+      expect(f.calls.some((c) => c.includes(`mv -f ${BIN}.prev`))).toBe(false);
+    };
+    test("cp -p failing stops before anything is installed", async () => {
+      const f = fake({ fail: (c) => c.startsWith("cp -p") });
+      const e = await fails(update(f.sys));
+      expect(e!.message).toContain("backing up");
+      expect(sudoCalls(f.calls)).toEqual([`cp -p ${BIN} ${BIN}.prev`]);
+    });
+    test("install failing leaves the binary untouched and does not restart", async () => {
+      const f = fake({ fail: (c) => c.startsWith("install ") });
+      expect(await fails(update(f.sys))).toBeInstanceOf(ExitError);
+      expect(sudoCalls(f.calls).some((c) => c.startsWith(`mv -f ${BIN}.new`))).toBe(false);
+      noReplace(f);
+    });
+    test("mv failing removes the .new file, leaves the binary untouched and does not restart", async () => {
+      const f = fake({ fail: (c) => c === `mv -f ${BIN}.new ${BIN}` });
+      expect(await fails(update(f.sys))).toBeInstanceOf(ExitError);
+      expect(sudoCalls(f.calls).at(-1)).toBe(`rm -f ${BIN}.new`);
+      noReplace(f);
+    });
+  });
+
+  test("systemctl restart returning non-zero triggers the rollback", async () => {
+    const f = fake({ fail: (c, n) => c === "systemctl restart claude-rc-launcher" && n === 0 });
+    const e = await fails(update(f.sys));
+    expect(e!.message).toContain("previous binary was restored");
+    expect(sudoCalls(f.calls)).toContain(`mv -f ${BIN}.prev ${BIN}`);
+    expect(f.calls.some((c) => c.includes("is-active"))).toBe(false);
+  });
+
+  test("when the restore mv fails the message says the new binary is still installed and gives the manual command", async () => {
+    const f = fake({ active: [false], fail: (c) => c === `mv -f ${BIN}.prev ${BIN}` });
+    const e = await fails(update(f.sys));
+    expect(e!.message).toContain("NEW binary is still installed");
+    expect(e!.message).toContain(`sudo mv -f ${BIN}.prev ${BIN} && sudo systemctl restart claude-rc-launcher`);
+    expect(sudoCalls(f.calls).filter((c) => c.startsWith("systemctl restart"))).toHaveLength(1);
+  });
+
+  test("when the second restart fails the message says the service did not restart and the journal is shown", async () => {
+    const f = fake({ active: [false], fail: (c, n) => c === "systemctl restart claude-rc-launcher" && n === 1 });
+    const out: string[] = [];
+    const e = await fails(nodeUpdate({ flags: {}, out: (s) => out.push(s), sys: f.sys }));
+    expect(e!.message).toContain("back in place");
+    expect(e!.message).toContain("did not restart");
+    expect(e!.message).not.toContain("service was restarted");
+    expect(out.join("\n")).toContain("boom: port in use");
+  });
+
+  test("an empty journal prints no blank line", async () => {
+    const f = fake({ active: [false], journal: "" });
+    const out: string[] = [];
+    await fails(nodeUpdate({ flags: {}, out: (s) => out.push(s), sys: f.sys }));
+    expect(out.filter((l) => l === "")).toEqual([]);
   });
 
   test("the same checksum as the installed binary changes nothing and does not restart", async () => {
@@ -272,6 +341,17 @@ describe("claude-rc node update", () => {
     expect(r.err.join("\n")).toContain("unexpected argument: extra");
     expect(f.calls).toEqual([]);
   });
+
+  for (const [flag, value] of [["--hub", "https://rc.example.com"], ["--force", ""], ["--listen", "10.0.0.9"], ["--name", "x"], ["--roots", "/a"], ["--url", "https://x"], ["--service-user", "kir"]] as const) {
+    test(`rejects ${flag}, which does not apply to node update`, async () => {
+      const f = fake();
+      const r = await cli(f.sys).run("node", "update", flag, ...(value ? [value] : []));
+      expect(r.code).toBe(1);
+      expect(r.err.join("\n")).toContain(`${flag} does not apply to node update`);
+      expect(r.err.join("\n")).toContain("claude-rc node update [--binary <file>] [--release <tag>]");
+      expect(f.calls).toEqual([]);
+    });
+  }
 
   test("rejects unknown flags", async () => {
     const r = await cli(fake().sys).run("node", "update", "--bogus");

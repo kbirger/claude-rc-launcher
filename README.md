@@ -466,6 +466,10 @@ one through `sudo` and restarts the service. It then waits up to 30 seconds for 
 If the service does not become active and stay active, the command puts the `.prev` binary back, restarts the service
 and prints the last 15 log lines. It then stops with an error.
 
+A later successful update overwrites `.prev` with the binary that was installed before it. After a rollback the `.prev`
+file is gone, because the command moved it back. If the command cannot restore the old binary, it says so, tells you
+that the new binary is still installed and prints the commands to restore it by hand.
+
 ### Write a node's configuration
 
 On the node machine, install the CLI, run `claude-rc login --hub <url>`, and let the hub fill in the part of the

@@ -105,7 +105,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
 
     if (name === "node" && args[0] === "update") {
       // Works on the node machine only and talks to no hub, so no login is needed.
-      if (args.length > 1) throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. usage: claude-rc node update [--binary <file>] [--release <tag>]`, 1);
+      const updateUsage = "usage: claude-rc node update [--binary <file>] [--release <tag>]";
+      if (args.length > 1) throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. ${updateUsage}`, 1);
+      const stray = Object.keys(flags).find((f) => !["binary", "release", "json", "help"].includes(f));
+      if (stray) throw new ExitError(`--${stray} does not apply to node update. ${updateUsage}`, 1);
       await nodeUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
       return 0;
     }

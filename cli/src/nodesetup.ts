@@ -245,6 +245,9 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
   try {
     sudo(["install", "-m", "755", tmp, `${BIN}.new`], "installing the binary");
     sudo(["mv", "-f", `${BIN}.new`, BIN], "installing the binary");
+  } catch (e) {
+    sys.sudo(["rm", "-f", `${BIN}.new`]);
+    throw e;
   } finally {
     sys.removeTemp(tmp);
   }
@@ -266,13 +269,23 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
   if (healthy) return out(`updated ${BIN} (the previous binary is kept as ${BIN}.prev) and restarted ${NAME}`);
 
   // 5. Roll back
-  const restored = sys.sudo(["mv", "-f", `${BIN}.prev`, BIN]).code === 0;
-  if (restored) sys.sudo(["systemctl", "restart", NAME]);
-  out(sys.sudo(["journalctl", "-u", NAME, "-n", "15", "--no-pager"]).stdout.trim());
+  const log = () => {
+    const text = sys.sudo(["journalctl", "-u", NAME, "-n", "15", "--no-pager"]).stdout.trim();
+    if (text) out(text);
+  };
+  if (sys.sudo(["mv", "-f", `${BIN}.prev`, BIN]).code !== 0) {
+    log();
+    throw new ExitError(
+      `the update failed and the previous binary could not be restored. The NEW binary is still installed and ${NAME} may be down or crash-looping. The previous binary is at ${BIN}.prev. To restore it by hand, run: sudo mv -f ${BIN}.prev ${BIN} && sudo systemctl restart ${NAME}`,
+      1,
+    );
+  }
+  const restarted = sys.sudo(["systemctl", "restart", NAME]).code === 0;
+  log();
   throw new ExitError(
-    restored
+    restarted
       ? `the update failed: ${NAME} did not become active and stay active within ${HEALTH_WAIT_MS / 1000} seconds. The previous binary was restored and the service was restarted`
-      : `the update failed and the previous binary could not be restored. It is still at ${BIN}.prev`,
+      : `the update failed: ${NAME} did not become active and stay active within ${HEALTH_WAIT_MS / 1000} seconds. The previous binary is back in place at ${BIN}, but the service did not restart. Last log lines are above`,
     1,
   );
 }
