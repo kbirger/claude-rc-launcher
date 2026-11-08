@@ -110,9 +110,30 @@ Test setup: WinSW v2.12.0, claude 2.1.319, service installed with `install /p` a
 
 - **Passed:** a service that runs as a named user can read the `claude` sign-in data. The session connected and appeared in claude.ai/code.
 - **Passed:** a service restart. WinSW stopped the child process (exit code 0), started a new one, and the session connected again.
-- **Found:** `claude remote-control` exits with code 1 if the working directory is not trusted. The error is `Workspace not trusted. Please run claude in <dir> first`. WinSW then restarts it every 5 seconds. The Windows backend must mark each instance directory as trusted before it starts the instance. The Linux code does this in `server/src/trust.ts`. Open question: where Windows keeps the trust data.
+- **Found:** `claude remote-control` exits with code 1 if the working directory is not trusted. The error is `Workspace not trusted. Please run claude in <dir> first`. WinSW then restarts it every 5 seconds. The Windows backend must mark each instance directory as trusted before it starts the instance. The Linux code does this in `server/src/trust.ts`. See "Workspace trust on Windows" below.
 - **Found:** `install /p` asks for the account password on the console. `install.ps1` must handle this. Do not write the password in the XML as plain text.
 - **Not tested yet:** survival of a full logoff. A screen lock did not count as a test. Do this test later and update this section.
+
+### Workspace trust on Windows (tested 2026-11-08)
+
+Windows `claude` keeps trust in `%USERPROFILE%\.claude.json`. The layout is the same as on Linux: `projects.<path>.hasTrustDialogAccepted = true`. The sign-in check runs before the trust check, so the test needed the real sign-in. I tested `claude remote-control` in an empty folder, with the entry added to the real file (backed up first) and removed afterwards.
+
+| Entry in `projects` | Result |
+|---|---|
+| none | `Workspace not trusted` |
+| `C:\Users\kir\trust-probe-dir` (backslash) | `Workspace not trusted` |
+| `c:/users/kir/trust-probe-dir` (forward slash, lower case) | `Workspace not trusted` |
+| `C:/Users/kir/trust-probe-dir` (forward slash, exact case) | Connected |
+| `C:/Users/kir/trust-probe-dir`, run in the child folder `...\child` | Connected |
+
+Decisions for the Windows backend:
+
+- Check trust by exact match on the forward-slash form of the path, with the same case as the real path. Convert `\` to `/` before the look-up. A backslash-only entry does not count as trusted, even though some exist in real files.
+- Keep the existing walk to parent folders. A trusted parent covers its child folders.
+- Write new entries in the forward-slash form, with the case of the real path.
+- Do not change `trust.ts`. Put a Windows `TrustStore` in `server/src/win/`.
+- Known risk: `claude` rewrites `.claude.json` all the time, so a read-modify-write can lose a change made in between. The Linux code has the same race. Keep the atomic rename.
+- Open: `realpath` on Windows can return a different case than the one `claude` writes. The backend must use the same path form as `claude` for the start folder.
 
 ## Suggested order of work
 
