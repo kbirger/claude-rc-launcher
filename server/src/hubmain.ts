@@ -10,12 +10,13 @@ import { createJwtVerifier, remoteKeys, type JwtVerifier } from "./jwt";
 import { resolveDirOwner } from "./owner";
 import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
+import { withLongUpdates, type ServeLimits } from "./serve";
 import { createServiceUpdater } from "./serviceupdate";
 import { staticHandler } from "./static";
 import type { UserAuthStrategy } from "./userauth";
 import { loadWebFiles } from "./webfiles";
 
-export type HubDeps = { instances?: InstanceService; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater };
+export type HubDeps = { instances?: InstanceService; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits };
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
@@ -69,7 +70,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
   const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, ...(cli ? { cli } : {}) });
-  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });
+  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);
   const listed = hosts.list();

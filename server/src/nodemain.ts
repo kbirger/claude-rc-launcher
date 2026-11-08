@@ -4,10 +4,11 @@ import { bunRunner, InstanceService } from "./instances";
 import { nodeAuth } from "./nodeauth";
 import { resolveDirOwner } from "./owner";
 import { realUpdateEnv } from "./realupdate";
+import { withLongUpdates, type ServeLimits } from "./serve";
 import { createServiceUpdater } from "./serviceupdate";
 import { ensureNodeCert } from "./tls";
 
-export type NodeDeps = { instances?: InstanceService; update?: Updater };
+export type NodeDeps = { instances?: InstanceService; update?: Updater; limits?: ServeLimits };
 
 export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ port: number; fingerprint: string; stop(): void }> {
   const node = cfg.node;
@@ -24,7 +25,7 @@ export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ por
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
   const app = createNodeApp({ cfg, instances, auth, dirOwner, update });
-  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, maxRequestBodySize: 1024 * 1024, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
+  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, maxRequestBodySize: 1024 * 1024, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`node "${cfg.name}" listening on https://${cfg.host}:${server.port}`);
   return { port: server.port!, fingerprint: cert.fingerprintSha256, stop: () => void server.stop(true) };
 }

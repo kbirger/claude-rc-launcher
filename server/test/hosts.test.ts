@@ -520,7 +520,7 @@ describe("node and update routes", () => {
       },
     };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]), { requestTimeoutMs: 1_234 });
-    expect((await upPost(app, "/api/hosts/nas/update", { release: "v1.1.0" })).status).toBe(202);
+    expect((await upPost(app, "/api/hosts/nas/update", { release: "v1.1.0", evil: 1 })).status).toBe(202);
     await get(app, "/api/hosts/nas/node");
     expect(calls).toEqual([
       ["POST", "/api/update", { release: "v1.1.0" }, 180_000],

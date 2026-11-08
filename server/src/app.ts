@@ -58,6 +58,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     } catch (e) {
       if (e instanceof UpdateRefused) throw new HttpError(e.status, e.message);
       console.error(e);
+      // On purpose the message goes back to the caller: an authenticated admin needs the reason in the update report.
       throw new HttpError(500, e instanceof Error ? e.message : String(e));
     }
     // 202: the watchdog restarts the service a moment after this answer is sent.

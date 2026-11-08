@@ -205,6 +205,52 @@ describe("update end to end", () => {
   });
 });
 
+describe("a slow update end to end", () => {
+  test("a node update that is silent past the idle limit still reaches the CLI through the hub", async () => {
+    // A short server-wide idle limit stands in for Bun's 10 s default, so the test takes seconds, not minutes.
+    const limits = { idleTimeout: 1, updateIdleTimeout: 30 };
+    const sec = generateSecret();
+    const slow = { run: async (): Promise<UpdateReport> => (await Bun.sleep(9_000), { status: "up-to-date", from: "1", clients: [] }) };
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
+      hosts: [],
+    } as unknown as Config;
+    const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify, update: slow, limits }));
+    stoppers.push(hub.stop);
+    const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
+    const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
+    const enr = (await (await fetch(hubUrl("/cli/api/node-enrollment"), { headers: cliH })).json()) as { hub_keys: { public_key: string }[] };
+    const stateDir = tmp();
+    const nodeCfg = {
+      ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
+      node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [enr.hub_keys[0]!.public_key], secretHashes: [sec.sha256] } },
+    } as unknown as Config;
+    const node = await quiet(() => startNode(nodeCfg, { instances: fakeInstances("pi").svc, update: slow, limits }));
+    stoppers.push(node.stop);
+    const fp = certFingerprint(readFileSync(path.join(stateDir, "node-cert.pem"), "utf8"));
+    await quiet(() => fetch(hubUrl("/cli/api/hosts"), { method: "POST", headers: cliH, body: JSON.stringify({ id: "pi", url: `https://localhost:${node.port}`, fingerprint: fp }) }));
+
+    const certPem = readFileSync(path.join(stateDir, "node-cert.pem"), "utf8");
+    // A fresh TLS connection straight to the node: this is the request Bun closes without the longer update limit.
+    const direct = fetch(`https://localhost:${node.port}/api/update`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${sec.secret}`, "content-type": "application/json" },
+      body: "{}",
+      tls: { ca: certPem },
+    } as RequestInit).then((r) => r.status, (e: Error) => e.message);
+    const [remote, local, straight] = await quiet(() =>
+      Promise.all([
+        ...["pi", "local"].map((h) => fetch(hubUrl(`/cli/api/hosts/${h}/update`), { method: "POST", headers: cliH, body: "{}" }).then((r) => r.status)),
+        direct,
+      ]),
+    );
+    expect([remote, local, straight]).toEqual([200, 200, 200]);
+  }, 30_000);
+});
+
 describe("hub key log line", () => {
   test("startHub logs the public key that node-enrollment returns", async () => {
     const hubCfg = {
