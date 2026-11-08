@@ -80,12 +80,12 @@ function fake(o: { existing?: string[]; active?: boolean; users?: string[]; plat
   return { sys, w };
 }
 
-function fakeHub(fail?: string) {
+function fakeHub(fail?: string, enroll: unknown = enrollment) {
   const requests: { method: string; path: string; body?: any }[] = [];
   const hub = {
     request: async (method: string, p: string, body?: unknown) => {
       requests.push({ method, path: p, body });
-      if (p === "/cli/api/node-enrollment") return enrollment;
+      if (p === "/cli/api/node-enrollment") return enroll;
       if (fail) throw new ExitError(fail, 1);
       return { id: "kirhub", source: "managed" };
     },
@@ -204,6 +204,20 @@ describe("nodeSetup", () => {
     const noSystemctl = fake();
     noSystemctl.sys.hasCommand = () => false;
     expect((await fails(run(noSystemctl.sys, fakeHub().hub)))?.message).toContain("systemctl");
+  });
+
+  test("an old hub (oidc, no hub_keys) or an empty hub_keys is refused before anything is written", async () => {
+    for (const [name, enroll] of [["old hub", { oidc: { issuer: "https://idp.example.com" } }], ["empty hub_keys", { hub_keys: [] }]] as const) {
+      const { sys, w } = fake();
+      const { hub, requests } = fakeHub(undefined, enroll);
+      const e = await fails(run(sys, hub));
+      expect([name, e?.message]).toEqual([name, "the hub did not return a hub key. Upgrade the hub to a version that supports hub keys."]);
+      expect(e?.code).toBe(1);
+      expect(requests.map((r) => r.path)).toEqual(["/cli/api/node-enrollment"]);
+      expect(w.calls.filter((c) => c.startsWith("sudo "))).toEqual([]);
+      expect(w.written.size).toBe(0);
+      expect(w.fetched).toEqual([]);
+    }
   });
 
   test("a node that never becomes healthy prints the journal and does not register", async () => {

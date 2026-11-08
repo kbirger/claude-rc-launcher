@@ -8,6 +8,15 @@ import type { HubClient } from "./hub";
 
 export type Enrollment = { hub_keys: { public_key: string }[] };
 
+/** Checks the hub's enrollment response. An old hub sends `oidc` and no `hub_keys`. */
+export function requireHubKeys(e: unknown): Enrollment {
+  const keys = (e as { hub_keys?: unknown } | null | undefined)?.hub_keys;
+  if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof (k as { public_key?: unknown } | null)?.public_key === "string")) {
+    throw new ExitError("the hub did not return a hub key. Upgrade the hub to a version that supports hub keys.", 1);
+  }
+  return e as Enrollment;
+}
+
 const q = (s: string) => JSON.stringify(s); // a JSON string is a valid TOML basic string
 const list = (a: string[]) => `[${a.map(q).join(", ")}]`;
 const isAbs = (p: string) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p);
@@ -112,7 +121,7 @@ export async function nodeConfig(o: { flags: Flags; hubUrl: string; hub: HubClie
   const exists = file !== "-" && fs.exists(file);
   if (exists && !flags.force) throw new ExitError(`${file} already exists. Use --force to replace it (the old file is kept as ${file}.bak)`, 1);
 
-  const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
+  const enrollment = requireHubKeys(await o.hub.request<unknown>("GET", "/cli/api/node-enrollment"));
   const text = renderNodeConfig({ hub: o.hubUrl, enrollment, ...nf });
   if (file === "-") return o.out(text);
 

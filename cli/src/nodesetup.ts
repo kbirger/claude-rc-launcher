@@ -7,7 +7,7 @@ import UNIT_TEXT from "../../deploy/claude-rc-launcher.service" with { type: "te
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
-import { nodeFlags, renderNodeConfig, type Enrollment } from "./nodecmd";
+import { nodeFlags, renderNodeConfig, requireHubKeys } from "./nodecmd";
 
 /** The same file as `deploy/claude-rc-launcher.service`, compiled into the CLI. */
 export const UNIT: string = UNIT_TEXT;
@@ -157,7 +157,7 @@ export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClien
   }
 
   // 2. The hub's values
-  const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
+  const enrollment = requireHubKeys(await o.hub.request<unknown>("GET", "/cli/api/node-enrollment"));
 
   // 3. The server binary
   const binary = await obtainBinary(sys, flags, `${NAME}-linux-${cpu}`, out);

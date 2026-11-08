@@ -172,6 +172,22 @@ describe("claude-rc node config", () => {
     expect(s.err[0]).toContain("EROFS");
   });
 
+  test("an old hub (oidc, no hub_keys), an empty hub_keys or a bad entry is refused and nothing is written", async () => {
+    const bad: Record<string, unknown> = {
+      "old hub": { oidc: { issuer: "https://idp.example.com", client_id: "c" } },
+      "empty hub_keys": { hub_keys: [] },
+      "entry without public_key": { hub_keys: [{ public_key: key(1) }, {}] },
+    };
+    for (const [name, body] of Object.entries(bad)) {
+      const nodeFs: NodeFs = { exists: () => false, write: () => { throw new Error("must not write"); }, backup: () => {}, sudoWrite: () => { throw new Error("must not run sudo"); }, isRoot: () => true };
+      const s = setup({ "GET /cli/api/node-enrollment": () => body }, nodeFs);
+      const r = await s.run("node", "config", ...flagsOk);
+      expect([name, r.code]).toEqual([name, 1]);
+      expect(s.err.join("\n")).toContain("the hub did not return a hub key. Upgrade the hub to a version that supports hub keys.");
+      expect(s.out).toEqual([]);
+    }
+  });
+
   test("a stray argument is refused, because a space after a comma in --names splits it", async () => {
     const s = setup({ "GET /cli/api/node-enrollment": () => enrollment });
     const r = await s.run("node", "config", "--listen", "10.0.0.9", "--names", "pi.internal,", "10.0.0.1", "--output", "-");
