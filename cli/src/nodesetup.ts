@@ -1,5 +1,5 @@
 import { createHash, X509Certificate } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -30,12 +30,16 @@ type Result = { code: number; stdout: string; stderr: string };
 export interface Sys {
   platform: string;
   arch: string;
+  /** The path of the running executable. */
+  execPath?: string;
   isRoot(): boolean;
   hasCommand(name: string): boolean;
   localAddresses(): string[];
   exists(path: string): boolean;
-  /** Runs a command without sudo. */
-  run(args: string[]): { code: number; stdout: string };
+  /** Whether the current user can create and replace files in this directory. */
+  writable?(dir: string): boolean;
+  /** Runs a command without sudo. A command that runs longer than `timeoutMs` is killed and counts as a failure. */
+  run(args: string[], opts?: { timeoutMs?: number }): { code: number; stdout: string; stderr?: string };
   /** Runs a command with sudo (without it, for root). Input goes to stdin. */
   sudo(args: string[], input?: string | Uint8Array): Result;
   readFile(path: string): Uint8Array;
@@ -49,13 +53,22 @@ export interface Sys {
 export const realSys: Sys = {
   platform: process.platform,
   arch: process.arch,
+  execPath: process.execPath,
   isRoot: () => process.getuid?.() === 0,
   hasCommand: (n) => Bun.which(n) !== null,
   localAddresses: () => Object.values(os.networkInterfaces()).flatMap((l) => (l ?? []).map((a) => a.address)),
   exists: (p) => existsSync(p),
-  run(args) {
-    const r = spawnSync(args[0]!, args.slice(1), { encoding: "utf8" });
-    return { code: r.status ?? 1, stdout: r.stdout ?? "" };
+  writable(dir) {
+    try {
+      accessSync(dir, constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  run(args, opts) {
+    const r = spawnSync(args[0]!, args.slice(1), { encoding: "utf8", ...(opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const } : {}) });
+    return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.error ? r.error.message : (r.stderr ?? "") };
   },
   sudo(args, input) {
     const argv = process.getuid?.() === 0 ? args : ["sudo", ...args];
@@ -84,15 +97,17 @@ export const realSys: Sys = {
 };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
-const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+export const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-const releaseCpu = (sys: Sys) => (sys.arch === "x64" ? "x64" : sys.arch === "arm64" ? "arm64" : undefined);
+export const releaseCpu = (sys: Sys) => (sys.arch === "x64" ? "x64" : sys.arch === "arm64" ? "arm64" : undefined);
 
-/** The server binary for `node setup` and `node update`: the `--binary` file, or the release asset after its SHA256SUMS check. */
-async function obtainBinary(sys: Sys, flags: Flags, cpu: string | undefined, out: (s: string) => void): Promise<Uint8Array> {
+/**
+ * The binary for `node setup`, `node update` and `update`: the `--binary` file, or the release asset (for example
+ * `claude-rc-linux-x64`) after its SHA256SUMS check.
+ */
+export async function obtainBinary(sys: Sys, flags: Flags, asset: string, out: (s: string) => void): Promise<Uint8Array> {
   if (flags.binary) return sys.readFile(flags.binary);
   const base = `https://github.com/${REPO}/releases/${flags.release ? `download/${flags.release}` : "latest/download"}`;
-  const asset = `${NAME}-linux-${cpu}`;
   out(`downloading ${asset} (${flags.release ?? "latest release"})`);
   const [bin, sums] = await Promise.all([get(sys, `${base}/${asset}`), get(sys, `${base}/SHA256SUMS`)]);
   const line = new TextDecoder().decode(sums).split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset);
@@ -145,7 +160,7 @@ export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClien
   const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
 
   // 3. The server binary
-  const binary = await obtainBinary(sys, flags, cpu, out);
+  const binary = await obtainBinary(sys, flags, `${NAME}-linux-${cpu}`, out);
   const config = renderNodeConfig({ hub: o.hubUrl, enrollment, ...nf });
 
   // 4. Install
@@ -231,7 +246,7 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
   if (!sys.exists(BIN) || !sys.exists(UNIT_PATH)) throw new ExitError(`this machine is not set up as a node (${BIN} or ${UNIT_PATH} is missing). Run "claude-rc node setup" first`, 1);
 
   // 2. The new binary
-  const binary = await obtainBinary(sys, flags, cpu, out);
+  const binary = await obtainBinary(sys, flags, `${NAME}-linux-${cpu}`, out);
   if (sha256(binary) === sha256(sys.readFile(BIN))) return out("already up to date");
 
   // 3. Install
@@ -240,10 +255,10 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
     if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
     return r;
   };
-  sudo(["cp", "-p", BIN, `${BIN}.prev`], "backing up the installed binary");
   const tmp = sys.writeTemp(NAME, binary);
   try {
     sudo(["install", "-m", "755", tmp, `${BIN}.new`], "installing the binary");
+    sudo(["cp", "-p", BIN, `${BIN}.prev`], "backing up the installed binary");
     sudo(["mv", "-f", `${BIN}.new`, BIN], "installing the binary");
   } catch (e) {
     sys.sudo(["rm", "-f", `${BIN}.new`]);

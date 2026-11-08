@@ -425,6 +425,32 @@ you must log in again. The login is saved in `~/.config/claude-rc/credentials.js
 honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
 reads no other environment variable.
 
+### Update the client
+
+To update the `claude-rc` program itself, run this on any machine that has the compiled binary:
+
+```sh
+claude-rc update [--release <tag>]
+```
+
+The command works on Linux and macOS. On Windows, download the new `claude-rc-windows-x64.exe` from the release page
+by hand. `install-cli.sh` is still the way to install the client the first time.
+
+The command needs no login and sends nothing to the hub. It changes no other file, so your saved login and your
+configuration stay as they are. If you run `claude-rc` from source, the command stops and tells you so.
+
+Without flags, it downloads the latest release for this platform and makes sure that the file matches `SHA256SUMS`.
+`--release <tag>` picks another release. If the checksum does not match, the command installs nothing.
+
+If the new binary is the same as the running one, the command prints `claude-rc is already up to date` and changes
+nothing. If it is different, the command copies the running binary to `<path>.prev` and replaces it. It uses `sudo`
+only when your user cannot write to the directory of the binary.
+
+It then runs the new binary with `--version`. If that fails, the command puts `<path>.prev` back and stops with an
+error. If it cannot restore the old binary, it says so and prints the `mv -f <path>.prev <path>` command to run by hand.
+
+A later successful update overwrites `.prev` with the binary that was installed before it.
+
 ### Set up a node with one command
 
 On the machine that should become a node, with the CLI installed (a release asset, see above):

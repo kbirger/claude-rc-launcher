@@ -9,6 +9,7 @@ import { hubClient } from "./hub";
 import { nodeConfig, type NodeFs } from "./nodecmd";
 import { nodeSetup, nodeUpdate, type Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
+import { selfUpdate } from "./update";
 import { VERSION } from "../../server/src/version";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
@@ -29,6 +30,7 @@ Commands:
   mkdir <parent> <name>              make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
+  update [--release tag]             update this claude-rc binary
   node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force]
                                      install, start and register this machine as a node
   node update [--binary file] [--release tag]
@@ -107,7 +109,17 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       return 0;
     }
 
-    if (name !== "host" && name !== "node" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+    if (name !== "host" && name !== "node" && name !== "update" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+
+    if (name === "update") {
+      // Works on any machine with the compiled binary and talks to no hub, so no login is needed.
+      const updateUsage = "usage: claude-rc update [--release <tag>]";
+      if (args.length > 0) throw new ExitError(`unexpected argument${args.length > 1 ? "s" : ""}: ${args.join(" ")}. ${updateUsage}`, 1);
+      const stray = Object.keys(flags).find((f) => !["release", "json", "help", "version"].includes(f));
+      if (stray) throw new ExitError(`--${stray} does not apply to update. ${updateUsage}`, 1);
+      await selfUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+      return 0;
+    }
 
     if (name === "node" && args[0] === "update") {
       // Works on the node machine only and talks to no hub, so no login is needed.
