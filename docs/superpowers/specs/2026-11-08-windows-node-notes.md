@@ -1,6 +1,6 @@
 # Windows node: findings and plan
 
-Status: research notes. No code is written yet. This file records the decisions and open questions so that work can continue on a Windows machine.
+Status (2026-11-08): all seven steps below are built and tested on a Windows machine, on the branch `feat/instances-interface`. The release workflow and the Windows CI job are written but have not run on GitHub yet. This file records the decisions and what was found on the way.
 
 ## Goal
 
@@ -86,14 +86,14 @@ This is new code, about 200 to 300 lines. It must do the following:
 
 ## Self-update on Windows
 
-Windows does not let a process overwrite its own running `.exe`. Use this sequence:
+Built in `server/src/win/update.ts` and `deploy/windows/claude-rc-launcher-run.ps1`. The first plan was a helper script that outlives the service. It does not work: the children of the agent die with it (tested), and WinSW 2.12 has no start hook (tested: `<prestart>` is silently ignored). The design that was built:
 
-1. Download the new file next to the old one and check its hash.
-2. Start a helper script that outlives the service.
-3. The helper stops the service, renames the files, and starts the service.
-4. If the new service does not become healthy, the helper restores the old file.
+1. The agent downloads `claude-rc-launcher-win-x64.exe`, checks it against `SHA256SUMS`, and runs the new file with `--version` before it replaces anything.
+2. A running `.exe` can be renamed but not overwritten, so the swap is two renames: `<exe>` to `<exe>.prev`, then `<exe>.new` to `<exe>`. The agent writes `update-pending.json` and exits with code 75. WinSW restarts it on failure.
+3. WinSW runs the launcher script, not the agent. The launcher counts every start while the marker exists. After 3 unconfirmed starts it moves `<exe>.prev` back and deletes the marker.
+4. The new agent deletes the marker after 30 seconds, the same time as on Linux.
 
-This is the same idea as the watchdog in `serviceupdate.ts`, written in PowerShell.
+The service account gets Modify rights on the install folder, because the agent renames files there. The Linux updater is not changed. Tested on the installed service: a good release is kept, and a release that answers `--version` but crashes is rolled back in about 23 seconds. Not tested: the whole path through a real GitHub release and the hub, because no release has the Windows asset yet.
 
 ## Open risk: run claude remote-control as a service
 
@@ -138,10 +138,17 @@ Decisions for the Windows backend:
 
 ## Suggested order of work
 
-1. Run the manual test for the open risk above.
-2. Extract the instance interface in shared code. Make sure that the Linux tests still pass.
-3. Add the path rules for Windows.
-4. Write the Windows instance backend and `index.win.ts`.
-5. Write the WinSW XML and `install.ps1`.
-6. Write the Windows updater.
-7. Add the build target and the release asset.
+1. Run the manual test for the open risk above. Done. Open: the logoff test.
+2. Extract the instance interface in shared code. Done.
+3. Add the path rules for Windows. Done (only `defaultName` needed a change).
+4. Write the Windows instance backend and `index.win.ts`. Done.
+5. Write the WinSW XML and `install.ps1`. Done.
+6. Write the Windows updater. Done.
+7. Add the build target and the release asset. Done: `bun run build:win`, the release workflow, a Windows CI job and the README.
+
+Still open:
+
+- The logoff test: does the service survive a full sign-out of the Windows user?
+- The first real release with the Windows asset, then `claude-rc update --all-nodes` through the hub against it.
+- The Windows client (`claude-rc.exe`) cannot update itself, so `update --all-nodes` fails on its last step when it runs on Windows.
+- Log rotation of the instance logs (`<state_dir>\instances\logs`) is not written.
