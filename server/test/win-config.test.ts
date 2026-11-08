@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
+import path from "node:path";
 import { ConfigError, parseConfig, windowsDataDir, type ConfigIo } from "../src/config";
 import { resolveConfigPath } from "../src/configfile";
 import { accountName, checkServiceAccount } from "../src/win/account";
@@ -29,8 +30,9 @@ describe("Windows node config", () => {
     expect(c.serviceUser).toBe(os.userInfo().username);
     expect(c.serviceHome).toBe(os.homedir());
     expect(c.roots).toEqual([os.homedir()]);
+    // Built with Windows path rules whatever the host is: a Linux host has a different home folder.
+    expect(c.claudeBin).toBe(path.win32.join(c.serviceHome, ".local", "bin", "claude.exe"));
     expect(c.claudeBin.toLowerCase()).toEndWith("\\.local\\bin\\claude.exe");
-    expect(c.claudeBin.startsWith(os.homedir())).toBe(true);
     expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir", "--no-create-session-in-dir"]);
     expect(c.node!.tls.stateDir).toBe(windowsDataDir());
     expect(c.unitDir).toBe("");
