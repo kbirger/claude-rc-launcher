@@ -49,6 +49,7 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
 export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port: number; stop(): void }> {
   if (cfg.mode !== "hub") throw new Error("startHub needs mode = hub");
   const hubKey = await loadOrCreateHubKey(cfg.stateDir);
+  console.log(`hub key ${hubKey.kid} public_key=${hubKey.publicKey}`);
   const files = await loadWebFiles();
   if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
   if (cfg.userAuth?.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {

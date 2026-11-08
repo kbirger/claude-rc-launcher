@@ -154,6 +154,32 @@ describe("hub key enrollment end to end", () => {
   });
 });
 
+describe("hub key log line", () => {
+  test("startHub logs the public key that node-enrollment returns", async () => {
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
+      hosts: [],
+    } as unknown as Config;
+    const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+    let hub: Awaited<ReturnType<typeof startHub>>;
+    try {
+      hub = await startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify });
+    } finally {
+      console.log = log;
+    }
+    stoppers.push(hub.stop);
+    const m = lines.map((l) => /^hub key ([0-9a-f]{16}) public_key=([A-Za-z0-9_-]+)$/.exec(l)).find(Boolean);
+    expect(m).toBeTruthy();
+    const enr = (await (await fetch(`http://127.0.0.1:${hub.port}/cli/api/node-enrollment`, { headers: { authorization: "Bearer cli-token" } })).json()) as { hub_keys: { public_key: string }[] };
+    expect(enr.hub_keys[0]!.public_key).toBe(m![2]!);
+  });
+});
+
 describe("entry points", () => {
   test("startNode rejects without TLS names", async () => {
     const base = { ...common, mode: "node", name: "x", port: 0, host: "127.0.0.1", roots: ["/x"], hosts: [] };
