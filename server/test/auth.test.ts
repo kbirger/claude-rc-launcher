@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createOidcClient, oidcUserAuth, type OidcClient, type User } from "../src/auth";
+import { createOidcClient, mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../src/auth";
 import type { Config, OidcUserAuth } from "../src/config";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
@@ -105,6 +105,45 @@ describe("allowed_users", () => {
     const r = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
     expect(r.status).toBe(302);
     expect(find(r, "session")).toBeDefined();
+  });
+});
+
+describe("allowed_users on an existing session", () => {
+  const withAllowed = (allowed: string[] | undefined): Config => {
+    const c = mkCfg();
+    return { ...c, userAuth: { ...(c.userAuth as OidcUserAuth), ...(allowed ? { allowedUsers: allowed } : {}) } } as Config;
+  };
+  const NOW = 1_000_000;
+  const session = (cfg: Config, u: User = user) => mintSessionCookie(cfg, u, NOW + 60_000);
+  const get = (app: Hono, path: string, cookie: string) => app.request(path, { headers: { cookie } });
+
+  test("a session of a user who is no longer listed gets 403 on the API and on pages, and the cookie is cleared", async () => {
+    const cookie = await session(withAllowed(undefined), { sub: "u9", name: "Gone", username: "gone" });
+    const app = build(withAllowed(["a@x.io"]));
+    for (const p of ["/api/x", "/"]) {
+      const r = await get(app, p, cookie);
+      expect([p, r.status]).toEqual([p, 403]);
+      expect(await r.json()).toEqual({ error: "user is not allowed" });
+      expect(find(r, "session")).toMatch(CLEARED);
+    }
+  });
+
+  test("the same cookie works while the user is listed and stops working when the user is removed", async () => {
+    const cookie = await session(withAllowed(["a@x.io"]));
+    expect((await get(build(withAllowed(["a@x.io"])), "/api/x", cookie)).status).toBe(200);
+    expect((await get(build(withAllowed(["someone-else"])), "/api/x", cookie)).status).toBe(403);
+  });
+
+  test("a listed username or email passes, and with no list every valid session passes", async () => {
+    const byName = await session(withAllowed(undefined), { sub: "u2", name: "Bob", username: "bob" });
+    expect((await get(build(withAllowed(["bob"])), "/api/x", byName)).status).toBe(200);
+    expect((await get(build(withAllowed(undefined)), "/api/x", byName)).status).toBe(200);
+  });
+
+  test("an expired or missing session is still 401 and is not mistaken for a denied user", async () => {
+    const old = await mintSessionCookie(withAllowed(["a@x.io"]), user, NOW - 1);
+    expect((await get(build(withAllowed(["a@x.io"])), "/api/x", old)).status).toBe(401);
+    expect((await build(withAllowed(["a@x.io"])).request("/api/x")).status).toBe(401);
   });
 });
 

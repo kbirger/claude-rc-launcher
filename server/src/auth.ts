@@ -163,6 +163,12 @@ function requireUser(cfg: Config, now: () => number = Date.now): MiddlewareHandl
       if (p === "/api" || p.startsWith("/api/")) return c.json({ error: "unauthenticated" }, 401);
       return c.redirect("/auth/login", 302);
     }
+    // The list is checked on every request, not only at login. A user who is removed from `allowed_users` loses access
+    // when the hub next reads its configuration, and does not keep it until the session cookie expires.
+    if (!isAllowed(user, oidcOf(cfg).allowedUsers)) {
+      deleteCookie(c, SESSION_COOKIE, { path: "/", secure: isSecure(cfg) });
+      return c.json({ error: "user is not allowed" }, 403);
+    }
     c.set("user", user);
     await next();
   };
