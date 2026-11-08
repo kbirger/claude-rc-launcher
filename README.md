@@ -148,7 +148,7 @@ that is group- or world-accessible is an error (`chmod 600`). `deploy/config.exa
 | `host` | `0.0.0.0` | Listen address (use `127.0.0.1` if the proxy is local) |
 | `public_url` | required | External URL; redirect URI is `public_url/auth/callback`; cookie is `Secure` when https |
 | `user_auth.mode` | required | `oidc` or `proxy-jwt`. There is no unauthenticated mode |
-| `user_auth.allowed_users` | unset | Usernames or emails allowed to log in; omit = anyone the IdP admits; `[]` is an error |
+| `user_auth.allowed_users` | unset | Usernames or emails allowed to log in. An email that the IdP marks `email_verified: false` never matches, so that user must match by username. Omit = anyone the IdP admits. `[]` is an error |
 | `user_auth.session_secret_file` | required for `oidc` | At least 32 chars: `openssl rand -hex 32` |
 | `user_auth.oidc.issuer` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `allow_insecure = true` |
 | `user_auth.oidc.allow_insecure` | `false` | Permits a non-loopback `http://` issuer. INSECURE: ID tokens are not signature-verified, a network attacker can forge logins. Do not use in production |

@@ -82,6 +82,14 @@ describe("cliBearerAuth", () => {
     expect(await r.json()).toEqual({ error: "user is not allowed" });
   });
 
+  test("allowed_users by email: an unverified email gets 403, a verified or unmarked one passes", async () => {
+    const m = await mk(["a@x.io"]);
+    const as = async (claims: Record<string, unknown>) => get(m.app, { authorization: `Bearer ${await m.sign({ preferred_username: "eve", ...claims })}` });
+    expect((await as({ email_verified: false })).status).toBe(403);
+    expect((await as({ email_verified: true })).status).toBe(200);
+    expect((await as({})).status).toBe(200);
+  });
+
   test("a cookie or a proxy header alone gives 401", async () => {
     const m = await mk();
     const t = await m.sign();
