@@ -1,6 +1,6 @@
 # Windows node: findings and plan
 
-Status (2026-11-08): all seven steps below are built and tested on a Windows machine, on the branch `feat/instances-interface`. The release workflow and the Windows CI job are written but have not run on GitHub yet. This file records the decisions and what was found on the way.
+Status (2026-11-08): all seven steps below are built, tested on a Windows machine, merged to `main` and released (v0.6.0, v0.6.1 with the client and `PATH` install, v0.6.2 with the one-line `irm | iex` install). The release workflow and the Windows CI job have run on GitHub. This file records the decisions and what was found on the way.
 
 ## Goal
 
@@ -93,11 +93,11 @@ Built in `server/src/win/update.ts` and `deploy/windows/claude-rc-launcher-run.p
 3. WinSW runs the launcher script, not the agent. The launcher counts every start while the marker exists. After 3 unconfirmed starts it moves `<exe>.prev` back and deletes the marker.
 4. The new agent deletes the marker after 30 seconds, the same time as on Linux.
 
-The service account gets Modify rights on the install folder, because the agent renames files there. The Linux updater is not changed. Tested on the installed service: a good release is kept, and a release that answers `--version` but crashes is rolled back in about 23 seconds. Not tested: the whole path through a real GitHub release and the hub, because no release has the Windows asset yet.
+The service account gets Modify rights on the install folder, because the agent renames files there. The Linux updater is not changed. Tested on the installed service: a good release is kept, and a release that answers `--version` but crashes is rolled back in about 23 seconds. Not tested: the whole path through a real GitHub release and the hub. Releases with the Windows asset exist now (v0.6.0 and later), but `claude-rc update --all-nodes` has not been run against them.
 
-## Open risk: run claude remote-control as a service
+## Risk (resolved, logoff still open): run claude remote-control as a service
 
-Nobody has tested `claude remote-control` in a non-interactive Windows service yet. Its sign-in data lives in a user profile. A service that runs as `LocalSystem` cannot see that profile. The likely fix is to run the service as a named user account, which WinSW supports.
+This was the open risk before the manual test below. `claude remote-control` runs in a non-interactive Windows service as a named user. Its sign-in data lives in a user profile. A service that runs as `LocalSystem` cannot see that profile. The likely fix is to run the service as a named user account, which WinSW supports.
 
 Test this by hand first, before any code:
 
@@ -146,9 +146,16 @@ Decisions for the Windows backend:
 6. Write the Windows updater. Done.
 7. Add the build target and the release asset. Done: `bun run build:win`, the release workflow, a Windows CI job and the README.
 
+Added after step 7:
+
+- `install.ps1` installs the command-line client into `C:\Program Files\claude-rc` and adds that folder to the machine `PATH` (v0.6.1). The `PATH` is read unexpanded and written back as an expandable string, and `WM_SETTINGCHANGE` is broadcast. `-NoClient`, `-ClientOnly` and `-Uninstall` control or reverse it.
+- `install.ps1` runs alone as `irm <url> | iex` (v0.6.2). It downloads `claude-rc-launcher-win-installer.zip`, checks it against `SHA256SUMS` and hands over to the script inside. Options come from `CLAUDE_RC_*` environment variables, because `| iex` takes no parameters. The release publishes `install.ps1` as its own asset.
+- Hub 0.4 to 0.5 was upgraded and `kirhub` migrated, and the Windows node was paired with the hub using the hub key.
+
 Still open:
 
 - The logoff test: does the service survive a full sign-out of the Windows user?
-- The first real release with the Windows asset, then `claude-rc update --all-nodes` through the hub against it.
+- `claude-rc update --all-nodes` through the hub against a release that has the Windows asset.
+- The updater does not refresh the launcher script or the WinSW XML from the release zip. Only `install.ps1` does.
 - The Windows client (`claude-rc.exe`) cannot update itself, so `update --all-nodes` fails on its last step when it runs on Windows.
 - Log rotation of the instance logs (`<state_dir>\instances\logs`) is not written.

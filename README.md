@@ -5,7 +5,8 @@ Linux host, so you can do it from a phone browser instead of SSH. Each instance 
 systemd service (`claude-rc-<id>.service`). One port serves the Svelte UI and the JSON API over
 plain HTTP; run it behind a reverse proxy. Login is OIDC (e.g. Authentik), or an identity asserted by
 a reverse proxy as a signed JWT (Authentik proxy outpost). One launcher (the **hub**) can also manage
-instances on other Linux hosts (**nodes**); see [Multiple hosts](#multiple-hosts).
+instances on other hosts (**nodes**): Linux hosts, and Windows machines with the [Windows node](#windows-node);
+see [Multiple hosts](#multiple-hosts).
 
 ## Security: read this first
 
@@ -217,7 +218,8 @@ checkout, or a run from source, prints `dev`. Neither binary needs a login, a ne
 ### Publishing a release (maintainers)
 
 Push a tag. The `Release` workflow tests, builds the Linux server binaries, the command-line client, the Windows node
-binary and its installer zip, adds `SHA256SUMS`, and publishes them:
+binary and its installer zip, adds `SHA256SUMS`, and publishes them. `install.ps1` is also published as a separate
+asset, because the one-line Windows install (`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
