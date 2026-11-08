@@ -25,11 +25,16 @@ type Opts = {
   version?: { code: number; stdout: string };
   /** Makes a command fail. It gets the command line (without sudo). */
   fail?: (cmd: string) => boolean;
+  /** What stderr a failed plain command reports. */
+  stderr?: string;
+  /** Leaves out Sys.writable and Sys.execPath. */
+  bare?: boolean;
 };
 
 function fake(o: Opts = {}) {
   const calls: string[] = [];
   const fetched: string[] = [];
+  const timeouts: (number | undefined)[] = [];
   const written = new Map<string, Uint8Array>();
   const exe = o.execPath ?? EXE;
   const sys: Sys = {
@@ -41,10 +46,11 @@ function fake(o: Opts = {}) {
     localAddresses: () => [],
     exists: () => true,
     writable: (p) => (calls.push(`writable ${p}`), o.writable ?? true),
-    run(args) {
+    run(args, opts) {
       const cmd = args.join(" ");
       calls.push(`run ${cmd}`);
-      if (o.fail?.(cmd)) return { code: 1, stdout: "" };
+      if (args[1] === "--version") timeouts.push(opts?.timeoutMs);
+      if (o.fail?.(cmd)) return { code: 1, stdout: "", stderr: o.stderr ?? "" };
       if (args[0] === exe && args[1] === "--version") return o.version ?? { code: 0, stdout: "claude-rc 9.9.9\n" };
       return { code: 0, stdout: "" };
     },
@@ -70,7 +76,11 @@ function fake(o: Opts = {}) {
     sleep: async () => {},
     now: () => 0,
   };
-  return { sys, calls, fetched, written };
+  if (o.bare) {
+    delete sys.execPath;
+    delete sys.writable;
+  }
+  return { sys, calls, fetched, written, timeouts };
 }
 
 async function update(sys: Sys, flags: Record<string, unknown> = {}) {
@@ -86,8 +96,8 @@ describe("selfUpdate", () => {
     const f = fake();
     const out = await update(f.sys);
     expect(f.calls.filter((c) => !c.startsWith("writable"))).toEqual([
-      `run cp -p ${EXE} ${EXE}.prev`,
       `run install -m 755 /tmp/fake/claude-rc ${EXE}.new`,
+      `run cp -p ${EXE} ${EXE}.prev`,
       `run mv -f ${EXE}.new ${EXE}`,
       "rm /tmp/fake/claude-rc",
       `run ${EXE} --version`,
@@ -106,8 +116,8 @@ describe("selfUpdate", () => {
     const f = fake({ writable: false });
     await update(f.sys);
     expect(f.calls.filter((c) => !c.startsWith("writable"))).toEqual([
-      `sudo cp -p ${EXE} ${EXE}.prev`,
       `sudo install -m 755 /tmp/fake/claude-rc ${EXE}.new`,
+      `sudo cp -p ${EXE} ${EXE}.prev`,
       `sudo mv -f ${EXE}.new ${EXE}`,
       "rm /tmp/fake/claude-rc",
       `run ${EXE} --version`,
@@ -148,6 +158,22 @@ describe("selfUpdate", () => {
     expect(f.calls).toContain("run cp -p /opt/x/claude-rc /opt/x/claude-rc.prev");
   });
 
+  test("without Sys.execPath the running process.execPath is used", async () => {
+    const f = fake({ bare: true, execPath: process.execPath });
+    const e = await fails(update(f.sys));
+    // the test runner is bun, which is a source run
+    expect(e!.message).toContain("source run");
+    expect(f.calls).toEqual([]);
+  });
+
+  test("without Sys.writable the sudo path is used", async () => {
+    const f = fake({ bare: true, execPath: EXE });
+    f.sys.execPath = EXE;
+    await update(f.sys);
+    expect(f.calls.some((c) => c === `sudo mv -f ${EXE}.new ${EXE}`)).toBe(true);
+    expect(f.calls.some((c) => c.startsWith("run cp") || c.startsWith("run mv"))).toBe(false);
+  });
+
   test("a checksum mismatch installs nothing", async () => {
     const f = fake({ sums: `${"0".repeat(64)}  ${ASSET}\n` });
     const e = await fails(update(f.sys));
@@ -182,6 +208,15 @@ describe("selfUpdate", () => {
       });
     }
 
+    test("the version check has a 10 second timeout and a timeout restores .prev", async () => {
+      const f = fake({ version: { code: 1, stdout: "" } });
+      const e = await fails(update(f.sys));
+      expect(f.timeouts).toEqual([10_000]);
+      expect(e!.message).toContain("did not answer");
+      expect(e!.message).toContain("10 seconds");
+      expect(f.calls.at(-1)).toBe(`run mv -f ${EXE}.prev ${EXE}`);
+    });
+
     test("the restore uses sudo when the directory is not writable", async () => {
       const f = fake({ writable: false, version: { code: 1, stdout: "" } });
       await fails(update(f.sys));
@@ -198,17 +233,23 @@ describe("selfUpdate", () => {
   });
 
   describe("failures during the install", () => {
-    test("cp -p failing stops before anything is installed", async () => {
+    test("cp -p failing removes .new and leaves the executable untouched", async () => {
       const f = fake({ fail: (c) => c.startsWith("cp -p") });
       const e = await fails(update(f.sys));
       expect(e!.message).toContain("backing up");
-      expect(changes(f.calls)).toEqual([`run cp -p ${EXE} ${EXE}.prev`]);
+      expect(changes(f.calls)).toEqual([`run install -m 755 /tmp/fake/claude-rc ${EXE}.new`, `run cp -p ${EXE} ${EXE}.prev`, `run rm -f ${EXE}.new`]);
     });
-    test("install failing leaves the executable untouched", async () => {
+    test("install failing never touches an existing .prev and removes .new", async () => {
       const f = fake({ fail: (c) => c.startsWith("install ") });
       expect(await fails(update(f.sys))).toBeInstanceOf(ExitError);
+      expect(f.calls.some((c) => c.includes(".prev"))).toBe(false);
+      expect(f.calls).toContain(`run rm -f ${EXE}.new`);
       expect(f.calls.some((c) => c.startsWith(`run mv -f ${EXE}.new`))).toBe(false);
       expect(f.calls.some((c) => c.includes("--version"))).toBe(false);
+    });
+    test("a failure shows the stderr of a plain command", async () => {
+      const f = fake({ fail: (c) => c.startsWith("install "), stderr: "Text file busy\n" });
+      expect((await fails(update(f.sys)))!.message).toContain("installing the binary failed (install exit 1): Text file busy");
     });
     test("mv failing removes the .new file", async () => {
       const f = fake({ fail: (c) => c === `mv -f ${EXE}.new ${EXE}` });
@@ -312,5 +353,20 @@ describe("claude-rc update", () => {
 
   test("help text lists update", () => {
     return import("../src/index").then((m) => expect(m.USAGE).toContain("update [--release tag]"));
+  });
+});
+
+describe("realSys.run", () => {
+  test("kills a command that runs past the timeout and reports a failure", () => {
+    const { realSys } = require("../src/nodesetup") as typeof import("../src/nodesetup");
+    const t = Date.now();
+    const r = realSys.run(["sleep", "5"], { timeoutMs: 200 });
+    expect(r.code).not.toBe(0);
+    expect(Date.now() - t).toBeLessThan(3000);
+  });
+  test("returns stderr", () => {
+    const { realSys } = require("../src/nodesetup") as typeof import("../src/nodesetup");
+    const r = realSys.run(["sh", "-c", "echo oops >&2; exit 3"]);
+    expect(r).toMatchObject({ code: 3, stderr: "oops\n" });
   });
 });

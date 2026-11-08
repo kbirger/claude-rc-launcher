@@ -98,8 +98,8 @@ describe("nodeUpdate", () => {
     const f = fake();
     const out = await update(f.sys);
     const steps = [
-      `cp -p ${BIN} ${BIN}.prev`,
       `install -m 755 /tmp/fake/claude-rc-launcher ${BIN}.new`,
+      `cp -p ${BIN} ${BIN}.prev`,
       `mv -f ${BIN}.new ${BIN}`,
       "systemctl restart claude-rc-launcher",
     ];
@@ -154,16 +154,18 @@ describe("nodeUpdate", () => {
       expect(f.calls.some((c) => c.includes("systemctl restart"))).toBe(false);
       expect(f.calls.some((c) => c.includes(`mv -f ${BIN}.prev`))).toBe(false);
     };
-    test("cp -p failing stops before anything is installed", async () => {
+    test("cp -p failing removes .new and leaves the binary untouched", async () => {
       const f = fake({ fail: (c) => c.startsWith("cp -p") });
       const e = await fails(update(f.sys));
       expect(e!.message).toContain("backing up");
-      expect(sudoCalls(f.calls)).toEqual([`cp -p ${BIN} ${BIN}.prev`]);
+      expect(sudoCalls(f.calls)).toEqual([`install -m 755 /tmp/fake/claude-rc-launcher ${BIN}.new`, `cp -p ${BIN} ${BIN}.prev`, `rm -f ${BIN}.new`]);
+      noReplace(f);
     });
     test("install failing leaves the binary untouched and does not restart", async () => {
       const f = fake({ fail: (c) => c.startsWith("install ") });
       expect(await fails(update(f.sys))).toBeInstanceOf(ExitError);
       expect(sudoCalls(f.calls).some((c) => c.startsWith(`mv -f ${BIN}.new`))).toBe(false);
+      expect(f.calls.some((c) => c.includes(".prev"))).toBe(false);
       noReplace(f);
     });
     test("mv failing removes the .new file, leaves the binary untouched and does not restart", async () => {

@@ -4,6 +4,7 @@ import { obtainBinary, releaseCpu, sha256, type Sys, realSys } from "./nodesetup
 import { VERSION } from "../../server/src/version";
 
 const NAME = "claude-rc";
+const VERSION_TIMEOUT_MS = 10_000;
 
 /**
  * `claude-rc update`: replaces this client binary with a release build. The previous binary is kept as `.prev` and
@@ -32,16 +33,17 @@ export async function selfUpdate(o: { flags: Flags; out: (s: string) => void; sy
   const run = (args: string[]) => {
     if (!plain) return sys.sudo(args);
     const r = sys.run(args);
-    return { code: r.code, stdout: r.stdout, stderr: "" };
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr ?? "" };
   };
   const step = (args: string[], what: string) => {
     const r = run(args);
     if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
   };
-  step(["cp", "-p", exe, `${exe}.prev`], "backing up the installed binary");
+  // The old .prev is only replaced once the new file is in place next to the executable.
   const tmp = sys.writeTemp(NAME, binary);
   try {
     step(["install", "-m", "755", tmp, `${exe}.new`], "installing the binary");
+    step(["cp", "-p", exe, `${exe}.prev`], "backing up the installed binary");
     step(["mv", "-f", `${exe}.new`, exe], "installing the binary");
   } catch (e) {
     run(["rm", "-f", `${exe}.new`]);
@@ -51,7 +53,7 @@ export async function selfUpdate(o: { flags: Flags; out: (s: string) => void; sy
   }
 
   // 4. Make sure that the new binary runs
-  const ran = sys.run([exe, "--version"]);
+  const ran = sys.run([exe, "--version"], { timeoutMs: VERSION_TIMEOUT_MS });
   const line = ran.stdout.trim().split("\n")[0] ?? "";
   if (ran.code === 0 && line.startsWith(`${NAME} `)) {
     return out(`updated ${exe} from ${VERSION} to ${line.slice(NAME.length + 1)} (the previous binary is kept as ${exe}.prev)`);
@@ -64,5 +66,5 @@ export async function selfUpdate(o: { flags: Flags; out: (s: string) => void; sy
       1,
     );
   }
-  throw new ExitError(`the update failed: the new binary did not run with --version. The previous binary was restored`, 1);
+  throw new ExitError(`the update failed: the new binary did not answer --version with a claude-rc version line within ${VERSION_TIMEOUT_MS / 1000} seconds. The previous binary was restored`, 1);
 }

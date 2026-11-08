@@ -38,8 +38,8 @@ export interface Sys {
   exists(path: string): boolean;
   /** Whether the current user can create and replace files in this directory. */
   writable?(dir: string): boolean;
-  /** Runs a command without sudo. */
-  run(args: string[]): { code: number; stdout: string };
+  /** Runs a command without sudo. A command that runs longer than `timeoutMs` is killed and counts as a failure. */
+  run(args: string[], opts?: { timeoutMs?: number }): { code: number; stdout: string; stderr?: string };
   /** Runs a command with sudo (without it, for root). Input goes to stdin. */
   sudo(args: string[], input?: string | Uint8Array): Result;
   readFile(path: string): Uint8Array;
@@ -66,9 +66,9 @@ export const realSys: Sys = {
       return false;
     }
   },
-  run(args) {
-    const r = spawnSync(args[0]!, args.slice(1), { encoding: "utf8" });
-    return { code: r.status ?? 1, stdout: r.stdout ?? "" };
+  run(args, opts) {
+    const r = spawnSync(args[0]!, args.slice(1), { encoding: "utf8", ...(opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const } : {}) });
+    return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.error ? r.error.message : (r.stderr ?? "") };
   },
   sudo(args, input) {
     const argv = process.getuid?.() === 0 ? args : ["sudo", ...args];
@@ -255,10 +255,10 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
     if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
     return r;
   };
-  sudo(["cp", "-p", BIN, `${BIN}.prev`], "backing up the installed binary");
   const tmp = sys.writeTemp(NAME, binary);
   try {
     sudo(["install", "-m", "755", tmp, `${BIN}.new`], "installing the binary");
+    sudo(["cp", "-p", BIN, `${BIN}.prev`], "backing up the installed binary");
     sudo(["mv", "-f", `${BIN}.new`, BIN], "installing the binary");
   } catch (e) {
     sys.sudo(["rm", "-f", `${BIN}.new`]);
