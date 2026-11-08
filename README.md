@@ -35,6 +35,8 @@ instances on other Linux hosts (**nodes**); see [Multiple hosts](#multiple-hosts
   a proof cannot use it at any other node.
 - To cut the hub off from a node, remove the hub key from that node. The identity provider no longer
   provides a kill switch for the hub, because the hub has no account there for nodes.
+- Anyone who holds the hub private key can forge valid proofs for every node that trusts the matching public
+  key. This stays true until each node's `hub_key` row is replaced.
 - Shared-secret node auth is weaker: long-lived and symmetric, with no revocation or audit. Use one
   secret per node. A stolen hub configuration exposes all of them.
 - A node can only be impersonated to the hub with its private key (the hub pins the node's certificate).
@@ -43,8 +45,9 @@ instances on other Linux hosts (**nodes**); see [Multiple hosts](#multiple-hosts
 - **Command-line client:** a CLI login gives the same access as a browser login, which is root-equivalent
   execution on the hub and every node. The CLI keeps a refresh token in `credentials.json` (mode 600) on the
   user's machine. Revoke it at the identity provider to end that login. The hub cannot revoke it.
-- `host add` makes the hub open a connection to any address that the user names, and send it the hub's
-  credential after the user confirms the certificate fingerprint. The user already has full control through the
+- `host add` makes the hub open a connection to any address that the user names, and send it a
+  signed proof after the user confirms the certificate fingerprint. The proof is bound to the confirmed
+  certificate, so the receiving server cannot replay it at another node. The user already has full control through the
   hub, so this adds no new level of access, but it is a new way to make the hub connect somewhere.
 - There is no unauthenticated mode. Only `/healthz` and `GET /cli/config` (two public values) are open.
 
@@ -215,9 +218,9 @@ method, the path, the body and the time. The node also rejects a proof that it h
 
 #### Clocks
 
-The hub clock and the node clock must agree within 5 seconds. The failing case is a node clock that is
-behind the hub clock. Then the time in the proof is in the future for the node, and the node rejects it.
-A node clock that is ahead of the hub by less than about 25 seconds still works. The symptom of a wrong
+The hub clock and the node clock must agree within 5 seconds. The node rejects a proof when its own clock is
+more than 5 seconds behind the hub. A node clock that is ahead of the hub is tolerated for about 30 seconds.
+The symptom of a wrong
 clock is the message `rejected our credentials` for a node that has the correct key. Run a time service
 (NTP) on the hub and on every node.
 
@@ -640,15 +643,24 @@ the hub public key (see [Command-line client](#command-line-client)).
 
 ### Rotating the hub key
 
-The hub has one active key. To rotate it, follow these steps.
+The hub has one active key. To rotate it, follow these steps in order.
 
-1. Delete `<state_dir>/hub-key.pem` on the hub.
-2. Restart the hub. It makes a new key and logs the new `hub key ... public_key=...` line.
-3. Run `claude-rc node setup` again on every node. For a hand-made node, replace the `public_key` in its
-   `[[node_auth.hub_key]]` row and restart the node.
+1. On the hub, delete `<state_dir>/hub-key.pem` and restart the hub. It makes a new key.
+2. Read the new public key. Look for the `hub key ... public_key=...` line in the hub log. You can also call
+   `GET /cli/api/node-enrollment`.
+3. On each node, replace the `public_key` value in its `[[node_auth.hub_key]]` row in
+   `/etc/claude-rc-launcher/config.toml`. Then run `sudo systemctl restart claude-rc-launcher`.
 
-Nodes are unreachable between the hub restart and the update of each node. A node can hold more than one
-`hub_key` row, but the hub signs with only one key.
+You can also write the node file again with `claude-rc node config --force` and the same flags that you used
+before. That command replaces the whole file, keeps the old one as `<file>.bak` and does not restart the node.
+Restart the node yourself afterward. Do not use `claude-rc node setup` for this. It refuses to run on a machine
+that already has a node, and it tries to register the host again.
+
+Nothing else changes. Managed hosts, `managed-hosts.json`, `pins/<id>.pem`, hosts in the configuration and node
+certificates stay as they are. A proof is bound to the node certificate fingerprint, so the pins remain valid.
+
+A node cannot hold the new key before the hub makes it. So there is a short window of an outage. Every node that
+you did not update yet rejects the hub until you replace its key. This is not a rotation without an outage.
 
 ## Reverse proxy
 
