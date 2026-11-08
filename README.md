@@ -574,12 +574,11 @@ managed host works at once, without a restart.
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)
 
 > The exact claims, issuer, audience and JWKS URL of `X-authentik-jwt` must be confirmed against your
-> Authentik; run `bun scripts/authentik-probe.ts proxy-jwt` and record the result (see
-> `docs/superpowers/specs/2026-11-06-multi-host-authentik-findings.md`).
+> Authentik: decode a real `X-authentik-jwt` header value and read them from the token.
 
 1. Create a **Proxy Provider** (forward auth, single application) and an application bound to the intended
    users/groups, and add it to the embedded or a dedicated outpost.
-2. Set `[user_auth.proxy_jwt]` from the probe output (`header`, `issuer`, `audience`, `jwks_url`).
+2. Set `[user_auth.proxy_jwt]` from the decoded token (`header`, `issuer`, `audience`, `jwks_url`).
 3. Behind Traefik use a forward-auth middleware that copies the JWT to the hub, and route the outpost's own
    path to the outpost:
 
