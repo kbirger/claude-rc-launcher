@@ -150,6 +150,13 @@ describe("names and ids", () => {
     expect(defaultName(cfg(), "/")).toBe("claude");
     expect(defaultName(cfg(), "/x/" + "a".repeat(100))).toHaveLength(64);
     expect(isValidName(defaultName(cfg(), "/x/we ird$"))).toBe(true);
+    // Windows paths: the last folder name, whichever separator is used.
+    expect(defaultName(cfg(), "C:\\work\\myproj")).toBe("myproj");
+    expect(defaultName(cfg({ NAME_PREFIX: "win-" }), "D:/work/myproj/")).toBe("win-myproj");
+    expect(defaultName(cfg(), "\\\\server\\share\\proj")).toBe("proj");
+    expect(defaultName(cfg(), "C:\\")).toBe("claude");
+    // A backslash in a POSIX path is part of the folder name, as before.
+    expect(defaultName(cfg(), "/x/a\\b")).toBe("a-b");
     expect(defaultName(cfg(), "/x/--dangerously-skip-permissions")).toBe("dangerously-skip-permissions");
     expect(defaultName(cfg(), "/x/---")).toBe("claude");
     expect(defaultName(cfg({ NAME_PREFIX: "-" }), "/x/p")).toBe("p");

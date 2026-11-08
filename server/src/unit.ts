@@ -20,7 +20,10 @@ export function isValidName(name: string): boolean {
 }
 
 export function defaultName(cfg: Config, absPath: string): string {
-  const base = absPath.split("/").filter(Boolean).pop() ?? "";
+  // A drive-letter or UNC path uses "\" as well as "/"; a POSIX path only "/".
+  const windowsStyle = /^([A-Za-z]:|\\\\)/.test(absPath);
+  const rest = windowsStyle ? absPath.replace(/^[A-Za-z]:/, "") : absPath;
+  const base = rest.split(windowsStyle ? /[\\/]/ : "/").filter(Boolean).pop() ?? "";
   const raw = (cfg.namePrefix + base).replace(/[^A-Za-z0-9._-]/gu, "-").replace(/^-+/, "").slice(0, 64);
   return raw || "claude";
 }

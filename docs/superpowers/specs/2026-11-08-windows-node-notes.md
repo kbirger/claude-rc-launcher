@@ -60,10 +60,17 @@ The CLI command `claude-rc node setup` stays Linux-only. It must fail with a cle
 
 The current class becomes the systemd implementation and its behavior does not change. The Windows entry point passes its own implementation. Tests already inject dependencies, so this refactor has low risk.
 
+Status: done on 2026-11-08 and not yet committed. `Instances` is in `server/src/instances.ts`, and `app.ts`, `nodemain.ts` and `hubmain.ts` use it. `tsc` passes. On Windows, 9 existing tests fail before and after the change. They are POSIX-only tests (file modes, symlinks, `/bin/sh`).
+
 Three smaller changes in shared code:
 
-- Paths. `unit.ts` and `paths.ts` use `startsWith("/")` and `split("/")`. The Windows backend needs its own path rules, and `resolveWithinRoots` must accept drive letters and backslashes.
-- Configuration. `scope`, `unit_dir` and `service_user` are systemd concepts. On Windows, ignore them or reject them with a clear message.
+- Paths. Done (2026-11-08). `paths.ts`, `fsapi.ts` and `config.ts` already use `node:path` and accept drive letters, backslashes and win32 case rules, so they need no change. Only `defaultName` in `unit.ts` split on `/` only. It now handles drive-letter and UNC paths. The rest of `unit.ts` is systemd-only, and the Windows backend does not use it.
+- Configuration (decided 2026-11-08):
+  - `service_user` stays. `install.ps1` writes it into the WinSW `<serviceaccount>`, and `install /p` asks for the password. At start-up the agent compares it with the account it runs as and stops with a clear error if they differ. `service_home` comes from `%USERPROFILE%`.
+  - `scope`, `unit_dir` and `allowed_users` are rejected with a clear error, not ignored. Windows has no user-scope services and no unit files, and instances cannot run as other users. An error stops someone from copying a Linux config by mistake.
+  - Instance state and logs go in a folder under `state_dir`. The default `state_dir` is `%ProgramData%\claude-rc-launcher`.
+  - The install path of the binaries is not a config key. The agent uses `dirname(process.execPath)`. `install.ps1` takes `-InstallDir`, which defaults to `C:\Program Files\claude-rc-launcher`.
+  - Open: the default for `roots`. Suggestion: the service account's profile folder.
 - Update. `createServiceUpdater` already takes an injectable `UpdateEnv`. The Windows entry point supplies one that replaces the `.exe` with a rename and a helper script.
 
 ## The Windows instance backend
