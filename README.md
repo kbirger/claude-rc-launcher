@@ -542,6 +542,63 @@ A later successful update overwrites `.prev` with the binary that was installed 
 file is gone, because the command moved it back. If the command cannot restore the old binary, it says so, tells you
 that the new binary is still installed and prints the commands to restore it by hand.
 
+### Update every machine with one command
+
+To update the service and the client on every machine, run this from your own machine after you sign in:
+
+```sh
+claude-rc update --all-nodes [--release <tag>] [--json]
+```
+
+A node is a machine that runs the launcher service for the hub. The command asks the hub to update each node, so no
+ssh is needed. `--release <tag>` applies to every machine. `--binary` is an error here, because each machine downloads
+its own build from the release.
+
+The command updates the machines in this order. First come the nodes, one after the other. Then comes the hub, which
+is the machine named `local`. The hub restarts, and the command waits for it to answer again. The last step is the
+client copy that runs the command. One failed machine does not stop the others.
+
+On each machine, the service checks the download against `SHA256SUMS`, keeps the old binary as `.prev` and restarts. A
+watchdog (a small script outside the service) puts the old binary back if the new one does not stay active.
+
+The command prints one table row for each machine. The columns are `MACHINE`, `BEFORE`, `AFTER`, `CLIENTS` and
+`STATUS`. The last row is the client that ran the command. With `--json`, the command prints the rows as JSON and
+no progress lines. The `STATUS` column has one of these values:
+
+- `updated`: the machine now runs a new version.
+- `up-to-date`: the machine already ran the release.
+- `skipped (offline)`: the hub could not reach the machine. A machine with another problem shows `skipped (error: <message>)`.
+- `failed (<reason>)`: the update did not work. The old version is still in place.
+- `rolled back`: the machine answered again with the old version, because the watchdog restored the old binary.
+- `no answer`: the machine did not answer within 90 seconds, and the version is not known.
+- `cannot update remotely`: the node is too old for this feature.
+
+If a row shows `rolled back` or `no answer`, the command prints a hint to read `journalctl -u claude-rc-launcher` on that
+machine. The exit code is 0 if every row is `updated` or `up-to-date`. Otherwise it is 1, and the error says how many
+machines were not updated. You can run the command again. A machine that is current shows `up-to-date`.
+
+Each machine can also have client copies of `claude-rc`. The service looks for them in these places:
+
+- The first `claude-rc` on the `PATH` of the service.
+- `~/.local/bin/claude-rc` of the service user.
+- `~/.local/bin/claude-rc` of root.
+
+The service updates every copy it finds, and each file once. The `CLIENTS` column shows the path of each copy and its
+result. If it finds no copy, that is not an error. If the service is current but a client copy is old, only the client
+is updated and the service is not restarted. If any client copy fails, the row is not OK and the exit code is 1.
+
+Keep these limits in mind:
+
+- A node older than the first release with this feature cannot be updated remotely. Run `claude-rc node update` on it once.
+- Some releases change the protocol between the hub and the nodes. The hub-proof release did this. After such a
+  release, the hub cannot reach the nodes that it updated first. Roll such a release out by hand.
+- If a machine does not answer within 90 seconds, the update can be rolled back. Read `journalctl -u claude-rc-launcher`
+  on that machine.
+- Any CLI user can start an update on all machines until admin status exists.
+- The update call can take up to about 190 seconds. A reverse proxy in front of the hub can cut the connection with its
+  own idle limit. For example, the nginx `proxy_read_timeout` is 60 seconds by default. Raise that limit for the hub.
+- If you run the CLI from source and not from the installed binary, the client row shows `failed` and the exit code is 1.
+
 ### Write a node's configuration
 
 On the node machine, install the CLI, run `claude-rc login --hub <url>`, and let the hub fill in the part of the
