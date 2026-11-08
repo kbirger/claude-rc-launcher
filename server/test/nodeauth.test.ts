@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -140,5 +140,58 @@ describe("hub proof", () => {
     const h = hp(await k.proof("GET", "/x"));
     expect((await a.request("/x", { headers: h })).status).toBe(200);
     expect((await a.request("/x", { headers: h })).status).toBe(401);
+  });
+
+  describe("rejection log", () => {
+    let warn: ReturnType<typeof spyOn>;
+    beforeEach(() => {
+      warn = spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => warn.mockRestore());
+    const lines = () => warn.mock.calls.map((c: unknown[]) => c.join(" "));
+
+    test("clock skew logs one line with the reason and not the token", async () => {
+      let clock = Date.now();
+      const k = await hubKit(() => clock);
+      const t = await k.proof("GET", "/x");
+      clock += 3_600_000; // the node clock is an hour ahead of the hub
+      const r = await app(k.settings()).request("/x", { headers: hp(t) });
+      expect(r.status).toBe(401);
+      expect(lines()).toHaveLength(1);
+      expect(lines()[0]).toStartWith("hub proof rejected: invalid hub proof: ");
+      expect(lines()[0]).toContain("exp");
+      expect(lines()[0]).not.toContain(t);
+      expect(lines()[0]).not.toContain(t.split(".")[1]!);
+    });
+    test("an unknown key id logs the reason", async () => {
+      const k = await hubKit();
+      const other = await hubKit();
+      const t = await k.proof("GET", "/x");
+      const r = await app(k.settings({ hubKeys: [other.key.publicKey] })).request("/x", { headers: hp(t) });
+      expect(r.status).toBe(401);
+      expect(lines()).toEqual(["hub proof rejected: invalid hub proof: unknown key"]);
+    });
+    test("the same reason is logged once per 10 s and again after that", async () => {
+      let clock = 1_000_000;
+      const k = await hubKit(() => clock);
+      const other = await hubKit();
+      const a = app(k.settings({ hubKeys: [other.key.publicKey] }));
+      const go = async () => (await a.request("/x", { headers: hp(await k.proof("GET", "/x")) })).status;
+      expect(await go()).toBe(401);
+      clock += 9_000;
+      expect(await go()).toBe(401);
+      expect(lines()).toHaveLength(1);
+      clock += 1_000;
+      expect(await go()).toBe(401);
+      expect(lines()).toHaveLength(2);
+    });
+    test("no log for a request without Hub-Proof, for a wrong secret or for a valid proof", async () => {
+      const k = await hubKit();
+      const a = app(k.settings());
+      await a.request("/x");
+      await a.request("/x", { headers: bearer("nope") });
+      expect((await a.request("/x", { headers: hp(await k.proof("GET", "/x")) })).status).toBe(200);
+      expect(lines()).toEqual([]);
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
-import { createProofVerifier } from "./hubproof";
+import { createProofVerifier, ProofError } from "./hubproof";
 
 export type NodeAuthSettings = {
   hubKeys: string[];
@@ -21,6 +21,8 @@ const hexEqual = (a: string, b: string) => {
   const bb = Buffer.from(b, "hex");
   return ab.length === bb.length && ab.length > 0 && timingSafeEqual(ab, bb);
 };
+
+const WARN_INTERVAL_MS = 10_000;
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -50,6 +52,17 @@ async function readCapped(stream: ReadableStream<Uint8Array> | null, max: number
 export function nodeAuth(s: NodeAuthSettings): MiddlewareHandler {
   const deny = (c: Parameters<MiddlewareHandler>[0]) => c.json({ error: "unauthorized" }, 401);
   const verifyProof = createProofVerifier({ keys: s.hubKeys, selfFingerprint: s.selfFingerprint, ...(s.now ? { now: s.now } : {}) });
+  const now = s.now ?? Date.now;
+  const warned = new Map<string, number>(); // message -> time of the last log line (ms)
+  /** Logs why a proof was rejected, at most once per message per 10 s. Only fixed texts are logged: never the token, a claim value or a key. */
+  const warn = (e: unknown) => {
+    const reason = e instanceof ProofError ? e.message : "invalid hub proof";
+    const t = now();
+    const last = warned.get(reason);
+    if (last !== undefined && t - last < WARN_INTERVAL_MS) return;
+    warned.set(reason, t);
+    console.warn(`hub proof rejected: ${reason}`);
+  };
   return async (c, next) => {
     const m = /^(Hub-Proof|Bearer) (\S+)$/.exec(c.req.header("authorization") ?? "");
     if (!m) return deny(c);
@@ -63,7 +76,8 @@ export function nodeAuth(s: NodeAuthSettings): MiddlewareHandler {
       const url = new URL(c.req.url);
       try {
         await verifyProof(token, { method: c.req.method, pathAndQuery: url.pathname + url.search, body });
-      } catch {
+      } catch (e) {
+        warn(e);
         return deny(c);
       }
       c.set("caller" as never, "hub" as never);
