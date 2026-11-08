@@ -224,6 +224,29 @@ describe("commands", () => {
     expect(s.err[0]).toContain("claude-rc login");
   });
 
+  test("update --all-nodes is parsed and goes to the hub with the saved login", async () => {
+    const s = setup({
+      "GET /cli/api/hosts": () => [{ id: "local", name: "hub", status: "ok", version: "1.0.0" }],
+      "POST /cli/api/hosts/local/update": () => ({ status: "up-to-date", from: "1.0.0", clients: [] }),
+    });
+    // A source run: the client step fails, so the exit code is 1, but the hub was asked.
+    s.env.sys = { execPath: "/usr/bin/bun", platform: "linux", arch: "x64" } as any;
+    const r = await s.run("update", "--all-nodes", "--release", "v1.2.3");
+    expect(r.code).toBe(1);
+    expect(s.seen.map((x) => `${x.method} ${x.path}`)).toEqual(["GET /cli/api/hosts", "POST /cli/api/hosts/local/update"]);
+    expect(JSON.parse(s.seen[1]!.body)).toEqual({ release: "v1.2.3" });
+    expect(s.out.join("\n")).toMatch(/^local .*up-to-date$/m);
+    expect(s.err.at(-1)).toBe("1 of 2 machines were not updated");
+  });
+
+  test("update rejects a flag that belongs to --all-nodes only", async () => {
+    const s = setup({});
+    const r = await s.run("update", "--hub", "https://x");
+    expect(r.code).toBe(1);
+    expect(s.err[0]).toContain("--hub does not apply to update");
+    expect(s.seen).toEqual([]);
+  });
+
   test("an unknown command exits 1 even when not signed in", async () => {
     const s = setup({});
     s.env.credsFile = path.join(tmp(), "none.json");

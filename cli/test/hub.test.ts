@@ -115,6 +115,19 @@ describe("hubClient.request", () => {
     const c = hubClient({ creds: creds("http://127.0.0.1:1", { expiresAt: 1000 }), save: () => {}, renew: async (x) => x, now: () => 0 });
     await expect(c.request("GET", "/cli/api/me")).rejects.toMatchObject({ code: 1, message: expect.stringContaining("http://127.0.0.1:1") });
   });
+  test("timeoutMs limits one call only; other calls get no signal", async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    const slow = (async (_u: string | URL, init?: RequestInit) => {
+      inits.push(init);
+      if (!init?.signal) return json({ ok: 1 });
+      return await new Promise<Response>((_, reject) => init.signal!.addEventListener("abort", () => reject(new Error("timed out"))));
+    }) as unknown as typeof fetch;
+    const c = hubClient({ creds: creds("http://hub", { expiresAt: 1000 }), save: () => {}, renew: async (x) => x, now: () => 0, fetch: slow });
+    await expect(c.request("POST", "/cli/api/hosts/a/update", {}, { timeoutMs: 20 })).rejects.toMatchObject({ code: 1, message: expect.stringContaining("timed out") });
+    expect(await c.request("GET", "/cli/api/hosts")).toEqual({ ok: 1 });
+    expect(inits[0]!.signal).toBeDefined();
+    expect(inits[1]!.signal).toBeUndefined();
+  });
 });
 
 describe("parseCli", () => {
@@ -122,6 +135,11 @@ describe("parseCli", () => {
     const p = parseCli(["host", "add", "nas", "--url", "https://x:1", "--force", "--json"]);
     expect(p.command).toEqual(["host", "add", "nas"]);
     expect(p.flags).toMatchObject({ url: "https://x:1", force: true, json: true });
+  });
+  test("--all-nodes is a boolean flag", () => {
+    const p = parseCli(["update", "--all-nodes", "--release", "v1.2.3"]);
+    expect(p.command).toEqual(["update"]);
+    expect(p.flags).toMatchObject({ "all-nodes": true, release: "v1.2.3" });
   });
   test("rejects unknown flags with a clear message", () => {
     expect(() => parseCli(["list", "--bogus"])).toThrow(ExitError);

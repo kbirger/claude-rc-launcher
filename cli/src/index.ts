@@ -10,6 +10,7 @@ import { nodeConfig, type NodeFs } from "./nodecmd";
 import { nodeSetup, nodeUpdate, type Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 import { selfUpdate } from "./update";
+import { checkAllNodesFlags, updateAll } from "./updateall";
 import { VERSION } from "../../server/src/version";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
@@ -30,7 +31,8 @@ Commands:
   mkdir <parent> <name> [--user <u>] make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
-  update [--release tag]             update this claude-rc binary
+  update [--release tag] [--all-nodes]
+                                     update this claude-rc binary (--all-nodes: every node, the hub, then this binary)
   node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force]
                                      install, start and register this machine as a node
   node update [--binary file] [--release tag]
@@ -112,13 +114,18 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     if (name !== "host" && name !== "node" && name !== "update" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
 
     if (name === "update") {
-      // Works on any machine with the compiled binary and talks to no hub, so no login is needed.
-      const updateUsage = "usage: claude-rc update [--release <tag>]";
+      const updateUsage = "usage: claude-rc update [--release <tag>] [--all-nodes]";
       if (args.length > 0) throw new ExitError(`unexpected argument${args.length > 1 ? "s" : ""}: ${args.join(" ")}. ${updateUsage}`, 1);
-      const stray = Object.keys(flags).find((f) => !["release", "json", "help", "version"].includes(f));
+      if (flags["all-nodes"]) checkAllNodesFlags(flags);
+      const allowed = ["release", "json", "help", "version", ...(flags["all-nodes"] ? ["all-nodes", "hub"] : [])];
+      const stray = Object.keys(flags).find((f) => !allowed.includes(f));
       if (stray) throw new ExitError(`--${stray} does not apply to update. ${updateUsage}`, 1);
-      await selfUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
-      return 0;
+      if (!flags["all-nodes"]) {
+        // Works on any machine with the compiled binary and talks to no hub, so no login is needed.
+        await selfUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+        return 0;
+      }
+      // --all-nodes goes through the hub: it needs the login below.
     }
 
     if (name === "node" && args[0] === "update") {
@@ -144,6 +151,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     }
     const hub = hubClient({ creds, save: (c) => saveCreds(env.credsFile, c), renew: (c) => renew(c, env.fetch), ...(env.fetch ? { fetch: env.fetch } : {}) });
 
+    if (name === "update") {
+      await updateAll({ flags, hub, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+      return 0;
+    }
     if (name === "node") {
       if (args.length > 1) {
         throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. A space after a comma in --names splits it into a separate argument: write the names without spaces, like --names a,b`, 1);

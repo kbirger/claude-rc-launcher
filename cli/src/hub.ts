@@ -28,23 +28,30 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
     o.save(creds);
   };
 
-  const send = async (method: string, path: string, body: unknown): Promise<Response> => {
+  const send = async (method: string, path: string, body: unknown, timeoutMs?: number): Promise<Response> => {
     const headers: Record<string, string> = { authorization: `Bearer ${creds.idToken}`, accept: "application/json" };
     if (method !== "GET") headers["content-type"] = "application/json";
     try {
-      return await doFetch(new URL(path, creds.hub), { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: "manual" });
+      return await doFetch(new URL(path, creds.hub), {
+        method,
+        headers,
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        redirect: "manual",
+        ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
     } catch (e) {
       throw new ExitError(`cannot reach ${creds.hub}: ${(e as Error).message}`, 1);
     }
   };
 
   return {
-    async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+    /** `opts.timeoutMs` limits each attempt. Without it, a call has no time limit of its own. */
+    async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, opts?: { timeoutMs?: number }): Promise<T> {
       if (creds.expiresAt - now() < RENEW_WINDOW_S) await refresh();
-      let res = await send(method, path, body);
+      let res = await send(method, path, body, opts?.timeoutMs);
       if (res.status === 401) {
         await refresh();
-        res = await send(method, path, body);
+        res = await send(method, path, body, opts?.timeoutMs);
         if (res.status === 401) throw new ExitError(LOGIN_MESSAGE, 2);
       }
       if (res.status === 204) return undefined as T;

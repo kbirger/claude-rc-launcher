@@ -22,6 +22,7 @@ export type Flags = {
   id?: string;
   release?: string;
   binary?: string;
+  "all-nodes"?: boolean;
   help?: boolean;
   version?: boolean;
 };
@@ -53,6 +54,7 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         id: { type: "string" },
         release: { type: "string" },
         binary: { type: "string" },
+        "all-nodes": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },
