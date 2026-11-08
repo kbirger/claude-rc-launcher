@@ -434,6 +434,7 @@ claude-rc list --host nas                        # instances (--host defaults to
 claude-rc ls /srv                                # directories you can start in (a lock marks untrusted ones)
 claude-rc ls /srv --user alice                   # trust is shown for that user
 claude-rc mkdir /srv new-project
+claude-rc mkdir /srv alice-project --user alice  # the new folder is owned by alice
 claude-rc start /srv/new-project --name demo     # prints the instance id
 claude-rc start /srv/new-project --user alice    # run the instance as alice
 claude-rc start /srv/new-project --force         # add the folder to trust, then start
@@ -447,7 +448,7 @@ of that user and then starts the instance. If the host is too old to accept `--f
 did not accept --force. Update the hub and the node.`
 
 `--user` needs a node that runs as root in system scope. If the node is too old to know `--user`, the CLI stops with
-`this host does not support --user. Update the node.` and starts nothing. An empty `--user` is an error. In `ls`, a
+`this host does not support --user. Update the node.` and starts or creates nothing. This applies to `start` and `mkdir`. An empty `--user` is an error. In `ls`, a
 lock after a path means that the folder is not trusted.
 
 Add `--json` to any command for machine-readable output. Exit code 0 is success, 1 is an error, and 2 means that

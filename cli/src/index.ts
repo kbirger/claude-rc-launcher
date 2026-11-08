@@ -27,7 +27,7 @@ Commands:
   stop <id>                          stop an instance    (--host <id>)
   logs <id> [--lines <n>]            show instance logs  (--host <id>)
   ls [path] [--user <u>]             list directories    (--host <id>)
-  mkdir <parent> <name>              make a directory    (--host <id>)
+  mkdir <parent> <name> [--user <u>] make a directory    (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
   update [--release tag]             update this claude-rc binary

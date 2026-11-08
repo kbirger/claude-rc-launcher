@@ -134,7 +134,7 @@ describe("commands", () => {
   });
 
   test("an empty --user fails before any request", async () => {
-    for (const argv of [["start", "/srv/p", "--user", ""], ["ls", "/srv", "--user", ""], ["ls", "--user="]]) {
+    for (const argv of [["start", "/srv/p", "--user", ""], ["ls", "/srv", "--user", ""], ["ls", "--user="], ["mkdir", "/srv", "new", "--user", ""]]) {
       const s = setup();
       const r = await s.run(...argv);
       expect(r.code).toBe(1);
@@ -163,6 +163,32 @@ describe("commands", () => {
     await s.run("mkdir", "/srv", "new");
     expect(JSON.parse(s.seen[0]!.body)).toEqual({ parent: "/srv", name: "new" });
     expect(s.out).toEqual(["/srv/new"]);
+  });
+
+  test("mkdir --user sends the user and first calls GET /users", async () => {
+    const s = setup({
+      "GET /cli/api/hosts/local/users": () => [{ name: "alice", uid: 1000 }],
+      "POST /cli/api/hosts/local/fs/mkdir": () => new Response(JSON.stringify({ path: "/srv/new" }), { status: 201 }),
+    });
+    expect((await s.run("mkdir", "/srv", "new", "--user", "alice")).code).toBe(0);
+    expect(s.seen.map((x) => `${x.method} ${x.path}`)).toEqual(["GET /cli/api/hosts/local/users", "POST /cli/api/hosts/local/fs/mkdir"]);
+    expect(JSON.parse(s.seen[1]!.body)).toEqual({ parent: "/srv", name: "new", user: "alice" });
+    expect(s.out).toEqual(["/srv/new"]);
+  });
+
+  test("mkdir --user fails clearly when /users is 404 and creates nothing", async () => {
+    const s = setup({ "GET /cli/api/hosts/local/users": () => Response.json({ error: "not found" }, { status: 404 }) });
+    const r = await s.run("mkdir", "/srv", "new", "--user", "alice");
+    expect(r.code).toBe(1);
+    expect(r.err.join("\n")).toContain("this host does not support --user. Update the node.");
+    expect(s.seen.filter((x) => x.method === "POST")).toHaveLength(0);
+  });
+
+  test("mkdir without --user makes no /users call", async () => {
+    const s = setup({ "POST /cli/api/hosts/local/fs/mkdir": () => new Response(JSON.stringify({ path: "/srv/new" }), { status: 201 }) });
+    await s.run("mkdir", "/srv", "new");
+    expect(s.seen).toHaveLength(1);
+    expect(JSON.parse(s.seen[0]!.body)).not.toHaveProperty("user");
   });
 
   test("whoami prints the name and username", async () => {

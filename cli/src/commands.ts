@@ -16,6 +16,16 @@ const need = (args: string[], n: number, usage: string) => {
 /** Runs one instance, filesystem or host-list command against the hub. */
 export async function runCommand(name: CommandName, args: string[], flags: Flags, hub: HubClient, out: (s: string) => void): Promise<void> {
   const host = `/cli/api/hosts/${encodeURIComponent(flags.host ?? "local")}`;
+  // An older node ignores `user` without an error. When --user is given, ask for `/users` first so that it fails instead.
+  const requireUserSupport = async () => {
+    if (flags.user === undefined) return;
+    try {
+      await hub.request("GET", `${host}/users`);
+    } catch (e) {
+      if (e instanceof HubError && e.status === 404) throw new ExitError("this host does not support --user. Update the node.", 1);
+      throw e;
+    }
+  };
   if (flags.user === "") throw new ExitError("--user must not be empty", 1);
   const show = (value: unknown, plain: () => string) => out(flags.json ? JSON.stringify(value, null, 2) : plain());
 
@@ -37,14 +47,7 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
     }
     case "start": {
       need(args, 1, "start <path> [--name <n>] [--user <u>] [--force]");
-      if (flags.user !== undefined) {
-        try {
-          await hub.request("GET", `${host}/users`);
-        } catch (e) {
-          if (e instanceof HubError && e.status === 404) throw new ExitError("this host does not support --user. Update the node.", 1);
-          throw e;
-        }
-      }
+      await requireUserSupport();
       const body = { path: args[0], ...(flags.name ? { name: flags.name } : {}), ...(flags.user !== undefined ? { user: flags.user } : {}), ...(flags.force ? { addTrust: true } : {}) };
       let inst: Instance;
       try {
@@ -81,8 +84,10 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       return;
     }
     case "mkdir": {
-      need(args, 2, "mkdir <parent> <name>");
-      const r = await hub.request<{ path: string }>("POST", `${host}/fs/mkdir`, { parent: args[0], name: args[1] });
+      need(args, 2, "mkdir <parent> <name> [--user <u>]");
+      await requireUserSupport();
+      const body = { parent: args[0], name: args[1], ...(flags.user !== undefined ? { user: flags.user } : {}) };
+      const r = await hub.request<{ path: string }>("POST", `${host}/fs/mkdir`, body);
       show(r, () => r.path);
       return;
     }
