@@ -4,10 +4,14 @@ import { HostError, type HostClient, type HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
-import { parseMkdirRequest, parseStartRequest, readJson } from "./requests";
+import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { VERSION } from "./version";
 import type { User } from "./userauth";
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed" };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string };
+
+/** A node's update downloads two release assets and checks them before it answers. */
+export const UPDATE_TIMEOUT_MS = 180_000;
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
@@ -36,7 +40,10 @@ export function hostsApi(o: {
       o.registry.list().map(async ({ host: h, client, source }): Promise<HostInfo> => {
         try {
           const r = await client.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
-          if (r.status === 200) return { id: h.id, name: h.name, status: "ok", source };
+          if (r.status === 200) {
+            const version = isObject(r.body) && typeof r.body.version === "string" ? r.body.version : undefined;
+            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}) };
+          }
           return { id: h.id, name: h.name, status: "error", error: "bad response", source };
         } catch (e) {
           if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response", source };
@@ -44,7 +51,7 @@ export function hostsApi(o: {
         }
       }),
     );
-    return c.json([{ id: "local", name: cfg.name, status: "ok" } satisfies HostInfo, ...rest]);
+    return c.json([{ id: "local", name: cfg.name, status: "ok", version: VERSION } satisfies HostInfo, ...rest]);
   });
 
   // Audit every state-changing request, local or remote.
@@ -118,6 +125,14 @@ export function hostsApi(o: {
     forward(async (c, k) => {
       const json = parseMkdirRequest(await readJson(c));
       return k.call("POST", "/api/fs/mkdir", { json, timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get("/node", forward((_c, k) => k.call("GET", "/api/node", { timeoutMs: requestTimeoutMs })));
+  remote.post(
+    "/update",
+    forward(async (c, k) => {
+      const json = parseUpdateRequest(await readJson(c));
+      return k.call("POST", "/api/update", { json, timeoutMs: UPDATE_TIMEOUT_MS });
     }),
   );
   remote.all("*", (c) => c.json({ error: "not found" }, 404));

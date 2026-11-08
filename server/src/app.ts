@@ -10,12 +10,17 @@ import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
-import { isObject, parseMkdirRequest, parseStartRequest, readJson } from "./requests";
+import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { UpdateRefused, type UpdateReport } from "./serviceupdate";
+import { VERSION } from "./version";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
 export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
 
-export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number };
+/** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
+export type Updater = { run(release?: string): Promise<UpdateReport> };
+
+export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 
@@ -36,12 +41,28 @@ function csrf(cfg: Config): MiddlewareHandler {
   };
 }
 
-export type InstanceApiDeps = { cfg: Config; instances: InstanceService; dirOwner?: DirOwner };
+export type InstanceApiDeps = { cfg: Config; instances: InstanceService; dirOwner?: DirOwner; update?: Updater };
 
-/** The instance and filesystem routes of one host (served for `local` by the hub and by a node). */
+/** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
-  const { cfg, instances, dirOwner } = deps;
+  const { cfg, instances, dirOwner, update } = deps;
   const r = new Hono();
+
+  r.get("/node", (c) => c.json({ ok: true, name: cfg.name, version: VERSION }));
+  r.post("/update", async (c) => {
+    const { release } = parseUpdateRequest(await readJson(c));
+    if (!update) throw new HttpError(501, "update is not available on this host");
+    let report: UpdateReport;
+    try {
+      report = await update.run(release);
+    } catch (e) {
+      if (e instanceof UpdateRefused) throw new HttpError(e.status, e.message);
+      console.error(e);
+      throw new HttpError(500, e instanceof Error ? e.message : String(e));
+    }
+    // 202: the watchdog restarts the service a moment after this answer is sent.
+    return c.json(report, report.status === "restarting" ? 202 : 200);
+  });
 
   r.get("/instances", async (c) => c.json(await instances.list()));
   r.post("/instances", async (c) => {
@@ -96,8 +117,8 @@ export function onError(err: Error, c: Context) {
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: InstanceService; auth: MiddlewareHandler; dirOwner?: DirOwner }): Hono {
-  const { cfg, instances, auth, dirOwner } = deps;
+export function createNodeApp(deps: { cfg: Config; instances: InstanceService; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater }): Hono {
+  const { cfg, instances, auth, dirOwner, update } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));
 
@@ -115,15 +136,14 @@ export function createNodeApp(deps: { cfg: Config; instances: InstanceService; a
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
-  api.get("/node", (c) => c.json({ ok: true, name: cfg.name }));
-  api.route("/", instanceApi({ cfg, instances, dirOwner }));
+  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}) }));
   app.route("/api", api);
   app.onError(onError);
   return app;
 }
 
 export function createApp(deps: Deps): Hono {
-  const { cfg, instances, userAuth, staticHandler, dirOwner } = deps;
+  const { cfg, instances, userAuth, staticHandler, dirOwner, update } = deps;
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -139,7 +159,7 @@ export function createApp(deps: Deps): Hono {
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner }),
+      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}) }),
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,

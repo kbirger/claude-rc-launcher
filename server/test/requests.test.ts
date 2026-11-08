@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../src/instances";
-import { isObject, parseMkdirRequest, parseStartRequest } from "../src/requests";
+import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest } from "../src/requests";
 
 const rejects = (fn: () => unknown) => {
   try {
@@ -61,6 +61,24 @@ describe("parseMkdirRequest", () => {
     [{ parent: "/srv", name: "a", user: "" }, "user must not be empty"],
   ])("rejects %j with 400", (body, message) => {
     expect(rejects(() => parseMkdirRequest(body))).toEqual({ status: 400, message });
+  });
+});
+
+describe("parseUpdateRequest", () => {
+  test("accepts no release and a version tag, and drops unknown fields", () => {
+    expect(parseUpdateRequest({})).toEqual({});
+    expect(parseUpdateRequest({ release: "v1.2.3" })).toEqual({ release: "v1.2.3" });
+    expect(parseUpdateRequest({ release: "1.2.3-rc.1", url: "https://evil" })).toEqual({ release: "1.2.3-rc.1" });
+  });
+  test.each([
+    [[], "body must be an object"],
+    [null, "body must be an object"],
+    [{ release: 5 }, "release must be a version tag such as v1.2.3"],
+    [{ release: "latest" }, "release must be a version tag such as v1.2.3"],
+    [{ release: "v1.0.0/../../x" }, "release must be a version tag such as v1.2.3"],
+    [{ release: "" }, "release must be a version tag such as v1.2.3"],
+  ])("rejects %j with 400", (body, message) => {
+    expect(rejects(() => parseUpdateRequest(body))).toEqual({ status: 400, message });
   });
 });
 

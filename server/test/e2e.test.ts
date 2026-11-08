@@ -8,6 +8,8 @@ import { startHub } from "../src/hubmain";
 import { certFingerprint } from "../src/hubproof";
 import { generateSecret, hashSecret } from "../src/nodeauth";
 import { startNode } from "../src/nodemain";
+import type { UpdateReport } from "../src/serviceupdate";
+import { VERSION } from "../src/version";
 
 const tmp = () => realpathSync(mkdtempSync(path.join(os.tmpdir(), "rc-e2e-")));
 const stoppers: (() => void)[] = [];
@@ -76,8 +78,8 @@ describe("hub + node end to end", () => {
   test("the host list shows both ok; instances and fs go through to the node", async () => {
     const s = await setup();
     expect(await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()).toEqual([
-      { id: "local", name: "hub", status: "ok" },
-      { id: "nas", name: "NAS", status: "ok", source: "config" },
+      { id: "local", name: "hub", status: "ok", version: VERSION },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION },
     ]);
     expect(await (await fetch(s.hubUrl("/api/hosts/nas/instances"), { headers: s.h() })).json()).toMatchObject([{ name: "pi-one" }]);
     const r = await fetch(s.hubUrl("/api/hosts/nas/instances"), { method: "POST", headers: s.h(), body: JSON.stringify({ path: "/proj", name: "x" }) });
@@ -102,7 +104,7 @@ describe("hub + node end to end", () => {
     const s = await setup();
     s.node.stop();
     const list = (await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[];
-    expect(list[0]).toEqual({ id: "local", name: "hub", status: "ok" });
+    expect(list[0]).toEqual({ id: "local", name: "hub", status: "ok", version: VERSION });
     expect(list[1]).toMatchObject({ id: "nas", status: "offline" });
     expect((await fetch(s.hubUrl("/api/hosts/local/instances"), { headers: s.h() })).status).toBe(200);
     const r = await fetch(s.hubUrl("/api/hosts/nas/instances"), { headers: s.h() });
@@ -151,6 +153,55 @@ describe("hub key enrollment end to end", () => {
     const list = await fetch(hubUrl("/api/hosts/pi/instances"), { headers: { cookie } });
     expect(list.status).toBe(200);
     expect(await list.json()).toMatchObject([{ name: "pi-one" }]);
+  });
+});
+
+describe("update end to end", () => {
+  const recorder = (from: string) => {
+    const releases: (string | undefined)[] = [];
+    const update = { run: async (release?: string): Promise<UpdateReport> => (releases.push(release), { status: "restarting", from, to: "9.9.9", clients: [] }) };
+    return { releases, update };
+  };
+
+  test("POST /cli/api/hosts/<node>/update reaches the node updater over the Hub-Proof path, and local reaches the hub's", async () => {
+    const hubUp = recorder("hub-old");
+    const nodeUp = recorder("node-old");
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
+      hosts: [],
+    } as unknown as Config;
+    const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify, update: hubUp.update }));
+    stoppers.push(hub.stop);
+    const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
+    const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
+    const enr = (await (await fetch(hubUrl("/cli/api/node-enrollment"), { headers: cliH })).json()) as { hub_keys: { public_key: string }[] };
+
+    const stateDir = tmp();
+    const nodeCfg = {
+      ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
+      node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [enr.hub_keys[0]!.public_key], secretHashes: [] } },
+    } as unknown as Config;
+    const node = await quiet(() => startNode(nodeCfg, { instances: fakeInstances("pi").svc, update: nodeUp.update }));
+    stoppers.push(node.stop);
+    const fp = certFingerprint(readFileSync(path.join(stateDir, "node-cert.pem"), "utf8"));
+    const add = await quiet(() => fetch(hubUrl("/cli/api/hosts"), { method: "POST", headers: cliH, body: JSON.stringify({ id: "pi", url: `https://localhost:${node.port}`, fingerprint: fp }) }));
+    expect(add.status).toBe(201);
+
+    const r = await quiet(() => fetch(hubUrl("/cli/api/hosts/pi/update"), { method: "POST", headers: cliH, body: JSON.stringify({ release: "v9.9.9", evil: 1 }) }));
+    expect(r.status).toBe(202);
+    expect(await r.json()).toEqual({ status: "restarting", from: "node-old", to: "9.9.9", clients: [] });
+    expect(nodeUp.releases).toEqual(["v9.9.9"]);
+
+    const node2 = await (await fetch(hubUrl("/cli/api/hosts/pi/node"), { headers: cliH })).json();
+    expect(node2).toEqual({ ok: true, name: "pi", version: VERSION });
+
+    const local = await quiet(() => fetch(hubUrl("/cli/api/hosts/local/update"), { method: "POST", headers: cliH, body: "{}" }));
+    expect(local.status).toBe(202);
+    expect(hubUp.releases).toEqual([undefined]);
+    expect(nodeUp.releases).toEqual(["v9.9.9"]);
   });
 });
 

@@ -9,6 +9,8 @@ import type { UserAuthStrategy } from "../src/userauth";
 import type { Config } from "../src/config";
 import { HttpError, type Instance } from "../src/instances";
 import { PathError } from "../src/paths";
+import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
+import { VERSION } from "../src/version";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const ID = "0123456789ab";
@@ -406,7 +408,7 @@ describe("host-scoped API", () => {
     const app = createApp({ cfg: local, instances: f.svc, userAuth: oidcUserAuth(local, oidc) });
     const r = await app.request("/api/hosts", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok" }]);
+    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION }]);
   });
   test("an unknown host is 404", async () => {
     const r = await mk().app.request("/api/hosts/other/instances", { headers: H() });
@@ -415,5 +417,55 @@ describe("host-scoped API", () => {
   });
   test("/api/hosts requires authentication", async () => {
     expect((await mk().app.request("/api/hosts")).status).toBe(401);
+  });
+});
+
+describe("POST /update on the local host", () => {
+  const withUpdate = (update?: { run(release?: string): Promise<UpdateReport> }) =>
+    createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), ...(update ? { update } : {}) });
+  const update = (app: any, body: unknown = {}) => app.request("/api/hosts/local/update", { method: "POST", headers: H(), body: JSON.stringify(body) });
+
+  test("without an updater it is 501", async () => {
+    const r = await update(withUpdate());
+    expect(r.status).toBe(501);
+    expect(await r.json()).toEqual({ error: "update is not available on this host" });
+  });
+
+  test("a restarting report is 202; the other reports are 200", async () => {
+    const reports: UpdateReport[] = [
+      { status: "restarting", from: "1", to: "2", clients: [] },
+      { status: "up-to-date", from: "2", clients: [] },
+      { status: "clients-only", from: "2", clients: [{ path: "/usr/local/bin/claude-rc", status: "updated" }] },
+      { status: "failed", from: "2", clients: [], error: "the checksum does not match" },
+    ];
+    for (const [report, status] of reports.map((r, i) => [r, i === 0 ? 202 : 200] as const)) {
+      const r = await update(withUpdate({ run: async () => report }));
+      expect([report.status, r.status]).toEqual([report.status, status]);
+      expect(await r.json()).toEqual(report);
+    }
+  });
+
+  test("a refusal keeps its status and message; another error is 500 with its message", async () => {
+    const busy = await update(withUpdate({ run: async () => { throw new UpdateRefused(409, "another update is running on this machine"); } }));
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toEqual({ error: "another update is running on this machine" });
+    const bad = await update(withUpdate({ run: async () => { throw new UpdateRefused(400, "release must be a version tag such as v1.2.3"); } }));
+    expect(bad.status).toBe(400);
+    const err = console.error;
+    console.error = () => {};
+    let boom: Response;
+    try {
+      boom = await update(withUpdate({ run: async () => { throw new Error("disk full"); } }));
+    } finally {
+      console.error = err;
+    }
+    expect(boom.status).toBe(500);
+    expect(await boom.json()).toEqual({ error: "disk full" });
+  });
+
+  test("GET /node returns ok, name and version", async () => {
+    const r = await withUpdate().request("/api/hosts/local/node", { headers: H() });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION });
   });
 });

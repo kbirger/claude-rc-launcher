@@ -1,11 +1,13 @@
-import { createNodeApp } from "./app";
+import { createNodeApp, type Updater } from "./app";
 import type { Config } from "./config";
 import { bunRunner, InstanceService } from "./instances";
 import { nodeAuth } from "./nodeauth";
 import { resolveDirOwner } from "./owner";
+import { realUpdateEnv } from "./realupdate";
+import { createServiceUpdater } from "./serviceupdate";
 import { ensureNodeCert } from "./tls";
 
-export type NodeDeps = { instances?: InstanceService };
+export type NodeDeps = { instances?: InstanceService; update?: Updater };
 
 export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ port: number; fingerprint: string; stop(): void }> {
   const node = cfg.node;
@@ -19,7 +21,9 @@ export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ por
   const auth = nodeAuth({ hubKeys: node.auth.hubKeys, selfFingerprint: "sha256:" + cert.fingerprintSha256, secretHashes: node.auth.secretHashes });
   const dirOwner = await resolveDirOwner(cfg);
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
-  const app = createNodeApp({ cfg, instances, auth, dirOwner });
+  // One updater for the process: it holds the lock that refuses a second update while one runs.
+  const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
+  const app = createNodeApp({ cfg, instances, auth, dirOwner, update });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, maxRequestBodySize: 1024 * 1024, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
   console.log(`node "${cfg.name}" listening on https://${cfg.host}:${server.port}`);
   return { port: server.port!, fingerprint: cert.fingerprintSha256, stop: () => void server.stop(true) };

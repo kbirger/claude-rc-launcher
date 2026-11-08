@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config";
+import { VERSION } from "../src/version";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;
 const ID = "0123456789ab";
@@ -41,7 +42,7 @@ describe("node app", () => {
   });
   test("/api/node and instance routes work with auth", async () => {
     const a = app();
-    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi" });
+    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION });
     expect(await (await a.request("/api/instances", { headers: ok })).json()).toEqual([inst]);
     expect((await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) })).status).toBe(201);
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);

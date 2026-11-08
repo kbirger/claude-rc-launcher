@@ -1,4 +1,4 @@
-import { createApp, type CliDeps } from "./app";
+import { createApp, type CliDeps, type Updater } from "./app";
 import { cliBearerAuth } from "./cliauth";
 import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
 import type { Config } from "./config";
@@ -9,11 +9,13 @@ import { bunRunner, InstanceService } from "./instances";
 import { createJwtVerifier, remoteKeys, type JwtVerifier } from "./jwt";
 import { resolveDirOwner } from "./owner";
 import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
+import { realUpdateEnv } from "./realupdate";
+import { createServiceUpdater } from "./serviceupdate";
 import { staticHandler } from "./static";
 import type { UserAuthStrategy } from "./userauth";
 import { loadWebFiles } from "./webfiles";
 
-export type HubDeps = { instances?: InstanceService; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier };
+export type HubDeps = { instances?: InstanceService; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater };
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
@@ -64,7 +66,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const makeClient = (h: HostConfig): HostClient => createHostClient(h, authorizerFor(h, hubKey));
   const cli = buildCliDeps(cfg, deps, makeClient, [hubKey.publicKey]);
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, ...(cli ? { cli } : {}) });
+  // One updater for the process: it holds the lock that refuses a second update while one runs.
+  const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);
