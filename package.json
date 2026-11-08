@@ -10,6 +10,7 @@
     "build:web": "bun run --cwd web build",
     "build:bundle": "bun run build:web && bun scripts/gen-embed.ts",
     "build:cli": "bun build --compile --define \"BUILD_VERSION=\\\"$(bun scripts/version.ts)\\\"\" cli/src/index.ts --outfile dist/claude-rc",
+    "build:win": "bun build --compile --target=bun-windows-x64 --define \"BUILD_VERSION=\\\"$(bun scripts/version.ts)\\\"\" server/src/index.win.ts --outfile dist/claude-rc-launcher-win-x64.exe",
     "build": "bun run build:bundle && bun build --compile --define \"BUILD_VERSION=\\\"$(bun scripts/version.ts)\\\"\" server/src/index.ts --outfile dist/claude-rc-launcher"
   },
   "dependencies": {

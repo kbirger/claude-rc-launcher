@@ -67,10 +67,11 @@ Three smaller changes in shared code:
 - Paths. Done (2026-11-08). `paths.ts`, `fsapi.ts` and `config.ts` already use `node:path` and accept drive letters, backslashes and win32 case rules, so they need no change. Only `defaultName` in `unit.ts` split on `/` only. It now handles drive-letter and UNC paths. The rest of `unit.ts` is systemd-only, and the Windows backend does not use it.
 - Configuration (decided 2026-11-08):
   - `service_user` stays. `install.ps1` writes it into the WinSW `<serviceaccount>`, and `install /p` asks for the password. At start-up the agent compares it with the account it runs as and stops with a clear error if they differ. `service_home` comes from `%USERPROFILE%`.
-  - `scope`, `unit_dir` and `allowed_users` are rejected with a clear error, not ignored. Windows has no user-scope services and no unit files, and instances cannot run as other users. An error stops someone from copying a Linux config by mistake.
+  - `instance.scope`, `instance.unit_dir`, `instance.service_path` and `instance.ssh_auth_sock` are rejected with a clear error, not ignored. Windows has no user-scope services, no unit files and no unit environment. An error stops someone from copying a Linux config by mistake. (An earlier draft named `allowed_users`. That key is a hub login allowlist and is not an instance setting. On Linux, user switching is implicit: it needs root and system scope.)
   - Instance state and logs go in a folder under `state_dir`. The default `state_dir` is `%ProgramData%\claude-rc-launcher`.
   - The install path of the binaries is not a config key. The agent uses `dirname(process.execPath)`. `install.ps1` takes `-InstallDir`, which defaults to `C:\Program Files\claude-rc-launcher`.
-  - Open: the default for `roots`. Suggestion: the service account's profile folder.
+  - `roots` defaults to the service account's profile folder.
+  - Done (2026-11-08): `parseConfig(raw, io, { windows: true })`, `checkServiceAccount` and `index.win.ts`. The state folder is `<tls.state_dir>\instances`.
 - Update. `createServiceUpdater` already takes an injectable `UpdateEnv`. The Windows entry point supplies one that replaces the `.exe` with a rename and a helper script.
 
 ## The Windows instance backend
@@ -81,7 +82,7 @@ This is new code, about 200 to 300 lines. It must do the following:
 - Track the PIDs and instance data in a state file, so that the list survives an agent restart.
 - Write the output of each instance to a log file, and read the last N lines for the logs endpoint.
 - Decide whether instances survive an agent restart. A Job Object setting can control this. The simple option is that instances restart with the agent.
-- Drop user switching (`allowed_users`). Every instance runs as the service account.
+- No user switching. Every instance runs as the service account, and a `user` field other than `service_user` is a 400.
 
 ## Self-update on Windows
 

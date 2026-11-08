@@ -19,7 +19,7 @@ export function isValidName(name: string): boolean {
   return NAME_RE.test(name);
 }
 
-export function defaultName(cfg: Config, absPath: string): string {
+export function defaultName(cfg: Pick<Config, "namePrefix">, absPath: string): string {
   // A drive-letter or UNC path uses "\" as well as "/"; a POSIX path only "/".
   const windowsStyle = /^([A-Za-z]:|\\\\)/.test(absPath);
   const rest = windowsStyle ? absPath.replace(/^[A-Za-z]:/, "") : absPath;
