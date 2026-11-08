@@ -12,7 +12,8 @@
     * Gets claude-rc-launcher-win-x64.exe: -Binary, else .\..\..\dist\, else the GitHub release (the latest, or
       -Release). A download is checked against the SHA256SUMS of the same release.
     * Gets WinSW (the Windows service wrapper) v2.12.0 and checks it against a pinned SHA-256.
-    * Copies both into -InstallDir and writes the WinSW definition next to them. The binary is written as a
+    * Copies both into -InstallDir, with the launcher script, and writes the WinSW definition next to them. The
+      service account gets Modify rights on -InstallDir: the agent updates its own binary there. The binary is written as a
       new file and moved over the old one, after the service is stopped.
     * Creates <DataDir>\config.toml from node.config.example.toml. An existing config.toml is NEVER changed.
     * Limits <DataDir> (it holds the certificate key) to SYSTEM, Administrators and the service account.
@@ -153,7 +154,10 @@ try {
 
   $template = Join-Path $Here "$Name.xml"
   $example = Join-Path $Here 'node.config.example.toml'
-  if (-not (Test-Path -LiteralPath $template) -or -not (Test-Path -LiteralPath $example)) { throw "$template or $example missing (run from a full checkout)" }
+  $launcher = Join-Path $Here "$Name-run.ps1"
+  foreach ($f in @($template, $example, $launcher)) {
+    if (-not (Test-Path -LiteralPath $f)) { throw "$f missing (run from a full checkout)" }
+  }
 
   # ---- stop the service so its files can be replaced ------------------------------------------------------
   $svc = Get-NodeService
@@ -179,6 +183,13 @@ try {
   $xml = $xml.Replace('@CONFIG@', [Security.SecurityElement]::Escape($ConfigFile)).Replace('@DATA_DIR@', [Security.SecurityElement]::Escape($DataDir))
   [IO.File]::WriteAllText($SvcXml, $xml, (New-Object Text.UTF8Encoding($false)))
   Write-Host "Wrote $SvcXml"
+  Copy-Item -LiteralPath $launcher -Destination (Join-Path $InstallDir "$Name-run.ps1") -Force
+  Write-Host "Installed the launcher script $Name-run.ps1"
+
+  # The agent updates itself: it renames its own .exe and puts the new one in place, so the service account needs to
+  # change files in the install folder. The inherited permissions stay as they are.
+  & icacls.exe $InstallDir /grant "${Account}:(OI)(CI)M" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls failed on $InstallDir (is '$Account' a valid account name?)" }
 
   if (-not (Test-Path -LiteralPath $ConfigFile)) {
     $conf = [IO.File]::ReadAllText($example).Replace('__SERVICE_USER__', $ShortUser)

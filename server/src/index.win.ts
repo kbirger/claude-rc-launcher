@@ -1,7 +1,6 @@
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { UpdateRefused } from "./serviceupdate";
-import type { Updater } from "./app";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { windowsDataDir, type Config } from "./config";
 import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner } from "./instances";
@@ -10,6 +9,7 @@ import { startNode } from "./nodemain";
 import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
 import { taskkillTree, WinInstances } from "./win/instances";
+import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
 
 // The Windows node. Only this file imports ./win, so the Linux binaries never contain this code.
 
@@ -36,6 +36,8 @@ try {
   process.exit(1);
 }
 
+console.log(`claude-rc-launcher ${VERSION} (Windows node), running as ${userInfo().username}`);
+
 const instances = new WinInstances(
   {
     roots: cfg.roots,
@@ -49,30 +51,43 @@ const instances = new WinInstances(
   { killTree: taskkillTree(bunRunner) },
 );
 
-// Self-update on Windows is not written yet: refuse it clearly, as the Linux updater does on other platforms.
-const update: Updater = {
-  async run() {
-    throw new UpdateRefused(409, "the update is not available on Windows yet");
-  },
+let running: { stop(): void };
+let closing = false;
+const shutdown = async (code = 0) => {
+  if (closing) return;
+  closing = true;
+  running?.stop();
+  await instances.close();
+  process.exit(code);
 };
 
-let running: { stop(): void };
+// After an update the agent ends itself with a non-zero code, so that WinSW starts the new binary (see win/update.ts).
+const dataDir = cfg.node!.tls.stateDir;
+const update = createWindowsUpdater(
+  realWinUpdateEnv({
+    dataDir,
+    // Wait a moment so that the answer to the update request is sent first.
+    scheduleExit: () => void setTimeout(() => void shutdown(UPDATE_EXIT_CODE), 2000),
+  }),
+);
+
 try {
   running = await startNode(cfg, { instances, update });
   const n = await instances.restore();
   if (n > 0) console.log(`started ${n} instance${n === 1 ? "" : "s"} from the saved list`);
+  confirmPendingUpdate({
+    dataDir,
+    version: VERSION,
+    exists: existsSync,
+    readFile: (p) => readFileSync(p),
+    remove: (p) => rmSync(p, { force: true }),
+    after: (ms, fn) => void setTimeout(fn, ms),
+    log: (line) => console.log(line),
+  });
 } catch (e) {
   console.error(`startup failed: ${(e as Error).message}`);
   process.exit(1);
 }
 
-let closing = false;
-const shutdown = async () => {
-  if (closing) return;
-  closing = true;
-  running.stop();
-  await instances.close();
-  process.exit(0);
-};
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown());

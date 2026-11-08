@@ -1,7 +1,7 @@
 <!--
   WinSW definition of the claude-rc-launcher node service. install.ps1 copies this file to
   claude-rc-launcher-svc.xml next to WinSW (claude-rc-launcher-svc.exe) and fills in the two values marked with @ signs.
-  WinSW starts claude-rc-launcher.exe as a child process and reports the service state to Windows.
+  WinSW starts the launcher script, which starts claude-rc-launcher.exe, and reports the service state to Windows.
   This file is the Windows counterpart of deploy/claude-rc-launcher.service.
 -->
 <service>
@@ -9,8 +9,12 @@
   <name>Claude RC Launcher (node)</name>
   <description>Node agent of claude-rc-launcher: starts claude remote-control sessions for a hub.</description>
 
-  <executable>%BASE%\claude-rc-launcher.exe</executable>
-  <arguments>--config "@CONFIG@"</arguments>
+  <!--
+    WinSW 2.x has no start hook, so it runs a launcher that rolls back an update that does not stay up and then
+    starts the agent (see claude-rc-launcher-run.ps1). The launcher returns the agent's exit code.
+  -->
+  <executable>powershell.exe</executable>
+  <arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%BASE%\claude-rc-launcher-run.ps1" -Exe "%BASE%\claude-rc-launcher.exe" -Config "@CONFIG@" -DataDir "@DATA_DIR@"</arguments>
 
   <!-- Restart=always, RestartSec=5 -->
   <onfailure action="restart" delay="5 sec"/>

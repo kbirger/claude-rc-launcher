@@ -36,9 +36,12 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
     expect(r.code).toBe(0);
     expect(await readFile(join(dir, "bin", "claude-rc-launcher.exe"), "utf8")).toBe("MZ fake node binary");
     expect(await readFile(join(dir, "bin", "claude-rc-launcher-svc.exe"), "utf8")).toBe("MZ fake winsw");
+    expect(await readFile(join(dir, "bin", "claude-rc-launcher-run.ps1"), "utf8")).toContain("update-pending.json");
     const xml = await readFile(join(dir, "bin", "claude-rc-launcher-svc.xml"), "utf8");
     expect(xml).toContain("<id>claude-rc-launcher</id>");
-    expect(xml).toContain(`<arguments>--config "${join(dir, "data", "config.toml")}"</arguments>`);
+    expect(xml).toContain("<executable>powershell.exe</executable>");
+    expect(xml).toContain(`-Config "${join(dir, "data", "config.toml")}" -DataDir "${join(dir, "data")}"`);
+    expect(xml).toContain('-File "%BASE%\\claude-rc-launcher-run.ps1" -Exe "%BASE%\\claude-rc-launcher.exe"');
     expect(xml).toContain(`<logpath>${join(dir, "data", "logs")}</logpath>`);
     expect(xml).not.toMatch(/@[A-Z_]+@/); // every token was replaced
     const conf = await readFile(join(dir, "data", "config.toml"), "utf8");
