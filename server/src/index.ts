@@ -3,6 +3,12 @@ import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { startHub } from "./hubmain";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
+import { VERSION } from "./version";
+
+if (process.argv.includes("--version")) {
+  console.log(`claude-rc-launcher ${VERSION}`);
+  process.exit(0);
+}
 
 if (process.argv[2] === "gen-secret") {
   const { secret, sha256 } = generateSecret();

@@ -23,16 +23,19 @@ jobs:
       - name: Build web bundle and embed it
         run: bun run build:bundle
       - name: Compile binaries
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           mkdir -p dist
+          version="$(bun scripts/version.ts)"
           for target in x64 arm64; do
-            bun build --compile --target=bun-linux-$target server/src/index.ts \
+            bun build --compile --target=bun-linux-$target --define "BUILD_VERSION=\"$version\"" server/src/index.ts \
               --outfile dist/claude-rc-launcher-linux-$target
           done
           # The command-line client runs on laptops, so it is built for more platforms than the server.
           for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
             ext=""; [ "$target" = "windows-x64" ] && ext=".exe"
-            bun build --compile --target=bun-$target cli/src/index.ts \
+            bun build --compile --target=bun-$target --define "BUILD_VERSION=\"$version\"" cli/src/index.ts \
               --outfile dist/claude-rc-$target$ext
           done
           cp install-cli.sh dist/install-cli.sh

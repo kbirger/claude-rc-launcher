@@ -9,6 +9,7 @@ import { hubClient } from "./hub";
 import { nodeConfig, type NodeFs } from "./nodecmd";
 import { nodeSetup, nodeUpdate, type Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
+import { VERSION } from "../../server/src/version";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
 
@@ -35,7 +36,8 @@ Commands:
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
                                      write this node's config.toml with the hub's values filled in
 
-Flags for every command: --host <id> (default local), --json, --help`;
+Flags for every command: --host <id> (default local), --json, --help
+  --version                          print the version`;
 
 export type Env = {
   credsFile: string;
@@ -79,6 +81,10 @@ const INSTANCE_COMMANDS = new Set<string>(["whoami", "hosts", "ls", "mkdir", "li
 export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void }, env: Env = defaultEnv()): Promise<number> {
   try {
     const { command, flags } = parseCli(argv);
+    if (flags.version) {
+      io.out(`claude-rc ${VERSION}`);
+      return 0;
+    }
     if (flags.help || command.length === 0) {
       io.out(USAGE);
       return 0;

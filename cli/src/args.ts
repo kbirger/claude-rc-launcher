@@ -23,6 +23,7 @@ export type Flags = {
   release?: string;
   binary?: string;
   help?: boolean;
+  version?: boolean;
 };
 
 export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
@@ -53,6 +54,7 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         release: { type: "string" },
         binary: { type: "string" },
         help: { type: "boolean", short: "h" },
+        version: { type: "boolean" },
       },
     });
     return { command: positionals, flags: values as Flags };
