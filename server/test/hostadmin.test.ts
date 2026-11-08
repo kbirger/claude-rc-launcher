@@ -7,7 +7,7 @@ import { createNodeApp, onError } from "../src/app";
 import type { Config } from "../src/config";
 import { PeekError, peekCertificate } from "../src/certpeek";
 import { hostAdminApi } from "../src/hostadmin";
-import { createHostClient, type HostClient, type HostConfig } from "../src/hostclient";
+import { createHostClient, secretAuthorizer, type HostClient, type HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
 import { generateSecret, nodeAuth } from "../src/nodeauth";
 import { ensureNodeCert } from "../src/tls";
@@ -32,7 +32,7 @@ const JSON_H = { "content-type": "application/json" };
 async function setup(o: { secret?: string; hasHubAuth?: boolean; peek?: typeof peekCertificate } = {}) {
   const node = await startNode();
   const stateDir = tmp();
-  const makeClient = (h: HostConfig): HostClient => createHostClient(h, async () => o.secret ?? node.secret);
+  const makeClient = (h: HostConfig): HostClient => createHostClient(h, secretAuthorizer(o.secret ?? node.secret));
   const registry = await HostRegistry.load({ stateDir, hosts: [staticHost], clients: new Map([["nas", { call: async () => ({ status: 200, body: {} }) }]]), makeClient });
   const app = new Hono();
   app.use("*", async (c, next) => {

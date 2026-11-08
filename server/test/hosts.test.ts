@@ -6,7 +6,7 @@ import type { MiddlewareHandler } from "hono";
 import { createApp, createNodeApp } from "../src/app";
 import type { Config } from "../src/config";
 import { HttpError } from "../src/instances";
-import { HostError, createHostClient, type HostClient, type HostConfig } from "../src/hostclient";
+import { HostError, createHostClient, secretAuthorizer, type HostClient, type HostConfig } from "../src/hostclient";
 import { generateSecret, nodeAuth } from "../src/nodeauth";
 import { ensureNodeCert } from "../src/tls";
 import { HostRegistry } from "../src/hostregistry";
@@ -70,7 +70,7 @@ async function startNode(id: string, over: { secret?: string } = {}): Promise<No
   stops.push(stop);
   const secret = over.secret ?? sec.secret;
   const host: HostConfig = { id, name: id.toUpperCase(), url: `https://localhost:${server.port}`, ca: cert.certPem, auth: { type: "secret", secret } };
-  return { host, client: createHostClient(host, async () => secret), secret, seen, starts, stop, delayNodeMs };
+  return { host, client: createHostClient(host, secretAuthorizer(secret)), secret, seen, starts, stop, delayNodeMs };
 }
 
 function hub(hosts: HostConfig[], clients: Map<string, HostClient>, o: { probeTimeoutMs?: number; requestTimeoutMs?: number } = {}) {
@@ -129,7 +129,7 @@ describe("host list", () => {
     const a = await startNode("nas", { secret: generateSecret().secret });
     const b = await startNode("pi");
     const other = await startNode("other");
-    const wrongPin = createHostClient({ ...b.host, ca: other.host.ca }, async () => b.secret);
+    const wrongPin = createHostClient({ ...b.host, ca: other.host.ca }, secretAuthorizer(b.secret));
     const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", wrongPin]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
       { id: "local", name: "box", status: "ok" },
@@ -199,7 +199,7 @@ describe("forwarding to a real node", () => {
   test("wrong pinned cert -> 502 with the exact message and no raw error text", async () => {
     const a = await startNode("nas");
     const other = await startNode("other");
-    const bad = createHostClient({ ...a.host, ca: other.host.ca }, async () => a.secret);
+    const bad = createHostClient({ ...a.host, ca: other.host.ca }, secretAuthorizer(a.secret));
     const app = hub([a.host], new Map([["nas", bad]]));
     const r = await get(app, "/api/hosts/nas/instances");
     expect(r.status).toBe(502);

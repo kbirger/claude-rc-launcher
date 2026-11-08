@@ -25,7 +25,7 @@ describe("HostRegistry", () => {
     const again = await load(dir);
     const pi = again.get("pi")!;
     expect(pi.source).toBe("managed");
-    expect(pi.host).toMatchObject({ id: "pi", name: "PI", url: "https://10.0.0.5:8443", serverName: "pi.internal", ca: PEM, auth: { type: "oidc" } });
+    expect(pi.host).toMatchObject({ id: "pi", name: "PI", url: "https://10.0.0.5:8443", serverName: "pi.internal", ca: PEM, auth: { type: "hub_key" } });
     const json = JSON.parse(readFileSync(path.join(dir, "managed-hosts.json"), "utf8"));
     expect(json._comment).toContain("Do not edit by hand");
     expect(json.hosts).toEqual([{ id: "pi", name: "PI", url: "https://10.0.0.5:8443", server_name: "pi.internal" }]);

@@ -1,3 +1,5 @@
+import { certFingerprint, signProof, type HubKey, type ProofRequest } from "./hubproof";
+
 export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
 export type HostConfig = { id: string; name: string; url: string; ca: string; serverName?: string; auth: HostAuth };
 
@@ -19,6 +21,19 @@ export interface HostClient {
     path: string,
     o?: { query?: Record<string, string>; json?: unknown; timeoutMs?: number },
   ): Promise<{ status: number; body: unknown }>;
+}
+
+/** Returns the full `Authorization` header value for one exact request. */
+export type Authorizer = (req: ProofRequest) => Promise<string>;
+
+/** `Hub-Proof <jwt>` signed for the node whose certificate is `host.ca`. */
+export function hubAuthorizer(key: HubKey, host: HostConfig): Authorizer {
+  const aud = certFingerprint(host.ca);
+  return async (req) => `Hub-Proof ${await signProof(key, req, aud)}`;
+}
+
+export function secretAuthorizer(secret: string): Authorizer {
+  return async () => `Bearer ${secret}`;
 }
 
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -71,7 +86,7 @@ async function readCapped(res: Response): Promise<string | null> {
  * Pinned HTTPS client for one node. Trust is exactly `host.ca` (the node's own certificate); the hostname is
  * still checked against its SAN (or `serverName`). Never disables verification.
  */
-export function createHostClient(host: HostConfig, token: () => Promise<string>, o: { fetch?: typeof fetch } = {}): HostClient {
+export function createHostClient(host: HostConfig, authorize: Authorizer, o: { fetch?: typeof fetch } = {}): HostClient {
   const doFetch = o.fetch ?? fetch;
   const fail = (reason: HostFailure, detail?: unknown): never => {
     if (detail !== undefined) console.error(`host ${host.id}: ${reason}:`, detail instanceof Error ? detail.message : detail);
@@ -81,19 +96,18 @@ export function createHostClient(host: HostConfig, token: () => Promise<string>,
     async call(method, path, opts = {}) {
       const url = new URL(path, host.url);
       for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
-      let bearer: string;
-      try {
-        bearer = await token();
-      } catch (e) {
-        return fail("rejected our credentials", e);
-      }
-      const headers: Record<string, string> = { authorization: `Bearer ${bearer}`, accept: "application/json" };
+      const headers: Record<string, string> = { accept: "application/json" };
       let body: string | undefined;
       if (opts.json !== undefined) {
         headers["content-type"] = "application/json";
         body = JSON.stringify(opts.json);
       } else if (method !== "GET") {
         headers["content-type"] = "application/json";
+      }
+      try {
+        headers.authorization = await authorize({ method, pathAndQuery: url.pathname + url.search, body: body ?? "" });
+      } catch (e) {
+        return fail("rejected our credentials", e);
       }
       let res: Response;
       try {

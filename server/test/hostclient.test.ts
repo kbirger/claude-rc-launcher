@@ -3,7 +3,11 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseConfig, type ConfigIo } from "../src/config";
-import { HostError, createHostClient, type HostConfig } from "../src/hostclient";
+import { createProofVerifier, certFingerprint, loadOrCreateHubKey } from "../src/hubproof";
+import { nodeAuth } from "../src/nodeauth";
+import { Hono } from "hono";
+import { createHash } from "node:crypto";
+import { HostError, createHostClient, hubAuthorizer, secretAuthorizer, type HostConfig } from "../src/hostclient";
 import { ensureNodeCert } from "../src/tls";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-host-"));
@@ -99,7 +103,7 @@ async function node(names = ["localhost", "127.0.0.1"], behaviour?: (req: Reques
 const hostFor = (n: { certPem: string; port: number }, over: Partial<HostConfig> = {}): HostConfig => ({
   id: "nas", name: "NAS", url: `https://localhost:${n.port}`, ca: n.certPem, auth: { type: "secret", secret: "x" }, ...over,
 });
-const tok = async () => "TOKEN";
+const tok = secretAuthorizer("TOKEN");
 const reason = async (p: Promise<unknown>) => {
   try {
     await p;
@@ -140,9 +144,9 @@ describe("host client", () => {
     const n = await node(undefined, () => Response.json({ error: "unauthorized" }, { status: 401 }));
     expect(await reason(createHostClient(hostFor(n), tok).call("GET", "/api/node"))).toBe("rejected our credentials");
   });
-  test("a token source failure -> rejected our credentials, nothing sent", async () => {
+  test("an authorizer failure -> rejected our credentials, nothing sent", async () => {
     const n = await node();
-    const bad = async () => { throw new Error("idp down"); };
+    const bad = async (): Promise<string> => { throw new Error("idp down"); };
     expect(await reason(createHostClient(hostFor(n), bad).call("GET", "/api/node"))).toBe("rejected our credentials");
     expect(n.log.length).toBe(0);
   });
@@ -180,5 +184,71 @@ describe("host client", () => {
   });
   test("HostError message is `host <id>: <reason>`", () => {
     expect(new HostError("nas", "timeout").message).toBe("host nas: timeout");
+  });
+});
+
+// ---------------------------------------------------------------- hub proofs
+describe("hub-signed requests", () => {
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+  const claims = (auth: string) => JSON.parse(Buffer.from(auth.replace(/^Hub-Proof /, "").split(".")[1]!, "base64url").toString());
+
+  async function recording() {
+    const n = await node();
+    const key = await loadOrCreateHubKey(tmp());
+    const host = hostFor(n, { auth: { type: "hub_key" } });
+    const seen: { url: URL; init: RequestInit }[] = [];
+    const fake = (async (url: URL, init: RequestInit) => {
+      seen.push({ url, init });
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+    return { key, host, seen, client: createHostClient(host, hubAuthorizer(key, host), { fetch: fake }) };
+  }
+  const authOf = (r: { init: RequestInit }) => (r.init.headers as Record<string, string>).authorization!;
+
+  test("sends Hub-Proof that verifies for the fingerprint of host.ca, and fails for another", async () => {
+    const { key, host, seen, client } = await recording();
+    await client.call("GET", "/api/fs", { query: { path: "/srv" } });
+    const auth = authOf(seen[0]!);
+    expect(auth).toStartWith("Hub-Proof ");
+    const jwt = auth.slice("Hub-Proof ".length);
+    const req = { method: "GET", pathAndQuery: seen[0]!.url.pathname + seen[0]!.url.search, body: "" };
+    await createProofVerifier({ keys: [key.publicKey], selfFingerprint: certFingerprint(host.ca) })(jwt, req);
+    const other = certFingerprint((await ensureNodeCert({ dir: tmp(), names: ["x"] })).certPem);
+    await expect(createProofVerifier({ keys: [key.publicKey], selfFingerprint: other })(jwt, req)).rejects.toThrow();
+  });
+  test("a POST proof binds the exact JSON string that was sent", async () => {
+    const { seen, client } = await recording();
+    await client.call("POST", "/api/instances", { json: { path: "/p", name: "x" } });
+    const sent = seen[0]!.init.body as string;
+    expect(claims(authOf(seen[0]!)).bh).toBe(sha(sent));
+    expect(claims(authOf(seen[0]!)).htm).toBe("POST");
+  });
+  test("a GET proof binds the empty body", async () => {
+    const { seen, client } = await recording();
+    await client.call("GET", "/api/node");
+    expect(claims(authOf(seen[0]!)).bh).toBe(sha(""));
+  });
+  test("secretAuthorizer returns Bearer <secret>", async () => {
+    expect(await secretAuthorizer("s3")({ method: "GET", pathAndQuery: "/", body: "" })).toBe("Bearer s3");
+  });
+  test("against a real node: a query with a space and ampersand, a POST body, and a replayed jti", async () => {
+    const c = await ensureNodeCert({ dir: tmp(), names: ["localhost", "127.0.0.1"] });
+    const key = await loadOrCreateHubKey(tmp());
+    const app = new Hono();
+    app.use("*", nodeAuth({ hubKeys: [key.publicKey], selfFingerprint: certFingerprint(c.certPem), secretHashes: [] }));
+    app.get("/api/fs", (x) => x.json({ q: new URL(x.req.url).search }));
+    app.post("/api/instances", async (x) => x.json({ got: await x.req.json() }));
+    const s = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { cert: c.certPem, key: c.keyPem }, fetch: app.fetch });
+    servers.push(s);
+    const host = hostFor({ certPem: c.certPem, port: s.port! }, { auth: { type: "hub_key" } });
+    const client = createHostClient(host, hubAuthorizer(key, host));
+    const r = await client.call("GET", "/api/fs", { query: { path: "/a b", x: "1" } });
+    expect(r.status).toBe(200);
+    expect((r.body as { q: string }).q).toBe("?path=%2Fa+b&x=1");
+    const p = await client.call("POST", "/api/instances", { json: { path: "/p\u00e9", name: "x" } });
+    expect(p).toEqual({ status: 200, body: { got: { path: "/p\u00e9", name: "x" } } });
+    // a different hub key is refused
+    const wrong = createHostClient(host, hubAuthorizer(await loadOrCreateHubKey(tmp()), host));
+    expect(await reason(wrong.call("GET", "/api/fs"))).toBe("rejected our credentials");
   });
 });

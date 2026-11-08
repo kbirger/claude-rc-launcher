@@ -6,7 +6,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { createApp, createNodeApp } from "../src/app";
 import { cliBearerAuth } from "../src/cliauth";
 import type { Config } from "../src/config";
-import { createHostClient, type HostConfig } from "../src/hostclient";
+import { createHostClient, secretAuthorizer, type HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
 import { createJwtVerifier } from "../src/jwt";
 import { generateSecret, nodeAuth } from "../src/nodeauth";
@@ -56,7 +56,7 @@ async function setup(o: { cli?: boolean } = {}) {
   const root = realpathSync(tmp());
   const cfg = { name: "box", hosts: [], roots: [root], publicUrl: "https://rc.example.com" } as unknown as Config;
   const local: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async (_: string, n: number) => `local log ${n}` };
-  const makeClient = (h: HostConfig) => createHostClient(h, async () => node.secret);
+  const makeClient = (h: HostConfig) => createHostClient(h, secretAuthorizer(node.secret));
   const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [], clients: new Map(), makeClient });
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
   const hubToken = `${b64({ alg: "RS256" })}.${b64({ iss: "https://auth.example.com/o/hub/", aud: "hub-client", sub: "svc-1" })}.sig`;

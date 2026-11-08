@@ -3,7 +3,8 @@ import { cliBearerAuth } from "./cliauth";
 import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
 import { createTokenSource, type TokenSource } from "./clientcreds";
 import type { Config } from "./config";
-import { createHostClient, type HostClient, type HostConfig } from "./hostclient";
+import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
+import { loadOrCreateHubKey, type HubKey } from "./hubproof";
 import { HostRegistry } from "./hostregistry";
 import { bunRunner, InstanceService } from "./instances";
 import { createJwtVerifier, remoteKeys, type JwtVerifier } from "./jwt";
@@ -23,29 +24,14 @@ async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrate
   return proxyJwtUserAuth({ settings: ua, verify, ...(deps.peer ? { peer: deps.peer } : {}) });
 }
 
-export function buildHostClients(cfg: Config): Map<string, HostClient> {
-  const clients = new Map<string, HostClient>();
-  const oidcToken: TokenSource | undefined = cfg.hubAuth ? createTokenSource(cfg.hubAuth) : undefined;
-  for (const h of cfg.hosts) {
-    let token: TokenSource;
-    if (h.auth.type === "secret") {
-      const secret = h.auth.secret;
-      token = async () => secret;
-    } else {
-      if (!oidcToken) throw new Error(`host ${h.id} uses auth.type = "hub_key" but [hub_auth.oidc] is not configured`);
-      token = oidcToken;
-    }
-    clients.set(h.id, createHostClient(h, token));
-  }
-  return clients;
+function authorizerFor(h: HostConfig, key: HubKey): Authorizer {
+  return h.auth.type === "secret" ? secretAuthorizer(h.auth.secret) : hubAuthorizer(key, h);
 }
 
-/** Managed hosts always authenticate with the hub's OIDC client credential. */
-function managedClientFactory(oidcToken: TokenSource | undefined): (h: HostConfig) => HostClient {
-  return (h) =>
-    createHostClient(h, oidcToken ?? (async () => {
-      throw new Error("hub_auth.oidc is not configured");
-    }));
+export function buildHostClients(cfg: Config, key: HubKey): Map<string, HostClient> {
+  const clients = new Map<string, HostClient>();
+  for (const h of cfg.hosts) clients.set(h.id, createHostClient(h, authorizerFor(h, key)));
+  return clients;
 }
 
 function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) => HostClient, oidcToken: TokenSource | undefined): CliDeps | undefined {
@@ -64,6 +50,7 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
 
 export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port: number; stop(): void }> {
   if (cfg.mode !== "hub") throw new Error("startHub needs mode = hub");
+  const hubKey = await loadOrCreateHubKey(cfg.stateDir);
   const files = await loadWebFiles();
   if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
   if (cfg.userAuth?.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {
@@ -76,9 +63,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const userAuth = await buildUserAuth(cfg, deps);
   // Forwarded headers are not consulted: the secure-cookie decision comes from public_url (https: => Secure).
   const oidcToken = cfg.hubAuth ? createTokenSource(cfg.hubAuth) : undefined;
-  const makeClient = managedClientFactory(oidcToken);
+  const makeClient = (h: HostConfig): HostClient => createHostClient(h, authorizerFor(h, hubKey));
   const cli = buildCliDeps(cfg, deps, makeClient, oidcToken);
-  const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg), makeClient });
+  const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
   const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });
   console.log(`listening on ${cfg.host}:${server.port}`);
