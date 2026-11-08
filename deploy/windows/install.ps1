@@ -209,8 +209,10 @@ try {
       Write-Warning "the service runs as '$start', not '$Account'. The agent will refuse to start unless instance.service_user matches."
     }
   } else {
-    & $SvcExe refresh | Out-Null
-    if ($LASTEXITCODE -ne 0) { Write-Warning "winsw refresh failed (exit $LASTEXITCODE); the service keeps its old settings" }
+    # WinSW 2.x cannot update a registered service. The XML (arguments, logs, stop timeout) is read at each
+    # start, so a new XML applies now. The account and the recovery actions are fixed at install time.
+    Write-Host "The service is already registered: its account and recovery actions stay as they are."
+    Write-Host "To change them, run .\install.ps1 -Uninstall, then this script again."
   }
 
   # ---- firewall (opt in) ----------------------------------------------------------------------------------
