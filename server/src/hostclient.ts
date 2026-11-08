@@ -1,4 +1,4 @@
-export type HostAuth = { type: "oidc" } | { type: "secret"; secret: string };
+export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
 export type HostConfig = { id: string; name: string; url: string; ca: string; serverName?: string; auth: HostAuth };
 
 export type HostFailure = "unreachable" | "timeout" | "certificate mismatch" | "rejected our credentials" | "bad response";

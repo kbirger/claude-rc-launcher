@@ -20,7 +20,7 @@ describe("renderNodeConfig", () => {
     expect(cfg.mode).toBe("node");
     expect(cfg).toMatchObject({ name: "pi", port: 8443, host: "10.0.0.9", roots: ["/home/pi/projects"] });
     expect(cfg.node!.tls).toEqual({ stateDir: "/var/lib/claude-rc-launcher", names: ["pi.internal", "10.0.0.9"] });
-    expect(cfg.node!.auth.oidc).toEqual({ jwksUrl: "https://auth.example.com/o/hub/jwks/", issuer: "https://auth.example.com/o/hub/", audience: "hub-client", callerClaim: "sub", callerValue: "svc-1" });
+    expect((cfg.node!.auth as { oidc?: any }).oidc).toEqual({ jwksUrl: "https://auth.example.com/o/hub/jwks/", issuer: "https://auth.example.com/o/hub/", audience: "hub-client", callerClaim: "sub", callerValue: "svc-1" });
   });
 
   test("a service user is written to [instance] and parses", () => {
@@ -40,7 +40,7 @@ describe("renderNodeConfig", () => {
   test("quotes, backslashes and newlines in values are escaped", () => {
     const cfg = parse(renderNodeConfig({ ...base, name: 'a"b\\c\nd', enrollment: { oidc: { ...enrollment.oidc, caller_value: 'x"y\\z' } } }));
     expect(cfg.name).toBe('a"b\\c\nd');
-    expect(cfg.node!.auth.oidc!.callerValue).toBe('x"y\\z');
+    expect((cfg.node!.auth as { oidc?: any }).oidc!.callerValue).toBe('x"y\\z');
   });
 
   test("the header says where the file came from and has no placeholder text", () => {

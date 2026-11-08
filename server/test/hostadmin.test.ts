@@ -26,7 +26,7 @@ async function startNode() {
   return { url: `https://localhost:${server.port}`, cert, secret: sec.secret, stop: () => server.stop(true) };
 }
 
-const staticHost: HostConfig = { id: "nas", name: "NAS", url: "https://10.0.0.5:8443", ca: "x", auth: { type: "oidc" } };
+const staticHost: HostConfig = { id: "nas", name: "NAS", url: "https://10.0.0.5:8443", ca: "x", auth: { type: "hub_key" } };
 const JSON_H = { "content-type": "application/json" };
 
 async function setup(o: { secret?: string; hasHubAuth?: boolean; peek?: typeof peekCertificate } = {}) {

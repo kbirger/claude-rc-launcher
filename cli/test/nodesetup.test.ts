@@ -127,7 +127,7 @@ describe("nodeSetup", () => {
     const cfg = parse(String(w.written.get(CONFIG)));
     expect(cfg).toMatchObject({ mode: "node", name: "kirhub", port: 8443, host: "192.168.1.111", serviceUser: "kir", roots: ["/home/kir/p"] });
     expect(cfg.node!.tls.names).toEqual(["kirhub", "192.168.1.111"]);
-    expect(cfg.node!.auth.oidc!.callerValue).toBe("svc-1");
+    expect((cfg.node!.auth as { oidc?: any }).oidc!.callerValue).toBe("svc-1");
   });
 
   test("the unit is the shipped unit", async () => {

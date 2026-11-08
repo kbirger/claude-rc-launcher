@@ -134,17 +134,16 @@ describe("node mode config", () => {
   });
   const node = (o: Record<string, unknown> = {}) => ({ ...nodeBase(), ...o });
 
-  test("a valid node file parses; caller_claim defaults to sub", () => {
-    const c = parseConfig(
-      node({ node_auth: { oidc: { jwks_url: "https://a/jwks", issuer: "https://a/", audience: "n", caller_value: "svc" }, secret: [{ sha256: "b".repeat(64) }] } }),
-      io,
-    );
+  const K1 = Buffer.alloc(32, 1).toString("base64url");
+  const K2 = Buffer.alloc(32, 2).toString("base64url");
+  test("a valid node file parses; hub keys keep their order", () => {
+    const c = parseConfig(node({ node_auth: { hub_key: [{ public_key: K1 }, { public_key: K2 }], secret: [{ sha256: "b".repeat(64) }] } }), io);
     expect(c.mode).toBe("node");
     expect(c.publicUrl).toBe("");
     expect(c.userAuth).toBeUndefined();
     expect(c.node).toEqual({
       tls: { stateDir: "/var/lib/rc", names: ["pi.internal", "10.0.0.9"] },
-      auth: { oidc: { jwksUrl: "https://a/jwks", issuer: "https://a/", audience: "n", callerClaim: "sub", callerValue: "svc" }, secretHashes: ["b".repeat(64)] },
+      auth: { hubKeys: [K1, K2], secretHashes: ["b".repeat(64)] },
     });
   });
   test("state_dir defaults to /var/lib/claude-rc-launcher", () => {
@@ -158,10 +157,18 @@ describe("node mode config", () => {
     expect(problems({ mode: "node", tls: nodeBase().tls })).toContain("node_auth");
     expect(problems(node({ node_auth: {} }))).toContain("node_auth");
   });
-  test("node_auth validation: sha256 is 64 hex, jwks_url https/loopback, caller_value required", () => {
+  test("node_auth validation: sha256 is 64 hex, public_key is 32 bytes of base64url", () => {
     expect(problems(node({ node_auth: { secret: [{ sha256: "xyz" }] } }))).toContain("node_auth.secret[0].sha256");
-    expect(problems(node({ node_auth: { oidc: { jwks_url: "http://a.example.com/j", issuer: "i", audience: "a", caller_value: "c" } } }))).toContain("node_auth.oidc.jwks_url");
-    expect(problems(node({ node_auth: { oidc: { jwks_url: "https://a/j", issuer: "i", audience: "a" } } }))).toContain("node_auth.oidc.caller_value");
+    expect(problems(node({ node_auth: { hub_key: [{ public_key: K1 }, { public_key: "AAAA" }] } }))).toContain("node_auth.hub_key[1].public_key");
+    expect(problems(node({ node_auth: { hub_key: [{ public_key: "not base64url!" }] } }))).toContain("node_auth.hub_key[0].public_key");
+    expect(problems(node({ node_auth: { hub_key: [{}] } }))).toContain("node_auth.hub_key[0].public_key");
+  });
+  test("[node_auth.oidc] is rejected and points to node_auth.hub_key", () => {
+    expect(problems(node({ node_auth: { oidc: { jwks_url: "https://a/j", issuer: "i", audience: "a", caller_value: "c" } } }))).toContain("node_auth.hub_key");
+  });
+  test("a node needs a hub_key or a secret", () => {
+    expect(parseConfig(node({ node_auth: { hub_key: [{ public_key: K1 }] } }), io).node!.auth.hubKeys).toEqual([K1]);
+    expect(parseConfig(node(), io).node!.auth.secretHashes).toHaveLength(1);
   });
   test("hub-only keys in a node file name each key", () => {
     for (const [k, v] of [["public_url", "https://x"], ["user_auth", {}], ["hub_auth", {}], ["hosts", []]] as const)

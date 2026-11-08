@@ -59,7 +59,7 @@ export class HostRegistry {
         } catch (e) {
           throw new Error(`cannot read ${pinFile} for managed host ${s.id}: ${(e as Error).message}`);
         }
-        const host: HostConfig = { id: s.id, name: s.name, url: s.url, ca, ...(s.server_name ? { serverName: s.server_name } : {}), auth: { type: "oidc" } };
+        const host: HostConfig = { id: s.id, name: s.name, url: s.url, ca, ...(s.server_name ? { serverName: s.server_name } : {}), auth: { type: "hub_key" } };
         entries.push({ host, client: o.makeClient(host), source: "managed" });
       }
     }

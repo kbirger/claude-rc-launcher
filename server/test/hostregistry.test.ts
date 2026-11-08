@@ -10,7 +10,7 @@ const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-reg-"));
 const client = (): HostClient => ({ call: async () => ({ status: 200, body: {} }) });
 const PEM = (await ensureNodeCert({ dir: tmp(), names: ["localhost"] })).certPem;
 const host = (id: string, over: Partial<HostConfig> = {}): HostConfig => ({
-  id, name: id.toUpperCase(), url: "https://10.0.0.5:8443", ca: PEM, auth: { type: "oidc" }, ...over,
+  id, name: id.toUpperCase(), url: "https://10.0.0.5:8443", ca: PEM, auth: { type: "hub_key" }, ...over,
 });
 const staticHost = host("nas");
 const load = (stateDir: string) =>

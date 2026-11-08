@@ -96,7 +96,7 @@ export function hostAdminApi(o: {
       url,
       ca: seen.pem,
       ...(serverName ? { serverName } : {}),
-      auth: { type: "oidc" },
+      auth: { type: "hub_key" },
     };
     if (body.force !== true) {
       try {

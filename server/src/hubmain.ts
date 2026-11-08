@@ -32,7 +32,7 @@ export function buildHostClients(cfg: Config): Map<string, HostClient> {
       const secret = h.auth.secret;
       token = async () => secret;
     } else {
-      if (!oidcToken) throw new Error(`host ${h.id} uses auth.type = "oidc" but [hub_auth.oidc] is not configured`);
+      if (!oidcToken) throw new Error(`host ${h.id} uses auth.type = "hub_key" but [hub_auth.oidc] is not configured`);
       token = oidcToken;
     }
     clients.set(h.id, createHostClient(h, token));

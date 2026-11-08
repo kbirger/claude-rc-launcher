@@ -26,7 +26,7 @@ export type ProxyJwtUserAuth = {
 export type NodeConfig = {
   tls: { stateDir: string; names: string[] };
   auth: {
-    oidc?: { jwksUrl: string; issuer: string; audience: string; callerClaim: string; callerValue: string };
+    hubKeys: string[];
     secretHashes: string[];
   };
 };
@@ -267,7 +267,7 @@ export function hostUrlProblem(url: string): string | undefined {
   return undefined;
 }
 
-function parseHosts(t: Tbl, hubAuth: ClientCredsSettings | undefined): HostConfig[] {
+function parseHosts(t: Tbl): HostConfig[] {
   const out: HostConfig[] = [];
   const seen = new Set<string>();
   for (const h of t.tables("hosts") ?? []) {
@@ -298,16 +298,18 @@ function parseHosts(t: Tbl, hubAuth: ClientCredsSettings | undefined): HostConfi
     if (!a) t.problems.push(`${h.path("auth")} is required`);
     else {
       const type = a.str("type", { req: true });
-      if (type === "oidc") {
-        if (!hubAuth) t.problems.push(`${a.path("type")} = "oidc" needs [hub_auth.oidc]`);
-        auth = { type: "oidc" };
+      if (type === "hub_key") {
+        auth = { type: "hub_key" };
         if (a.has("secret_file")) t.problems.push(`${a.path("secret_file")} is only for type = "secret"`);
         a.skip("secret_file");
       } else if (type === "secret") {
         const secret = a.file("secret_file", "secret", { req: true });
         if (secret !== undefined) auth = { type: "secret", secret };
+      } else if (type === "oidc") {
+        t.problems.push(`${a.path("type")} = "oidc" was replaced by "hub_key" (the hub signs each request with its own key)`);
+        a.skip("secret_file");
       } else if (type !== undefined) {
-        t.problems.push(`${a.path("type")} must be "oidc" or "secret"`);
+        t.problems.push(`${a.path("type")} must be "hub_key" or "secret"`);
         a.skip("secret_file");
       }
       a.finish();
@@ -331,18 +333,19 @@ function parseNode(t: Tbl): NodeConfig | undefined {
   tls?.finish();
 
   const na = t.table("node_auth");
-  if (!na) t.problems.push("node_auth is required in node mode (at least one of node_auth.oidc or node_auth.secret)");
-  let oidc: NodeConfig["auth"]["oidc"];
-  const oi = na?.table("oidc");
-  if (oi) {
-    const jwksUrl = oi.str("jwks_url", { req: true }) ?? "";
-    if (jwksUrl) checkUrl(oi, "jwks_url", jwksUrl);
-    const issuer = oi.str("issuer", { req: true }) ?? "";
-    const audience = oi.str("audience", { req: true }) ?? "";
-    const callerClaim = oi.str("caller_claim") ?? "sub";
-    const callerValue = oi.str("caller_value", { req: true }) ?? "";
-    oi.finish();
-    oidc = { jwksUrl, issuer, audience, callerClaim, callerValue };
+  if (!na) t.problems.push("node_auth is required in node mode (at least one of node_auth.hub_key or node_auth.secret)");
+  if (na?.has("oidc")) {
+    t.problems.push("node_auth.oidc was removed; list the hub's public key under [[node_auth.hub_key]] instead");
+    na.skip("oidc");
+  }
+  const hubKeys: string[] = [];
+  for (const row of na?.tables("hub_key") ?? []) {
+    const k = row.str("public_key", { req: true });
+    if (k !== undefined) {
+      if (/^[A-Za-z0-9_-]+$/.test(k) && Buffer.from(k, "base64url").length === 32) hubKeys.push(k);
+      else t.problems.push(`${row.path("public_key")} must be base64url of exactly 32 bytes (the public key the hub prints)`);
+    }
+    row.finish();
   }
   const secretHashes: string[] = [];
   for (const row of na?.tables("secret") ?? []) {
@@ -353,10 +356,10 @@ function parseNode(t: Tbl): NodeConfig | undefined {
     }
     row.finish();
   }
-  if (na && !oi && !na.has("secret")) t.problems.push("node_auth needs at least one of node_auth.oidc or node_auth.secret");
+  if (na && !na.has("hub_key") && !na.has("secret") && !na.has("oidc")) t.problems.push("node_auth needs at least one of node_auth.hub_key or node_auth.secret");
   na?.finish();
   if (!tls || !names) return undefined;
-  return { tls: { stateDir, names }, auth: { ...(oidc ? { oidc } : {}), secretHashes } };
+  return { tls: { stateDir, names }, auth: { hubKeys, secretHashes } };
 }
 
 export function parseConfig(raw: unknown, io: ConfigIo): Config {
@@ -403,7 +406,7 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   const hubAuth = mode === "hub" ? parseHubAuth(t) : undefined;
   const stateDir = (mode === "hub" ? t.absStr("state_dir") : undefined) ?? "/var/lib/claude-rc-launcher";
   const cliAuth = mode === "hub" ? parseCliAuth(t) : undefined;
-  const hosts = mode === "hub" ? parseHosts(t, hubAuth) : [];
+  const hosts = mode === "hub" ? parseHosts(t) : [];
   const ua = mode === "hub" ? t.table("user_auth") : undefined;
   if (mode === "hub" && !ua) problems.push("user_auth is required");
   if (ua) {
