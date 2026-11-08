@@ -97,6 +97,16 @@ Test this by hand first, before any code:
 2. Install a trivial WinSW service that runs `claude remote-control` under that user.
 3. Make sure that the session appears and survives a service restart and a logoff.
 
+### Result of the manual test (2026-11-08)
+
+Test setup: WinSW v2.12.0, claude 2.1.319, service installed with `install /p` as `KIRSTATION4\kir`. The test files are in `C:\Users\kir\winsw-test\`.
+
+- **Passed:** a service that runs as a named user can read the `claude` sign-in data. The session connected and appeared in claude.ai/code.
+- **Passed:** a service restart. WinSW stopped the child process (exit code 0), started a new one, and the session connected again.
+- **Found:** `claude remote-control` exits with code 1 if the working directory is not trusted. The error is `Workspace not trusted. Please run claude in <dir> first`. WinSW then restarts it every 5 seconds. The Windows backend must mark each instance directory as trusted before it starts the instance. The Linux code does this in `server/src/trust.ts`. Open question: where Windows keeps the trust data.
+- **Found:** `install /p` asks for the account password on the console. `install.ps1` must handle this. Do not write the password in the XML as plain text.
+- **Not tested yet:** survival of a full logoff. A screen lock did not count as a test. Do this test later and update this section.
+
 ## Suggested order of work
 
 1. Run the manual test for the open risk above.
