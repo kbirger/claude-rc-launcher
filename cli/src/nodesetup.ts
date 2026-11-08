@@ -7,7 +7,7 @@ import UNIT_TEXT from "../../deploy/claude-rc-launcher.service" with { type: "te
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
-import { nodeFlags, renderNodeConfig, requireHubKeys } from "./nodecmd";
+import { nodeFlags, renderNodeConfig, urlHost, requireHubKeys } from "./nodecmd";
 
 /** The same file as `deploy/claude-rc-launcher.service`, compiled into the CLI. */
 export const UNIT: string = UNIT_TEXT;
@@ -123,7 +123,7 @@ export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClien
   const sys = o.sys ?? realSys;
   const { flags, out } = o;
   const usage = "usage: claude-rc node setup --listen <address> [--hub <url>] [--name <n>] [--id <id>] [--port <n>] [--names <a,b>] [--roots </a,/b>] [--service-user <user>] [--url <https-url>] [--binary <file>] [--release <tag>] [--force]";
-  const nf = nodeFlags(flags, usage);
+  const nf = nodeFlags(flags, usage, urlHost(flags.url));
   const wildcard = nf.listen === "0.0.0.0" || nf.listen === "::";
 
   // 1. Checks

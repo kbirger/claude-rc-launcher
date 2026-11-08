@@ -68,7 +68,7 @@ function fake(o: { existing?: string[]; active?: boolean; users?: string[]; plat
       w.fetched.push(u);
       if (u === `${RELEASE}/latest/download/${ASSET}` || u === `${RELEASE}/download/v0.1.0/${ASSET}`) return new Response(BINARY);
       if (u.endsWith("/SHA256SUMS")) return new Response(o.sums ?? `${sha(BINARY)}  ${ASSET}\n${"0".repeat(64)}  claude-rc-linux-x64\n`);
-      if (u === "https://192.168.1.111:8443/healthz") {
+      if (/^https:\/\/[^/]+\/healthz$/.test(u)) {
         if (!w.started || o.healthy === false) throw new Error("ECONNREFUSED");
         return Response.json({ ok: true });
       }
@@ -129,6 +129,34 @@ describe("nodeSetup", () => {
     expect(cfg).toMatchObject({ mode: "node", name: "kirhub", port: 8443, host: "192.168.1.111", serviceUser: "kir", roots: ["/home/kir/p"] });
     expect(cfg.node!.tls.names).toEqual(["kirhub", "192.168.1.111"]);
     expect(cfg.node!.auth.hubKeys).toEqual([KEY]);
+  });
+
+  describe("the certificate covers the host in --url", () => {
+    const namesOf = async (flags: Record<string, unknown>, addresses?: string[]) => {
+      const { sys, w } = fake(addresses ? { addresses } : {});
+      await run(sys, fakeHub().hub, flags);
+      return parse(String(w.written.get(CONFIG))).node!.tls.names;
+    };
+    test("a DNS name in --url is added next to the listen address and --names", async () => {
+      expect(await namesOf({ url: "https://node.lan:8443" })).toEqual(["192.168.1.111", "node.lan"]);
+      expect(await namesOf({ url: "https://node.lan:8443", names: "kirhub" })).toEqual(["kirhub", "192.168.1.111", "node.lan"]);
+    });
+    test("a wildcard listen needs no --names when --url names the host", async () => {
+      expect(await namesOf({ listen: "0.0.0.0", url: "https://node.lan:8443" }, ["0.0.0.0"])).toEqual(["node.lan"]);
+    });
+    test("a wildcard listen with other --names still gets the --url host", async () => {
+      expect(await namesOf({ listen: "0.0.0.0", url: "https://node.lan:8443", names: "10.0.0.5" }, ["0.0.0.0"])).toEqual(["10.0.0.5", "node.lan"]);
+    });
+    test("a host that is already listed is not added twice, whatever its case", async () => {
+      expect(await namesOf({ url: "https://Node.LAN:8443", names: "node.lan" })).toEqual(["node.lan", "192.168.1.111"]);
+      expect(await namesOf({ url: "https://192.168.1.111:8443" })).toEqual(["192.168.1.111"]);
+    });
+    test("an IPv6 address in --url is added without its brackets", async () => {
+      expect(await namesOf({ url: "https://[fd00::1]:8443" })).toEqual(["192.168.1.111", "fd00::1"]);
+    });
+    test("an invalid --url still gives the --url error", async () => {
+      expect((await fails(run(fake().sys, fakeHub().hub, { url: "not a url" })))?.message).toContain("--url is not a valid URL");
+    });
   });
 
   test("the unit is the shipped unit", async () => {

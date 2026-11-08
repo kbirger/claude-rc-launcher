@@ -89,14 +89,29 @@ export const realNodeFs: NodeFs = {
 
 export type NodeFlags = { listen: string; port: number; names: string[]; roots?: string[]; name?: string; serviceUser?: string };
 
-/** Validates the flags that `node config` and `node setup` share. */
-export function nodeFlags(flags: Flags, usage: string): NodeFlags {
+/** The host of an `--url` value, without IPv6 brackets. `undefined` when the value is not a URL (the caller reports that). */
+export function urlHost(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).hostname.replace(/^\[(.*)\]$/, "$1") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Validates the flags that `node config` and `node setup` share. `hubHost` is the host that the hub will connect to
+ * (the host of `--url` in `node setup`). The certificate must cover it, so it is added to the names.
+ */
+export function nodeFlags(flags: Flags, usage: string, hubHost?: string): NodeFlags {
   if (!flags.listen) throw new ExitError(`--listen is required: the private address this node binds. ${usage}`, 1);
   const names = csv(flags.names ?? "");
   const bad = names.find((n) => !isIP(n) && !/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(n));
   if (bad) throw new ExitError(`--names has an invalid name: ${JSON.stringify(bad)}. Names are DNS names or IP addresses, separated by commas without spaces`, 1);
   // The hub will almost always connect to the address that the node binds, so the certificate must cover it.
   if (isIP(flags.listen) && flags.listen !== "0.0.0.0" && flags.listen !== "::" && !names.includes(flags.listen)) names.push(flags.listen);
+  // The same holds for the host in --url: the hub checks the certificate against that name, so it must be listed.
+  if (hubHost && (isIP(hubHost) || /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(hubHost)) && !names.some((n) => n.toLowerCase() === hubHost.toLowerCase())) names.push(hubHost);
   if (names.length === 0) throw new ExitError(`--names is required when --listen is not an IP address: the DNS names and IP addresses of THIS node that the hub will use in --url. ${usage}`, 1);
   const port = flags.port === undefined ? 8443 : Number(flags.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ExitError("--port must be a number from 1 to 65535", 1);

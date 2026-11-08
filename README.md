@@ -511,6 +511,8 @@ If registration fails, the node stays installed and running, and the message giv
 that retries it. `--id` sets the host id (default: the `--name`, in lower case). `--port` (default 8443), `--names`,
 `--url` and `--roots` work as in `node config`. With `--service-user`, instances run as that user, and `claude` must be
 installed for that user; the command only warns when it is missing.
+`node setup` also adds the host of `--url` to the certificate names. With a wildcard `--listen`, `--url` alone is enough,
+and `--names` is optional.
 
 The command does not change a firewall.
 
