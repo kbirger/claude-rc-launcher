@@ -281,10 +281,13 @@ function parseHosts(t: Tbl): HostConfig[] {
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
-function parseNode(t: Tbl): NodeConfig | undefined {
+/** Where a Windows node keeps its certificate and instance state, when `tls.state_dir` is not set. */
+export const windowsDataDir = (): string => path.win32.join(process.env.ProgramData ?? "C:\ProgramData", "claude-rc-launcher");
+
+function parseNode(t: Tbl, windows: boolean): NodeConfig | undefined {
   const tls = t.table("tls");
   if (!tls) t.problems.push("tls is required in node mode");
-  const stateDir = tls?.absStr("state_dir") ?? "/var/lib/claude-rc-launcher";
+  const stateDir = tls?.absStr("state_dir") ?? (windows ? windowsDataDir() : "/var/lib/claude-rc-launcher");
   const names = tls?.strs("names", { nonEmpty: true });
   if (tls && !tls.has("names")) t.problems.push("tls.names is required (certificate SANs, at least one)");
   tls?.finish();
@@ -319,14 +322,23 @@ function parseNode(t: Tbl): NodeConfig | undefined {
   return { tls: { stateDir, names }, auth: { hubKeys, secretHashes } };
 }
 
-export function parseConfig(raw: unknown, io: ConfigIo): Config {
+/**
+ * `windows: true` reads the file as the config of a Windows node: node mode only, Windows defaults, and the
+ * systemd-only instance keys are errors. It is explicit, not read from the host, so a Linux config parses the
+ * same wherever the code runs.
+ */
+export type ParseOptions = { windows?: boolean };
+
+export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {}): Config {
+  const windows = opts.windows === true;
   const problems: string[] = [];
   if (!isObject(raw)) throw new ConfigError(["config must be a TOML table"]);
   const t = new Tbl(raw, "", problems, io);
 
-  const modeRaw = t.str("mode") ?? "hub";
+  const modeRaw = t.str("mode") ?? (windows ? "node" : "hub");
   if (modeRaw !== "hub" && modeRaw !== "node") problems.push(`mode must be "hub" or "node"`);
   const mode: "hub" | "node" = modeRaw === "node" ? "node" : "hub";
+  if (windows && modeRaw === "hub") problems.push('mode must be "node": a Windows machine runs as a node only');
 
   const name = t.str("name") ?? os.hostname();
   const port = t.port("port") ?? 8080;
@@ -335,18 +347,26 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   if (mode === "node" && publicUrl) problems.push("public_url is not allowed in node mode");
 
   const inst = t.table("instance");
-  const scopeRaw = inst?.str("scope") ?? "system";
+  // These keys describe a systemd unit. A Windows node has none: an error stops a copied Linux config.
+  if (windows) {
+    for (const k of ["scope", "unit_dir", "service_path", "ssh_auth_sock"]) {
+      if (inst?.has(k)) problems.push(`instance.${k} is not supported on Windows`);
+      inst?.skip(k);
+    }
+  }
+  const scopeRaw = (windows ? undefined : inst?.str("scope")) ?? "system";
   if (scopeRaw !== "system" && scopeRaw !== "user") problems.push(`instance.scope must be "system" or "user"`);
   const scope = scopeRaw === "user" ? "user" : "system";
-  const serviceUser = inst?.str("service_user") ?? "root";
-  const serviceHome = inst?.absStr("service_home") ?? (serviceUser === "root" ? "/root" : `/home/${serviceUser}`);
-  const unitDir = inst?.absStr("unit_dir") ?? (scope === "user" ? `${serviceHome}/.config/systemd/user` : "/etc/systemd/system");
+  const serviceUser = inst?.str("service_user") ?? (windows ? os.userInfo().username : "root");
+  const serviceHome = inst?.absStr("service_home") ?? (windows ? os.homedir() : serviceUser === "root" ? "/root" : `/home/${serviceUser}`);
+  const unitDir = windows ? "" : (inst?.absStr("unit_dir") ?? (scope === "user" ? `${serviceHome}/.config/systemd/user` : "/etc/systemd/system"));
   const roots = inst?.strs("roots", { abs: true, nonEmpty: true }) ?? [serviceHome];
-  const claudeBin = inst?.absStr("claude_bin") ?? `${serviceHome}/.local/bin/claude`;
+  const claudeBin = inst?.absStr("claude_bin") ?? (windows ? path.win32.join(serviceHome, ".local", "bin", "claude.exe") : `${serviceHome}/.local/bin/claude`);
   const claudeRcArgs = inst?.strs("claude_rc_args") ?? ["--spawn", "same-dir", "--no-create-session-in-dir"];
-  const servicePath =
-    inst?.str("service_path") ?? `${serviceHome}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
-  const sshAuthSock = inst?.str("ssh_auth_sock");
+  const servicePath = windows
+    ? ""
+    : (inst?.str("service_path") ?? `${serviceHome}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`);
+  const sshAuthSock = windows ? undefined : inst?.str("ssh_auth_sock");
   const namePrefix = inst?.str("name_prefix") ?? "";
   inst?.finish();
 
@@ -355,7 +375,7 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   if (mode === "node") {
     for (const k of ["user_auth", "hub_auth", "hosts", "cli_auth", "state_dir"]) if (t.has(k)) problems.push(`${k} is not allowed in node mode`);
     t.skip("user_auth", "hub_auth", "hosts", "cli_auth", "state_dir");
-    node = parseNode(t);
+    node = parseNode(t, windows);
   } else {
     for (const k of ["tls", "node_auth"]) if (t.has(k)) problems.push(`${k} is only allowed in node mode`);
     t.skip("tls", "node_auth");

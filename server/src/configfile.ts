@@ -1,15 +1,15 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { ConfigError, parseConfig, type Config, type ConfigIo } from "./config";
+import { ConfigError, parseConfig, type Config, type ConfigIo, type ParseOptions } from "./config";
 
 export const DEFAULT_CONFIG_PATH = "/etc/claude-rc-launcher/config.toml";
 
-export function resolveConfigPath(argv: string[], env: Record<string, string | undefined>): string {
+export function resolveConfigPath(argv: string[], env: Record<string, string | undefined>, defaultPath = DEFAULT_CONFIG_PATH): string {
   const i = argv.indexOf("--config");
   if (i >= 0 && argv[i + 1]) return argv[i + 1]!;
   const eq = argv.find((a) => a.startsWith("--config="));
   if (eq) return eq.slice("--config=".length);
-  return env.CLAUDE_RC_CONFIG || DEFAULT_CONFIG_PATH;
+  return env.CLAUDE_RC_CONFIG || defaultPath;
 }
 
 export function makeIo(dir: string): ConfigIo {
@@ -32,7 +32,7 @@ export function makeIo(dir: string): ConfigIo {
   };
 }
 
-export function loadConfigFile(file: string): Config {
+export function loadConfigFile(file: string, opts: ParseOptions = {}): Config {
   let text: string;
   try {
     text = readFileSync(file, "utf8");
@@ -45,5 +45,5 @@ export function loadConfigFile(file: string): Config {
   } catch (e) {
     throw new ConfigError([`${file} is not valid TOML: ${(e as Error).message}`]);
   }
-  return parseConfig(raw, makeIo(path.dirname(path.resolve(file))));
+  return parseConfig(raw, makeIo(path.dirname(path.resolve(file))), opts);
 }
