@@ -95,4 +95,16 @@ describe.skipIf(process.platform === "win32")("install-binary.sh --service --nod
     const r = run(["--service", "--node", bin], env);
     expect(r.out).not.toContain("Not enabling");
   });
+
+  test("a node file with a hub_key row lets it proceed; only node_auth.oidc does not", () => {
+    const { bin, env } = setup();
+    run(["--service", "--node", bin], env);
+    const f = path.join(env.CONFIG_DIR, "config.toml");
+    const head = ['mode = "node"', "[tls]", 'names = ["pi.internal"]'];
+    writeFileSync(f, [...head, "[node_auth.oidc]", 'issuer = "https://idp"'].join("\n") + "\n");
+    expect(run(["--service", "--node", bin], env).out).toContain("node_auth");
+    writeFileSync(f, [...head, "[[node_auth.hub_key]]", `public_key = "${Buffer.alloc(32, 1).toString("base64url")}"`].join("\n") + "\n");
+    const r = run(["--service", "--node", bin], env);
+    expect(r.out).not.toContain("Not enabling");
+  });
 });

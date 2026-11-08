@@ -28,13 +28,18 @@ instances on other Linux hosts (**nodes**); see [Multiple hosts](#multiple-hosts
 - Path-prefix mounting (e.g. `https://host/rc/`) is not supported; serve at a hostname root.
 - **Multi-host:** a hub login is root-equivalent execution on the hub **and on every node** (as each
   node's `instance.service_user`). Compromising the hub gives an attacker everything the hub can reach:
-  its client credential or secrets and every pinned node.
+  the hub private key, any shared secrets and every pinned node.
 - Nodes enforce their own `instance.roots` regardless of what the hub asks.
-- Shared-secret node auth is weaker than OIDC: long-lived, symmetric, no IdP revocation or audit. Use one
-  secret per node; a stolen hub config exposes all of them.
-- A node can only be impersonated to the hub with its private key (the hub pins the node's certificate),
-  and the hub can only be impersonated to a node with its credential.
-- Access tokens are replayable by anyone who can read the hub-to-node channel, hence TLS is mandatory.
+- The hub does not send a reusable credential to a managed node. It signs a proof for each request. The
+  proof is valid for 30 seconds, for one node, one method, one path and one body. A server that receives
+  a proof cannot use it at any other node.
+- To cut the hub off from a node, remove the hub key from that node. The identity provider no longer
+  provides a kill switch for the hub, because the hub has no account there for nodes.
+- Shared-secret node auth is weaker: long-lived and symmetric, with no revocation or audit. Use one
+  secret per node. A stolen hub configuration exposes all of them.
+- A node can only be impersonated to the hub with its private key (the hub pins the node's certificate).
+  The hub can only be impersonated to a node with the hub private key.
+- TLS is mandatory between the hub and the nodes. It hides the proofs and the traffic from the network.
 - **Command-line client:** a CLI login gives the same access as a browser login, which is root-equivalent
   execution on the hub and every node. The CLI keeps a refresh token in `credentials.json` (mode 600) on the
   user's machine. Revoke it at the identity provider to end that login. The hub cannot revoke it.
@@ -179,28 +184,42 @@ CSRF checks stay mandatory.
 
 | Key | Meaning |
 |---|---|
-| `[hub_auth.oidc]` `token_url`, `client_id`, `auth_method` (`client_secret` or `private_key_jwt`), `scope` | OIDC client credentials the hub uses towards nodes. Required if any host uses `auth.type = "oidc"` |
-| `client_secret_file`, optional `username` + `password_file` | with `client_secret` (the optional pair is an Authentik service account) |
-| `private_key_file` (PKCS#8 PEM), optional `key_id` | with `private_key_jwt` |
-| `[[hosts]]` `id`, `name`, `url`, `ca_file`, `server_name`, `[hosts.auth]` | One per node. `id` matches `^[a-z0-9][a-z0-9-]{0,31}$` (`local` is reserved). `url` is an `https://` origin with no path. `ca_file` is the node's own certificate (the pin). `server_name` is the name checked against the certificate (use it when `url` is an IP). `auth.type` is `oidc` or `secret` (with `secret_file`) |
+| `<state_dir>/hub-key.pem` | The hub private key (Ed25519, mode 0600). The hub makes it on first start. It is not a configuration key and nobody writes it by hand |
+| `[[hosts]]` `id`, `name`, `url`, `ca_file`, `server_name`, `[hosts.auth]` | One per node. `id` matches `^[a-z0-9][a-z0-9-]{0,31}$` (`local` is reserved). `url` is an `https://` origin with no path. `ca_file` is the node's own certificate (the pin). `server_name` is the name checked against the certificate (use it when `url` is an IP). `auth.type` is `hub_key` or `secret` (with `secret_file`). Hosts added with `host add` always use `hub_key` |
+
+The hub signs every request to a `hub_key` host with its private key. The hub needs no `[hub_auth]` table.
+A hub file with `[hub_auth]` fails to load. The hub logs one line at every start, for example
+`hub key 3f2a9c1d0b7e4a65 public_key=<base64url>`. The `public_key` value is the hub public key. A hand-made
+node needs it in a `[[node_auth.hub_key]]` row. `GET /cli/api/node-enrollment` returns the same value.
 
 #### Node keys
 
 A node is the same binary with `mode = "node"`: no UI, no user login, TLS mandatory.
-`public_url`, `[user_auth]`, `[hub_auth]` and `[[hosts]]` are rejected in a node file; `[tls]` and
+`public_url`, `[user_auth]` and `[[hosts]]` are rejected in a node file. `[tls]` and
 `[node_auth]` are rejected in a hub file.
 
 | Key | Meaning |
 |---|---|
 | `tls.state_dir` | Holds `node-cert.pem` (0644) and `node-key.pem` (0600). Default `/var/lib/claude-rc-launcher` |
 | `tls.names` | Certificate SANs (DNS names or IPs), at least one |
-| `[node_auth.oidc]` `jwks_url`, `issuer`, `audience`, `caller_claim` (default `sub`), `caller_value` | Accept the hub's OIDC access token; `claims[caller_claim]` must equal `caller_value` |
+| `[[node_auth.hub_key]]` `public_key` | Trust a hub that signs with this key. The value is base64url text of the 32 raw bytes of an Ed25519 public key. Repeat the table to trust more than one key |
 | `[[node_auth.secret]]` `sha256` | Accept the shared secret whose SHA-256 this is; repeat the table to accept two during rotation |
 
-At least one of `[node_auth.oidc]` / `[[node_auth.secret]]` is required. The token's shape picks the
-verifier: a token with two dots is a JWT and is checked by `[node_auth.oidc]` only, anything else is a
-secret checked by `[[node_auth.secret]]` only. A method that is not configured rejects its shape (401);
-there is no fallback.
+A node needs at least one `[[node_auth.hub_key]]` row or one `[[node_auth.secret]]` row. The scheme of the
+`Authorization` header picks the check. `Hub-Proof <jwt>` is checked against the `hub_key` rows only.
+`Bearer <secret>` is checked against the `secret` rows only. A method that is not configured rejects its
+scheme (401). There is no fallback. A node file with `[node_auth.oidc]` fails to load.
+
+A proof must match the request. The node checks the signature, the node certificate fingerprint, the
+method, the path, the body and the time. The node also rejects a proof that it has seen before.
+
+#### Clocks
+
+The hub clock and the node clock must agree within 5 seconds. The failing case is a node clock that is
+behind the hub clock. Then the time in the proof is in the future for the node, and the node rejects it.
+A node clock that is ahead of the hub by less than about 25 seconds still works. The symptom of a wrong
+clock is the message `rejected our credentials` for a node that has the correct key. Run a time service
+(NTP) on the hub and on every node.
 
 ### User scope (`instance.scope = "user"`)
 
@@ -279,7 +298,7 @@ WantedBy=multi-user.target
 ## Multiple hosts
 
 ```
-Browser -> reverse proxy [+ Authentik outpost] -> HUB -- HTTPS, pinned cert, Bearer --> NODE
+Browser -> reverse proxy [+ Authentik outpost] -> HUB -- HTTPS, pinned cert, Hub-Proof --> NODE
 ```
 
 The hub serves the UI and proxies the instance API of each node. A host picker appears in the header when
@@ -291,7 +310,7 @@ implicit host `local`.
 The easy way is `claude-rc host add` (see [Command-line client](#command-line-client)). It reads the node's
 certificate through the hub, asks you to type the fingerprint that the node logged, and pins the certificate. The
 manual way below needs a restart of the hub, and it is the only way to use a shared secret.
-`claude-rc node config` writes the node side of the OIDC setup for you.
+`claude-rc node config` writes the node side of the setup for you, including the hub public key.
 
 #### Pairing a node by hand
 
@@ -303,8 +322,12 @@ manual way below needs a restart of the hub, and it is the only way to use a sha
 2. Copy `<tls.state_dir>/node-cert.pem` (public) to the hub, e.g. `/etc/claude-rc-launcher/nas.pem`.
    The private key never leaves the node.
 3. In the hub's `config.toml` add a `[[hosts]]` table with `url`, `ca_file = "nas.pem"` (and
-   `server_name` if `url` is an IP) and `[hosts.auth]`.
-4. Compare the fingerprint of `nas.pem` (`openssl x509 -in nas.pem -noout -fingerprint -sha256`) with
+   `server_name` if `url` is an IP) and `[hosts.auth]` with `type = "hub_key"` (or `type = "secret"`).
+4. For `hub_key`, give the node the hub public key. Read it in the `hub key ... public_key=...` line that
+   the hub logs at start, for example with `journalctl -u claude-rc-launcher | grep 'hub key'`. You can also
+   read it from `GET /cli/api/node-enrollment`. Put it in a `[[node_auth.hub_key]]` row in the node's
+   `config.toml` and restart the node.
+5. Compare the fingerprint of `nas.pem` (`openssl x509 -in nas.pem -noout -fingerprint -sha256`) with
    the one the node logged. Restart the hub.
 
 The certificate is reused on every start so the pin stays valid. If `tls.names` stops being covered by the
@@ -323,8 +346,8 @@ claude-rc-launcher gen-secret
 ```
 
 Rotation: add the new `sha256` as a second `[[node_auth.secret]]`, switch the hub to the new secret, then
-remove the old entry. Shared-secret mode is simple but weaker than OIDC (see the security notes): the
-secret is long-lived, there is no IdP revocation or audit trail, and a stolen hub config exposes every
+remove the old entry. Shared-secret mode is simple but weaker than `hub_key` (see the security notes). The
+secret is long-lived, there is no revocation or audit trail, and a stolen hub configuration exposes every
 node's secret.
 
 ### Hub API
@@ -465,7 +488,7 @@ first four have succeeded.
 
 1. It checks the machine: Linux with `systemctl`, `--listen` is an address of this machine, the service user exists,
    and no node is installed yet (`--force` replaces one and keeps the old files as `.bak`).
-2. It asks the hub for the values in `[node_auth.oidc]`.
+2. It asks the hub for its public keys and writes them as `[[node_auth.hub_key]]` rows.
 3. It downloads `claude-rc-launcher-linux-<x64|arm64>` from the latest release (`--release v0.1.0` picks another one)
    and checks it against `SHA256SUMS`. `--binary <file>` installs a file you already have.
 4. It writes `/etc/claude-rc-launcher/config.toml`, the systemd unit and the binary, through `sudo`. You run the
@@ -473,7 +496,7 @@ first four have succeeded.
 5. It starts the service and waits up to 30 seconds for the node to answer over its own certificate. If it does not,
    it prints the last log lines and stops.
 6. It reads the fingerprint from the node's own `node-cert.pem` and registers the node with the hub. The hub reads the
-   certificate itself, requires the same fingerprint, tests the node with its service account and saves the host.
+   certificate itself, requires the same fingerprint, tests the node with a signed proof and saves the host.
    Nobody types a fingerprint, because it comes from a file on the machine where you are signed in.
 
 If registration fails, the node stays installed and running, and the message gives the `claude-rc host add ...` command
@@ -481,7 +504,7 @@ that retries it. `--id` sets the host id (default: the `--name`, in lower case).
 `--url` and `--roots` work as in `node config`. With `--service-user`, instances run as that user, and `claude` must be
 installed for that user; the command only warns when it is missing.
 
-The command does not create the Authentik service account, and it does not change a firewall.
+The command does not change a firewall.
 
 ### Update a node's binary
 
@@ -529,11 +552,9 @@ command stops. `--force` replaces it and keeps the old file as `<file>.bak`. If 
 not writable, the command writes the file through `sudo`, so sudo asks for your password. Do not run the whole command
 with `sudo`, because then it looks for your login in root's home directory.
 
-The hub supplies the `[node_auth.oidc]` values: the issuer, the JWKS URL, the audience (the hub's client id) and
-`caller_value` (the `sub` of the hub's service account). It reads them from a token that it gets for its own
-service account, and it never returns the token. This needs `[hub_auth.oidc]` on the hub, and an identity provider
-that issues JWT access tokens. The route is `GET /cli/api/node-enrollment`. A node that uses a shared secret does not
-need this command.
+The hub supplies the `[[node_auth.hub_key]]` rows. Each row holds the `public_key` of the hub. The hub needs no
+identity provider setup for this. The route is `GET /cli/api/node-enrollment`. It returns
+`{ "hub_keys": [{ "public_key": "..." }] }`. A node that uses a shared secret does not need this command.
 
 ### Add a node
 
@@ -550,10 +571,11 @@ claude-rc host remove nas
    is the only protection for the first connection, so compare it with the node's log and not with the screen.
    Scripts can pass `--fingerprint sha256:<hex>`.
 3. The hub reads the certificate again, requires the same fingerprint, and pins the certificate that it read
-   itself. Then it calls the node with the hub's OIDC credential. If that call fails, nothing is saved. `--force`
-   saves the host anyway.
+   itself. Then it calls the node with a signed proof for that certificate. If that call fails, nothing is saved.
+   `--force` saves the host anyway.
 
-Added hosts use the hub's `[hub_auth.oidc]` credential, so that table must exist. No secret passes through the CLI.
+Added hosts always use `hub_key`. The node must already trust the hub key. The hub needs no `[hub_auth]`
+table. No secret passes through the CLI.
 The hub keeps these hosts in `state_dir` (default `/var/lib/claude-rc-launcher`): `managed-hosts.json` and
 `pins/<id>.pem`. **The hub owns those files. Do not edit them by hand.** The hub does not re-read them while it
 runs, and it overwrites them on the next change. Hosts that you write by hand, and hosts that use a shared
@@ -573,12 +595,14 @@ managed host works at once, without a restart.
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)
 
-> The exact claims, issuer, audience and JWKS URL of `X-authentik-jwt` must be confirmed against your
-> Authentik: decode a real `X-authentik-jwt` header value and read them from the token.
+> The exact claims, issuer, audience and JWKS URL must be confirmed against your Authentik. Decode a real
+> `X-authentik-jwt` header value and read them from the token. The header name is not in the token.
+> `header` is the name of the header that you forward, for example `X-authentik-jwt`.
 
 1. Create a **Proxy Provider** (forward auth, single application) and an application bound to the intended
    users/groups, and add it to the embedded or a dedicated outpost.
-2. Set `[user_auth.proxy_jwt]` from the decoded token (`header`, `issuer`, `audience`, `jwks_url`).
+2. Set `[user_auth.proxy_jwt]`. Take `issuer`, `audience` and `jwks_url` from the decoded token. Set `header`
+   to the name of the header that you forward, for example `X-authentik-jwt`.
 3. Behind Traefik use a forward-auth middleware that copies the JWT to the hub, and route the outpost's own
    path to the outpost:
 
@@ -608,25 +632,23 @@ http:
 Only the verified JWT is trusted; `X-authentik-username` is ignored. Set `trusted_peers` to the proxy's
 address as an extra layer.
 
-### Authentik: service account for hub-to-node OIDC
+### Hub-to-node authentication
 
-Create a service account (or an OAuth2 provider with the client-credentials grant) for the hub and a
-provider/application for the nodes whose tokens carry the hub's identity. Put the token URL and client in
-the hub's `[hub_auth.oidc]`, and on each node set `[node_auth.oidc]` with that provider's JWKS URL, issuer,
-audience and the service account's `sub` as `caller_value`. Whether `private_key_jwt` can be registered for a
-hub-held key depends on your Authentik version; the probe (`client-credentials` / `private-key-jwt`) tells you.
+Nodes need no Authentik setup. The hub does not use an account at the identity provider to call nodes.
+It signs each request with its own key. Run `claude-rc node config` or `claude-rc node setup` to give a node
+the hub public key (see [Command-line client](#command-line-client)).
 
-A setup that is verified on Authentik 2026.8.4 (see `2026-11-06-multi-host-authentik-findings.md`, section 1):
+### Rotating the hub key
 
-1. Create a service account user, for example `rc-hub`. Authentik shows its app-password token once.
-2. Create an OAuth2/OpenID provider, client type **Confidential**, with the grant type **Client Credentials** only
-   (a provider created through the API has no grant types and rejects everything), an RS256 signing key, and an
-   access token lifetime of about 10 minutes. Create an application for it and bind the service account to it.
-3. In the hub's `[hub_auth.oidc]` use `auth_method = "client_secret"` with `client_secret_file` (the provider's
-   secret), **and** `username` and `password_file` (the service account's name and app-password token). The client
-   secret alone is refused with `invalid_grant`.
-4. On the hub run `claude-rc node config` (see [Command-line client](#command-line-client)) to get the matching
-   `[node_auth.oidc]` values for each node.
+The hub has one active key. To rotate it, follow these steps.
+
+1. Delete `<state_dir>/hub-key.pem` on the hub.
+2. Restart the hub. It makes a new key and logs the new `hub key ... public_key=...` line.
+3. Run `claude-rc node setup` again on every node. For a hand-made node, replace the `public_key` in its
+   `[[node_auth.hub_key]]` row and restart the node.
+
+Nodes are unreachable between the hub restart and the update of each node. A node can hold more than one
+`hub_key` row, but the hub signs with only one key.
 
 ## Reverse proxy
 

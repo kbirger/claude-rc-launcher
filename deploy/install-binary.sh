@@ -22,7 +22,7 @@
 #     With --node the node example config is used and no session.secret is created.
 #   * systemd is reloaded, but the service is only enabled and started once config.toml has no
 #     placeholders left and oidc-client.secret exists and is non-empty (node: at least one
-#     [node_auth.*] method is enabled). Otherwise it prints what to fill in; run the same command
+#     [[node_auth.hub_key]] or [[node_auth.secret]] row is present). Otherwise it prints what to fill in; run the same command
 #     again afterwards.
 #
 # Environment (mainly for testing): PREFIX (default /usr/local), SYSTEMD_DIR (default
@@ -141,8 +141,8 @@ if [ "$HAVE_SYSTEMCTL" -eq 1 ]; then systemctl daemon-reload; fi
 MISSING=()
 if grep -qE 'example\.com|replace-with' "$CONF"; then MISSING+=("placeholder values in $CONF"); fi
 if [ "$NODE" -eq 1 ]; then
-  if ! grep -qE '^\[(\[node_auth\.secret\]|node_auth\.oidc)\]' "$CONF"; then
-    MISSING+=("a node_auth method in $CONF ([[node_auth.secret]] with the sha256 from 'claude-rc-launcher gen-secret', or [node_auth.oidc])")
+  if ! grep -qE '^\[\[node_auth\.(hub_key|secret)\]\]' "$CONF"; then
+    MISSING+=("a node_auth method in $CONF ([[node_auth.hub_key]] with the hub public key from 'claude-rc node config', or [[node_auth.secret]] with the sha256 from 'claude-rc-launcher gen-secret')")
   fi
 elif [ ! -s "$CONFIG_DIR/oidc-client.secret" ]; then
   MISSING+=("$CONFIG_DIR/oidc-client.secret (mode 600)")

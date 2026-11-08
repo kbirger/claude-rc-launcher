@@ -22,15 +22,13 @@ names = ["pi.example.com", "10.0.0.9"]    # certificate SANs: the DNS names / IP
 
 # Enable at least one of the two methods below.
 
+# Hub public key: the hub signs every request with its private key and the node checks the signature.
+# Get the line from the output of `claude-rc node config` or from `GET /cli/api/node-enrollment` on the hub.
+# Repeat the table to trust more than one hub key.
+# [[node_auth.hub_key]]
+# public_key = "replace-with-the-hub-public-key"
+
 # Shared secret: run `claude-rc-launcher gen-secret`, put the secret on the hub, the sha256 here.
 # Repeat the table to accept two secrets during rotation.
 # [[node_auth.secret]]
 # sha256 = "replace-with-64-hex-chars-from-gen-secret"
-
-# OIDC client credentials (Authentik service account for the hub):
-# [node_auth.oidc]
-# jwks_url = "https://auth.example.com/application/o/rc-node/jwks/"
-# issuer = "https://auth.example.com/application/o/rc-node/"
-# audience = "replace-with-audience"
-# caller_claim = "sub"                    # default "sub"
-# caller_value = "replace-with-the-hub-service-account-identity"
