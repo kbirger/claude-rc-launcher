@@ -111,6 +111,71 @@ sudo systemctl enable --now claude-rc-launcher
 curl http://127.0.0.1:8080/healthz   # {"ok":true}
 ```
 
+### Windows node
+
+A Windows machine can be a node that a hub controls. It cannot be a hub. The service runs the node binary through
+[WinSW](https://github.com/winsw/winsw) (the Windows service wrapper), which restarts it after a failure.
+
+**Before you start**
+
+- Install `claude` and sign in as the Windows user that the service will run as. The sign-in and the workspace-trust data
+  are in that user's profile (`%USERPROFILE%\.claude.json`). `SYSTEM` and the built-in service accounts do not work.
+- You need an elevated PowerShell (Run as administrator) and the password of that user.
+- The hub must run 0.5.0 or later (see [Upgrading from 0.4](#upgrading-from-04)).
+
+**Install**
+
+```powershell
+$base = 'https://github.com/kbirger/claude-rc-launcher/releases/latest/download'
+Invoke-WebRequest "$base/claude-rc-launcher-win-installer.zip" -OutFile installer.zip
+Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
+(Get-FileHash installer.zip).Hash.ToLower() -eq ((Select-String 'win-installer.zip' SHA256SUMS).Line -split '\s+')[0]   # must print True
+Expand-Archive installer.zip -DestinationPath claude-rc-installer
+cd claude-rc-installer
+.\install.ps1 -OpenFirewall
+```
+
+From a clone, run `.\deploy\windows\install.ps1` instead. It uses `dist\claude-rc-launcher-win-x64.exe` when that file
+exists (`bun run build:win` makes it). `-Binary <file>` and `-Release v1.2.3` choose another binary.
+
+The script installs the binary, WinSW and a small launcher script into `C:\Program Files\claude-rc-launcher`, and creates
+`C:\ProgramData\claude-rc-launcher\config.toml` from `deploy\windows\node.config.example.toml`. It never changes an
+existing `config.toml`. It limits the data folder (it holds the certificate key) to `SYSTEM`, Administrators and the
+service account. WinSW then asks for the account and its password: enter the user that you signed in to `claude` with.
+The service starts when `config.toml` has no placeholders left and has at least one `[[node_auth.hub_key]]` or
+`[[node_auth.secret]]`. Otherwise the script says what to fill in. Edit the file and run the script again.
+`-OpenFirewall` adds an inbound rule for the port in `config.toml`, for Private and Domain networks only.
+
+Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host add win --url https://<this-pc>:8443`.
+
+**What is different from Linux**
+
+- `[instance]` takes `service_user`, `service_home`, `roots`, `claude_bin`, `claude_rc_args` and `name_prefix`.
+  `scope`, `unit_dir`, `service_path` and `ssh_auth_sock` are errors, because they describe a systemd unit.
+  `service_user` must be the account that the service runs as. The node stops at start-up if it is not.
+- Every instance runs as the service account. `--user` is refused. The default `service_home` is `%USERPROFILE%`, the
+  default `roots` is that folder, and the default `tls.state_dir` is `C:\ProgramData\claude-rc-launcher`.
+- Instances live and die with the node process. The node keeps a list in `<state_dir>\instances\instances.json` and
+  starts those instances again when it starts. Logs of each instance are in `<state_dir>\instances\logs\<id>.log`.
+- `claude` trusts a folder only if `.claude.json` has an entry for the path with forward slashes and the same
+  letter case, for example `C:/Users/me/proj`. The node writes that form when you start an instance with `--force`, and
+  it ignores backslash entries because `claude` does too.
+- The service and update logs are in `C:\ProgramData\claude-rc-launcher\logs`.
+
+**Updating.** `claude-rc update --all-nodes` updates a Windows node like any other. Run it from a Linux or macOS
+client. The Windows client cannot update itself yet, so on Windows the last step of the command fails after the
+machines are updated. The node downloads
+`claude-rc-launcher-win-x64.exe`, checks it against `SHA256SUMS`, runs the new binary once with `--version`, swaps it in
+by renaming files (a running `.exe` can be renamed but not overwritten) and restarts. The old binary stays as
+`claude-rc-launcher.exe.prev`. If the new binary does not stay up for 30 seconds, the launcher puts the old one back
+after three tries, about 20 seconds in all, and writes the reason to `logs\update.log`. Installing the same release
+again with `install.ps1` also works. The service account needs write access to the install folder for this. The script
+gives it Modify rights there. The service already runs as that account, so this does not give it more power.
+
+**Remove.** `.\install.ps1 -Uninstall` removes the service and the firewall rule. It keeps the files, the config and
+the certificate. The password of the account and the recovery actions are set when the service is registered. To change
+them, uninstall and run the script again.
+
 ### Print the version
 
 Run `--version` on either binary to print its version.
@@ -126,7 +191,8 @@ checkout, or a run from source, prints `dev`. Neither binary needs a login, a ne
 
 ### Publishing a release (maintainers)
 
-Push a tag. The `Release` workflow tests, builds both binaries plus `SHA256SUMS`, and publishes them:
+Push a tag. The `Release` workflow tests, builds the Linux server binaries, the command-line client, the Windows node
+binary and its installer zip, adds `SHA256SUMS`, and publishes them:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
@@ -705,6 +771,26 @@ address as an extra layer.
 Nodes need no Authentik setup. The hub does not use an account at the identity provider to call nodes.
 It signs each request with its own key. Run `claude-rc node config` or `claude-rc node setup` to give a node
 the hub public key (see [Command-line client](#command-line-client)).
+
+### Upgrading from 0.4
+
+Release 0.5.0 replaced the OIDC token that the hub sent to nodes with a request signed by the hub's own key. The old
+configuration no longer loads, so do not only replace the binary. A hub or a node that starts with an old file stops with
+an error such as `hub_auth was removed` or `node_auth.oidc was removed`. The binary and the file must change together.
+
+1. **Hub.** In `config.toml`, delete the `[hub_auth.oidc]` table (and `[hub_auth]` if you have it). Install the new binary
+   and restart. Read the hub public key in the `hub key ... public_key=...` line of the log. The key files that the old
+   `[hub_auth.oidc]` table named (`hub-client.secret`, `hub-service.token`) are not used any more.
+2. **Every node.** In its `config.toml`, replace the `[node_auth.oidc]` table with
+   `[[node_auth.hub_key]]` and `public_key = "<the hub public key>"`. Install the new binary and restart.
+   `claude-rc node config --force` writes the whole file for you.
+3. **Hosts.** A node shows `rejected our credentials` in `claude-rc hosts` until step 2 is done on it. The hub keeps its
+   hosts and their pinned certificates, and a node keeps its certificate, so nothing needs pairing again.
+
+A hub older than 0.5.0 cannot update a node remotely, and the 0.5.0 hub cannot reach a 0.4 node. So update the first time
+by hand on each machine, for example with `claude-rc node update` after you changed the file. A failed start restores the
+old binary but not the old file. To roll back, put the old binary and the old file back together. Back both up first.
+Later updates can use [`claude-rc update --all-nodes`](#update-every-machine-with-one-command).
 
 ### Rotating the hub key
 

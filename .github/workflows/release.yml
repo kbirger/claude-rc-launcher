@@ -1,6 +1,7 @@
 name: Release
 
-# Push a tag like v0.1.0 to build prebuilt Linux binaries and publish them as a GitHub release.
+# Push a tag like v0.1.0 to build the prebuilt binaries (Linux server, command-line client, Windows node and its
+# installer) and publish them as a GitHub release.
 on:
   push:
     tags: ["v*"]
@@ -38,6 +39,11 @@ jobs:
             bun build --compile --target=bun-$target --define "BUILD_VERSION=\"$version\"" cli/src/index.ts \
               --outfile dist/claude-rc-$target$ext
           done
+          # The Windows node. install.ps1 needs the files next to it, so they travel together as one zip.
+          bun build --compile --target=bun-windows-x64 --define "BUILD_VERSION=\"$version\"" server/src/index.win.ts \
+            --outfile dist/claude-rc-launcher-win-x64.exe
+          (cd deploy/windows && zip -q -j ../../dist/claude-rc-launcher-win-installer.zip \
+            install.ps1 claude-rc-launcher.xml claude-rc-launcher-run.ps1 node.config.example.toml)
           cp install-cli.sh dist/install-cli.sh
           (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish release

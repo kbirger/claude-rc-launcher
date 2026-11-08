@@ -23,3 +23,17 @@ jobs:
       - run: bun run --cwd web check
       - run: bun test
       - run: bun run build
+
+  # The Windows node: its PowerShell scripts (installer, launcher) only run on Windows, and the build must work there.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: >-
+          bun test server/test/win-config.test.ts server/test/win-instances.test.ts server/test/win-trust.test.ts
+          server/test/win-update.test.ts server/test/win-install.test.ts server/test/win-launcher.test.ts
+      - run: bun run build:win
