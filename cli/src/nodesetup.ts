@@ -1,4 +1,4 @@
-import { createHash, X509Certificate } from "node:crypto";
+import { X509Certificate } from "node:crypto";
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -8,12 +8,12 @@ import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
 import { HOST_ID_RE } from "../../server/src/hostid";
+import { downloadAsset, installWithBackup, restorePrevious, ReleaseError, sha256, type ReleaseIo } from "../../server/src/release";
 import { nodeFlags, renderNodeConfig, urlHost, requireHubKeys } from "./nodecmd";
 
 /** The same file as `deploy/claude-rc-launcher.service`, compiled into the CLI. */
 export const UNIT: string = UNIT_TEXT;
 
-const REPO = "kbirger/claude-rc-launcher";
 const NAME = "claude-rc-launcher";
 const BIN = `/usr/local/bin/${NAME}`;
 const CONFIG_DIR = "/etc/claude-rc-launcher";
@@ -97,7 +97,18 @@ export const realSys: Sys = {
 };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
-export const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+export { sha256 };
+
+/** The release code's view of `Sys`: every command runs through sudo. */
+const sudoIo = (sys: Sys): ReleaseIo => ({
+  fetch: sys.fetch,
+  run: (args) => {
+    const r = sys.sudo(args);
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+  },
+  writeTemp: sys.writeTemp,
+  removeTemp: sys.removeTemp,
+});
 
 export const releaseCpu = (sys: Sys) => (sys.arch === "x64" ? "x64" : sys.arch === "arm64" ? "arm64" : undefined);
 
@@ -107,12 +118,13 @@ export const releaseCpu = (sys: Sys) => (sys.arch === "x64" ? "x64" : sys.arch =
  */
 export async function obtainBinary(sys: Sys, flags: Flags, asset: string, out: (s: string) => void): Promise<Uint8Array> {
   if (flags.binary) return sys.readFile(flags.binary);
-  const base = `https://github.com/${REPO}/releases/${flags.release ? `download/${flags.release}` : "latest/download"}`;
   out(`downloading ${asset} (${flags.release ?? "latest release"})`);
-  const [bin, sums] = await Promise.all([get(sys, `${base}/${asset}`), get(sys, `${base}/SHA256SUMS`)]);
-  const line = new TextDecoder().decode(sums).split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset);
-  if (!line || line[0] !== sha256(bin)) throw new ExitError(`the checksum of ${asset} does not match SHA256SUMS. Nothing was installed`, 1);
-  return bin;
+  try {
+    return await downloadAsset(sys, asset, flags.release);
+  } catch (e) {
+    if (e instanceof ReleaseError) throw new ExitError(e.message, 1);
+    throw e;
+  }
 }
 
 /**
@@ -250,21 +262,11 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
   if (sha256(binary) === sha256(sys.readFile(BIN))) return out("already up to date");
 
   // 3. Install
-  const sudo = (args: string[], what: string) => {
-    const r = sys.sudo(args);
-    if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
-    return r;
-  };
-  const tmp = sys.writeTemp(NAME, binary);
   try {
-    sudo(["install", "-m", "755", tmp, `${BIN}.new`], "installing the binary");
-    sudo(["cp", "-p", BIN, `${BIN}.prev`], "backing up the installed binary");
-    sudo(["mv", "-f", `${BIN}.new`, BIN], "installing the binary");
+    installWithBackup(sudoIo(sys), BIN, binary);
   } catch (e) {
-    sys.sudo(["rm", "-f", `${BIN}.new`]);
+    if (e instanceof ReleaseError) throw new ExitError(e.message, 1);
     throw e;
-  } finally {
-    sys.removeTemp(tmp);
   }
 
   // 4. Restart and wait for the service to stay active
@@ -288,7 +290,7 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
     const text = sys.sudo(["journalctl", "-u", NAME, "-n", "15", "--no-pager"]).stdout.trim();
     if (text) out(text);
   };
-  if (sys.sudo(["mv", "-f", `${BIN}.prev`, BIN]).code !== 0) {
+  if (!restorePrevious(sudoIo(sys), BIN)) {
     log();
     throw new ExitError(
       `the update failed and the previous binary could not be restored. The NEW binary is still installed and ${NAME} may be down or crash-looping. The previous binary is at ${BIN}.prev. To restore it by hand, run: sudo mv -f ${BIN}.prev ${BIN} && sudo systemctl restart ${NAME}`,
@@ -303,15 +305,4 @@ export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sy
       : `the update failed: ${NAME} did not become active and stay active within ${HEALTH_WAIT_MS / 1000} seconds. The previous binary is back in place at ${BIN}, but the service did not restart. Last log lines are above`,
     1,
   );
-}
-
-async function get(sys: Sys, url: string): Promise<Uint8Array> {
-  let res: Response;
-  try {
-    res = await sys.fetch(url);
-  } catch (e) {
-    throw new ExitError(`cannot download ${url}: ${(e as Error).message}`, 1);
-  }
-  if (!res.ok) throw new ExitError(`cannot download ${url}: HTTP ${res.status}`, 1);
-  return new Uint8Array(await res.arrayBuffer());
 }

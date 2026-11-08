@@ -1,5 +1,6 @@
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
+import { installWithBackup, restorePrevious, ReleaseError, type ReleaseIo } from "../../server/src/release";
 import { obtainBinary, releaseCpu, sha256, type Sys, realSys } from "./nodesetup";
 import { VERSION } from "../../server/src/version";
 
@@ -35,21 +36,12 @@ export async function selfUpdate(o: { flags: Flags; out: (s: string) => void; sy
     const r = sys.run(args);
     return { code: r.code, stdout: r.stdout, stderr: r.stderr ?? "" };
   };
-  const step = (args: string[], what: string) => {
-    const r = run(args);
-    if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
-  };
-  // The old .prev is only replaced once the new file is in place next to the executable.
-  const tmp = sys.writeTemp(NAME, binary);
+  const io: ReleaseIo = { fetch: sys.fetch, run, writeTemp: sys.writeTemp, removeTemp: sys.removeTemp };
   try {
-    step(["install", "-m", "755", tmp, `${exe}.new`], "installing the binary");
-    step(["cp", "-p", exe, `${exe}.prev`], "backing up the installed binary");
-    step(["mv", "-f", `${exe}.new`, exe], "installing the binary");
+    installWithBackup(io, exe, binary);
   } catch (e) {
-    run(["rm", "-f", `${exe}.new`]);
+    if (e instanceof ReleaseError) throw new ExitError(e.message, 1);
     throw e;
-  } finally {
-    sys.removeTemp(tmp);
   }
 
   // 4. Make sure that the new binary runs
@@ -60,7 +52,7 @@ export async function selfUpdate(o: { flags: Flags; out: (s: string) => void; sy
   }
 
   // 5. Roll back
-  if (run(["mv", "-f", `${exe}.prev`, exe]).code !== 0) {
+  if (!restorePrevious(io, exe)) {
     throw new ExitError(
       `the update failed and the previous binary could not be restored. The NEW binary is still installed and does not run. The previous binary is at ${exe}.prev. To restore it by hand, run: ${plain ? "" : "sudo "}mv -f ${exe}.prev ${exe}`,
       1,
