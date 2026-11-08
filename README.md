@@ -123,15 +123,33 @@ A Windows machine can be a node that a hub controls. It cannot be a hub. The ser
 - You need an elevated PowerShell (Run as administrator) and the password of that user.
 - The hub must run 0.5.0 or later (see [Upgrading from 0.4](#upgrading-from-04)).
 
-**Install**
+**Install.** One line, in an elevated PowerShell:
 
 ```powershell
-$base = 'https://github.com/kbirger/claude-rc-launcher/releases/latest/download'
-Invoke-WebRequest "$base/claude-rc-launcher-win-installer.zip" -OutFile installer.zip
-Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
-(Get-FileHash installer.zip).Hash.ToLower() -eq ((Select-String 'win-installer.zip' SHA256SUMS).Line -split '\s+')[0]   # must print True
-Expand-Archive installer.zip -DestinationPath claude-rc-installer
-cd claude-rc-installer
+irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1 | iex
+```
+
+The script downloads the release zip that has the other installer files, checks it against `SHA256SUMS`, and runs the
+installer inside. `| iex` cannot take parameters, so give options as environment variables, and set them first:
+
+```powershell
+$env:CLAUDE_RC_OPEN_FIREWALL = '1'   # also: CLAUDE_RC_RELEASE='v1.2.3', CLAUDE_RC_CLIENT_ONLY='1', CLAUDE_RC_NO_CLIENT='1'
+irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1 | iex
+```
+
+Or run it as a script block, which does take parameters (`-ClientOnly`, `-OpenFirewall`, `-Release v1.2.3`, ...):
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1))) -OpenFirewall
+```
+
+`iex` runs whatever the URL returns, with administrator rights. The check against `SHA256SUMS` guards the download of the
+zip and the binaries, but both come from the same release, so it does not protect against a release that is itself
+bad. To read the script before you run it, save it and run the file. A file that is run alone works the same way:
+
+```powershell
+irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1 -OutFile install.ps1
+notepad install.ps1
 .\install.ps1 -OpenFirewall
 ```
 
@@ -150,7 +168,7 @@ The script installs the node binary, WinSW and a small launcher script into `C:\
 existing `config.toml`. It limits the data folder (it holds the certificate key) to `SYSTEM`, Administrators and the
 service account. WinSW then asks for the account and its password: enter the user that you signed in to `claude` with.
 The service starts when `config.toml` has no placeholders left and has at least one `[[node_auth.hub_key]]` or
-`[[node_auth.secret]]`. Otherwise the script says what to fill in. Edit the file and run the script again.
+`[[node_auth.secret]]`. Otherwise the script says what to fill in. Edit the file and run the same install command again.
 `-OpenFirewall` adds an inbound rule for the port in `config.toml`, for Private and Domain networks only.
 
 Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host add win --url https://<this-pc>:8443`.

@@ -3,7 +3,17 @@
   Installs claude-rc-launcher as a Windows node service (WinSW) and starts it once the config is ready.
 
 .DESCRIPTION
-  Run in an elevated PowerShell (Windows PowerShell 5.1 or PowerShell 7):
+  Run in an elevated PowerShell (Windows PowerShell 5.1 or PowerShell 7). One line, from the latest release:
+
+    irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1 | iex
+
+  `| iex` cannot take parameters. Use environment variables instead (CLAUDE_RC_RELEASE=v1.2.3, CLAUDE_RC_CLIENT_ONLY=1,
+  CLAUDE_RC_NO_CLIENT=1, CLAUDE_RC_OPEN_FIREWALL=1), or run it as a script block:
+
+    & ([scriptblock]::Create((irm <url>))) -ClientOnly
+
+  A lone install.ps1 (this file, without the files of the release zip next to it) downloads the release zip, checks it
+  against SHA256SUMS and runs the install.ps1 inside. From a clone or an unpacked zip it uses the files next to it:
 
     .\install.ps1 [-Binary <exe>] [-Release v1.2.3] [-Account DOMAIN\user] [-OpenFirewall] [-NoClient]
     .\install.ps1 -ClientOnly [-Release v1.2.3]      only the claude-rc client and the PATH (no node, no service)
@@ -58,6 +68,19 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest is much faster without the progress bar
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
+# `irm <url> | iex` cannot pass parameters, so the main options can also be given as environment variables:
+# CLAUDE_RC_RELEASE=v1.2.3, CLAUDE_RC_CLIENT_ONLY=1, CLAUDE_RC_NO_CLIENT=1, CLAUDE_RC_OPEN_FIREWALL=1.
+# A parameter that is given on the command line always wins.
+function Get-EnvFlag([string]$Var) {
+  $v = [Environment]::GetEnvironmentVariable($Var)
+  return [bool]($v -and ($v -notin @('0', 'false', 'no')))
+}
+$envRelease = [Environment]::GetEnvironmentVariable('CLAUDE_RC_RELEASE')
+if (-not $PSBoundParameters.ContainsKey('Release') -and $envRelease) { $Release = $envRelease; $PSBoundParameters['Release'] = $envRelease }
+if (-not $PSBoundParameters.ContainsKey('ClientOnly') -and (Get-EnvFlag 'CLAUDE_RC_CLIENT_ONLY')) { $ClientOnly = [switch]$true; $PSBoundParameters['ClientOnly'] = $ClientOnly }
+if (-not $PSBoundParameters.ContainsKey('NoClient') -and (Get-EnvFlag 'CLAUDE_RC_NO_CLIENT')) { $NoClient = [switch]$true; $PSBoundParameters['NoClient'] = $NoClient }
+if (-not $PSBoundParameters.ContainsKey('OpenFirewall') -and (Get-EnvFlag 'CLAUDE_RC_OPEN_FIREWALL')) { $OpenFirewall = [switch]$true; $PSBoundParameters['OpenFirewall'] = $OpenFirewall }
+
 $Name = 'claude-rc-launcher'
 $Repo = 'kbirger/claude-rc-launcher'
 $AssetName = 'claude-rc-launcher-win-x64.exe'
@@ -68,7 +91,9 @@ $WinSWUrl = 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.
 $WinSWSha256 = '05B82D46AD331CC16BDC00DE5C6332C1EF818DF8CEEFCD49C726553209B3A0DA'
 $FirewallRule = 'claude-rc-launcher node'
 
-$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+# The folder of this file, or '' when the script did not start from a file (irm <url> | iex).
+$Here = [string](Get-Variable -Name PSScriptRoot -ValueOnly -ErrorAction SilentlyContinue)
+$InstallerAsset = 'claude-rc-launcher-win-installer.zip'
 $SvcExe = Join-Path $InstallDir "$Name-svc.exe"
 $SvcXml = Join-Path $InstallDir "$Name-svc.xml"
 $Dest = Join-Path $InstallDir "$Name.exe"
@@ -79,7 +104,13 @@ function Test-Admin {
   $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-Sha256([string]$Path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant() }
+# Uses .NET directly, not Get-FileHash: no module has to load for a security check, and the file is streamed.
+function Get-Sha256([string]$Path) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $stream = [IO.File]::OpenRead($Path)
+  try { return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '') }
+  finally { $stream.Dispose(); $sha.Dispose() }
+}
 
 function Assert-Executable([string]$Path, [string]$What) {
   $bytes = [IO.File]::ReadAllBytes($Path)
@@ -93,7 +124,10 @@ function Get-Download([string]$Url, [string]$OutFile) {
 $ReleaseTagPattern = '^v?\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$'
 
 function Get-ReleaseAsset([string]$Tag, [string]$TempDir, [string]$Asset) {
-  $base = if ($Tag) { "https://github.com/$Repo/releases/download/$Tag" } else { "https://github.com/$Repo/releases/latest/download" }
+  # CLAUDE_RC_RELEASE_BASE points at a mirror (or a test server) that serves the release files. It is not needed normally.
+  $base = if ($env:CLAUDE_RC_RELEASE_BASE) { $env:CLAUDE_RC_RELEASE_BASE.TrimEnd('/') }
+          elseif ($Tag) { "https://github.com/$Repo/releases/download/$Tag" }
+          else { "https://github.com/$Repo/releases/latest/download" }
   $bin = Join-Path $TempDir $Asset
   $sums = Join-Path $TempDir 'SHA256SUMS'
   Write-Host "==> Downloading $Asset ($(if ($Tag) { $Tag } else { 'latest' }))"
@@ -143,8 +177,8 @@ function Remove-MachinePath([string]$Dir, [string]$KeyPath) {
 function Get-ClientSource([string]$TempDir) {
   $path = $ClientBinary
   if (-not $path) {
-    $localClient = Join-Path $Here '..\..\dist\claude-rc.exe'
-    $path = if (Test-Path -LiteralPath $localClient) { (Resolve-Path -LiteralPath $localClient).Path } else { Get-ReleaseAsset $Release $TempDir $ClientAsset }
+    $localClient = if ($Here) { Join-Path $Here '..\..\dist\claude-rc.exe' } else { '' }
+    $path = if ($localClient -and (Test-Path -LiteralPath $localClient)) { (Resolve-Path -LiteralPath $localClient).Path } else { Get-ReleaseAsset $Release $TempDir $ClientAsset }
   }
   if (-not (Test-Path -LiteralPath $path)) { throw "client binary not found: $path" }
   Assert-Executable $path 'the claude-rc client'
@@ -238,6 +272,34 @@ if ($ClientOnly) {
   try { Install-ClientAndPath (Get-ClientSource $tempClient) } finally { Remove-Item -LiteralPath $tempClient -Recurse -Force -ErrorAction SilentlyContinue }
   return
 }
+
+# ---- started without the files next to it: fetch them -------------------------------------------------------
+# `irm <url> | iex`, or a lone install.ps1 that was downloaded by itself, has no XML, launcher or example config next to
+# it. The release zip has them. It is checked against SHA256SUMS, unpacked, and its own install.ps1 does the work with
+# the same options.
+$sideFiles = @("$Name.xml", "$Name-run.ps1", 'node.config.example.toml')
+$haveSideFiles = $Here -and (@($sideFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Here $_)) }).Count -eq 0)
+if (-not $haveSideFiles) {
+  if (-not $NoService -and -not (Test-Admin)) { throw 'run this in an elevated PowerShell (Run as administrator)' }
+  if ($Release -and $Release -notmatch $ReleaseTagPattern) { throw "invalid release tag: $Release (for example v1.2.3)" }
+  $bootTemp = Join-Path ([IO.Path]::GetTempPath()) ("$Name-installer-" + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $bootTemp | Out-Null
+  try {
+    $zipFile = Get-ReleaseAsset $Release $bootTemp $InstallerAsset
+    $unpacked = Join-Path $bootTemp 'installer'
+    Expand-Archive -LiteralPath $zipFile -DestinationPath $unpacked -Force
+    foreach ($f in @('install.ps1') + $sideFiles) {
+      if (-not (Test-Path -LiteralPath (Join-Path $unpacked $f))) { throw "$InstallerAsset does not contain $f" }  # also stops a loop
+    }
+    $forward = @{}
+    foreach ($k in $PSBoundParameters.Keys) { $forward[$k] = $PSBoundParameters[$k] }
+    & (Join-Path $unpacked 'install.ps1') @forward
+  } finally {
+    Remove-Item -LiteralPath $bootTemp -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  return
+}
+
 if (-not $NoService -and -not (Test-Admin)) { throw 'run this in an elevated PowerShell (Run as administrator)' }
 if ($Account -match '^(NT AUTHORITY\\|NT SERVICE\\)|^(SYSTEM|LOCAL SERVICE|NETWORK SERVICE)$') {
   throw "the service must run as a user account that is signed in to claude, not '$Account'"
@@ -364,7 +426,7 @@ try {
     Write-Host ''
     Write-Host "The service is installed but not started. Edit $ConfigFile :"
     $problems | ForEach-Object { Write-Host "  - $_" }
-    Write-Host 'Then run this script again.'
+    Write-Host 'Then run the same install command again.'
     return
   }
   Write-Host "==> Starting $Name"

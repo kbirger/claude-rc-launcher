@@ -36,5 +36,5 @@ jobs:
       - run: >-
           bun test server/test/win-config.test.ts server/test/win-instances.test.ts server/test/win-trust.test.ts
           server/test/win-update.test.ts server/test/win-install.test.ts server/test/win-launcher.test.ts
-          server/test/win-path.test.ts
+          server/test/win-path.test.ts server/test/win-bootstrap.test.ts
       - run: bun run build:win

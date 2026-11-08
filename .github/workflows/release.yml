@@ -44,6 +44,8 @@ jobs:
             --outfile dist/claude-rc-launcher-win-x64.exe
           (cd deploy/windows && zip -q -j ../../dist/claude-rc-launcher-win-installer.zip \
             install.ps1 claude-rc-launcher.xml claude-rc-launcher-run.ps1 node.config.example.toml)
+          # The one-line installer: `irm .../releases/latest/download/install.ps1 | iex`. It fetches the zip above.
+          cp deploy/windows/install.ps1 dist/install.ps1
           cp install-cli.sh dist/install-cli.sh
           (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish release
