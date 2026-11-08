@@ -444,6 +444,28 @@ installed for that user; the command only warns when it is missing.
 
 The command does not create the Authentik service account, and it does not change a firewall.
 
+### Update a node's binary
+
+To update only the server binary of a node, run this on the node machine:
+
+```sh
+claude-rc node update [--binary <file>] [--release <tag>]
+```
+
+The command needs no login and sends nothing to the hub. It does not change the config, the unit, the certificate or
+the registration. If the node is not installed yet, it stops and tells you to run `claude-rc node setup` first.
+
+It gets the binary in the same way as `node setup`. Without flags, it downloads the latest release and checks it
+against `SHA256SUMS`. `--release <tag>` picks another release. `--binary <file>` installs a file you already have.
+You cannot use `--binary` and `--release` together.
+
+If the new binary is the same as the installed one, the command prints `already up to date` and restarts nothing.
+If it is different, the command keeps the old binary as `/usr/local/bin/claude-rc-launcher.prev`, installs the new
+one through `sudo` and restarts the service. It then waits up to 30 seconds for the service to stay active.
+
+If the service does not become active and stay active, the command puts the `.prev` binary back, restarts the service
+and prints the last 15 log lines. It then stops with an error.
+
 ### Write a node's configuration
 
 On the node machine, install the CLI, run `claude-rc login --hub <url>`, and let the hub fill in the part of the
