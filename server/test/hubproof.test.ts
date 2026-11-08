@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SignJWT } from "jose";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-hubproof-"));
 const AUD = "sha256:" + "ab".repeat(32);
 const NOW = 1_800_000_000_000;
 const req: ProofRequest = { method: "POST", pathAndQuery: "/api/x?y=1", body: '{"a":1}' };
+const bh = createHash("sha256").update(req.body).digest("hex");
 const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 
 function counter() {
@@ -43,21 +45,23 @@ describe("hub proof", () => {
 
   test("rejects a missing exp", async () => {
     const { key, verify } = await setup();
-    const t = await new SignJWT({ htm: "POST", htu: req.pathAndQuery, bh: "x", jti: "j" })
+    const t = await new SignJWT({ htm: "POST", htu: req.pathAndQuery, bh, jti: "j" })
       .setProtectedHeader({ alg: "EdDSA", kid: key.kid })
       .setIssuer("claude-rc-hub").setAudience(AUD).setIssuedAt(NOW / 1000).sign(key.privateKey);
-    await expect(verify(t, req)).rejects.toBeInstanceOf(ProofError);
+    const e = await verify(t, req).catch((x) => x);
+    expect(e).toBeInstanceOf(ProofError);
+    expect(e.message).toMatch(/exp/i);
   });
 
   test("rejects exp - iat of 61 s", async () => {
     const { key, verify } = await setup();
-    const { createHash } = await import("node:crypto");
-    const bh = createHash("sha256").update(req.body).digest("hex");
     const iat = NOW / 1000;
     const t = await new SignJWT({ htm: req.method, htu: req.pathAndQuery, bh, jti: "long" })
       .setProtectedHeader({ alg: "EdDSA", kid: key.kid })
       .setIssuer("claude-rc-hub").setAudience(AUD).setIssuedAt(iat).setExpirationTime(iat + 61).sign(key.privateKey);
-    await expect(verify(t, req)).rejects.toBeInstanceOf(ProofError);
+    const e = await verify(t, req).catch((x) => x);
+    expect(e).toBeInstanceOf(ProofError);
+    expect(e.message).toMatch(/lifetime/i);
   });
 
   test("rejects a changed method, path or body", async () => {
@@ -80,17 +84,21 @@ describe("hub proof", () => {
   test("rejects an HS256 token signed with the public key bytes", async () => {
     const { key, verify } = await setup();
     const secret = new Uint8Array(Buffer.from(key.publicKey, "base64url"));
-    const t = await new SignJWT({ htm: "POST", htu: req.pathAndQuery, bh: "x", jti: "h" })
+    const t = await new SignJWT({ htm: "POST", htu: req.pathAndQuery, bh, jti: "h" })
       .setProtectedHeader({ alg: "HS256", kid: key.kid })
       .setIssuer("claude-rc-hub").setAudience(AUD).setIssuedAt(NOW / 1000).setExpirationTime(NOW / 1000 + 30).sign(secret);
-    await expect(verify(t, req)).rejects.toBeInstanceOf(ProofError);
+    const e = await verify(t, req).catch((x) => x);
+    expect(e).toBeInstanceOf(ProofError);
+    expect(e.message).toMatch(/not allowed/i);
   });
 
   test("rejects an alg none token", async () => {
     const { key, verify } = await setup();
     const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
-    const t = `${enc({ alg: "none", kid: key.kid })}.${enc({ iss: "claude-rc-hub", aud: AUD, iat: NOW / 1000, exp: NOW / 1000 + 30, jti: "n", htm: "POST", htu: req.pathAndQuery, bh: "x" })}.`;
-    await expect(verify(t, req)).rejects.toBeInstanceOf(ProofError);
+    const t = `${enc({ alg: "none", kid: key.kid })}.${enc({ iss: "claude-rc-hub", aud: AUD, iat: NOW / 1000, exp: NOW / 1000 + 30, jti: "n", htm: "POST", htu: req.pathAndQuery, bh })}.`;
+    const e = await verify(t, req).catch((x) => x);
+    expect(e).toBeInstanceOf(ProofError);
+    expect(e.message).toMatch(/not allowed/i);
   });
 
   test("rejects an unknown kid", async () => {
