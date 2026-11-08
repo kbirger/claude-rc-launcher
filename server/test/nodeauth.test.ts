@@ -1,24 +1,32 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Hono } from "hono";
-import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
-import { createJwtVerifier, JwtError, type JwtVerifier } from "../src/jwt";
+import { loadOrCreateHubKey, signProof, type HubKey } from "../src/hubproof";
 import { generateSecret, hashSecret, nodeAuth, type NodeAuthSettings } from "../src/nodeauth";
 
-const ISS = "https://auth.example.com/o/node/";
-const AUD = "rc-node";
+const FP = "sha256:" + "ab".repeat(32);
 
-async function jwtKit() {
-  const { publicKey, privateKey } = await generateKeyPair("ES256");
-  const keys = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: "k", alg: "ES256" }] });
-  const sign = (claims: Record<string, unknown> = {}) =>
-    new SignJWT({ sub: "hub-svc", ...claims }).setProtectedHeader({ alg: "ES256", kid: "k" }).setIssuer(ISS).setAudience(AUD).setExpirationTime("5m").sign(privateKey);
-  return { sign, verify: createJwtVerifier({ keys, issuer: ISS, audience: AUD }) };
+async function hubKit(now?: () => number) {
+  const key: HubKey = await loadOrCreateHubKey(mkdtempSync(path.join(tmpdir(), "hubkey-")));
+  const proof = (method: string, pathAndQuery: string, body = "", o: { now?: () => number } = {}) =>
+    signProof(key, { method, pathAndQuery, body }, FP, o);
+  const settings = (extra: Partial<NodeAuthSettings> = {}): NodeAuthSettings => ({
+    hubKeys: [key.publicKey],
+    selfFingerprint: FP,
+    secretHashes: [],
+    ...(now ? { now } : {}),
+    ...extra,
+  });
+  return { key, proof, settings };
 }
 
 function app(s: NodeAuthSettings) {
   const a = new Hono();
   a.use("*", nodeAuth(s));
   a.get("/x", (c) => c.json({ caller: c.get("caller" as never) }));
+  a.post("/echo", async (c) => c.json({ caller: c.get("caller" as never), body: await c.req.json() }));
   return a;
 }
 const bearer = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -34,19 +42,19 @@ describe("shared secret", () => {
     expect(generateSecret().secret).not.toBe(s.secret);
   });
   test("valid secret -> 200, caller is 'secret'", async () => {
-    const r = await app({ secretHashes: [s.sha256] }).request("/x", { headers: bearer(s.secret) });
+    const r = await app({ hubKeys: [], selfFingerprint: FP, secretHashes: [s.sha256] }).request("/x", { headers: bearer(s.secret) });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ caller: "secret" });
   });
   test("wrong secret -> 401; either of two listed hashes accepted", async () => {
-    const a = app({ secretHashes: [s.sha256] });
+    const a = app({ hubKeys: [], selfFingerprint: FP, secretHashes: [s.sha256] });
     expect((await a.request("/x", { headers: bearer(other.secret) })).status).toBe(401);
-    const rot = app({ secretHashes: [s.sha256, other.sha256] });
+    const rot = app({ hubKeys: [], selfFingerprint: FP, secretHashes: [s.sha256, other.sha256] });
     expect((await rot.request("/x", { headers: bearer(s.secret) })).status).toBe(200);
     expect((await rot.request("/x", { headers: bearer(other.secret) })).status).toBe(200);
   });
   test("no Authorization, cookie only, Basic, empty bearer -> 401", async () => {
-    const a = app({ secretHashes: [s.sha256] });
+    const a = app({ hubKeys: [], selfFingerprint: FP, secretHashes: [s.sha256] });
     expect((await a.request("/x")).status).toBe(401);
     expect((await a.request("/x", { headers: { cookie: `session=${s.secret}` } })).status).toBe(401);
     expect((await a.request("/x", { headers: { authorization: `Basic ${btoa("u:" + s.secret)}` } })).status).toBe(401);
@@ -54,57 +62,66 @@ describe("shared secret", () => {
   });
 });
 
-describe("oidc", () => {
-  test("valid JWT with matching caller claim -> 200, caller is the sub", async () => {
-    const k = await jwtKit();
-    const a = app({ secretHashes: [], oidc: { verify: k.verify, callerClaim: "sub", callerValue: "hub-svc" } });
-    const r = await a.request("/x", { headers: bearer(await k.sign()) });
-    expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ caller: "hub-svc" });
-  });
-  test("another callerValue -> 401; other claim name works", async () => {
-    const k = await jwtKit();
-    const t = await k.sign({ azp: "hub-client" });
-    const bad = app({ secretHashes: [], oidc: { verify: k.verify, callerClaim: "sub", callerValue: "someone-else" } });
-    expect((await bad.request("/x", { headers: bearer(t) })).status).toBe(401);
-    const good = app({ secretHashes: [], oidc: { verify: k.verify, callerClaim: "azp", callerValue: "hub-client" } });
-    expect((await good.request("/x", { headers: bearer(t) })).status).toBe(200);
-  });
-  test("a JWT that fails verification -> 401", async () => {
-    const k = await jwtKit();
-    const other = await jwtKit();
-    const a = app({ secretHashes: [], oidc: { verify: k.verify, callerClaim: "sub", callerValue: "hub-svc" } });
-    expect((await a.request("/x", { headers: bearer(await other.sign()) })).status).toBe(401);
-  });
-});
+describe("hub proof", () => {
+  const hp = (t: string) => ({ authorization: `Hub-Proof ${t}` });
 
-describe("no downgrade between methods", () => {
-  test("JWT-shaped token with only secrets configured -> 401 and never hashed", async () => {
-    const k = await jwtKit();
-    const t = await k.sign();
-    // A JWT-shaped token that also happens to be a registered hash preimage must still be refused.
-    const a = app({ secretHashes: [hashSecret(t)] });
+  test("valid proof -> 200 and caller is 'hub'", async () => {
+    const k = await hubKit();
+    const r = await app(k.settings()).request("/x", { headers: hp(await k.proof("GET", "/x")) });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ caller: "hub" });
+  });
+  test("Bearer <jwt> is treated as a secret and rejected", async () => {
+    const k = await hubKit();
+    const t = await k.proof("GET", "/x");
+    const a = app(k.settings({ secretHashes: [hashSecret(t)].slice(0, 0) }));
     expect((await a.request("/x", { headers: bearer(t) })).status).toBe(401);
   });
-  test("hex secret with only OIDC configured -> 401 and the verifier is not called", async () => {
-    let calls = 0;
-    const verify: JwtVerifier = async () => {
-      calls++;
-      throw new JwtError("no");
-    };
-    const a = app({ secretHashes: [], oidc: { verify, callerClaim: "sub", callerValue: "x" } });
-    expect((await a.request("/x", { headers: bearer(generateSecret().secret) })).status).toBe(401);
-    expect(calls).toBe(0);
+  test("Hub-Proof with no hubKeys configured -> 401", async () => {
+    const k = await hubKit();
+    const r = await app(k.settings({ hubKeys: [] })).request("/x", { headers: hp(await k.proof("GET", "/x")) });
+    expect(r.status).toBe(401);
   });
-  test("JWT-shaped token goes to the verifier, not the secret path", async () => {
-    const seen: string[] = [];
-    const verify: JwtVerifier = async (t) => {
-      seen.push(t);
-      throw new JwtError("no");
-    };
-    const t = "aaa.bbb.ccc";
-    const a = app({ secretHashes: [hashSecret(t)], oidc: { verify, callerClaim: "sub", callerValue: "x" } });
-    expect((await a.request("/x", { headers: bearer(t) })).status).toBe(401);
-    expect(seen).toEqual([t]);
+  test("a secret under the Hub-Proof scheme -> 401", async () => {
+    const s = generateSecret();
+    const k = await hubKit();
+    const r = await app(k.settings({ secretHashes: [s.sha256] })).request("/x", { headers: hp(s.secret) });
+    expect(r.status).toBe(401);
+  });
+  test("POST with a JSON body: the handler can still read the body", async () => {
+    const k = await hubKit();
+    const body = JSON.stringify({ a: 1 });
+    const r = await app(k.settings()).request("/echo", { method: "POST", body, headers: { ...hp(await k.proof("POST", "/echo", body)), "content-type": "application/json" } });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ caller: "hub", body: { a: 1 } });
+  });
+  test("a tampered body -> 401", async () => {
+    const k = await hubKit();
+    const r = await app(k.settings()).request("/echo", { method: "POST", body: '{"a":2}', headers: hp(await k.proof("POST", "/echo", '{"a":1}')) });
+    expect(r.status).toBe(401);
+  });
+  test("query with a space and an ampersand is accepted", async () => {
+    const k = await hubKit();
+    const u = new URL("http://node/x?path=/a b&x=1");
+    const r = await app(k.settings()).request("/x?path=/a b&x=1", { headers: hp(await k.proof("GET", u.pathname + u.search)) });
+    expect(r.status).toBe(200);
+  });
+  test("body over 1 MiB -> 413", async () => {
+    const k = await hubKit();
+    const body = "x".repeat(1024 * 1024 + 1);
+    const r = await app(k.settings()).request("/echo", { method: "POST", body, headers: hp(await k.proof("POST", "/echo", body)) });
+    expect(r.status).toBe(413);
+  });
+  test("clock 10 s off -> 401", async () => {
+    const k = await hubKit(() => Date.now() - 10_000);
+    const r = await app(k.settings()).request("/x", { headers: hp(await k.proof("GET", "/x")) });
+    expect(r.status).toBe(401);
+  });
+  test("replaying the same proof -> 401", async () => {
+    const k = await hubKit();
+    const a = app(k.settings());
+    const h = hp(await k.proof("GET", "/x"));
+    expect((await a.request("/x", { headers: h })).status).toBe(200);
+    expect((await a.request("/x", { headers: h })).status).toBe(401);
   });
 });

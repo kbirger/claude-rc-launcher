@@ -53,7 +53,7 @@ async function startNode(id: string, over: { secret?: string } = {}): Promise<No
     trustFilter: async () => () => false,
     logs: async (_id: string, n: number) => `${id} log ${n}`,
   };
-  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ secretHashes: [sec.sha256] }) });
+  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }) });
   const seen: Headers[] = [];
   const delayNodeMs = { value: 0 };
   const server = Bun.serve({

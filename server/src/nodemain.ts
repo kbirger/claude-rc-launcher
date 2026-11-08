@@ -1,7 +1,6 @@
 import { createNodeApp } from "./app";
 import type { Config } from "./config";
 import { bunRunner, InstanceService } from "./instances";
-import { createJwtVerifier, remoteKeys } from "./jwt";
 import { nodeAuth } from "./nodeauth";
 import { resolveDirOwner } from "./owner";
 import { ensureNodeCert } from "./tls";
@@ -17,19 +16,8 @@ export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ por
   console.log(`node certificate fingerprint sha256:${cert.fingerprintSha256}`);
   if (cert.created) console.log(`generated a new node certificate in ${node.tls.stateDir}; copy node-cert.pem to the hub's ca_file`);
 
-  const oidc = node.auth.oidc;
-  const auth = nodeAuth({
-    secretHashes: node.auth.secretHashes,
-    ...(oidc
-      ? {
-          oidc: {
-            verify: createJwtVerifier({ keys: remoteKeys(oidc.jwksUrl), issuer: oidc.issuer, audience: oidc.audience }),
-            callerClaim: oidc.callerClaim,
-            callerValue: oidc.callerValue,
-          },
-        }
-      : {}),
-  });
+  // TODO(task 3): wire the real hub keys from the configuration.
+  const auth = nodeAuth({ hubKeys: [], selfFingerprint: "sha256:" + cert.fingerprintSha256, secretHashes: node.auth.secretHashes });
   const dirOwner = await resolveDirOwner(cfg);
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
   const app = createNodeApp({ cfg, instances, auth, dirOwner });

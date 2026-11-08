@@ -20,7 +20,7 @@ async function startNode() {
   const sec = generateSecret();
   const cert = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
   const svc: any = { list: async () => [], start: async () => ({}), stop: async () => {}, logs: async () => "" };
-  const app = createNodeApp({ cfg: { name: "n", roots: [realpathSync(tmp())] } as unknown as Config, instances: svc, auth: nodeAuth({ secretHashes: [sec.sha256] }) });
+  const app = createNodeApp({ cfg: { name: "n", roots: [realpathSync(tmp())] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }) });
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
   stops.push(() => server.stop(true));
   return { url: `https://localhost:${server.port}`, cert, secret: sec.secret, stop: () => server.stop(true) };

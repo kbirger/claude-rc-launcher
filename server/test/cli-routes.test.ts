@@ -44,7 +44,7 @@ async function startNode() {
   const cert = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
   const starts: unknown[] = [];
   const svc: any = { list: async () => [{ ...inst, name: "node-one" }], start: async (i: any) => (starts.push(i), { ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async () => "node log" };
-  const app = createNodeApp({ cfg: { name: "n", roots: [realpathSync(tmp())] } as unknown as Config, instances: svc, auth: nodeAuth({ secretHashes: [sec.sha256] }) });
+  const app = createNodeApp({ cfg: { name: "n", roots: [realpathSync(tmp())] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }) });
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
   stops.push(() => server.stop(true));
   return { url: `https://localhost:${server.port}`, fp: `sha256:${cert.fingerprintSha256}`, secret: sec.secret, starts };
