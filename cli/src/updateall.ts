@@ -4,6 +4,7 @@ import { table } from "./format";
 import { HubError, type HubClient } from "./hub";
 import { realSys, type Sys } from "./nodesetup";
 import { selfUpdate } from "./update";
+import { RELEASE_TAG_RE } from "../../server/src/release";
 import { VERSION } from "../../server/src/version";
 import type { HostInfo } from "../../server/src/hosts";
 import type { ClientResult, UpdateReport } from "../../server/src/serviceupdate";
@@ -22,6 +23,9 @@ const OK = new Set(["updated", "up-to-date"]);
 /** `--binary` cannot go to other machines: each one downloads its own release build. */
 export function checkAllNodesFlags(flags: Flags): void {
   if (flags.binary) throw new ExitError("--binary does not apply to update --all-nodes: every machine downloads its build from the release. Use --release <tag>", 1);
+  if (flags.release !== undefined && !RELEASE_TAG_RE.test(flags.release)) {
+    throw new ExitError(`--release must be a version tag such as v1.2.3 (got "${flags.release}")`, 1);
+  }
 }
 
 const hostPath = (id: string) => `/cli/api/hosts/${encodeURIComponent(id)}`;
@@ -57,7 +61,7 @@ async function updateHost(hub: HubClient, sys: Sys, h: HostInfo, release: string
   out(`updating ${h.id} ...`);
   let report: UpdateReport;
   try {
-    report = await hub.request<UpdateReport>("POST", `${hostPath(h.id)}/update`, release ? { release } : {}, { timeoutMs: UPDATE_TIMEOUT_MS });
+    report = await hub.request<UpdateReport>("POST", `${hostPath(h.id)}/update`, release !== undefined ? { release } : {}, { timeoutMs: UPDATE_TIMEOUT_MS });
   } catch (e) {
     if (e instanceof HubError && e.status === 404) return { ...row, status: TOO_OLD };
     if (e instanceof ExitError) return { ...row, status: `failed (${e.message})` };
@@ -92,7 +96,7 @@ async function updateClient(flags: Flags, sys: Sys): Promise<UpdateRow> {
   const exe = sys.execPath ?? process.execPath;
   const row: UpdateRow = { machine: "client", before: VERSION, after: VERSION, clients: exe, status: "" };
   try {
-    await selfUpdate({ flags: { ...(flags.release ? { release: flags.release } : {}) }, out: (s) => lines.push(s), sys });
+    await selfUpdate({ flags: { ...(flags.release !== undefined ? { release: flags.release } : {}) }, out: (s) => lines.push(s), sys });
   } catch (e) {
     if (e instanceof ExitError) return { ...row, status: `failed (${e.message})` };
     throw e;

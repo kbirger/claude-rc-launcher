@@ -255,6 +255,14 @@ describe("updateAll", () => {
     expect(r.sys.calls).toContain(`fetch ${RELEASE}/download/v1.2.3/${ASSET}`);
   });
 
+  test.each([[""], ["latest"], ["1.2"]])("a bad --release %p is an error before any request", async (rel) => {
+    const r = await run(ALL, GOOD, { release: rel });
+    expect(r.calls).toEqual([]);
+    expect(r.sys.calls).toEqual([]);
+    expect(r.error?.code).toBe(1);
+    expect(r.error?.message).toContain("--release");
+  });
+
   test("without --release the update body is empty", async () => {
     const r = await run(ALL, GOOD);
     for (const c of r.calls.filter((c) => c.method === "POST")) expect(c.body).toEqual({});

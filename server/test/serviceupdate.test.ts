@@ -384,7 +384,7 @@ describe("createServiceUpdater lock", () => {
 });
 
 describe("watchdogScript in a real shell", () => {
-  function sandbox(mode: "never-active" | "active") {
+  function sandbox(mode: "never-active" | "active" | "restart-fails") {
     const dir = mkdtempSync(path.join(tmpdir(), "crl-watchdog-"));
     const bin = path.join(dir, "claude-rc-launcher");
     writeFileSync(bin, "new");
@@ -394,7 +394,7 @@ describe("watchdogScript in a real shell", () => {
     mkdirSync(fake);
     writeFileSync(
       path.join(fake, "systemctl"),
-      `#!/bin/sh\necho "$*" >> '${log}'\ncase "$1" in is-active) ${mode === "active" ? "exit 0" : "exit 3"} ;; esac\nexit 0\n`,
+      `#!/bin/sh\necho "$*" >> '${log}'\ncase "$1" in is-active) ${mode === "active" ? "exit 0" : "exit 3"} ;; restart) ${mode === "restart-fails" ? "exit 1" : "exit 0"} ;; esac\nexit 0\n`,
     );
     chmodSync(path.join(fake, "systemctl"), 0o755);
     const run = () =>
@@ -415,6 +415,22 @@ describe("watchdogScript in a real shell", () => {
         expect(readFileSync(s.bin, "utf8")).toBe("old");
         expect(existsSync(`${s.bin}.prev`)).toBe(false);
         expect(s.restarts()).toBe(2);
+      } finally {
+        s.cleanup();
+      }
+    },
+    30_000,
+  );
+
+  test(
+    "a first restart that fails puts the .prev binary back at once",
+    () => {
+      const s = sandbox("restart-fails");
+      try {
+        const r = s.run();
+        expect(r.exitCode).not.toBe(0);
+        expect(readFileSync(s.bin, "utf8")).toBe("old");
+        expect(existsSync(`${s.bin}.prev`)).toBe(false);
       } finally {
         s.cleanup();
       }

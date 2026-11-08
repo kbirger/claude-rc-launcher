@@ -93,7 +93,12 @@ unit=${shQuote(o.unit)}
 wait=${wait}
 limit=$((wait * 2))
 sleep 2
-systemctl restart "$unit"
+if ! systemctl restart "$unit"; then
+  echo "restarting $unit failed: restoring $bin.prev"
+  mv -f "$bin.prev" "$bin" || { echo "cannot restore $bin.prev"; exit 2; }
+  systemctl restart "$unit"
+  exit 1
+fi
 up=0
 tries=0
 while [ "$tries" -lt "$limit" ]; do

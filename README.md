@@ -565,16 +565,17 @@ The command prints one table row for each machine. The columns are `MACHINE`, `B
 `STATUS`. The last row is the client that ran the command. With `--json`, the command prints the rows as JSON and
 no progress lines. The `STATUS` column has one of these values:
 
-- `updated`: the machine now runs a new version.
+- `updated`: the machine now runs a new version. The row appears when the new version first answers. The watchdog can still roll back during the next 30 seconds, so run `claude-rc hosts` or check again if in doubt.
 - `up-to-date`: the machine already ran the release.
-- `skipped (offline)`: the hub could not reach the machine. A machine with another problem shows `skipped (error: <message>)`.
-- `failed (<reason>)`: the update did not work. The old version is still in place.
-- `rolled back`: the machine answered again with the old version, because the watchdog restored the old binary.
+- `skipped (offline: <reason>)`: the hub could not reach the machine, for example `skipped (offline: unreachable)` or `skipped (offline: timeout)`.
+- `skipped (error: <message>)`: the hub reached the machine, but it reported an error.
+- `failed (<reason>)`: a step failed, and the reason names it. If the reason names a client copy, or the call timed out, the machine can already run the new version. On a slow link each update downloads two binaries and can hit the 180 second limit between hub and node.
+- `rolled back`: the machine answers with the old version. The watchdog probably restored the old binary. The row also appears when the restart did not happen and the old process still answers.
 - `no answer`: the machine did not answer within 90 seconds, and the version is not known.
-- `cannot update remotely`: the node is too old for this feature.
+- `cannot update remotely (node too old: run claude-rc node update on it once)`: the node is too old for this feature.
 
 If a row shows `rolled back` or `no answer`, the command prints a hint to read `journalctl -u claude-rc-launcher` on that
-machine. The exit code is 0 if every row is `updated` or `up-to-date`. Otherwise it is 1, and the error says how many
+machine. The hint appears in table mode only, not with `--json`. The exit code is 0 if every row is `updated` or `up-to-date`. Otherwise it is 1, and the error says how many
 machines were not updated. You can run the command again. A machine that is current shows `up-to-date`.
 
 Each machine can also have client copies of `claude-rc`. The service looks for them in these places:
@@ -583,7 +584,7 @@ Each machine can also have client copies of `claude-rc`. The service looks for t
 - `~/.local/bin/claude-rc` of the service user.
 - `~/.local/bin/claude-rc` of root.
 
-The service updates every copy it finds, and each file once. The `CLIENTS` column shows the path of each copy and its
+The service updates every copy it finds, and each file once. If the service rolls back, client copies that were already updated stay on the new version. The `CLIENTS` column shows the path of each copy and its
 result. If it finds no copy, that is not an error. If the service is current but a client copy is old, only the client
 is updated and the service is not restarted. If any client copy fails, the row is not OK and the exit code is 1.
 
