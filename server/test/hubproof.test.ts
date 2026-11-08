@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SignJWT } from "jose";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { certFingerprint, createProofVerifier, loadOrCreateHubKey, ProofError, signProof, type ProofRequest } from "../src/hubproof";
@@ -137,15 +137,22 @@ describe("loadOrCreateHubKey", () => {
     expect(readFileSync(f, "utf8")).toBe("not a key");
   });
 
-  test("throws and does not overwrite when the file cannot be read", async () => {
-    if (process.getuid?.() === 0) return; // root ignores file modes
+  test("throws with a plain next step and does not overwrite when the file is empty", async () => {
     const dir = tmp();
     const f = path.join(dir, "hub-key.pem");
-    writeFileSync(f, "x", { mode: 0o600 });
-    chmodSync(f, 0);
-    await expect(loadOrCreateHubKey(dir)).rejects.toThrow();
-    chmodSync(f, 0o600);
-    expect(readFileSync(f, "utf8")).toBe("x");
+    writeFileSync(f, "", { mode: 0o600 });
+    await expect(loadOrCreateHubKey(dir)).rejects.toThrow(
+      `cannot parse ${f}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in the README).`,
+    );
+    expect(readFileSync(f, "utf8")).toBe("");
+  });
+
+  test("throws and does not replace the path when it cannot be read (a directory, which fails for root too)", async () => {
+    const dir = tmp();
+    const f = path.join(dir, "hub-key.pem");
+    mkdirSync(f);
+    await expect(loadOrCreateHubKey(dir)).rejects.toThrow(`cannot read hub key ${f}`);
+    expect(statSync(f).isDirectory()).toBe(true);
   });
 
   test("kid is 16 hex characters and publicKey is 32 raw bytes", async () => {

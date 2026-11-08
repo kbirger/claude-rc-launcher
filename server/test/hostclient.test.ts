@@ -228,7 +228,7 @@ describe("hub-signed requests", () => {
   test("secretAuthorizer returns Bearer <secret>", async () => {
     expect(await secretAuthorizer("s3")({ method: "GET", pathAndQuery: "/", body: "" })).toBe("Bearer s3");
   });
-  test("against a real node: a query with a space and ampersand, a POST body, and a replayed jti", async () => {
+  test("against a real node: a query with a space and ampersand, a POST body, and a replayed proof", async () => {
     const c = await ensureNodeCert({ dir: tmp(), names: ["localhost", "127.0.0.1"] });
     const key = await loadOrCreateHubKey(tmp());
     const app = new Hono();
@@ -244,6 +244,10 @@ describe("hub-signed requests", () => {
     expect((r.body as { q: string }).q).toBe("?path=%2Fa+b&x=1");
     const p = await client.call("POST", "/api/instances", { json: { path: "/p\u00e9", name: "x" } });
     expect(p).toEqual({ status: 200, body: { got: { path: "/p\u00e9", name: "x" } } });
+    // one captured proof, sent twice to the real nodeAuth: the second is refused
+    const captured = await hubAuthorizer(key, host)({ method: "GET", pathAndQuery: "/api/fs", body: "" });
+    expect((await app.request("/api/fs", { headers: { authorization: captured } })).status).toBe(200);
+    expect((await app.request("/api/fs", { headers: { authorization: captured } })).status).toBe(401);
     // a different hub key is refused
     const wrong = createHostClient(host, hubAuthorizer(await loadOrCreateHubKey(tmp()), host));
     expect(await reason(wrong.call("GET", "/api/fs"))).toBe("rejected our credentials");

@@ -47,13 +47,21 @@ export async function loadOrCreateHubKey(dir: string): Promise<HubKey> {
       if (jwk.crv !== "Ed25519" || !jwk.x) throw new Error("not an Ed25519 key");
       return await describeKey(privateKey, jwk.x);
     } catch (e) {
-      throw new Error(`cannot parse hub key ${file}: ${(e as Error).message}`, { cause: e });
+      throw new Error(
+        `cannot parse ${file}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in the README).`,
+        { cause: e },
+      );
     }
   }
   const { privateKey } = await generateKeyPair("EdDSA", { crv: "Ed25519", extractable: true });
   const pem = await exportPKCS8(privateKey);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(file, pem, { mode: 0o600, flag: "wx" });
+  try {
+    writeFileSync(file, pem, { mode: 0o600, flag: "wx" });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`another process is creating ${file}; retry`, { cause: e });
+    throw e;
+  }
   chmodSync(file, 0o600);
   const jwk = await exportJWK(privateKey);
   return describeKey(privateKey as CryptoKey, jwk.x!);

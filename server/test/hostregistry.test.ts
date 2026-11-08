@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { HostRegistry } from "../src/hostregistry";
 import type { HostClient, HostConfig } from "../src/hostclient";
+import { certFingerprint } from "../src/hubproof";
 import { ensureNodeCert } from "../src/tls";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-reg-"));
@@ -29,6 +30,21 @@ describe("HostRegistry", () => {
     const json = JSON.parse(readFileSync(path.join(dir, "managed-hosts.json"), "utf8"));
     expect(json._comment).toContain("Do not edit by hand");
     expect(json.hosts).toEqual([{ id: "pi", name: "PI", url: "https://10.0.0.5:8443", server_name: "pi.internal" }]);
+  });
+
+  test("a corrupt pin file fails the load with the file and the host in the message", async () => {
+    const dir = tmp();
+    await (await load(dir)).add(host("pi"));
+    const pin = path.join(dir, "pins", "pi.pem");
+    writeFileSync(pin, "not a certificate");
+    // like the hub: the client of a hub_key host reads the fingerprint of its pinned certificate at once
+    const makeClient = (h: HostConfig): HostClient => {
+      certFingerprint(h.ca);
+      return client();
+    };
+    const e = await HostRegistry.load({ stateDir: dir, hosts: [staticHost], clients: new Map([["nas", client()]]), makeClient }).catch((x) => x as Error);
+    expect(e).toBeInstanceOf(Error);
+    expect((e as Error).message).toStartWith(`cannot use ${pin} for managed host pi: `);
   });
 
   test("files and directories get the modes from the design", async () => {

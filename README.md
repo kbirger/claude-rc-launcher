@@ -340,6 +340,10 @@ issue a new one, then re-copy it to every hub. Certificates are valid for five y
 The hub verifies the node with exactly that certificate (and checks the hostname against it), never
 with `rejectUnauthorized: false`.
 
+A node behind a TLS-terminating proxy cannot use `hub_key`. The `ca_file` must be the node's own leaf certificate, not a CA certificate and not a proxy certificate. Otherwise every call fails with `rejected our credentials` and the node log shows an audience mismatch.
+
+Do not copy the `tls.state_dir` of a node to another node. Two nodes with the same certificate share one fingerprint, so a proof for one is valid at the other.
+
 ### Shared secrets
 
 ```sh
