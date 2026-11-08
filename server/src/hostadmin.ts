@@ -1,8 +1,9 @@
 import { isIP } from "node:net";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { PeekError, peekCertificate } from "./certpeek";
-import { HOST_ID_RE, hostUrlProblem } from "./config";
+import { hostUrlProblem } from "./config";
 import { HostError, type HostClient, type HostConfig } from "./hostclient";
+import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import type { User } from "./userauth";

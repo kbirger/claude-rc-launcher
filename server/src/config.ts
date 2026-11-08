@@ -2,6 +2,7 @@ import os from "node:os";
 import { X509Certificate } from "node:crypto";
 import path from "node:path";
 import type { HostConfig } from "./hostclient";
+import { HOST_ID_RE } from "./hostid";
 import { validPeer } from "./proxyauth";
 
 export type OidcUserAuth = {
@@ -208,7 +209,6 @@ function parseCliAuth(t: Tbl): CliAuthSettings | undefined {
   return issuer && clientId && jwksUrl ? { issuer, clientId, jwksUrl } : undefined;
 }
 
-export const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 /** `undefined` when `url` is an https origin without a path, query, fragment or credentials. */
 export function hostUrlProblem(url: string): string | undefined {

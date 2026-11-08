@@ -7,6 +7,7 @@ import UNIT_TEXT from "../../deploy/claude-rc-launcher.service" with { type: "te
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
+import { HOST_ID_RE } from "../../server/src/hostid";
 import { nodeFlags, renderNodeConfig, urlHost, requireHubKeys } from "./nodecmd";
 
 /** The same file as `deploy/claude-rc-launcher.service`, compiled into the CLI. */
@@ -22,7 +23,6 @@ const STATE_DIR = "/var/lib/claude-rc-launcher";
 const CERT = `${STATE_DIR}/node-cert.pem`;
 const HEALTH_WAIT_MS = 30_000;
 const STAY_ACTIVE_MS = 2_000;
-const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 type Result = { code: number; stdout: string; stderr: string };
 

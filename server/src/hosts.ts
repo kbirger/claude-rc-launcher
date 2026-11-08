@@ -1,13 +1,13 @@
 import { Hono, type Context } from "hono";
 import type { Config } from "./config";
 import { HostError, type HostClient, type HostFailure } from "./hostclient";
+import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import type { User } from "./userauth";
 
 export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed" };
 
-const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const ID_RE = /^[0-9a-f]{12}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 

@@ -1,11 +1,11 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { HostClient, HostConfig } from "./hostclient";
+import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
 
 export type HostEntry = { host: HostConfig; client: HostClient; source: "config" | "managed" };
 
-const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const FILE = "managed-hosts.json";
 const COMMENT = "Owned by claude-rc-launcher. Do not edit by hand. Put hand-written hosts in config.toml.";
 
@@ -48,7 +48,7 @@ export class HostRegistry {
       }
       if (!Array.isArray(parsed?.hosts)) throw new Error(`${file} has no "hosts" array`);
       for (const s of parsed.hosts as Stored[]) {
-        if (typeof s?.id !== "string" || !ID_RE.test(s.id) || s.id === "local" || typeof s.url !== "string" || typeof s.name !== "string") {
+        if (typeof s?.id !== "string" || !HOST_ID_RE.test(s.id) || s.id === "local" || typeof s.url !== "string" || typeof s.name !== "string") {
           throw new Error(`${file} has an invalid host entry: ${JSON.stringify(s)}`);
         }
         if (entries.some((e) => e.host.id === s.id)) throw new Error(`${file}: host id ${s.id} is also defined in config.toml or twice in this file`);
@@ -84,7 +84,7 @@ export class HostRegistry {
     return this.locked(async () => {
       if (!this.store) throw new HttpError(501, "this registry cannot store hosts");
       if (h.id === "local") throw new HttpError(409, 'host id "local" is reserved');
-      if (!ID_RE.test(h.id)) throw new HttpError(400, `host id must match ${ID_RE.source}`);
+      if (!HOST_ID_RE.test(h.id)) throw new HttpError(400, `host id must match ${HOST_ID_RE.source}`);
       if (this.get(h.id)) throw new HttpError(409, `host ${h.id} already exists`);
       const pin = path.join(this.store.dir, "pins", `${h.id}.pem`);
       await ensureDirs(this.store.dir);
