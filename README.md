@@ -103,6 +103,19 @@ sudo systemctl enable --now claude-rc-launcher
 curl http://127.0.0.1:8080/healthz   # {"ok":true}
 ```
 
+### Print the version
+
+Run `--version` on either binary to print its version.
+
+```sh
+claude-rc --version             # claude-rc 0.2.0
+claude-rc-launcher --version    # claude-rc-launcher 0.2.0
+```
+
+A release prints the plain tag version, for example `0.2.0`. A local build prints `<last tag>+<branch>.<short sha>`, for
+example `0.2.0+feat-multi-host.dbe45d4`. It adds `.dirty` when tracked files have changes. A build outside a git
+checkout, or a run from source, prints `dev`. Neither binary needs a login, a network or a config file for this.
+
 ### Publishing a release (maintainers)
 
 Push a tag. The `Release` workflow tests, builds both binaries plus `SHA256SUMS`, and publishes them:
