@@ -398,3 +398,46 @@ describe("audit", () => {
     expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=local POST /api/hosts/local/instances 201"]);
   });
 });
+
+describe("local and remote hosts validate request bodies the same way", () => {
+  const post = (app: any, p: string, body: string) => app.request(p, { method: "POST", headers: JSON_H, body });
+  const outcome = async (r: Response) => ({ status: r.status, body: await r.json() });
+  const bad = (v: unknown) => JSON.stringify(v);
+
+  test("POST /instances gives the same answer for every bad body", async () => {
+    const n = await startNode("nas");
+    const app = hub([n.host], new Map([["nas", n.client]]));
+    const bodies = ["{not json", bad([]), bad("x"), bad({}), bad({ path: "" }), bad({ path: "/srv/p", name: 5 }), bad({ path: "/srv/p", user: 5 }), bad({ path: "/srv/p", user: "" }), bad({ path: "/srv/p", addTrust: "yes" })];
+    for (const b of bodies) {
+      const local = await outcome(await post(app, "/api/hosts/local/instances", b));
+      const remote = await outcome(await post(app, "/api/hosts/nas/instances", b));
+      expect([b, local.status]).toEqual([b, 400]);
+      expect([b, remote]).toEqual([b, local]);
+    }
+    expect(n.starts).toHaveLength(0);
+  });
+
+  test("POST /fs/mkdir gives the same answer for every bad body", async () => {
+    const n = await startNode("nas");
+    const app = hub([n.host], new Map([["nas", n.client]]));
+    const bodies = ["{not json", bad([]), bad({}), bad({ parent: "/srv" }), bad({ parent: 1, name: "a" }), bad({ parent: "/srv", name: "a", user: 5 }), bad({ parent: "/srv", name: "a", user: "" })];
+    for (const b of bodies) {
+      const local = await outcome(await post(app, "/api/hosts/local/fs/mkdir", b));
+      const remote = await outcome(await post(app, "/api/hosts/nas/fs/mkdir", b));
+      expect([b, local.status]).toEqual([b, 400]);
+      expect([b, remote]).toEqual([b, local]);
+    }
+  });
+
+  test("a valid start body reaches the service the same way on both hosts, and unknown fields are dropped", async () => {
+    const n = await startNode("nas");
+    const app = hub([n.host], new Map([["nas", n.client]]));
+    const b = bad({ path: "/srv/p", name: "x", user: "alice", addTrust: true, evil: 1 });
+    const local = await outcome(await post(app, "/api/hosts/local/instances", b));
+    const remote = await outcome(await post(app, "/api/hosts/nas/instances", b));
+    expect(local.status).toBe(201);
+    expect(remote).toEqual(local);
+    expect(local.body).not.toHaveProperty("evil");
+    expect(n.starts).toEqual([{ path: "/srv/p", name: "x", user: "alice", addTrust: true }]);
+  });
+});

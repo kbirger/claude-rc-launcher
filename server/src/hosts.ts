@@ -4,6 +4,7 @@ import { HostError, type HostClient, type HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
+import { parseMkdirRequest, parseStartRequest, readJson } from "./requests";
 import type { User } from "./userauth";
 
 export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed" };
@@ -11,16 +12,7 @@ export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "e
 const ID_RE = /^[0-9a-f]{12}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
-
-async function readJson(c: Context): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new HttpError(400, "invalid JSON body");
-  }
-}
 
 /**
  * `/api/hosts`: the host list, `local` (the hub's own instance API) and an allow-listed proxy to nodes.
@@ -96,21 +88,7 @@ export function hostsApi(o: {
   remote.post(
     "/instances",
     forward(async (c, k) => {
-      const body = await readJson(c);
-      if (!isObject(body)) throw new HttpError(400, "body must be an object");
-      if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
-      if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
-      if (body.user !== undefined) {
-        if (typeof body.user !== "string") throw new HttpError(400, "user must be a string");
-        if (!body.user) throw new HttpError(400, "user must not be empty");
-      }
-      if (body.addTrust !== undefined && typeof body.addTrust !== "boolean") throw new HttpError(400, "addTrust must be a boolean");
-      const json = {
-        path: body.path,
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.user !== undefined ? { user: body.user } : {}),
-        ...(body.addTrust !== undefined ? { addTrust: body.addTrust } : {}),
-      };
+      const json = parseStartRequest(await readJson(c));
       return k.call("POST", "/api/instances", { json, timeoutMs: requestTimeoutMs });
     }),
   );
@@ -138,15 +116,7 @@ export function hostsApi(o: {
   remote.post(
     "/fs/mkdir",
     forward(async (c, k) => {
-      const body = await readJson(c);
-      if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
-        throw new HttpError(400, "parent and name are required strings");
-      }
-      if (body.user !== undefined) {
-        if (typeof body.user !== "string") throw new HttpError(400, "user must be a string");
-        if (!body.user) throw new HttpError(400, "user must not be empty");
-      }
-      const json = { parent: body.parent, name: body.name, ...(body.user !== undefined ? { user: body.user } : {}) };
+      const json = parseMkdirRequest(await readJson(c));
       return k.call("POST", "/api/fs/mkdir", { json, timeoutMs: requestTimeoutMs });
     }),
   );

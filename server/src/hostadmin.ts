@@ -1,27 +1,16 @@
 import { isIP } from "node:net";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { PeekError, peekCertificate } from "./certpeek";
 import { hostUrlProblem } from "./config";
 import { HostError, type HostClient, type HostConfig } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
+import { readObject } from "./requests";
 import type { User } from "./userauth";
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const DNS_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const TEST_CALL_TIMEOUT_MS = 5_000;
-
-async function readObject(c: Context): Promise<Record<string, unknown>> {
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    throw new HttpError(400, "invalid JSON body");
-  }
-  if (!isObject(body)) throw new HttpError(400, "body must be an object");
-  return body;
-}
 
 const normalizeFingerprint = (s: string) => s.toLowerCase().replace(/^sha256:/, "").replace(/:/g, "");
 

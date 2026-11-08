@@ -10,6 +10,7 @@ import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { HttpError, type InstanceService } from "./instances";
 import { PathError } from "./paths";
+import { isObject, parseMkdirRequest, parseStartRequest, readJson } from "./requests";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
 export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
@@ -17,16 +18,6 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 export type Deps = { cfg: Config; instances: InstanceService; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
-
-async function readJson(c: Context): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new HttpError(400, "invalid JSON body");
-  }
-}
-
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function csrf(cfg: Config): MiddlewareHandler {
   let allowed: string;
@@ -54,19 +45,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
 
   r.get("/instances", async (c) => c.json(await instances.list()));
   r.post("/instances", async (c) => {
-    const body = await readJson(c);
-    if (!isObject(body)) throw new HttpError(400, "body must be an object");
-    if (typeof body.path !== "string" || !body.path) throw new HttpError(400, "path is required");
-    if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
-    if (body.user !== undefined && typeof body.user !== "string") throw new HttpError(400, "user must be a string");
-    if (body.user === "") throw new HttpError(400, "user must not be empty");
-    if (body.addTrust !== undefined && typeof body.addTrust !== "boolean") throw new HttpError(400, "addTrust must be a boolean");
-    const input = {
-      path: body.path,
-      ...(body.name === undefined ? {} : { name: body.name }),
-      ...(body.user === undefined ? {} : { user: body.user }),
-      ...(body.addTrust === undefined ? {} : { addTrust: body.addTrust }),
-    };
+    const input = parseStartRequest(await readJson(c));
     return c.json(await instances.start(input), 201);
   });
   r.delete("/instances/:id", async (c) => {
@@ -95,12 +74,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     return c.json(await listDirs(c.req.query("path"), cfg.roots, false, trusted));
   });
   r.post("/fs/mkdir", async (c) => {
-    const body = await readJson(c);
-    if (!isObject(body) || typeof body.parent !== "string" || typeof body.name !== "string") {
-      throw new HttpError(400, "parent and name are required strings");
-    }
-    if (body.user !== undefined && typeof body.user !== "string") throw new HttpError(400, "user must be a string");
-    if (body.user === "") throw new HttpError(400, "user must not be empty");
+    const body = parseMkdirRequest(await readJson(c));
     // The owner is resolved first, so an unknown user makes no folder.
     const owner = body.user === undefined ? dirOwner : ((await instances.dirOwnerFor(body.user)) ?? dirOwner);
     return c.json(await makeDir(body.parent, body.name, cfg.roots, owner), 201);
