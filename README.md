@@ -138,7 +138,14 @@ cd claude-rc-installer
 From a clone, run `.\deploy\windows\install.ps1` instead. It uses `dist\claude-rc-launcher-win-x64.exe` when that file
 exists (`bun run build:win` makes it). `-Binary <file>` and `-Release v1.2.3` choose another binary.
 
-The script installs the binary, WinSW and a small launcher script into `C:\Program Files\claude-rc-launcher`, and creates
+The script also installs the command-line client as `C:\Program Files\claude-rc\claude-rc.exe` and adds that folder to the
+machine `PATH`. Open a new terminal to use `claude-rc`. The client has a folder of its own on purpose: the service
+account can write to the node's folder (see Updating below), and a folder on the `PATH` must not be writable by it.
+`-NoClient` skips the client and the `PATH` change, `-ClientBinary <file>` chooses the file, and `-ClientOnly` installs only
+the client and the `PATH` entry, with no node and no service. The script keeps the
+other entries of the `PATH` as they are, adds the folder only once, and `-Uninstall` takes it off again.
+
+The script installs the node binary, WinSW and a small launcher script into `C:\Program Files\claude-rc-launcher`, and creates
 `C:\ProgramData\claude-rc-launcher\config.toml` from `deploy\windows\node.config.example.toml`. It never changes an
 existing `config.toml`. It limits the data folder (it holds the certificate key) to `SYSTEM`, Administrators and the
 service account. WinSW then asks for the account and its password: enter the user that you signed in to `claude` with.
@@ -457,7 +464,9 @@ curl -fsSL https://raw.githubusercontent.com/kbirger/claude-rc-launcher/main/ins
   | sh -s -- node setup --hub https://rc.example.com --listen 192.168.1.111 --name kirhub --service-user kir
 ```
 
-On Windows, download `claude-rc-windows-x64.exe` from the release. It is built but has not been run on Windows. To build the CLI from a clone, run
+On Windows, the [Windows node installer](#windows-node) installs the client and puts it on the `PATH`
+(`install.ps1 -ClientOnly` if you only want the client and no node). You can also download
+`claude-rc-windows-x64.exe` from the release and put it where you like. To build the CLI from a clone, run
 `bun run build:cli`.
 
 ### Enable CLI login on the hub

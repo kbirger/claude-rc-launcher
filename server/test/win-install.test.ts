@@ -22,7 +22,7 @@ afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
 async function install(extra: string[] = [], over: { binary?: string } = {}) {
   const p = Bun.spawn(
-    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", over.binary ?? bin, "-WinSW", winsw,
+    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-NoClient", "-Binary", over.binary ?? bin, "-WinSW", winsw,
       "-InstallDir", join(dir, "bin"), "-DataDir", join(dir, "data"), ...extra],
     { stdout: "pipe", stderr: "pipe" },
   );
