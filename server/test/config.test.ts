@@ -174,6 +174,11 @@ describe("node mode config", () => {
     for (const [k, v] of [["public_url", "https://x"], ["user_auth", {}], ["hub_auth", {}], ["hosts", []]] as const)
       expect(problems(node({ [k]: v }))).toContain(k);
   });
+  test("a hub file with [hub_auth] fails and says it was removed in favour of hub_key", () => {
+    const m = problems({ ...base(), hub_auth: { oidc: { token_url: "https://a/t", client_id: "h" } } });
+    expect(m).toContain("hub_auth was removed");
+    expect(m).toContain("hub_key");
+  });
   test("[tls] or [node_auth] in a hub file is an error", () => {
     expect(problems({ ...base(), tls: { names: ["x"] } })).toContain("tls");
     expect(problems({ ...base(), node_auth: {} })).toContain("node_auth");

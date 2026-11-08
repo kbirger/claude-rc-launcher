@@ -29,7 +29,7 @@ async function startNode() {
 const staticHost: HostConfig = { id: "nas", name: "NAS", url: "https://10.0.0.5:8443", ca: "x", auth: { type: "hub_key" } };
 const JSON_H = { "content-type": "application/json" };
 
-async function setup(o: { secret?: string; hasHubAuth?: boolean; peek?: typeof peekCertificate } = {}) {
+async function setup(o: { secret?: string; peek?: typeof peekCertificate } = {}) {
   const node = await startNode();
   const stateDir = tmp();
   const makeClient = (h: HostConfig): HostClient => createHostClient(h, secretAuthorizer(o.secret ?? node.secret));
@@ -39,7 +39,7 @@ async function setup(o: { secret?: string; hasHubAuth?: boolean; peek?: typeof p
     c.set("user" as never, { sub: "u1", name: "Ann", username: "kir" } as never);
     await next();
   });
-  app.route("/cli/api/hosts", hostAdminApi({ registry, makeClient, hasHubAuth: o.hasHubAuth ?? true, ...(o.peek ? { peek: o.peek } : {}) }));
+  app.route("/cli/api/hosts", hostAdminApi({ registry, makeClient, ...(o.peek ? { peek: o.peek } : {}) }));
   app.onError(onError);
   const post = (p: string, body: unknown) => app.request(`/cli/api/hosts${p === "/" ? "" : p}`, { method: "POST", headers: JSON_H, body: JSON.stringify(body) });
   const del = (p: string) => app.request(`/cli/api/hosts${p}`, { method: "DELETE", headers: JSON_H });
@@ -140,11 +140,10 @@ describe("POST / (add)", () => {
     }
     expect((await s.post("/", [] as unknown as object)).status).toBe(400);
   });
-  test("without [hub_auth.oidc] the hub answers 400 and says so", async () => {
-    const s = await setup({ hasHubAuth: false });
+  test("host add works when the hub has no credential other than its key", async () => {
+    const s = await setup();
     const r = await s.post("/", { id: "pi", url: s.node.url, fingerprint: s.fp });
-    expect(r.status).toBe(400);
-    expect((await r.json()).error).toContain("hub_auth.oidc");
+    expect(r.status).toBe(201);
   });
 });
 

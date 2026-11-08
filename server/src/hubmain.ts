@@ -1,7 +1,6 @@
 import { createApp, type CliDeps } from "./app";
 import { cliBearerAuth } from "./cliauth";
 import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
-import { createTokenSource, type TokenSource } from "./clientcreds";
 import type { Config } from "./config";
 import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
 import { loadOrCreateHubKey, type HubKey } from "./hubproof";
@@ -34,7 +33,7 @@ export function buildHostClients(cfg: Config, key: HubKey): Map<string, HostClie
   return clients;
 }
 
-function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) => HostClient, oidcToken: TokenSource | undefined): CliDeps | undefined {
+function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) => HostClient, hubKeys: string[]): CliDeps | undefined {
   const c = cfg.cliAuth;
   if (!c) return undefined;
   const verify = deps.cliVerify ?? createJwtVerifier({ keys: remoteKeys(c.jwksUrl), issuer: c.issuer, audience: c.clientId });
@@ -43,8 +42,7 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
     clientId: c.clientId,
     auth: cliBearerAuth({ verify, ...(cfg.userAuth?.allowedUsers ? { allowedUsers: cfg.userAuth.allowedUsers } : {}) }),
     makeClient,
-    hasHubAuth: !!cfg.hubAuth,
-    enrollment: { ...(oidcToken ? { token: oidcToken } : {}), clientId: cfg.hubAuth?.clientId ?? "" },
+    enrollment: { hubKeys },
   };
 }
 
@@ -62,9 +60,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
   const userAuth = await buildUserAuth(cfg, deps);
   // Forwarded headers are not consulted: the secure-cookie decision comes from public_url (https: => Secure).
-  const oidcToken = cfg.hubAuth ? createTokenSource(cfg.hubAuth) : undefined;
   const makeClient = (h: HostConfig): HostClient => createHostClient(h, authorizerFor(h, hubKey));
-  const cli = buildCliDeps(cfg, deps, makeClient, oidcToken);
+  const cli = buildCliDeps(cfg, deps, makeClient, [hubKey.publicKey]);
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
   const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: app.fetch });

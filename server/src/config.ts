@@ -1,7 +1,6 @@
 import os from "node:os";
 import { X509Certificate } from "node:crypto";
 import path from "node:path";
-import type { ClientCredsSettings } from "./clientcreds";
 import type { HostConfig } from "./hostclient";
 import { validPeer } from "./proxyauth";
 
@@ -49,7 +48,6 @@ export type Config = {
   namePrefix: string;
   userAuth?: OidcUserAuth | ProxyJwtUserAuth; // hub
   node?: NodeConfig; // node
-  hubAuth?: ClientCredsSettings; // hub
   hosts: HostConfig[]; // hub; [] otherwise
   stateDir: string; // hub: holds managed hosts. Node: unused (see node.tls.stateDir)
   cliAuth?: CliAuthSettings; // hub: present when CLI login is enabled
@@ -192,47 +190,6 @@ export function checkUrl(t: Tbl, k: string, value: string, o: { allowInsecure?: 
   if (u.protocol === "http:" && (loopback || o.allowInsecure)) return true;
   t.problems.push(`${t.path(k)} must be https (http is only accepted for localhost/127.0.0.1/::1${o.hint ?? ""})`);
   return false;
-}
-
-function parseHubAuth(t: Tbl): ClientCredsSettings | undefined {
-  const ha = t.table("hub_auth");
-  const oi = ha?.table("oidc");
-  ha?.finish();
-  if (!oi) return undefined;
-  const tokenUrl = oi.str("token_url", { req: true }) ?? "";
-  if (tokenUrl) checkUrl(oi, "token_url", tokenUrl);
-  const clientId = oi.str("client_id", { req: true }) ?? "";
-  const scope = oi.str("scope");
-  const method = oi.str("auth_method", { req: true });
-  const only = (allowed: string[], all: string[]) => {
-    for (const k of all) if (!allowed.includes(k) && oi.has(k)) t.problems.push(`${oi.path(k)} is not allowed when auth_method = "${method}"`);
-  };
-  const SECRET_KEYS = ["client_secret_file", "username", "password_file"];
-  const KEY_KEYS = ["private_key_file", "key_id"];
-  let clientAuth: ClientCredsSettings["clientAuth"] | undefined;
-  if (method === "client_secret") {
-    only(SECRET_KEYS, [...SECRET_KEYS, ...KEY_KEYS]);
-    const clientSecret = oi.file("client_secret_file", "secret", { req: true }) ?? "";
-    const username = oi.str("username");
-    const password = oi.file("password_file", "secret");
-    if (username !== undefined && password === undefined && !oi.has("password_file")) t.problems.push(`${oi.path("password_file")} is required with username`);
-    if (username === undefined && oi.has("password_file")) t.problems.push(`${oi.path("username")} is required with password_file`);
-    clientAuth = { method, clientSecret, ...(username !== undefined ? { username } : {}), ...(password !== undefined ? { password } : {}) };
-    oi.skip(...KEY_KEYS);
-  } else if (method === "private_key_jwt") {
-    only(KEY_KEYS, [...SECRET_KEYS, ...KEY_KEYS]);
-    const privateKeyPem = oi.file("private_key_file", "secret", { req: true }) ?? "";
-    const keyId = oi.str("key_id");
-    clientAuth = { method, privateKeyPem, ...(keyId ? { keyId } : {}) };
-    oi.skip(...SECRET_KEYS);
-  } else if (method !== undefined) {
-    t.problems.push(`${oi.path("auth_method")} must be "client_secret" or "private_key_jwt"`);
-    oi.skip(...SECRET_KEYS, ...KEY_KEYS);
-  } else {
-    oi.skip(...SECRET_KEYS, ...KEY_KEYS);
-  }
-  oi.finish();
-  return clientAuth ? { tokenUrl, clientId, ...(scope ? { scope } : {}), clientAuth } : undefined;
 }
 
 function parseCliAuth(t: Tbl): CliAuthSettings | undefined {
@@ -402,8 +359,9 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
   } else {
     for (const k of ["tls", "node_auth"]) if (t.has(k)) problems.push(`${k} is only allowed in node mode`);
     t.skip("tls", "node_auth");
+    if (t.has("hub_auth")) problems.push("hub_auth was removed: the hub now signs each request with its own key. Hosts use the hub key (auth type hub_key), so delete the [hub_auth] section");
+    t.skip("hub_auth");
   }
-  const hubAuth = mode === "hub" ? parseHubAuth(t) : undefined;
   const stateDir = (mode === "hub" ? t.absStr("state_dir") : undefined) ?? "/var/lib/claude-rc-launcher";
   const cliAuth = mode === "hub" ? parseCliAuth(t) : undefined;
   const hosts = mode === "hub" ? parseHosts(t) : [];
@@ -478,7 +436,6 @@ export function parseConfig(raw: unknown, io: ConfigIo): Config {
     namePrefix,
     ...(userAuth ? { userAuth } : {}),
     ...(node ? { node } : {}),
-    ...(hubAuth ? { hubAuth } : {}),
     ...(cliAuth ? { cliAuth } : {}),
     stateDir,
     hosts,

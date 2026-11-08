@@ -5,6 +5,7 @@ import path from "node:path";
 import { mintSessionCookie, type OidcClient } from "../src/auth";
 import type { Config } from "../src/config";
 import { startHub } from "../src/hubmain";
+import { certFingerprint } from "../src/hubproof";
 import { generateSecret, hashSecret } from "../src/nodeauth";
 import { startNode } from "../src/nodemain";
 
@@ -51,7 +52,7 @@ async function setup() {
   const nodeFake = fakeInstances("pi");
   const nodeCfg = {
     ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [nodeRoot], hosts: [],
-    node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { secretHashes: [sec.sha256] } },
+    node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [], secretHashes: [sec.sha256] } },
   } as unknown as Config;
   const node = await quiet(() => startNode(nodeCfg, { instances: nodeFake.svc }));
   stoppers.push(node.stop);
@@ -115,16 +116,54 @@ describe("hub + node end to end", () => {
   });
 });
 
+describe("hub key enrollment end to end", () => {
+  test("a node set up with the key from enrollment is added with host add and lists instances through the hub", async () => {
+    const hubFake = fakeInstances("hub");
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
+      hosts: [],
+    } as unknown as Config;
+    const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
+    const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, cliVerify }));
+    stoppers.push(hub.stop);
+    const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
+    const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
+
+    const enr = (await (await fetch(hubUrl("/cli/api/node-enrollment"), { headers: cliH })).json()) as { hub_keys: { public_key: string }[] };
+    expect(enr.hub_keys).toHaveLength(1);
+
+    const stateDir = tmp();
+    const nodeFake = fakeInstances("pi");
+    const nodeCfg = {
+      ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
+      node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [enr.hub_keys[0]!.public_key], secretHashes: [] } },
+    } as unknown as Config;
+    const node = await quiet(() => startNode(nodeCfg, { instances: nodeFake.svc }));
+    stoppers.push(node.stop);
+    const fp = certFingerprint(readFileSync(path.join(stateDir, "node-cert.pem"), "utf8"));
+
+    const add = await quiet(() => fetch(hubUrl("/cli/api/hosts"), { method: "POST", headers: cliH, body: JSON.stringify({ id: "pi", url: `https://localhost:${node.port}`, fingerprint: fp }) }));
+    expect(add.status).toBe(201);
+
+    const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
+    const list = await fetch(hubUrl("/api/hosts/pi/instances"), { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject([{ name: "pi-one" }]);
+  });
+});
+
 describe("entry points", () => {
   test("startNode rejects without TLS names", async () => {
     const base = { ...common, mode: "node", name: "x", port: 0, host: "127.0.0.1", roots: ["/x"], hosts: [] };
     await expect(startNode({ ...base } as unknown as Config)).rejects.toThrow(/tls/i);
-    await expect(startNode({ ...base, node: { tls: { stateDir: tmp(), names: [] }, auth: { secretHashes: ["a".repeat(64)] } } } as unknown as Config)).rejects.toThrow(/names/);
+    await expect(startNode({ ...base, node: { tls: { stateDir: tmp(), names: [] }, auth: { hubKeys: [], secretHashes: ["a".repeat(64)] } } } as unknown as Config)).rejects.toThrow(/names/);
   });
 
   test("startNode reuses its certificate and logs the fingerprint", async () => {
     const stateDir = tmp();
-    const cfg = { ...common, mode: "node", name: "x", port: 0, host: "127.0.0.1", roots: ["/x"], hosts: [], node: { tls: { stateDir, names: ["localhost"] }, auth: { secretHashes: ["a".repeat(64)] } } } as unknown as Config;
+    const cfg = { ...common, mode: "node", name: "x", port: 0, host: "127.0.0.1", roots: ["/x"], hosts: [], node: { tls: { stateDir, names: ["localhost"] }, auth: { hubKeys: [], secretHashes: ["a".repeat(64)] } } } as unknown as Config;
     const lines: string[] = [];
     const log = console.log;
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));

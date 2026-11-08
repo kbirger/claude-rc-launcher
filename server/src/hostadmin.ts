@@ -41,7 +41,6 @@ function checkServerName(v: unknown): string | undefined {
 export function hostAdminApi(o: {
   registry: HostRegistry;
   makeClient: (h: HostConfig) => HostClient;
-  hasHubAuth: boolean;
   peek?: typeof peekCertificate;
 }): Hono {
   const peek = o.peek ?? peekCertificate;
@@ -85,7 +84,6 @@ export function hostAdminApi(o: {
     if (typeof body.fingerprint !== "string") throw new HttpError(400, "fingerprint is required");
     const want = normalizeFingerprint(body.fingerprint);
     if (!/^[0-9a-f]{64}$/.test(want)) throw new HttpError(400, "fingerprint must be 64 hexadecimal characters");
-    if (!o.hasHubAuth) throw new HttpError(400, "hub_auth.oidc is not configured, so the hub has no credential to send to a new host. Add [hub_auth.oidc] to config.toml first");
 
     const seen = await peekOrFail(url, serverName);
     if (normalizeFingerprint(seen.fingerprint) !== want) throw new HttpError(400, "fingerprint does not match the certificate that the node presents");

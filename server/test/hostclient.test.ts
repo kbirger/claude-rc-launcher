@@ -20,7 +20,6 @@ describe("[[hosts]] config", () => {
   const hubBase = () => ({
     public_url: "https://rc.example.com",
     user_auth: { mode: "oidc", session_secret_file: "session.secret", oidc: { issuer: "https://i", client_id: "c", client_secret_file: "c.secret" } },
-    hub_auth: { oidc: { token_url: "https://auth.example.com/t", client_id: "hub", auth_method: "client_secret", client_secret_file: "hub.secret" } },
   });
   const host = (o: Record<string, unknown> = {}) => ({ id: "nas", url: "https://10.0.0.5:8443", ca_file: "nas.pem", auth: { type: "secret", secret_file: "nas.secret" }, ...o });
   const cfgWith = (hosts: unknown[], extra: Record<string, unknown> = {}) => ({ ...hubBase(), ...extra, hosts });
@@ -63,11 +62,9 @@ describe("[[hosts]] config", () => {
     files["junk.pem"] = "not a certificate";
     expect(fails(cfgWith([host({ ca_file: "junk.pem" })]))).toContain("hosts[0].ca_file");
   });
-  test("auth.type = oidc is rejected and names hub_key; a hub_key host needs no hub_auth", () => {
+  test("auth.type = oidc is rejected and names hub_key; a hub_key host needs nothing else", () => {
     expect(fails(cfgWith([host({ auth: { type: "oidc" } })]))).toContain("hub_key");
-    const { hub_auth: _ignored, ...noHub } = hubBase();
-    void _ignored;
-    expect(parseConfig({ ...noHub, hosts: [host({ auth: { type: "hub_key" } })] }, io).hosts[0]!.auth).toEqual({ type: "hub_key" });
+    expect(parseConfig({ ...hubBase(), hosts: [host({ auth: { type: "hub_key" } })] }, io).hosts[0]!.auth).toEqual({ type: "hub_key" });
   });
   test("secret_file group-readable is an error (via the io)", () => {
     const strict: ConfigIo = { readFile: (p, kind) => { if (kind === "secret" && p === "nas.secret") throw new Error("must not be accessible by group or others"); return files[p] ?? "x".repeat(40); } };
