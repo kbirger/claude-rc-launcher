@@ -7,7 +7,7 @@ import { ExitError, LOGIN_MESSAGE, credsPath, deleteCreds, loadCreds, saveCreds 
 import { hostAdd, hostRemove } from "./hostcmd";
 import { hubClient } from "./hub";
 import { nodeConfig, type NodeFs } from "./nodecmd";
-import { nodeSetup, type Sys } from "./nodesetup";
+import { nodeSetup, nodeUpdate, type Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
@@ -30,6 +30,8 @@ Commands:
   host remove <id>
   node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force]
                                      install, start and register this machine as a node
+  node update [--binary file] [--release tag]
+                                     update this node's server binary and restart it
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
                                      write this node's config.toml with the hub's values filled in
 
@@ -101,6 +103,13 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
 
     if (name !== "host" && name !== "node" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
 
+    if (name === "node" && args[0] === "update") {
+      // Works on the node machine only and talks to no hub, so no login is needed.
+      if (args.length > 1) throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. usage: claude-rc node update [--binary <file>] [--release <tag>]`, 1);
+      await nodeUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+      return 0;
+    }
+
     let creds = loadCreds(env.credsFile);
     if (!creds && name === "node" && args[0] === "setup" && flags.hub) {
       // A new node has no login yet: sign in first, then continue with the setup.
@@ -122,7 +131,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
         await nodeSetup({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
         return 0;
       }
-      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>]", 1);
+      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>]", 1);
       await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.nodeFs ? { fs: env.nodeFs } : {}) });
       return 0;
     }

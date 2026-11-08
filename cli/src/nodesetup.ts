@@ -21,6 +21,7 @@ const UNIT_PATH = `/etc/systemd/system/${NAME}.service`;
 const STATE_DIR = "/var/lib/claude-rc-launcher";
 const CERT = `${STATE_DIR}/node-cert.pem`;
 const HEALTH_WAIT_MS = 30_000;
+const STAY_ACTIVE_MS = 2_000;
 const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 type Result = { code: number; stdout: string; stderr: string };
@@ -85,6 +86,20 @@ export const realSys: Sys = {
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
+const releaseCpu = (sys: Sys) => (sys.arch === "x64" ? "x64" : sys.arch === "arm64" ? "arm64" : undefined);
+
+/** The server binary for `node setup` and `node update`: the `--binary` file, or the release asset after its SHA256SUMS check. */
+async function obtainBinary(sys: Sys, flags: Flags, cpu: string | undefined, out: (s: string) => void): Promise<Uint8Array> {
+  if (flags.binary) return sys.readFile(flags.binary);
+  const base = `https://github.com/${REPO}/releases/${flags.release ? `download/${flags.release}` : "latest/download"}`;
+  const asset = `${NAME}-linux-${cpu}`;
+  out(`downloading ${asset} (${flags.release ?? "latest release"})`);
+  const [bin, sums] = await Promise.all([get(sys, `${base}/${asset}`), get(sys, `${base}/SHA256SUMS`)]);
+  const line = new TextDecoder().decode(sums).split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset);
+  if (!line || line[0] !== sha256(bin)) throw new ExitError(`the checksum of ${asset} does not match SHA256SUMS. Nothing was installed`, 1);
+  return bin;
+}
+
 /**
  * `claude-rc node setup`: installs this machine as a node and registers it with the hub. Nothing on the machine
  * changes until the checks, the hub's answer and the download have all succeeded.
@@ -98,7 +113,7 @@ export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClien
 
   // 1. Checks
   if (sys.platform !== "linux") throw new ExitError(`node setup works on Linux with systemd only (this is ${sys.platform})`, 1);
-  const cpu = sys.arch === "x64" ? "x64" : sys.arch === "arm64" ? "arm64" : undefined;
+  const cpu = releaseCpu(sys);
   if (!cpu) throw new ExitError(`unsupported CPU architecture: ${sys.arch}. Use --binary with a build for this machine`, 1);
   if (!sys.hasCommand("systemctl")) throw new ExitError("systemctl was not found. The node runs as a systemd service", 1);
   if (wildcard && !flags.url) throw new ExitError("--url is required when --listen is a wildcard address: the https URL that the hub will use for this node", 1);
@@ -130,18 +145,7 @@ export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClien
   const enrollment = await o.hub.request<Enrollment>("GET", "/cli/api/node-enrollment");
 
   // 3. The server binary
-  let binary: Uint8Array;
-  if (flags.binary) {
-    binary = sys.readFile(flags.binary);
-  } else {
-    const base = `https://github.com/${REPO}/releases/${flags.release ? `download/${flags.release}` : "latest/download"}`;
-    const asset = `${NAME}-linux-${cpu}`;
-    out(`downloading ${asset} (${flags.release ?? "latest release"})`);
-    const [bin, sums] = await Promise.all([get(sys, `${base}/${asset}`), get(sys, `${base}/SHA256SUMS`)]);
-    const line = new TextDecoder().decode(sums).split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset);
-    if (!line || line[0] !== sha256(bin)) throw new ExitError(`the checksum of ${asset} does not match SHA256SUMS. Nothing was installed`, 1);
-    binary = bin;
-  }
+  const binary = await obtainBinary(sys, flags, cpu, out);
   const config = renderNodeConfig({ hub: o.hubUrl, enrollment, ...nf });
 
   // 4. Install
@@ -207,6 +211,70 @@ export async function nodeSetup(o: { flags: Flags; hubUrl: string; hub: HubClien
   out(`  fingerprint: ${fingerprint}`);
   out(`  config:      ${CONFIG}`);
   out(`To remove it: claude-rc host remove ${id}   and on this machine: sudo systemctl disable --now ${NAME}`);
+}
+
+/**
+ * `claude-rc node update`: replaces the server binary of an installed node and restarts the service. The previous
+ * binary is kept as `.prev` and comes back if the service does not stay active. The config, the unit, the
+ * certificate and the registration are not touched, and the hub is not called.
+ */
+export async function nodeUpdate(o: { flags: Flags; out: (s: string) => void; sys?: Sys }): Promise<void> {
+  const sys = o.sys ?? realSys;
+  const { flags, out } = o;
+
+  // 1. Checks
+  if (sys.platform !== "linux") throw new ExitError(`node update works on Linux with systemd only (this is ${sys.platform})`, 1);
+  if (!sys.hasCommand("systemctl")) throw new ExitError("systemctl was not found. The node runs as a systemd service", 1);
+  if (flags.binary && flags.release) throw new ExitError("--binary and --release cannot be used together: --binary installs a file, --release downloads one", 1);
+  const cpu = releaseCpu(sys);
+  if (!cpu && !flags.binary) throw new ExitError(`unsupported CPU architecture: ${sys.arch}. Use --binary with a build for this machine`, 1);
+  if (!sys.exists(BIN) || !sys.exists(UNIT_PATH)) throw new ExitError(`this machine is not set up as a node (${BIN} or ${UNIT_PATH} is missing). Run "claude-rc node setup" first`, 1);
+
+  // 2. The new binary
+  const binary = await obtainBinary(sys, flags, cpu, out);
+  if (sha256(binary) === sha256(sys.readFile(BIN))) return out("already up to date");
+
+  // 3. Install
+  const sudo = (args: string[], what: string) => {
+    const r = sys.sudo(args);
+    if (r.code !== 0) throw new ExitError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`, 1);
+    return r;
+  };
+  sudo(["cp", "-p", BIN, `${BIN}.prev`], "backing up the installed binary");
+  const tmp = sys.writeTemp(NAME, binary);
+  try {
+    sudo(["install", "-m", "755", tmp, `${BIN}.new`], "installing the binary");
+    sudo(["mv", "-f", `${BIN}.new`, BIN], "installing the binary");
+  } finally {
+    sys.removeTemp(tmp);
+  }
+
+  // 4. Restart and wait for the service to stay active
+  const isActive = () => sys.run(["systemctl", "is-active", NAME]).code === 0;
+  let healthy = false;
+  if (sys.sudo(["systemctl", "restart", NAME]).code === 0) {
+    const deadline = sys.now() + HEALTH_WAIT_MS;
+    while (!healthy && sys.now() < deadline) {
+      if (isActive()) {
+        await sys.sleep(STAY_ACTIVE_MS);
+        healthy = isActive();
+      } else {
+        await sys.sleep(500);
+      }
+    }
+  }
+  if (healthy) return out(`updated ${BIN} (the previous binary is kept as ${BIN}.prev) and restarted ${NAME}`);
+
+  // 5. Roll back
+  const restored = sys.sudo(["mv", "-f", `${BIN}.prev`, BIN]).code === 0;
+  if (restored) sys.sudo(["systemctl", "restart", NAME]);
+  out(sys.sudo(["journalctl", "-u", NAME, "-n", "15", "--no-pager"]).stdout.trim());
+  throw new ExitError(
+    restored
+      ? `the update failed: ${NAME} did not become active and stay active within ${HEALTH_WAIT_MS / 1000} seconds. The previous binary was restored and the service was restarted`
+      : `the update failed and the previous binary could not be restored. It is still at ${BIN}.prev`,
+    1,
+  );
 }
 
 async function get(sys: Sys, url: string): Promise<Uint8Array> {
