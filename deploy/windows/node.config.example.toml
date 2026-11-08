@@ -1,0 +1,37 @@
+# claude-rc-launcher NODE configuration for Windows: this machine is managed by a hub; it has no UI and no user login.
+# Secrets are never written here. Placeholder values (example.com, replace-with-...) must be replaced
+# before the service starts. Paths in single quotes need no escaping for backslashes.
+# A Windows machine runs as a node only.
+
+mode = "node"
+# name = "my-pc"                          # display name; default: hostname
+port = 8443
+host = "192.168.1.50"                     # bind a PRIVATE interface, not 0.0.0.0 on a public host
+
+[instance]
+# The account the service runs as. install.ps1 fills in the account you install for. The agent
+# stops at start-up if it runs as another account: claude's sign-in and trust data are in that profile.
+service_user = "__SERVICE_USER__"
+# roots = ['C:\Users\me\projects']        # absolute folders the hub may browse and start in; default: the profile folder
+# claude_bin = 'C:\Users\me\.local\bin\claude.exe'
+# Not supported on Windows (an error if set): scope, unit_dir, service_path, ssh_auth_sock.
+
+[tls]
+# Holds node-cert.pem (copy this to the hub as its ca_file) and node-key.pem (never leaves this machine).
+# The certificate is generated on first start and reused afterwards so the hub's pin stays valid.
+# Default: C:\ProgramData\claude-rc-launcher
+# state_dir = 'C:\ProgramData\claude-rc-launcher'
+names = ["my-pc.example.com", "192.168.1.50"]   # certificate SANs: the DNS names / IPs the hub connects to
+
+# Enable at least one of the two methods below.
+
+# Hub public key: the hub signs every request with its private key and the node checks the signature.
+# Get the line from the output of `claude-rc node config` or from `GET /cli/api/node-enrollment` on the hub.
+# Repeat the table to trust more than one hub key.
+# [[node_auth.hub_key]]
+# public_key = "replace-with-the-hub-public-key"
+
+# Shared secret: run `claude-rc-launcher gen-secret`, put the secret on the hub, the sha256 here.
+# Repeat the table to accept two secrets during rotation.
+# [[node_auth.secret]]
+# sha256 = "replace-with-64-hex-chars-from-gen-secret"
