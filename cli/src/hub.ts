@@ -21,7 +21,9 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
     try {
       creds = await o.renew(creds);
     } catch (e) {
-      throw e instanceof ExitError && e.code === 2 ? e : new ExitError(LOGIN_MESSAGE, 2);
+      // `renew` reports a rejected refresh token as code 2. Any other failure (the identity provider is down, an
+      // unexpected error) is not an expired login, so it keeps its own message and does not tell the user to log in.
+      throw e instanceof ExitError ? e : new ExitError(`could not renew the login: ${(e as Error)?.message ?? String(e)}`, 1);
     }
     o.save(creds);
   };

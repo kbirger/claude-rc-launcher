@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { ExitError, type Credentials } from "../src/creds";
+import { ExitError, LOGIN_MESSAGE, type Credentials } from "../src/creds";
 import { hubClient, HubError } from "../src/hub";
 import { parseCli } from "../src/args";
 
@@ -57,10 +57,35 @@ describe("hubClient.request", () => {
   });
   test("a 401 then a failed renewal is ExitError code 2 with the login message", async () => {
     const h = fakeHub(() => json({ error: "unauthenticated" }, 401));
-    const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async () => { throw new Error("rejected"); }, now: () => 0 });
+    const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async () => { throw new ExitError(LOGIN_MESSAGE, 2); }, now: () => 0 });
     const e = await c.request("GET", "/cli/api/me").catch((x) => x);
     expect(e).toBeInstanceOf(ExitError);
     expect(e).toMatchObject({ code: 2, message: 'not signed in or the login expired: run "claude-rc login"' });
+  });
+  test("a renewal that cannot reach the identity provider keeps its message and exit code 1", async () => {
+    const h = fakeHub(() => json({ error: "unauthenticated" }, 401));
+    const down = new ExitError("cannot reach the identity provider at https://idp.example/token: connection refused", 1);
+    const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async () => { throw down; }, now: () => 0 });
+    const e = await c.request("GET", "/cli/api/me").catch((x) => x);
+    expect(e).toBe(down);
+    expect(e).toMatchObject({ code: 1 });
+    expect(h.seen.length).toBe(1);
+  });
+  test("the same happens when the token is renewed before the call", async () => {
+    const h = fakeHub(() => json({ ok: 1 }));
+    const c = hubClient({ creds: creds(h.url, { expiresAt: 130 }), save: () => {}, renew: async () => { throw new ExitError("cannot reach the identity provider at t: down", 1); }, now: () => 100 });
+    const e = await c.request("GET", "/cli/api/me").catch((x) => x);
+    expect(e).toMatchObject({ code: 1, message: "cannot reach the identity provider at t: down" });
+    expect(h.seen.length).toBe(0);
+  });
+  test("an unexpected error from the renewal is exit code 1 and keeps its message", async () => {
+    const h = fakeHub(() => json({ error: "unauthenticated" }, 401));
+    const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async () => { throw new TypeError("boom"); }, now: () => 0 });
+    const e = await c.request("GET", "/cli/api/me").catch((x) => x);
+    expect(e).toBeInstanceOf(ExitError);
+    expect(e).toMatchObject({ code: 1 });
+    expect((e as Error).message).toContain("boom");
+    expect((e as Error).message).not.toContain("claude-rc login");
   });
   test("a second 401 after a good renewal is ExitError code 2", async () => {
     const h = fakeHub(() => json({ error: "unauthenticated" }, 401));
