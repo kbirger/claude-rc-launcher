@@ -52,9 +52,19 @@ export type Env = {
   sys?: Sys;
 };
 
+/**
+ * The program that opens `url` in the default browser. On Windows it is not `cmd /c start`: cmd reads every `&`
+ * in the URL as a command separator, so the browser would get only the text before the first `&`. rundll32 gets the
+ * URL as one argument and never goes through cmd.
+ */
+export function browserCommand(platform: NodeJS.Platform, url: string): [string, string[]] {
+  if (platform === "darwin") return ["open", [url]];
+  if (platform === "win32") return ["rundll32", ["url.dll,FileProtocolHandler", url]];
+  return ["xdg-open", [url]];
+}
+
 function openBrowser(url: string): Promise<void> {
-  const [cmd, args]: [string, string[]] =
-    process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
+  const [cmd, args] = browserCommand(process.platform, url);
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: "ignore", detached: true });
     p.once("error", reject);
