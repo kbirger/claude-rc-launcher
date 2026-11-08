@@ -74,7 +74,7 @@ describe("hub proof", () => {
   test("Bearer <jwt> is treated as a secret and rejected", async () => {
     const k = await hubKit();
     const t = await k.proof("GET", "/x");
-    const a = app(k.settings({ secretHashes: [hashSecret(t)].slice(0, 0) }));
+    const a = app(k.settings({ secretHashes: [] }));
     expect((await a.request("/x", { headers: bearer(t) })).status).toBe(401);
   });
   test("Hub-Proof with no hubKeys configured -> 401", async () => {
@@ -111,6 +111,23 @@ describe("hub proof", () => {
     const body = "x".repeat(1024 * 1024 + 1);
     const r = await app(k.settings()).request("/echo", { method: "POST", body, headers: hp(await k.proof("POST", "/echo", body)) });
     expect(r.status).toBe(413);
+  });
+  test("streamed body over 1 MiB with no content-length -> 413 without reading it all", async () => {
+    const k = await hubKit();
+    let sent = 0;
+    const chunk = new Uint8Array(64 * 1024);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(ctl) {
+        if (sent >= 64 * 1024 * 1024) return ctl.close();
+        sent += chunk.length;
+        ctl.enqueue(chunk);
+      },
+    });
+    const req = new Request("http://node/echo", { method: "POST", body: stream, headers: hp("x"), duplex: "half" } as RequestInit);
+    expect(req.headers.get("content-length")).toBeNull();
+    const r = await app(k.settings()).fetch(req);
+    expect(r.status).toBe(413);
+    expect(sent).toBeLessThan(8 * 1024 * 1024);
   });
   test("clock 10 s off -> 401", async () => {
     const k = await hubKit(() => Date.now() - 10_000);

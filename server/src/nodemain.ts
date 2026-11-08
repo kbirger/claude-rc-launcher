@@ -21,7 +21,7 @@ export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ por
   const dirOwner = await resolveDirOwner(cfg);
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
   const app = createNodeApp({ cfg, instances, auth, dirOwner });
-  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
+  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, maxRequestBodySize: 1024 * 1024, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: app.fetch });
   console.log(`node "${cfg.name}" listening on https://${cfg.host}:${server.port}`);
   return { port: server.port!, fingerprint: cert.fingerprintSha256, stop: () => void server.stop(true) };
 }

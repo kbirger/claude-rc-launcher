@@ -24,6 +24,25 @@ const hexEqual = (a: string, b: string) => {
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/** Reads a body stream as UTF-8 text; returns null as soon as it exceeds `max` bytes (the rest is not read). */
+async function readCapped(stream: ReadableStream<Uint8Array> | null, max: number): Promise<string | null> {
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /**
  * Authentication for a node. The Authorization scheme picks the check and there is no fallback:
  * `Hub-Proof <jwt>` is a hub-signed proof for this exact request; `Bearer <secret>` is a shared secret.
@@ -38,8 +57,9 @@ export function nodeAuth(s: NodeAuthSettings): MiddlewareHandler {
     if (m[1] === "Hub-Proof") {
       const declared = Number(c.req.header("content-length") ?? 0);
       if (declared > MAX_BODY_BYTES) return c.json({ error: "request body too large" }, 413);
-      const body = await c.req.text(); // Hono caches it, so handlers can still call c.req.json()
-      if (Buffer.byteLength(body) > MAX_BODY_BYTES) return c.json({ error: "request body too large" }, 413);
+      const body = await readCapped(c.req.raw.body, MAX_BODY_BYTES);
+      if (body === null) return c.json({ error: "request body too large" }, 413);
+      (c.req.bodyCache as Record<string, unknown>).text = Promise.resolve(body); // handlers can still call c.req.text() / c.req.json()
       const url = new URL(c.req.url);
       try {
         await verifyProof(token, { method: c.req.method, pathAndQuery: url.pathname + url.search, body });
