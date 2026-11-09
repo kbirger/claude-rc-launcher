@@ -29,7 +29,7 @@ function setup(routes: Record<string, () => Response | unknown> = {}) {
   const credsFile = path.join(tmp(), "credentials.json");
   const creds: Credentials = { hub: `http://127.0.0.1:${server.port}`, issuer: "i", clientId: "c", tokenEndpoint: "t", idToken: "tok", refreshToken: "r", expiresAt: Math.floor(Date.now() / 1000) + 3600 };
   saveCreds(credsFile, creds);
-  const env: Env = { credsFile, open: async () => {}, readLine: async () => "" };
+  const env: Env = { credsFile, open: async () => {}, readLine: async () => "", sleep: async () => {} };
   const out: string[] = [];
   const err: string[] = [];
   const run = async (...argv: string[]) => ({ code: await main(argv, { out: (s) => out.push(s), err: (s) => err.push(s) }, env), out, err });
@@ -264,5 +264,141 @@ describe("commands", () => {
     const t = setup({});
     expect((await t.run("logout")).code).toBe(0);
     expect(existsSync(t.credsFile)).toBe(false);
+  });
+});
+
+describe("clone, repos and gh-login", () => {
+  const H = "/cli/api/hosts/local";
+  const inst = () => new Response(JSON.stringify({ id: ID, name: "x", path: "/srv/r", state: "active", startedAt: null }), { status: 201 });
+  const accepted = () => new Response(JSON.stringify({ id: "job1", path: "/srv/r" }), { status: 202 });
+  const seq = (...rs: (() => Response | unknown)[]) => { let i = 0; return () => rs[Math.min(i++, rs.length - 1)]!(); };
+  const err = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status });
+
+  test("clone posts repo and parent, polls until done, starts the instance and prints the id", async () => {
+    const s = setup({
+      [`POST ${H}/clone`]: accepted,
+      [`GET ${H}/clone/job1`]: seq(() => ({ state: "running" }), () => ({ state: "done", path: "/srv/r" })),
+      [`POST ${H}/instances`]: inst,
+    });
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.code).toBe(0);
+    expect(JSON.parse(s.seen[0]!.body)).toEqual({ repo: "o/r", parent: "/srv" });
+    expect(s.seen.filter((x) => x.path.endsWith("/clone/job1")).length).toBe(2);
+    expect(JSON.parse(s.seen.at(-1)!.body)).toEqual({ path: "/srv/r" });
+    expect(s.out).toEqual(["cloning o/r...", ID]);
+  });
+
+  test("clone --json prints only the instance and --force sends addTrust", async () => {
+    const s = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }), [`POST ${H}/instances`]: inst });
+    expect((await s.run("clone", "o/r", "/srv", "--json", "--force", "--name", "x")).code).toBe(0);
+    expect(JSON.parse(s.seen.at(-1)!.body)).toEqual({ path: "/srv/r", name: "x", addTrust: true });
+    expect(JSON.parse(s.out.join("\n")).id).toBe(ID);
+  });
+
+  test("a 428 on the start after a clone tells the user to use --force", async () => {
+    const s = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }), [`POST ${H}/instances`]: err(428, { error: "untrusted", code: "untrusted" }) });
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.code).toBe(1);
+    expect(r.err.join("\n")).toMatch(/Use --force/);
+  });
+
+  test("clone POST 404 says the host cannot clone", async () => {
+    const s = setup({});
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.code).toBe(1);
+    expect(r.err).toEqual(["this host cannot clone. Update the node."]);
+  });
+
+  test("clone POST 409 prints the message and starts nothing", async () => {
+    const s = setup({ [`POST ${H}/clone`]: err(409, { error: "r already exists" }) });
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.code).toBe(1);
+    expect(r.err).toEqual(["r already exists"]);
+    expect(s.seen.length).toBe(1);
+  });
+
+  test("a failed clone prints the error and does not start", async () => {
+    const s = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "failed", error: "repository not found" }) });
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.code).toBe(1);
+    expect(r.err).toEqual(["repository not found"]);
+    expect(s.seen.some((x) => x.path.endsWith("/instances"))).toBe(false);
+  });
+
+  test("one transient poll failure is retried", async () => {
+    const s = setup({
+      [`POST ${H}/clone`]: accepted,
+      [`GET ${H}/clone/job1`]: seq(err(502, { error: "bad gateway" }), () => ({ state: "done", path: "/srv/r" })),
+      [`POST ${H}/instances`]: inst,
+    });
+    expect((await s.run("clone", "o/r", "/srv")).code).toBe(0);
+  });
+
+  test("five poll failures in a row, or a poll 404, lose track of the clone", async () => {
+    const lost = "lost track of the clone. Check the folder before trying again";
+    const a = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: err(502, { error: "x" }) });
+    expect((await a.run("clone", "o/r", "/srv")).err).toEqual([lost]);
+    expect(a.seen.filter((x) => x.path.endsWith("/clone/job1")).length).toBe(5);
+    const b = setup({ [`POST ${H}/clone`]: accepted });
+    expect((await b.run("clone", "o/r", "/srv")).err).toEqual([lost]);
+    expect(b.seen.filter((x) => x.path.endsWith("/clone/job1")).length).toBe(1);
+  });
+
+  test("a clone that never finishes times out after 11 minutes", async () => {
+    const s = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "running" }) });
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.err).toEqual(["clone timed out"]);
+  });
+
+  test("clone --user first checks /users and sends user", async () => {
+    const s = setup({ [`GET ${H}/users`]: () => [], [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }), [`POST ${H}/instances`]: inst });
+    expect((await s.run("clone", "o/r", "/srv", "--user", "alice")).code).toBe(0);
+    expect(s.seen[0]!.path).toBe(`${H}/users`);
+    expect(JSON.parse(s.seen[1]!.body)).toEqual({ repo: "o/r", parent: "/srv", user: "alice" });
+  });
+
+  test("clone needs two arguments", async () => {
+    expect((await setup().run("clone", "o/r")).code).toBe(1);
+  });
+
+  const body = { groups: [{ owner: "o", repos: [{ name: "o/a", private: false, pushedAt: "t" }, { name: "o/b", private: true, pushedAt: "t" }] }, { owner: "p", repos: [{ name: "p/c", private: false, pushedAt: "t" }] }] };
+  test("repos prints grouped lines and --json prints the body", async () => {
+    const s = setup({ [`GET ${H}/github/repos`]: () => body });
+    expect((await s.run("repos")).code).toBe(0);
+    expect(s.out).toEqual(["o\n  o/a\n  o/b (private)\np\n  p/c"]);
+    s.out.length = 0;
+    await s.run("repos", "--json");
+    expect(JSON.parse(s.out.join("\n"))).toEqual(body);
+  });
+
+  test("repos on a 409 github-login-required gives the hint, and a 404 says to update", async () => {
+    const a = setup({ [`GET ${H}/github/repos`]: err(409, { error: "x", code: "github-login-required" }) });
+    const r = await a.run("repos");
+    expect(r.code).toBe(1);
+    expect(r.err).toEqual(['GitHub login required. Run "claude-rc gh-login"']);
+    expect((await setup().run("repos")).err).toEqual(["this host cannot clone. Update the node."]);
+  });
+
+  test("gh-login prints the code and url, sends {} and exits 0 after done", async () => {
+    const s = setup({ [`POST ${H}/github/login`]: () => new Response(JSON.stringify({ id: "l1", code: "ABCD-1234", url: "https://github.com/login/device" }), { status: 202 }), [`GET ${H}/github/login/l1`]: seq(() => ({ state: "pending" }), () => ({ state: "done" })) });
+    const r = await s.run("gh-login");
+    expect(r.code).toBe(0);
+    expect(s.seen[0]!.body).toBe("{}");
+    expect(r.out.join("\n")).toContain("ABCD-1234");
+    expect(r.out.join("\n")).toContain("https://github.com/login/device");
+    expect(r.out.at(-1)).toBe("signed in");
+  });
+
+  test("gh-login sends user, and exits 1 with the error on failed", async () => {
+    const s = setup({ [`GET ${H}/users`]: () => [], [`POST ${H}/github/login`]: () => new Response(JSON.stringify({ id: "l1", code: "C", url: "u" }), { status: 202 }), [`GET ${H}/github/login/l1`]: () => ({ state: "failed", error: "access denied" }) });
+    const r = await s.run("gh-login", "--user", "alice");
+    expect(r.code).toBe(1);
+    expect(JSON.parse(s.seen[1]!.body)).toEqual({ user: "alice" });
+    expect(r.err).toEqual(["access denied"]);
+  });
+
+  test("the help text lists the three commands", async () => {
+    const r = await setup().run("--help");
+    for (const c of ["clone <repo> <parent>", "repos [--user", "gh-login [--user"]) expect(r.out.join("\n")).toContain(c);
   });
 });

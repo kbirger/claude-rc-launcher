@@ -7,14 +7,23 @@ type Instance = { id: string; path: string; name: string; state: string; started
 type HostInfo = { id: string; name: string; status: string; error?: string };
 type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
 
-export type CommandName = "whoami" | "hosts" | "ls" | "mkdir" | "list" | "start" | "stop" | "logs";
+export type CommandName = "whoami" | "hosts" | "ls" | "mkdir" | "list" | "start" | "stop" | "logs" | "clone" | "repos" | "gh-login";
+
+type RepoGroups = { groups: { owner: string; repos: { name: string; private?: boolean; pushedAt?: string }[] }[] };
+type PollState = { state: string; path?: string; error?: string };
+
+const CLONE_POLL_MS = 2000;
+const LOGIN_POLL_MS = 3000;
+const POLL_LIMIT_MS = 11 * 60 * 1000;
+const MAX_POLL_FAILURES = 5;
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const need = (args: string[], n: number, usage: string) => {
   if (args.length < n) throw new ExitError(`usage: claude-rc ${usage}`, 1);
 };
 
 /** Runs one instance, filesystem or host-list command against the hub. */
-export async function runCommand(name: CommandName, args: string[], flags: Flags, hub: HubClient, out: (s: string) => void): Promise<void> {
+export async function runCommand(name: CommandName, args: string[], flags: Flags, hub: HubClient, out: (s: string) => void, sleep: (ms: number) => Promise<void> = defaultSleep): Promise<void> {
   const host = `/cli/api/hosts/${encodeURIComponent(flags.host ?? "local")}`;
   // An older node ignores `user` without an error. When --user is given, ask for `/users` first so that it fails instead.
   const requireUserSupport = async () => {
@@ -28,6 +37,42 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
   };
   if (flags.user === "") throw new ExitError("--user must not be empty", 1);
   const show = (value: unknown, plain: () => string) => out(flags.json ? JSON.stringify(value, null, 2) : plain());
+
+  const cannotClone = () => new ExitError("this host cannot clone. Update the node.", 1);
+  /** Polls until the state is not one of `keep`. Retries a failed poll on the next tick and gives up after 5 in a row or on a 404. */
+  const poll = async (path: string, intervalMs: number, keep: string, lost: string, timeout: string): Promise<PollState> => {
+    let failures = 0;
+    let waited = 0;
+    while (waited < POLL_LIMIT_MS) {
+      await sleep(intervalMs);
+      waited += intervalMs;
+      try {
+        const r = await hub.request<PollState>("GET", path);
+        failures = 0;
+        if (r.state !== keep) return r;
+      } catch (e) {
+        if (e instanceof HubError && e.status === 404) throw new ExitError(lost, 1);
+        if (++failures >= MAX_POLL_FAILURES) throw new ExitError(lost, 1);
+      }
+    }
+    throw new ExitError(timeout, 1);
+  };
+  /** Starts an instance in `path`. Shared by `start` and `clone`. */
+  const startInstance = async (path: string) => {
+    const body = { path, ...(flags.name ? { name: flags.name } : {}), ...(flags.user !== undefined ? { user: flags.user } : {}), ...(flags.force ? { addTrust: true } : {}) };
+    let inst: Instance;
+    try {
+      inst = await hub.request<Instance>("POST", `${host}/instances`, body);
+    } catch (e) {
+      if (e instanceof HubError && e.status === 428) {
+        // An older hub drops addTrust, so --force can still end in a 428.
+        if (flags.force) throw new ExitError(`${e.message}. The host did not accept --force. Update the hub and the node.`, 1);
+        throw new ExitError(`${e.message}. Use --force to trust it`, 1);
+      }
+      throw e;
+    }
+    show(inst, () => inst.id);
+  };
 
   switch (name) {
     case "whoami": {
@@ -48,19 +93,7 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
     case "start": {
       need(args, 1, "start <path> [--name <n>] [--user <u>] [--force]");
       await requireUserSupport();
-      const body = { path: args[0], ...(flags.name ? { name: flags.name } : {}), ...(flags.user !== undefined ? { user: flags.user } : {}), ...(flags.force ? { addTrust: true } : {}) };
-      let inst: Instance;
-      try {
-        inst = await hub.request<Instance>("POST", `${host}/instances`, body);
-      } catch (e) {
-        if (e instanceof HubError && e.status === 428) {
-          // An older hub drops addTrust, so --force can still end in a 428.
-          if (flags.force) throw new ExitError(`${e.message}. The host did not accept --force. Update the hub and the node.`, 1);
-          throw new ExitError(`${e.message}. Use --force to trust it`, 1);
-        }
-        throw e;
-      }
-      show(inst, () => inst.id);
+      await startInstance(args[0]!);
       return;
     }
     case "stop": {
@@ -89,6 +122,55 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       const body = { parent: args[0], name: args[1], ...(flags.user !== undefined ? { user: flags.user } : {}) };
       const r = await hub.request<{ path: string }>("POST", `${host}/fs/mkdir`, body);
       show(r, () => r.path);
+      return;
+    }
+     case "clone": {
+      need(args, 2, "clone <repo> <parent> [--user <u>] [--name <n>] [--force]");
+      await requireUserSupport();
+      const repo = args[0]!;
+      let job: { id: string; path: string };
+      try {
+        job = await hub.request<{ id: string; path: string }>("POST", `${host}/clone`, { repo, parent: args[1], ...(flags.user !== undefined ? { user: flags.user } : {}) });
+      } catch (e) {
+        if (e instanceof HubError && e.status === 404) throw cannotClone();
+        throw e;
+      }
+      if (!flags.json) out(`cloning ${repo}...`);
+      const r = await poll(`${host}/clone/${encodeURIComponent(job.id)}`, CLONE_POLL_MS, "running", "lost track of the clone. Check the folder before trying again", "clone timed out");
+      if (r.state !== "done") throw new ExitError(r.error ?? "clone failed", 1);
+      await startInstance(r.path ?? job.path);
+      return;
+    }
+    case "repos": {
+      await requireUserSupport();
+      let r: RepoGroups;
+      try {
+        r = await hub.request<RepoGroups>("GET", `${host}/github/repos${flags.user !== undefined ? `?user=${encodeURIComponent(flags.user)}` : ""}`);
+      } catch (e) {
+        if (e instanceof HubError && e.status === 404) throw cannotClone();
+        if (e instanceof HubError && e.status === 409 && (e.body as { code?: string } | undefined)?.code === "github-login-required") {
+          throw new ExitError('GitHub login required. Run "claude-rc gh-login"', 1);
+        }
+        throw e;
+      }
+      show(r, () => r.groups.map((g) => [g.owner, ...g.repos.map((x) => `  ${x.name}${x.private ? " (private)" : ""}`)].join("\n")).join("\n"));
+      return;
+    }
+    case "gh-login": {
+      await requireUserSupport();
+      let login: { id: string; code: string; url: string };
+      try {
+        login = await hub.request<{ id: string; code: string; url: string }>("POST", `${host}/github/login`, flags.user !== undefined ? { user: flags.user } : {});
+      } catch (e) {
+        if (e instanceof HubError && e.status === 404) throw cannotClone();
+        throw e;
+      }
+      // The one-time code is only printed, never saved.
+      if (flags.json) out(JSON.stringify({ code: login.code, url: login.url }));
+      else out(`Open ${login.url} and enter the code ${login.code}`);
+      const r = await poll(`${host}/github/login/${encodeURIComponent(login.id)}`, LOGIN_POLL_MS, "pending", "lost track of the GitHub login. Run \"claude-rc gh-login\" again", "GitHub login timed out");
+      if (r.state !== "done") throw new ExitError(r.error ?? "GitHub login failed", 1);
+      out(flags.json ? JSON.stringify({ state: "done" }) : "signed in");
       return;
     }
   }

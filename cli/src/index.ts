@@ -29,6 +29,10 @@ Commands:
   logs <id> [--lines <n>]            show instance logs  (--host <id>)
   ls [path] [--user <u>]             list directories    (--host <id>)
   mkdir <parent> <name> [--user <u>] make a directory    (--host <id>)
+  clone <repo> <parent> [--user <u>] [--name <n>] [--force]
+                                     clone a GitHub repo and start it (--host <id>)
+  repos [--user <u>]                 list your GitHub repos (--host <id>)
+  gh-login [--user <u>]              sign in to GitHub     (--host <id>)
   host add <id> --url <https-url> [--name n] [--server-name n] [--fingerprint f] [--force]
   host remove <id>
   update [--release tag] [--all-nodes]
@@ -50,6 +54,8 @@ export type Env = {
   readLine: (prompt: string, signal?: AbortSignal) => Promise<string>;
   nodeFs?: NodeFs;
   sys?: Sys;
+  /** Waits between polls. Tests replace it so that they do not wait in real time. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 /**
@@ -90,7 +96,7 @@ export function defaultEnv(): Env {
   };
 }
 
-const INSTANCE_COMMANDS = new Set<string>(["whoami", "hosts", "ls", "mkdir", "list", "start", "stop", "logs"]);
+const INSTANCE_COMMANDS = new Set<string>(["whoami", "hosts", "ls", "mkdir", "list", "start", "stop", "logs", "clone", "repos", "gh-login"]);
 
 export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void }, env: Env = defaultEnv()): Promise<number> {
   try {
@@ -184,7 +190,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       else await hostRemove(id, hub, io.out);
       return 0;
     }
-    await runCommand(name as CommandName, args, flags, hub, io.out);
+    await runCommand(name as CommandName, args, flags, hub, io.out, env.sleep);
     return 0;
   } catch (e) {
     if (e instanceof ExitError) {
