@@ -197,4 +197,39 @@ describe("repos", () => {
     const e = await fail(cloner.repos());
     expect([e.status, e.message]).toEqual([504, "gh timed out"]);
   });
+
+  test("the whole list has a 100 s deadline: each gh call gets min(60 s, time left), then 504", async () => {
+    let t = 0;
+    const calls: Call[] = [];
+    const cloner = createCloner({
+      cfg: { roots: [] } as unknown as Config,
+      now: () => t,
+      run: async (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        t += 45_000;
+        if (args[0] === "api") return ok(args[1] === "user" ? "me" : "org1\norg2\n");
+        return ok("[]");
+      },
+      identityFor: async () => id,
+    });
+    const e = await fail(cloner.repos());
+    expect([e.status, e.message]).toEqual([504, "gh timed out"]);
+    // api user at 0 s, user/orgs at 45 s, own list at 90 s; no time is left for the orgs.
+    expect(calls.map((c) => c.opts?.timeoutMs)).toEqual([60_000, 55_000, 10_000]);
+  });
+
+  test("a deadline hit inside the org lists fails the call instead of giving a partial list", async () => {
+    let t = 0;
+    const cloner = createCloner({
+      cfg: { roots: [] } as unknown as Config,
+      now: () => t,
+      run: async (_cmd, args) => {
+        if (args[0] === "api") return ok(args[1] === "user" ? "me" : "org1\n");
+        if (owner(args) === "") { t = 100_000; return ok("[]"); }
+        return ok("[]");
+      },
+      identityFor: async () => id,
+    });
+    expect((await fail(cloner.repos())).status).toBe(504);
+  });
 });

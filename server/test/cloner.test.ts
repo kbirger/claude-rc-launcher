@@ -216,6 +216,15 @@ describe("clone", () => {
     expect(r.error).not.toContain("Cloning into");
   });
 
+  test("a private repo with no login says to sign in to GitHub", async () => {
+    const stderr = "Cloning into 'priv'...\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n";
+    const { cloner } = setup({ code: 128, stdout: "", stderr });
+    const r = await runClone(cloner, { repo: "octo/priv", parent: root });
+    expect([r.state, r.error]).toEqual(["failed", "GitHub login required for this repository. Sign in to GitHub on this machine"]);
+    const t = setup({ code: 128, stdout: "", stderr: "fatal: terminal prompts disabled\n" });
+    expect((await runClone(t.cloner, { repo: "octo/priv2", parent: root })).error).toBe("GitHub login required for this repository. Sign in to GitHub on this machine");
+  });
+
   test("git is passed -q", async () => {
     const { cloner, calls } = setup(ok);
     await runClone(cloner, { repo: "octo/quiet", parent: root });

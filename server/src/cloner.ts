@@ -26,6 +26,9 @@ const CLONE_FORGET_MS = 10 * 60 * 1000;
 const CLEANUP_TIMEOUT_MS = 5 * 60 * 1000;
 type CloneJob = { state: "running" | "done" | "failed"; path?: string; error?: string };
 const GH_TIMEOUT_MS = 60 * 1000;
+/** The whole repo list must answer before the hub gives up on the request (120 s). */
+const REPO_LIST_DEADLINE_MS = 100 * 1000;
+const LOGIN_REQUIRED = "GitHub login required for this repository. Sign in to GitHub on this machine";
 const REPO_LIST_PARALLEL = 4;
 
 /** Names the tool behind an exit 127. setpriv exits 127 too when it cannot exec its target; a spawn failure of setpriv itself has other text. */
@@ -77,7 +80,10 @@ export function createCloner(deps: {
   /** Sets the owner of the new folder. It must not follow a symlink (the default is `lchown`). */
   lchownFn?: (path: string, uid: number, gid: number) => Promise<void>;
   lstatFn?: (path: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; uid: number; gid: number }>;
+  /** Milliseconds, for the repo list deadline. */
+  now?: () => number;
 }): Cloner {
+  const now = deps.now ?? Date.now;
   const lchownFn = deps.lchownFn ?? lchown;
   const lstatFn = deps.lstatFn ?? lstat;
   const logins = createLoginManager({ run: deps.run, identityFor: deps.identityFor, spawn: deps.spawnLogin, clock: deps.loginClock, missingTool });
@@ -157,6 +163,8 @@ export function createCloner(deps: {
         if (r.code === 127) {
           throw new HttpError(400, `${missingTool(w.cmd, r.stderr, "git")} is not installed`);
         }
+        // A private repo with no usable login: git wanted to ask for a user name.
+        if (r.code !== 0 && /could not read Username|terminal prompts disabled/i.test(r.stderr)) throw new HttpError(400, LOGIN_REQUIRED);
         if (r.code !== 0) {
           const lines = r.stderr.split("\n").map((l) => l.trim()).filter(Boolean);
           const first = lines.find((l) => /^(fatal|error):/i.test(l)) ?? lines[lines.length - 1] ?? `exit ${r.code}`;
@@ -188,9 +196,16 @@ export function createCloner(deps: {
     },
     async repos(user) {
       const id = await deps.identityFor(user);
+      const deadline = now() + REPO_LIST_DEADLINE_MS;
+      let expired = false;
       const gh = async (args: string[]) => {
+        const left = deadline - now();
+        if (left <= 0) {
+          expired = true;
+          throw new HttpError(504, "gh timed out");
+        }
         const w = asUser(id, "gh", args);
-        const r = await deps.run(w.cmd, w.args, { env: w.env, timeoutMs: GH_TIMEOUT_MS });
+        const r = await deps.run(w.cmd, w.args, { env: w.env, timeoutMs: Math.min(GH_TIMEOUT_MS, left) });
         if (r.timedOut) throw new HttpError(504, "gh timed out");
         if (r.code === 127) throw new HttpError(500, `${missingTool(w.cmd, r.stderr, "gh")} is not installed`);
         if (r.code === 4 || r.stderr.includes("gh auth login")) {
@@ -216,6 +231,8 @@ export function createCloner(deps: {
           return null;
         }
       });
+      // A skipped org is fine, but a list cut short by the deadline is not: fail instead of a partial answer.
+      if (expired) throw new HttpError(504, "gh timed out");
       const groups: RepoGroup[] = [{ owner: login, repos: own }];
       for (const g of orgGroups) if (g) groups.push(g);
       return { groups };
