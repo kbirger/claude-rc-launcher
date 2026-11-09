@@ -1,4 +1,4 @@
-import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256, type ReleaseIo } from "./release";
+import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256, type ReleaseIo, type RunResult } from "./release";
 
 /** The installed service. The updater works on this layout only. */
 export const SERVICE_BIN = "/usr/local/bin/claude-rc-launcher";
@@ -9,6 +9,8 @@ export const STAY_ACTIVE_SECONDS = 30;
 
 const CLIENT = "claude-rc";
 const VERSION_TIMEOUT_MS = 10_000;
+/** The host poll asks for client versions, so a hung client must not hold it for long. */
+const CLIENT_VERSION_TIMEOUT_MS = 2_000;
 
 export type ClientResult = { path: string; status: "updated" | "up-to-date" | "failed"; from?: string; to?: string; error?: string };
 
@@ -34,6 +36,8 @@ export interface UpdateEnv extends ReleaseIo {
   pathEnv: string;
   /** Homes whose `~/.local/bin/claude-rc` is a client copy: the service user's and root's. */
   homes: string[];
+  /** Like `run`, without blocking the event loop. When it is missing, callers fall back to `run`. */
+  runAsync?(args: string[], opts?: { timeoutMs?: number }): Promise<RunResult>;
   /** Starts the watchdog script outside this service, so that it survives the restart. */
   startWatchdog(script: string): void;
 }
@@ -121,6 +125,70 @@ exit 1
 `;
 }
 
+/** The version a binary reports with `--version` (`<prefix> <version>`), or undefined when it does not answer. */
+function binaryVersion(env: Pick<UpdateEnv, "run">, p: string, prefix: string): string | undefined {
+  return parseVersion(env.run([p, "--version"], { timeoutMs: VERSION_TIMEOUT_MS }), prefix);
+}
+
+function parseVersion(r: RunResult, prefix: string): string | undefined {
+  const line = r.stdout.trim().split("\n")[0] ?? "";
+  return r.code === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
+}
+
+export type ClientVersion = { path: string; version?: string };
+/** A lookup of the client versions. `reset` drops the cached list and any lookup in flight, so the next call asks again. */
+export type ClientVersionsLookup = (() => Promise<ClientVersion[]>) & { reset?: () => void };
+
+/**
+ * The client copies on this machine with the version each one reports. The copies are asked in parallel without
+ * blocking the event loop, and concurrent callers share one lookup. The list is cached for `ttlMs`, so a host poll
+ * does not start a process each time. A copy that does not answer has no `version`.
+ */
+export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: () => number } = {}): ClientVersionsLookup & { reset: () => void } {
+  const ttlMs = o.ttlMs ?? 60_000;
+  const now = o.now ?? Date.now;
+  let cached: { at: number; list: ClientVersion[] } | undefined;
+  let inflight: Promise<ClientVersion[]> | undefined;
+  // Counts the resets. A lookup that started before a reset does not store its answer.
+  let generation = 0;
+
+  const ask = async (path: string): Promise<ClientVersion> => {
+    try {
+      const opts = { timeoutMs: CLIENT_VERSION_TIMEOUT_MS };
+      const r = env.runAsync ? await env.runAsync([path, "--version"], opts) : env.run([path, "--version"], opts);
+      const version = parseVersion(r, CLIENT);
+      return version !== undefined ? { path, version } : { path };
+    } catch {
+      return { path };
+    }
+  };
+
+  const get = () => {
+    if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.list);
+    if (!inflight) {
+      // Run the body from a microtask, so that a synchronous throw is a rejection of `p` and `inflight` is set first.
+      const gen = generation;
+      const p: Promise<ClientVersion[]> = Promise.resolve().then(async () => {
+        const list = await Promise.all(findClients(env).map(ask));
+        if (gen === generation) cached = { at: now(), list };
+        return list;
+      });
+      inflight = p;
+      const clear = () => {
+        if (inflight === p) inflight = undefined;
+      };
+      p.then(clear, clear);
+    }
+    return inflight;
+  };
+  const reset = () => {
+    generation++;
+    cached = undefined;
+    inflight = undefined;
+  };
+  return Object.assign(get, { reset });
+}
+
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -131,11 +199,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createServiceUpdater(env: UpdateEnv): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
 
-  const versionOf = (p: string, prefix: string): string | undefined => {
-    const r = env.run([p, "--version"], { timeoutMs: VERSION_TIMEOUT_MS });
-    const line = r.stdout.trim().split("\n")[0] ?? "";
-    return r.code === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
-  };
+  const versionOf = (p: string, prefix: string) => binaryVersion(env, p, prefix);
 
   const refuseUnlessInstalled = () => {
     if (env.platform !== "linux") throw new UpdateRefused(409, `the update works on Linux with systemd only (this is ${env.platform})`);

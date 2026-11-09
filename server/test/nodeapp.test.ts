@@ -38,12 +38,49 @@ describe("node app", () => {
   test("/healthz is open", async () => {
     expect((await app().request("/healthz")).status).toBe(200);
   });
+  test("/api/node carries the client versions of the machine", async () => {
+    const clients = [{ path: "/usr/local/bin/claude-rc", version: "0.8.2" }, { path: "/root/.local/bin/claude-rc" }];
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => clients });
+    expect((await (await a.request("/api/node", { headers: ok })).json()).clients).toEqual(clients);
+  });
+  test("/api/update resets the client versions after a client update and not after up-to-date", async () => {
+    const run = (report: unknown) => async () => report as any;
+    const call = async (report: unknown) => {
+      let resets = 0;
+      const clientVersions = Object.assign(async () => [], { reset: () => void resets++ });
+      const a = createNodeApp({ cfg, instances, auth, clientVersions, update: { run: run(report) } });
+      await a.request("/api/update", { method: "POST", headers: json, body: "{}" });
+      return resets;
+    };
+    expect(await call({ status: "clients-only", from: "1", clients: [] })).toBe(1);
+    expect(await call({ status: "restarting", from: "1", clients: [] })).toBe(1);
+    expect(await call({ status: "failed", from: "1", clients: [{ path: "/p", status: "updated" }] })).toBe(1);
+    expect(await call({ status: "up-to-date", from: "1", clients: [{ path: "/p", status: "up-to-date" }] })).toBe(0);
+  });
+  test("a pending client lookup does not block other requests", async () => {
+    let starts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => (starts++, await gate, [{ path: "/p", version: "1.0.0" }]) });
+    const n1 = a.request("/api/node", { headers: ok });
+    const n2 = a.request("/api/node", { headers: ok });
+    expect((await a.request("/api/instances", { headers: ok })).status).toBe(200);
+    release();
+    expect((await (await n1).json()).clients).toEqual([{ path: "/p", version: "1.0.0" }]);
+    expect((await (await n2).json()).clients).toEqual([{ path: "/p", version: "1.0.0" }]);
+    expect(starts).toBe(2); // sharing one lookup is createClientVersions' job (see serviceupdate.test.ts)
+  });
+  test("a throwing client lookup gives 200 with no clients", async () => {
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => { throw new Error("boom"); } });
+    const r = await a.request("/api/node", { headers: ok });
+    expect([r.status, (await r.json()).clients]).toEqual([200, []]);
+  });
   test("/api routes need auth", async () => {
     for (const p of ["/api/node", "/api/instances", "/api/fs"]) expect((await app().request(p)).status).toBe(401);
   });
   test("/api/node and instance routes work with auth", async () => {
     const a = app();
-    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, clone: false });
+    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, clone: false, clients: [] });
     expect(await (await a.request("/api/instances", { headers: ok })).json()).toEqual([inst]);
     expect((await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) })).status).toBe(201);
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);

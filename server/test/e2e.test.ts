@@ -77,7 +77,9 @@ async function setup() {
 describe("hub + node end to end", () => {
   test("the host list shows both ok; instances and fs go through to the node", async () => {
     const s = await setup();
-    expect(await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()).toEqual([
+    // The client copies on the machine running the test decide `clientVersion`, and the latest release decides `stale` and `target`, so they are left out here.
+    const list = ((await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[]).map(({ clientVersion: _c, stale: _s, target: _t, ...h }) => h);
+    expect(list).toEqual([
       { id: "local", name: "hub", status: "ok", version: VERSION },
       { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION },
     ]);
@@ -104,7 +106,7 @@ describe("hub + node end to end", () => {
     const s = await setup();
     s.node.stop();
     const list = (await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[];
-    expect(list[0]).toEqual({ id: "local", name: "hub", status: "ok", version: VERSION });
+    expect(list[0]).toMatchObject({ id: "local", name: "hub", status: "ok", version: VERSION });
     expect(list[1]).toMatchObject({ id: "nas", status: "offline" });
     expect((await fetch(s.hubUrl("/api/hosts/local/instances"), { headers: s.h() })).status).toBe(200);
     const r = await fetch(s.hubUrl("/api/hosts/nas/instances"), { headers: s.h() });
@@ -196,7 +198,8 @@ describe("update end to end", () => {
     expect(nodeUp.releases).toEqual(["v9.9.9"]);
 
     const node2 = await (await fetch(hubUrl("/cli/api/hosts/pi/node"), { headers: cliH })).json();
-    expect(node2).toEqual({ ok: true, name: "pi", version: VERSION, clone: false });
+    expect(node2).toMatchObject({ ok: true, name: "pi", version: VERSION, clone: false });
+    expect(Array.isArray((node2 as any).clients)).toBe(true);
 
     const local = await quiet(() => fetch(hubUrl("/cli/api/hosts/local/update"), { method: "POST", headers: cliH, body: "{}" }));
     expect(local.status).toBe(202);

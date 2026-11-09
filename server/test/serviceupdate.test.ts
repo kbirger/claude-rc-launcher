@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { sha256, type RunResult } from "../src/release";
 import {
+  createClientVersions,
   createServiceUpdater,
   findClients,
   UpdateRefused,
@@ -458,5 +459,128 @@ describe("watchdogScript in a real shell", () => {
   test("values are quoted for the shell", () => {
     const s = watchdogScript({ bin: "/tmp/a b'c", unit: "u", waitSeconds: 30 });
     expect(s).toContain(`'/tmp/a b'\\''c'`);
+  });
+});
+
+describe("createClientVersions", () => {
+  const make = (answers: Record<string, string | null>) => {
+    const calls: string[][] = [];
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: ["/root"],
+      exists: (p: string) => p in answers,
+      realpath: (p: string) => p,
+      run: (args: string[]) => {
+        calls.push(args);
+        const a = answers[args[0]!];
+        return a === null || a === undefined ? { code: 1, stdout: "", stderr: "boom" } : { code: 0, stdout: a, stderr: "" };
+      },
+    } as unknown as UpdateEnv;
+    return { env, calls };
+  };
+  const A = "/usr/local/bin/claude-rc";
+  const B = "/root/.local/bin/claude-rc";
+
+  test("one copy gives its version", async () => {
+    expect(await createClientVersions(make({ [A]: "claude-rc 0.8.2\n" }).env)()).toEqual([{ path: A, version: "0.8.2" }]);
+  });
+  test("a copy that exits 1 has no version", async () => {
+    expect(await createClientVersions(make({ [A]: null }).env)()).toEqual([{ path: A }]);
+  });
+  test("two copies give two entries", async () => {
+    expect(await createClientVersions(make({ [A]: "claude-rc 0.8.2\n", [B]: "claude-rc 0.8.0\n" }).env)()).toEqual([
+      { path: A, version: "0.8.2" },
+      { path: B, version: "0.8.0" },
+    ]);
+  });
+  test("no copy gives an empty list", async () => {
+    expect(await createClientVersions(make({}).env)()).toEqual([]);
+  });
+  test("a second call within the ttl runs no command, and one after it does", async () => {
+    const { env, calls } = make({ [A]: "claude-rc 0.8.2\n" });
+    let t = 1_000;
+    const get = createClientVersions(env, { now: () => t });
+    await get();
+    expect(calls.length).toBe(1);
+    t += 59_000;
+    await get();
+    expect(calls.length).toBe(1);
+    t += 2_000;
+    await get();
+    expect(calls.length).toBe(2);
+  });
+  test("runAsync is used when present, with a short timeout, and concurrent callers share one lookup", async () => {
+    const seen: { args: string[]; timeoutMs?: number }[] = [];
+    let release!: (r: { code: number; stdout: string; stderr: string }) => void;
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: [],
+      exists: (p: string) => p === A,
+      realpath: (p: string) => p,
+      run: () => {
+        throw new Error("sync run must not be used");
+      },
+      runAsync: (args: string[], opts?: { timeoutMs?: number }) => {
+        seen.push({ args, ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+        return new Promise((res) => (release = res));
+      },
+    } as unknown as UpdateEnv;
+    const get = createClientVersions(env);
+    const p1 = get();
+    const p2 = get();
+    await Bun.sleep(0);
+    release({ code: 0, stdout: "claude-rc 1.0.0\n", stderr: "" });
+    expect(await p1).toEqual([{ path: A, version: "1.0.0" }]);
+    expect(await p2).toEqual([{ path: A, version: "1.0.0" }]);
+    expect(seen).toEqual([{ args: [A, "--version"], timeoutMs: 2_000 }]);
+  });
+  test("reset makes the next call ask again", async () => {
+    const { env, calls } = make({ [A]: "claude-rc 0.8.2\n" });
+    const get = createClientVersions(env, { now: () => 1_000 });
+    await get();
+    get.reset();
+    await get();
+    expect(calls.length).toBe(2);
+  });
+  test("a lookup in flight during reset does not store its old answer", async () => {
+    let answer = "claude-rc 0.8.2\n";
+    let release!: (r: { code: number; stdout: string; stderr: string }) => void;
+    let calls = 0;
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: [],
+      exists: (p: string) => p === A,
+      realpath: (p: string) => p,
+      run: () => ({ code: 0, stdout: answer, stderr: "" }),
+      runAsync: () => {
+        calls++;
+        return calls === 1 ? new Promise((res) => (release = res)) : Promise.resolve({ code: 0, stdout: answer, stderr: "" });
+      },
+    } as unknown as UpdateEnv;
+    const get = createClientVersions(env, { now: () => 1_000 });
+    const old = get();
+    await Bun.sleep(0);
+    get.reset();
+    answer = "claude-rc 0.8.3\n";
+    release({ code: 0, stdout: "claude-rc 0.8.2\n", stderr: "" });
+    expect(await old).toEqual([{ path: A, version: "0.8.2" }]);
+    expect(await get()).toEqual([{ path: A, version: "0.8.3" }]);
+    expect(calls).toBe(2);
+  });
+  test("a lookup that throws rejects once and does not stick", async () => {
+    let n = 0;
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: [],
+      exists: (p: string) => {
+        if (n++ === 0) throw new Error("fs broke");
+        return p === A;
+      },
+      realpath: (p: string) => p,
+      run: () => ({ code: 0, stdout: "claude-rc 1.0.0\n", stderr: "" }),
+    } as unknown as UpdateEnv;
+    const get = createClientVersions(env);
+    await expect(get()).rejects.toThrow("fs broke");
+    expect(await get()).toEqual([{ path: A, version: "1.0.0" }]);
   });
 });

@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { streamSSE } from "hono/streaming";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
@@ -8,12 +9,15 @@ import { enrollmentApi } from "./enrollment";
 import type { AdoptDir } from "./ownedir";
 import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
+import type { UpdateRecord } from "./updaterecord";
+import { createUpdateTracker } from "./updatetracker";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
+import { LatestError, type createLatestRelease } from "./latest";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
-import { UpdateRefused, type UpdateReport } from "./serviceupdate";
+import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
@@ -22,7 +26,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; keepaliveMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -45,14 +49,22 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 /** `adoptDir` replaces the owner change of a new folder (tests). */
-export type InstanceApiDeps = { cfg: Config; instances: Instances; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
-  const { cfg, instances, dirOwner, update, cloner, adoptDir } = deps;
+  const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
   const r = new Hono();
 
-  r.get("/node", (c) => c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined }));
+  r.get("/node", async (c) => {
+    let clients: ClientVersion[] = [];
+    try {
+      clients = (await clientVersions?.()) ?? [];
+    } catch (e) {
+      console.error(`client versions failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined, clients });
+  });
   r.post("/update", async (c) => {
     const { release } = parseUpdateRequest(await readJson(c));
     if (!update) throw new HttpError(501, "update is not available on this host");
@@ -65,6 +77,8 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       // On purpose the message goes back to the caller: an authenticated admin needs the reason in the update report.
       throw new HttpError(500, e instanceof Error ? e.message : String(e));
     }
+    // Client files changed, so the cached client versions are old.
+    if (report.status === "clients-only" || report.status === "restarting" || report.clients.some((x) => x.status === "updated")) clientVersions?.reset?.();
     // 202: the watchdog restarts the service a moment after this answer is sent.
     return c.json(report, report.status === "restarting" ? 202 : 200);
   });
@@ -149,8 +163,8 @@ export function onError(err: Error, c: Context) {
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner }): Hono {
-  const { cfg, instances, auth, dirOwner, update, cloner } = deps;
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup }): Hono {
+  const { cfg, instances, auth, dirOwner, update, cloner, clientVersions } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));
 
@@ -168,14 +182,14 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
-  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}) }));
+  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
   return app;
 }
 
 export function createApp(deps: Deps): Hono {
-  const { cfg, instances, userAuth, staticHandler, dirOwner, update, cloner, adoptDir } = deps;
+  const { cfg, instances, userAuth, staticHandler, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -187,16 +201,65 @@ export function createApp(deps: Deps): Hono {
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
 
+  api.get("/latest", async (c) => {
+    if (!deps.latest) throw new HttpError(501, "latest release is not available on this host");
+    try {
+      return c.json(await deps.latest.get());
+    } catch (e) {
+      if (e instanceof LatestError) throw new HttpError(503, e.message);
+      throw e;
+    }
+  });
+
   const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
+  const probeVersion = async (host: string): Promise<string | undefined> => {
+    try {
+      const r = await registry.get(host)?.client.call("GET", "/api/node", { timeoutMs: deps.probeTimeoutMs ?? 3_000 });
+      const v = r && isObject(r.body) ? r.body.version : undefined;
+      return typeof v === "string" ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const updates = deps.updates
+    ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion }), probe: probeVersion }
+    : undefined;
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}) }),
+      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) }),
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
+      ...(deps.latest ? { latest: deps.latest } : {}),
+      ...(updates ? { updates } : {}),
     });
   api.route("/hosts", forwarding());
+  api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
+  api.get("/events", (c) => {
+    const record = deps.updates;
+    if (!record) return c.json({ error: "update record not available" }, 501);
+    const keepaliveMs = deps.keepaliveMs ?? 15_000;
+    return streamSSE(c, async (stream) => {
+      // Listen before reading the list so a change in between is not lost (a duplicate is fine: the client replaces by host).
+      const unsubscribe = record.onChange((e) => void stream.writeSSE({ event: "update", data: JSON.stringify(e) }).catch(() => {}));
+      const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
+      const done = new Promise<void>((resolve) =>
+        stream.onAbort(() => {
+          clearInterval(timer);
+          unsubscribe();
+          resolve();
+        }),
+      );
+      try {
+        await stream.writeSSE({ event: "snapshot", data: JSON.stringify(record.list()) });
+        await done;
+      } finally {
+        clearInterval(timer);
+        unsubscribe();
+      }
+    });
+  });
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
 

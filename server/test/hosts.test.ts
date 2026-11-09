@@ -13,6 +13,9 @@ import { HostRegistry } from "../src/hostregistry";
 import type { Cloner } from "../src/cloner";
 import type { UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
+import { hostsApi } from "../src/hosts";
+import { Hono } from "hono";
+import { UpdateRecord } from "../src/updaterecord";
 
 const ID = "0123456789ab";
 const inst = { id: ID, path: "/srv/p", name: "n", state: "active", startedAt: null };
@@ -48,7 +51,7 @@ const fakeUpdater = (report: UpdateReport = restarting) => {
 const stops: (() => void)[] = [];
 afterAll(() => stops.forEach((s) => s()));
 
-async function startNode(id: string, over: { secret?: string; cloner?: Cloner } = {}): Promise<NodeFixture> {
+async function startNode(id: string, over: { secret?: string; cloner?: Cloner; clientVersions?: () => Promise<{ path: string; version?: string }[]> } = {}): Promise<NodeFixture> {
   const root = realpathSync(tmp());
   const sec = generateSecret();
   const cert = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
@@ -65,7 +68,7 @@ async function startNode(id: string, over: { secret?: string; cloner?: Cloner } 
     logs: async (_id: string, n: number) => `${id} log ${n}`,
   };
   const up = fakeUpdater();
-  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }), update: up.update, ...(over.cloner ? { cloner: over.cloner } : {}) });
+  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }), update: up.update, ...(over.cloner ? { cloner: over.cloner } : {}), ...(over.clientVersions ? { clientVersions: over.clientVersions } : {}) });
   const seen: Headers[] = [];
   const delayNodeMs = { value: 0 };
   const server = Bun.serve({
@@ -85,7 +88,7 @@ async function startNode(id: string, over: { secret?: string; cloner?: Cloner } 
   return { host, client: createHostClient(host, secretAuthorizer(secret)), secret, seen, starts, updates: up.updates, stop, delayNodeMs };
 }
 
-function hub(hosts: HostConfig[], clients: Map<string, HostClient>, o: { probeTimeoutMs?: number; requestTimeoutMs?: number; update?: { run(release?: string): Promise<UpdateReport> } } = {}) {
+function hub(hosts: HostConfig[], clients: Map<string, HostClient>, o: { probeTimeoutMs?: number; requestTimeoutMs?: number; clientVersions?: () => Promise<{ path: string; version?: string }[]>; update?: { run(release?: string): Promise<UpdateReport> }; updates?: UpdateRecord } = {}) {
   const cfg = { name: "box", hosts, roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config;
   return createApp({ cfg, instances: localSvc, userAuth, hostClients: clients, ...o });
 }
@@ -104,6 +107,28 @@ afterEach(() => {
   console.error = realErr;
 });
 
+describe("host list client versions", () => {
+  test("a node's clientVersion is the oldest of its copies, and none without copies", async () => {
+    const a = await startNode("nas", { clientVersions: async () => [{ path: "/a", version: "0.8.2" }, { path: "/b", version: "0.8.0" }] });
+    const b = await startNode("pi");
+    const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", b.client]]));
+    const list = await (await get(app, "/api/hosts")).json();
+    expect(list.find((h: any) => h.id === "nas").clientVersion).toBe("0.8.0");
+    expect("clientVersion" in list.find((h: any) => h.id === "pi")).toBe(false);
+  });
+  test("a node that answers without a clients field has no clientVersion", async () => {
+    const fake: HostClient = { call: async () => ({ status: 200, body: { ok: true, name: "x", version: VERSION } }) } as unknown as HostClient;
+    const host: HostConfig = { id: "old", name: "OLD", url: "https://localhost:1", auth: { type: "secret", secret: "s" } } as HostConfig;
+    const app = hub([host], new Map([["old", fake]]));
+    const list = await (await get(app, "/api/hosts")).json();
+    expect("clientVersion" in list.find((h: any) => h.id === "old")).toBe(false);
+  });
+  test("local gets its clientVersion from the local /node", async () => {
+    const app = hub([], new Map(), { clientVersions: async () => [{ path: "/a", version: "0.9.0" }, { path: "/b" }] });
+    expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0", stale: false });
+  });
+});
+
 describe("host list", () => {
   test("lists local first then remotes, all ok", async () => {
     const a = await startNode("nas");
@@ -112,9 +137,9 @@ describe("host list", () => {
     const r = await get(app, "/api/hosts");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION },
-      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION },
+      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, stale: false },
+      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, stale: false },
     ]);
   });
 
@@ -130,10 +155,10 @@ describe("host list", () => {
     expect(Date.now() - t0).toBeLessThan(2_500);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION },
-      { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config" },
-      { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config" },
+      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, stale: false },
+      { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config", stale: false },
+      { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config", stale: false },
     ]);
   });
 
@@ -144,9 +169,9 @@ describe("host list", () => {
     const wrongPin = createHostClient({ ...b.host, ca: other.host.ca }, secretAuthorizer(b.secret));
     const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", wrongPin]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION },
-      { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config" },
-      { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config" },
+      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
+      { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config", stale: false },
+      { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config", stale: false },
     ]);
   });
 });
@@ -462,8 +487,8 @@ describe("node and update routes", () => {
   test("GET node returns name and version for local and for a node", async () => {
     const n = await startNode("nas");
     const app = hub([n.host], new Map([["nas", n.client]]));
-    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, clone: false });
-    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, clone: false });
+    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, clone: false, clients: [] });
+    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, clone: false, clients: [] });
   });
 
   test("the host list takes a node's version from its probe answer", async () => {
@@ -471,9 +496,9 @@ describe("node and update routes", () => {
     const old: HostClient = { call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };
     const app = hub([hostCfg("nas"), hostCfg("old")], new Map([["nas", client], ["old", old]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION },
-      { id: "nas", name: "nas", status: "ok", source: "config", version: "1.4.0" },
-      { id: "old", name: "old", status: "ok", source: "config" },
+      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
+      { id: "nas", name: "nas", status: "ok", source: "config", version: "1.4.0", stale: false },
+      { id: "old", name: "old", status: "ok", source: "config", stale: false },
     ]);
   });
 
@@ -705,5 +730,209 @@ describe("clone, repo list and login forwarding", () => {
     const r = await get(app, "/api/hosts/nas/github/repos");
     expect(r.status).toBe(502);
     expect(await r.json()).toEqual({ error: "host nas: bad response", host: "nas" });
+  });
+});
+
+describe("host list stale flags", () => {
+  const nodeBody = (version: string, clients: { version?: string }[] = []) => ({ ok: true, name: "n", version, clients });
+  const fakeNode = (body: unknown): HostClient => ({ call: async () => ({ status: 200, body }) }) as unknown as HostClient;
+  const cfgHost = (id: string) => ({ id, name: id, url: "https://localhost:1", auth: { type: "secret", secret: "s" } }) as HostConfig;
+  const release = (version: string, checkedAt = new Date().toISOString()) => ({ version, checkedAt });
+  async function list(o: { version: string; latest?: { peek: () => any; get: () => Promise<any> }; localClients?: { version?: string }[]; nodes?: Record<string, HostClient> }) {
+    const nodes = o.nodes ?? {};
+    const local = new Hono();
+    local.get("/node", (c) => c.json({ clients: o.localClients ?? [] }));
+    const registry = HostRegistry.memory(Object.keys(nodes).map(cfgHost), new Map(Object.entries(nodes)));
+    const api = hostsApi({ cfg: { name: "box" } as unknown as Config, local, registry, version: o.version, ...(o.latest ? { latest: o.latest } : {}) });
+    const r = await api.request("/");
+    expect(r.status).toBe(200);
+    return (await r.json()) as any[];
+  }
+  const latest = (version: string) => ({ peek: () => release(version), get: async () => release(version) });
+
+  test("the hub older than the latest release is stale with that target", async () => {
+    const l = await list({ version: "0.8.2", latest: latest("0.8.3") });
+    expect(l[0]).toMatchObject({ id: "local", stale: true, target: "0.8.3" });
+  });
+  test("the hub at the latest release with an old client is stale", async () => {
+    const l = await list({ version: "0.8.3", latest: latest("0.8.3"), localClients: [{ version: "0.8.2" }] });
+    expect(l[0]).toMatchObject({ stale: true, target: "0.8.3" });
+  });
+  test("the hub at the latest release without old clients is not stale", async () => {
+    expect((await list({ version: "0.8.3", latest: latest("0.8.3") }))[0]).toMatchObject({ stale: false, target: "0.8.3" });
+  });
+  test("a dev hub is not stale and its nodes have no target", async () => {
+    const l = await list({ version: "dev", latest: latest("0.8.3"), nodes: { nas: fakeNode(nodeBody("0.1.0")) } });
+    expect(l[0].stale).toBe(false);
+    expect(l[1].stale).toBe(false);
+    expect("target" in l[1]).toBe(false);
+  });
+  test("a node older than the hub is stale with the hub's version as target", async () => {
+    const l = await list({ version: "0.8.3", nodes: { nas: fakeNode(nodeBody("0.8.1")) } });
+    expect(l[1]).toMatchObject({ id: "nas", stale: true, target: "0.8.3" });
+  });
+  test("a node with only an old client is stale", async () => {
+    const l = await list({ version: "0.8.3", nodes: { nas: fakeNode(nodeBody("0.8.3", [{ version: "0.8.0" }])) } });
+    expect(l[1]).toMatchObject({ stale: true, target: "0.8.3" });
+  });
+  test("a node at the hub's version with no clients is not stale", async () => {
+    const l = await list({ version: "0.8.3", nodes: { nas: fakeNode(nodeBody("0.8.3")) } });
+    expect(l[1]).toMatchObject({ stale: false, target: "0.8.3" });
+  });
+  test("an offline node is not stale and has no target", async () => {
+    const down = { call: async () => { throw new HostError("nas", "unreachable"); } } as unknown as HostClient;
+    const l = await list({ version: "0.8.3", nodes: { nas: down } });
+    expect(l[1]).toMatchObject({ status: "offline", stale: false });
+    expect("target" in l[1]).toBe(false);
+  });
+  test("a node with an unknown version is not stale", async () => {
+    const l = await list({ version: "0.8.3", nodes: { nas: fakeNode(nodeBody("dev", [{ version: "0.8.3+abc" }])) } });
+    expect(l[1].stale).toBe(false);
+  });
+  test("the list never waits on GitHub: get never resolves and peek is empty", async () => {
+    let calls = 0;
+    const l0 = Date.now();
+    const l = await list({ version: "0.8.2", latest: { peek: () => undefined, get: () => (calls++, new Promise(() => {})) } });
+    expect(Date.now() - l0).toBeLessThan(1_000);
+    expect(l[0].stale).toBe(false);
+    expect("target" in l[0]).toBe(false);
+    expect(calls).toBe(1);
+  });
+  test("a failing get leaves the list normal and starts no unhandled rejection", async () => {
+    const l = await list({ version: "0.8.2", latest: { peek: () => undefined, get: () => Promise.reject(new Error("offline")) } });
+    expect(l[0]).toMatchObject({ id: "local", stale: false });
+  });
+  test("a fresh cached release starts no refresh; an old one does", async () => {
+    let calls = 0;
+    const get = async () => (calls++, release("0.8.3"));
+    await list({ version: "0.8.2", latest: { peek: () => release("0.8.3"), get } });
+    expect(calls).toBe(0);
+    const l = await list({ version: "0.8.2", latest: { peek: () => release("0.8.3", new Date(Date.now() - 2 * 3_600_000).toISOString()), get } });
+    expect(calls).toBe(1);
+    expect(l[0]).toMatchObject({ stale: true, target: "0.8.3" });
+  });
+});
+
+describe("update record", () => {
+  const upPost = (app: any, p: string) => app.request(p, { method: "POST", headers: JSON_H, body: "{}" });
+  const hostCfg = (id: string): HostConfig => ({ id, name: id, url: "https://x", ca: "pem", auth: { type: "secret", secret: "s" } });
+  const newRecord = () => UpdateRecord.load({ stateDir: tmp() });
+  const nodeClient = (answers: { status: number; body: unknown }[], version = "1.0.0"): HostClient => ({
+    call: async (m: string, p: string) => (p === "/api/node" ? { status: 200, body: { ok: true, name: "nas", version } } : answers.shift()!),
+  }) as unknown as HostClient;
+  const entryOf = (r: UpdateRecord, h: string) => r.list().find((e) => e.host === h);
+
+  test("a node update writes running with the probed version, and the audit line is unchanged", async () => {
+    const record = await newRecord();
+    let during: unknown;
+    const client = { call: async (_m: string, p: string) => {
+      if (p === "/api/node") return { status: 200, body: { ok: true, name: "nas", version: "1.0.0" } };
+      during = entryOf(record, "nas");
+      return { status: 200, body: { status: "up-to-date", from: "1.0.0", clients: [] } };
+    } } as unknown as HostClient;
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    const r = await upPost(app, "/api/hosts/nas/update");
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ status: "up-to-date", from: "1.0.0", clients: [] });
+    expect(during).toMatchObject({ status: "running", from: "1.0.0", startedBy: "kir" });
+    expect(entryOf(record, "nas")).toMatchObject({ status: "up-to-date", startedBy: "kir" });
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=nas POST /api/hosts/nas/update 200"]);
+  });
+  test("local starts from the hub version and stays running after a restart answer", async () => {
+    const record = await newRecord();
+    const up = fakeUpdater();
+    const app = hub([], new Map(), { update: up.update, updates: record });
+    expect((await upPost(app, "/api/hosts/local/update")).status).toBe(202);
+    expect(entryOf(record, "local")).toMatchObject({ status: "running", from: VERSION, startedBy: "kir" });
+  });
+  test("a 409 that another update runs leaves the first entry as it is", async () => {
+    const record = await newRecord();
+    const first = { host: "nas", startedAt: new Date().toISOString(), startedBy: "ann", from: "0.9.0", status: "running" as const };
+    await record.set(first);
+    const client = nodeClient([{ status: 409, body: { error: "another update is running on this machine" } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(409);
+    expect(entryOf(record, "nas")).toEqual(first);
+  });
+  test("other error answers are recorded as failed with the error text", async () => {
+    for (const [status, error] of [[404, "not found"], [409, "this process is not the installed service"], [400, "release must be a version tag such as v1.2.3"], [500, "internal error"]] as const) {
+      const record = await newRecord();
+      const client = nodeClient([{ status, body: { error } }]);
+      const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+      expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(status);
+      expect(entryOf(record, "nas")).toMatchObject({ status: "failed", error });
+    }
+  });
+  test("a host error (502) is recorded as failed", async () => {
+    const record = await newRecord();
+    const client = { call: async (_m: string, p: string) => {
+      if (p === "/api/node") return { status: 200, body: { version: "1.0.0" } };
+      throw new HostError("nas", "unreachable");
+    } } as unknown as HostClient;
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(502);
+    expect(entryOf(record, "nas")).toMatchObject({ status: "failed" });
+    expect(entryOf(record, "nas")?.error).toBeTruthy();
+  });
+  test("a node that does not answer the probe starts from unknown", async () => {
+    const record = await newRecord();
+    const client = { call: async (_m: string, p: string) => {
+      if (p === "/api/node") throw new HostError("nas", "unreachable");
+      return { status: 200, body: { status: "up-to-date", from: "x", clients: [] } };
+    } } as unknown as HostClient;
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    await upPost(app, "/api/hosts/nas/update");
+    expect(entryOf(record, "nas")?.from).toBe("unknown");
+  });
+  test("an unknown host writes no entry, and without a record nothing is recorded", async () => {
+    const record = await newRecord();
+    const app = hub([], new Map(), { updates: record });
+    expect((await upPost(app, "/api/hosts/nope/update")).status).toBe(404);
+    expect(record.list()).toEqual([]);
+    const plain = hub([], new Map(), { update: fakeUpdater().update });
+    expect((await upPost(plain, "/api/hosts/local/update")).status).toBe(202);
+  });
+  test("a busy 409 while the probe is slow does not touch the entry, and the first update still settles", async () => {
+    const record = await newRecord();
+    const first = { host: "nas", startedAt: new Date().toISOString(), startedBy: "ann", from: "0.9.0", status: "running" as const };
+    await record.set(first);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const client = { call: async (_m: string, p: string) => {
+      if (p === "/api/node") return (await gate, { status: 200, body: { version: "1.0.0" } });
+      return { status: 409, body: { error: "another update is running on this machine" } };
+    } } as unknown as HostClient;
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    const pending = upPost(app, "/api/hosts/nas/update");
+    await record.set({ ...first, status: "updated", to: "1.0.0", finishedAt: new Date().toISOString() });
+    await record.set({ ...first });
+    release();
+    expect((await pending).status).toBe(409);
+    expect(entryOf(record, "nas")).toEqual(first);
+  });
+  test("a successful answer to a request that did not write leaves the other entry alone", async () => {
+    const record = await newRecord();
+    const first = { host: "nas", startedAt: new Date().toISOString(), startedBy: "ann", from: "0.9.0", status: "running" as const };
+    await record.set(first);
+    const client = nodeClient([{ status: 200, body: { status: "up-to-date", from: "1.0.0", clients: [] } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(200);
+    expect(entryOf(record, "nas")).toEqual(first);
+  });
+  test("a record that fails to write still lets the update run and answer", async () => {
+    const record = await newRecord();
+    (record as any).setIf = async () => { throw new Error("disk full"); };
+    const client = nodeClient([{ status: 200, body: { status: "up-to-date", from: "1.0.0", clients: [] } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    const r = await upPost(app, "/api/hosts/nas/update");
+    expect(r.status).toBe(200);
+    expect((await r.json()).status).toBe("up-to-date");
+  });
+  test("an answer with an unknown status is recorded as failed", async () => {
+    const record = await newRecord();
+    const client = nodeClient([{ status: 200, body: { status: "dancing" } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(200);
+    expect(entryOf(record, "nas")).toMatchObject({ status: "failed", error: "unexpected answer from the host" });
   });
 });

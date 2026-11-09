@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { HttpError } from "./instances";
 import { RELEASE_TAG_RE } from "./release";
+import { normalizeVersion } from "./versions";
 
 /**
  * Reading and validating request bodies. The local routes (`app.ts`), the routes that forward to a node
@@ -86,5 +87,5 @@ export function parseUpdateRequest(body: unknown): UpdateRequest {
   if (!isObject(body)) throw new HttpError(400, "body must be an object");
   if (body.release === undefined) return {};
   if (typeof body.release !== "string" || !RELEASE_TAG_RE.test(body.release)) throw new HttpError(400, "release must be a version tag such as v1.2.3");
-  return { release: body.release };
+  return { release: `v${normalizeVersion(body.release)}` };
 }

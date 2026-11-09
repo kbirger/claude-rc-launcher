@@ -4,6 +4,7 @@ import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
 import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
 import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
+import { createLatestRelease } from "./latest";
 import { loadOrCreateHubKey, type HubKey } from "./hubproof";
 import { HostRegistry } from "./hostregistry";
 import { bunRunner, InstanceService, type Instances } from "./instances";
@@ -12,9 +13,11 @@ import { resolveDirOwner } from "./owner";
 import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates, type ServeLimits } from "./serve";
-import { createServiceUpdater } from "./serviceupdate";
+import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { staticHandler } from "./static";
+import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
+import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
 
 export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits };
@@ -69,9 +72,18 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const cli = buildCliDeps(cfg, deps, makeClient, [hubKey.publicKey]);
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
   // One updater for the process: it holds the lock that refuses a second update while one runs.
-  const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
+  const updateEnv = realUpdateEnv(cfg);
+  const update = deps.update ?? createServiceUpdater(updateEnv);
+  const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  const latest = createLatestRelease({ fetch: globalThis.fetch });
+  // Fill the cache now, so the first host list after a start already knows whether the hub is stale. Startup does not wait for it.
+  void latest.get().catch(() => {});
+  const record = await UpdateRecord.load({ stateDir: cfg.stateDir });
+  // A hub update that restarted this process is settled before the first request.
+  await record.reconcileHub(VERSION);
+  await record.markStaleRunning();
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, updates: record, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);

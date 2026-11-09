@@ -68,7 +68,14 @@ describe("parseUpdateRequest", () => {
   test("accepts no release and a version tag, and drops unknown fields", () => {
     expect(parseUpdateRequest({})).toEqual({});
     expect(parseUpdateRequest({ release: "v1.2.3" })).toEqual({ release: "v1.2.3" });
-    expect(parseUpdateRequest({ release: "1.2.3-rc.1", url: "https://evil" })).toEqual({ release: "1.2.3-rc.1" });
+    expect(parseUpdateRequest({ release: "1.2.3-rc.1", url: "https://evil" })).toEqual({ release: "v1.2.3-rc.1" });
+  });
+  test("adds the v to a bare release tag", () => {
+    expect(parseUpdateRequest({ release: "0.8.3" })).toEqual({ release: "v0.8.3" });
+    expect(parseUpdateRequest({ release: "v0.8.3" })).toEqual({ release: "v0.8.3" });
+  });
+  test("still rejects a path-like release", () => {
+    expect(rejects(() => parseUpdateRequest({ release: "../x" }))).toEqual({ status: 400, message: "release must be a version tag such as v1.2.3" });
   });
   test.each([
     [[], "body must be an object"],

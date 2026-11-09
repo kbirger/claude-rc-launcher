@@ -118,7 +118,7 @@ export async function updateAll(o: { flags: Flags; hub: HubClient; out: (s: stri
   const progress = flags.json ? () => {} : out;
 
   const hosts = await hub.request<HostInfo[]>("GET", "/cli/api/hosts");
-  const local = hosts.find((h) => h.id === "local") ?? { id: "local", name: "local", status: "ok" as const };
+  const local = hosts.find((h) => h.id === "local") ?? { id: "local", name: "local", status: "ok" as const, stale: false };
   const rows: UpdateRow[] = [];
   for (const h of hosts.filter((h) => h.id !== "local")) rows.push(await updateHost(hub, sys, h, flags.release, progress));
   rows.push(await updateHost(hub, sys, local, flags.release, progress));

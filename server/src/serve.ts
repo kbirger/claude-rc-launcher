@@ -19,6 +19,9 @@ export const GITHUB_IDLE_TIMEOUT_SECONDS = 125;
 
 const GITHUB_PATH_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?github\/(?:repos|login)$/;
 
+/** The update event stream sends nothing between events, so it must not hit the idle limit. */
+const EVENTS_PATH_RE = /^\/api\/events$/;
+
 type Fetch = (req: Request, server: Server<undefined>) => Response | Promise<Response>;
 
 /** Wraps an app's fetch so that an update route (`POST`) may stay idle for `seconds`, and the GitHub repo list and login start for `githubSeconds`. */
@@ -29,7 +32,8 @@ export function withLongUpdates(
 ): Fetch {
   return (req, server) => {
     const { pathname } = new URL(req.url);
-    if (req.method === "POST" && UPDATE_PATH_RE.test(pathname)) server.timeout(req, seconds);
+    if (req.method === "GET" && EVENTS_PATH_RE.test(pathname)) server.timeout(req, 0);
+    else if (req.method === "POST" && UPDATE_PATH_RE.test(pathname)) server.timeout(req, seconds);
     else if (GITHUB_PATH_RE.test(pathname) && ((req.method === "GET" && pathname.endsWith("/repos")) || (req.method === "POST" && pathname.endsWith("/login")))) server.timeout(req, githubSeconds);
     return app.fetch(req, server);
   };

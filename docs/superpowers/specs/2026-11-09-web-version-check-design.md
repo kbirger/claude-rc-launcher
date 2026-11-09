@@ -76,7 +76,7 @@ The hub restarts when it updates. The page loses its connection for a short time
 
 ### Limits
 
-- The update runs only on a Linux system-scope service that was installed with the installer. Other machines (a Windows node, a user-scope service) answer 409. The banner shows the message that the machine gave and offers no retry.
+- The update runs only on a system-scope service that was installed with the installer (Linux, or a Windows node through its own updater). A user-scope service and a Linux machine whose service is not the installed one answer 409. The banner shows the message that the machine gave and offers no retry.
 - A node too old to have `POST /update` answers 404 through the hub. The banner says to run `claude-rc node update` on it once.
 - A release that changes how the hub talks to the nodes can leave an updated hub unable to reach the old nodes. The README already says to roll such a release out by hand. The banner must not hide that: when the hub update succeeds and a node then shows `offline`, the banner says so.
 

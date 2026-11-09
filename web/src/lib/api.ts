@@ -2,7 +2,18 @@ export type Instance = { id: string; path: string; name: string; state: string; 
 export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean; kind?: "git" | "github" }[] };
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 export type Me = { sub: string; name: string; email?: string; username?: string; logoutUrl?: string };
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: string; version?: string; clientVersion?: string; stale?: boolean; target?: string };
+export type UpdateEntry = {
+  host: string;
+  startedAt: string;
+  finishedAt?: string;
+  startedBy: string;
+  from: string;
+  to?: string;
+  status: "running" | "updated" | "up-to-date" | "failed" | "rolled back" | "unknown";
+  error?: string;
+};
+export type Latest = { version: string; checkedAt: string };
 
 export type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] };
 
@@ -72,3 +83,8 @@ export const githubLoginStart = (host: string, user?: string) =>
   request<{ id: string; code: string; url: string }>("POST", `${h(host)}/github/login`, user ? { user } : {});
 export const githubLoginStatus = (host: string, id: string) =>
   request<{ state: string; error?: string }>("GET", `${h(host)}/github/login/${encodeURIComponent(id)}`);
+export const getLatest = () => request<Latest>("GET", "/api/latest");
+export const getUpdates = () => request<UpdateEntry[]>("GET", "/api/updates");
+// The body carries at most the release; the hub picks the download itself.
+export const updateHost = (host: string, release?: string) =>
+  request<{ status: string; from: string; to?: string; clients?: unknown; error?: string }>("POST", `${h(host)}/update`, release ? { release } : {});

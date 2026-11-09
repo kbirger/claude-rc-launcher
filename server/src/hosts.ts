@@ -5,10 +5,30 @@ import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import type { LatestRelease } from "./latest";
+import { isKnownVersion, isStale, normalizeVersion, stalestVersion } from "./versions";
 import { VERSION } from "./version";
 import type { User } from "./userauth";
+import type { UpdateRecord } from "./updaterecord";
+import type { UpdateTracker } from "./updatetracker";
+import type { UpdateReport } from "./serviceupdate";
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string };
+/** The oldest known version among the `clients` of a node's `/node` body, or undefined. */
+function clientVersionOf(body: unknown): string | undefined {
+  if (!isObject(body) || !Array.isArray(body.clients)) return undefined;
+  return stalestVersion(body.clients.map((x) => (isObject(x) && typeof x.version === "string" ? x.version : undefined)));
+}
+
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; stale: boolean; target?: string };
+
+/** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
+const LATEST_MAX_AGE_MS = 3_600_000;
+
+/** `stale` and `target` of a host: stale only when `target` is known and the host or its clients are older. */
+function staleness(target: string | undefined, version: string | undefined, clientVersion: string | undefined): { stale: boolean; target?: string } {
+  if (target === undefined) return { stale: false };
+  return { stale: isStale(version, target) || isStale(clientVersion, target), target };
+}
 
 /** A node's update downloads two release assets and checks them before it answers. */
 export const UPDATE_TIMEOUT_MS = 180_000;
@@ -22,6 +42,7 @@ const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
+const REPORT_STATUSES: readonly string[] = ["restarting", "up-to-date", "clients-only", "failed"];
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /**
@@ -35,29 +56,49 @@ export function hostsApi(o: {
   registry: HostRegistry;
   probeTimeoutMs?: number;
   requestTimeoutMs?: number;
+  latest?: { peek(): LatestRelease | undefined; get(): Promise<LatestRelease> };
+  /** The hub's own version; only tests set it. */
+  version?: string;
+  /** Records each update: the record, its tracker and the call that reads the version of a node. */
+  updates?: { record: UpdateRecord; tracker: UpdateTracker; probe(host: string): Promise<string | undefined> };
 }): Hono {
   const { cfg, local } = o;
   const probeTimeoutMs = o.probeTimeoutMs ?? 3_000;
   const requestTimeoutMs = o.requestTimeoutMs ?? 10_000;
+  const hubVersion = o.version ?? VERSION;
   const app = new Hono();
 
   app.get("/", async (c) => {
+    // The host list never waits on GitHub: it reads what is cached and refreshes in the background.
+    const cachedLatest = o.latest?.peek();
+    if (o.latest && (!cachedLatest || Date.now() - Date.parse(cachedLatest.checkedAt) > LATEST_MAX_AGE_MS)) void o.latest.get().catch(() => {});
+    const hubTarget = isKnownVersion(hubVersion) ? hubVersion : undefined;
     const rest = await Promise.all(
       o.registry.list().map(async ({ host: h, client, source }): Promise<HostInfo> => {
         try {
           const r = await client.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
           if (r.status === 200) {
             const version = isObject(r.body) && typeof r.body.version === "string" ? r.body.version : undefined;
-            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}) };
+            const clientVersion = clientVersionOf(r.body);
+            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}), ...staleness(hubTarget, version, clientVersion) };
           }
-          return { id: h.id, name: h.name, status: "error", error: "bad response", source };
+          return { id: h.id, name: h.name, status: "error", error: "bad response", source, stale: false };
         } catch (e) {
-          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response", source };
-          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason, source };
+          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response", source, stale: false };
+          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason, source, stale: false };
         }
       }),
     );
-    return c.json([{ id: "local", name: cfg.name, status: "ok", version: VERSION } satisfies HostInfo, ...rest]);
+    let localClient: string | undefined;
+    try {
+      localClient = clientVersionOf(await (await local.request("/node")).json());
+    } catch (e) {
+      // The host list does not fail without the local client version.
+      console.error(`local client version failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const latestVersion = cachedLatest ? normalizeVersion(cachedLatest.version) : undefined;
+    const localTarget = isKnownVersion(latestVersion) ? latestVersion : undefined;
+    return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...staleness(localTarget, hubVersion, localClient) } satisfies HostInfo, ...rest]);
   });
 
   // Audit every state-changing request, local or remote.
@@ -70,6 +111,46 @@ export function hostsApi(o: {
       console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} ${c.req.method} ${pathname} ${c.res.status}`);
     }
   });
+
+  // Record each update of a machine. The answer to the browser is read from a clone and is never changed.
+  const tracking = o.updates;
+  if (tracking) {
+    app.post("/:host/update", async (c, next) => {
+      const host = c.req.param("host") ?? "";
+      if (host !== "local" && !(HOST_ID_RE.test(host) && o.registry.get(host))) return next();
+      const u = c.get("user" as never) as User | undefined;
+      const startedBy = u?.username ?? u?.sub ?? "unknown";
+      let wrote = false;
+      try {
+        const from = host === "local" ? hubVersion : ((await tracking.probe(host).catch(() => undefined)) ?? "unknown");
+        wrote = await tracking.tracker.begin(host, startedBy, from);
+      } catch (e) {
+        console.error(`update record failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      await next();
+      // Another update owns the entry (or nothing was written): this request records nothing.
+      if (!wrote) return;
+      try {
+        const res = c.res.clone();
+        let body: unknown;
+        try {
+          body = await res.json();
+        } catch {
+          body = undefined;
+        }
+        const errorText = isObject(body) && typeof body.error === "string" ? body.error : undefined;
+        if (res.status >= 400) {
+          await tracking.tracker.finish(host, { status: "failed", error: errorText ?? (res.statusText || `update answered ${res.status}`) });
+        } else if (isObject(body) && typeof body.status === "string" && REPORT_STATUSES.includes(body.status)) {
+          await tracking.tracker.finish(host, body as UpdateReport);
+        } else {
+          await tracking.tracker.finish(host, { status: "failed", error: "unexpected answer from the host" });
+        }
+      } catch (e) {
+        console.error(`update record failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+  }
 
   app.route("/local", local);
 
