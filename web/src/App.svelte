@@ -58,7 +58,7 @@
 <header>
   <h1>Claude RC</h1>
   {#if hosts.length > 1}
-    <HostPicker {hosts} {selected} onselect={select} />
+    <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} onselect={select} />
   {/if}
   <span class="user">{me?.name ?? ""}</span>
   <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>

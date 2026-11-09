@@ -1,8 +1,9 @@
 <script lang="ts">
   import { useQueryClient } from "@tanstack/svelte-query";
-  import { ApiError, updateHost, type HostInfo } from "./api";
+  import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
+  import { isRunning } from "./updatebanner";
 
-  let { hosts, selected, onselect }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void } = $props();
+  let { hosts, selected, onselect, updates = [] }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[] } = $props();
 
   const client = useQueryClient();
   let busy = $state(false);
@@ -11,7 +12,7 @@
   const shown = (v?: string) => (!v ? "unknown" : v === "dev" || v.includes("+") ? "local build" : v);
   const label = (h: HostInfo) => {
     if (h.status !== "ok") return `${h.name} (${h.error ?? h.status})`;
-    const versions = h.version || h.clientVersion ? ` (service ${shown(h.version)}, client ${h.clientVersion ? shown(h.clientVersion) : "none"})` : "";
+    const versions = ` (service ${shown(h.version)}, client ${h.clientVersion ? shown(h.clientVersion) : "no client"})`;
     return `${h.name}${versions}${h.stale ? " - out of date" : ""}`;
   };
 
@@ -36,14 +37,14 @@
 
 <label class="picker">
   <span class="sr">Host</span>
-  <select value={selected} onchange={(e) => onselect(e.currentTarget.value)} aria-label="Host">
+  <select value={selected} onchange={(e) => { error = ""; onselect(e.currentTarget.value); }} aria-label="Host">
     {#each hosts as h (h.id)}
       <option value={h.id} disabled={h.status !== "ok"}>{label(h)}</option>
     {/each}
   </select>
 </label>
 {#if canUpdate}
-  <button class="primary" disabled={busy} onclick={update}>Update</button>
+  <button class="primary" disabled={busy || isRunning(updates, current?.id ?? "")} onclick={update}>Update</button>
 {/if}
 {#if error}<span class="error" role="alert">{error}</span>{/if}
 

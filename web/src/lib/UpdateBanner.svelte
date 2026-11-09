@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
-  import { bannerKey, bannerModel, type BannerItem } from "./updatebanner";
+  import { bannerKey, bannerModel, isRunning, mergeCallErrors, pruneCallErrors, type BannerItem } from "./updatebanner";
 
   let { hosts, updates, latestError }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean } = $props();
 
@@ -19,12 +19,13 @@
   });
 
   const nameOf = (id: string) => hosts.find((h) => h.id === id)?.name ?? id;
-  const items = $derived<BannerItem[]>([
-    ...bannerModel({ hosts, updates, latestError, now }),
-    ...Object.entries(callErrors).map(([host, error]): BannerItem => ({ kind: "failed", host, error })),
-  ]);
+  const items = $derived<BannerItem[]>(mergeCallErrors(bannerModel({ hosts, updates, latestError, now }), callErrors));
+  $effect(() => {
+    const next = pruneCallErrors(callErrors, hosts, updates);
+    if (Object.keys(next).length !== Object.keys(callErrors).length) callErrors = next;
+  });
   const key = $derived(items.map(bannerKey).join("|"));
-  const actionable = $derived(items.some((i) => i.kind !== "latest-unknown" && i.kind !== "hub-local-build"));
+  const actionable = $derived(items.some((i) => i.kind !== "latest-unknown" && i.kind !== "hub-local-build" && i.kind !== "updating"));
 
   async function run(id: string, release?: string) {
     const name = nameOf(id);
@@ -53,7 +54,7 @@
   async function updateNodes(list: { id: string; target: string }[]) {
     busy = true;
     try {
-      for (const n of list) await run(n.id, n.target);
+      for (const n of list) if (!isRunning(updates, n.id)) await run(n.id, n.target);
     } finally {
       busy = false;
     }
@@ -63,11 +64,13 @@
 {#if items.length && dismissed !== key}
   <section class="banner" role={actionable ? "alert" : "status"} aria-label="Updates">
     <ul>
-      {#each items as item (bannerKey(item))}
-        <li class:warn={item.kind !== "latest-unknown" && item.kind !== "hub-local-build"}>
+      {#each items as item, i (bannerKey(item) + ":" + i)}
+        <li class:warn={item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating"}>
           {#if item.kind === "hub-update"}
             <span>The hub is out of date. Latest release: {item.target}.</span>
             <button class="primary" disabled={busy} onclick={updateHub}>Update hub</button>
+          {:else if item.kind === "updating"}
+            <span>Updating {item.name}...</span>
           {:else if item.kind === "node-update"}
             <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.</span>
             <button class="primary" disabled={busy} onclick={() => updateNodes(item.hosts)}>Update all nodes</button>
