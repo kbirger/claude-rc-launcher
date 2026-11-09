@@ -345,6 +345,9 @@ a parent folder is trusted.
 
 - The node makes sure that the folder is trusted before it starts an instance. An untrusted start never succeeds silently.
 - The web dialog shows untrusted folders in gray with a lock. You can still select one. The dialog asks before it trusts the folder.
+- The web dialog shows an icon before each folder name: a plain folder, a git repo with no GitHub remote, or a GitHub repo.
+  A repo whose remotes are all elsewhere, such as GitLab, shows the git icon. A worktree or a submodule shows the git icon.
+  The node reads only `.git/config` to decide. It ignores a symlinked `.git` or `config`: a symlinked `.git` shows the folder icon and a symlinked `config` shows the git icon. A root folder that is itself a repo always shows the folder icon, because the node does not classify roots. An older node sends no kind, so the dialog shows only the folder icon.
 - The CLI needs `--force` to add trust. Without it, the start fails.
 - The selected user runs the unit (`User=`) and owns the trust file. When the node writes the file, it keeps the file mode.
   It gives the file to the UID and GID of that user in `/etc/passwd`.
@@ -1022,6 +1025,8 @@ The command-line client uses the same handlers under `/cli/api` with `Authorizat
 - `addTrust: true` adds the folder to that user's trust file. The server never adds trust unless the request says so.
 - `user` on `GET /fs` selects the user whose trust is shown. Each directory entry always carries `trusted`, true or
   false. If `user` is omitted, `trusted` is for the configured `service_user`.
+  A directory entry below a root also carries `kind`, either `git` or `github`. A regular folder has no `kind`.
+  The roots-level listing has no `kind`.
 - `user` on `POST /fs/mkdir` is the user that owns the new folder. The rules are the same as for `user` on
   `POST /instances`. If `user` is omitted and the node runs as root, the folder belongs to the configured
   `service_user`. The roots do not follow `user`.

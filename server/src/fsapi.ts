@@ -3,8 +3,19 @@ import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
 import { adoptNewDir, type AdoptDir } from "./ownedir";
 import { PathError, resolveWithinRoots } from "./paths";
+import { repoKind, type RepoKind } from "./repokind";
 
-export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
+export type DirEntry = { name: string; path: string; trusted?: boolean; kind?: RepoKind };
+export type DirListing = { path: string; parent: string | null; dirs: DirEntry[] };
+
+/** Runs fn over items with at most `limit` calls in flight. */
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 
 export async function resolveChecked(input: string, roots: string[]): Promise<string> {
   try {
@@ -36,6 +47,7 @@ export async function listDirs(
   roots: string[],
   showHidden = false,
   trusted?: (absPath: string) => boolean,
+  classify: (absPath: string) => Promise<RepoKind | undefined> = repoKind,
 ): Promise<DirListing> {
   if (path === undefined) {
     const dirs = (await realRoots(roots)).map((r) => (trusted ? { name: r, path: r, trusted: trusted(r) } : { name: r, path: r }));
@@ -48,10 +60,14 @@ export async function listDirs(
   } catch {
     throw new HttpError(400, "cannot read directory");
   }
-  const dirs: { name: string; path: string; trusted?: boolean }[] = [];
+  const dirs: DirEntry[] = [];
+  const reals = new Map<DirEntry, string>();
   // Trust is judged on the real path, as `start` does, so a link shares its target's flag.
-  const entry = (name: string, full: string, real: string) =>
-    trusted ? { name, path: full, trusted: trusted(real) } : { name, path: full };
+  const entry = (name: string, full: string, real: string): DirEntry => {
+    const d: DirEntry = trusted ? { name, path: full, trusted: trusted(real) } : { name, path: full };
+    reals.set(d, real);
+    return d;
+  };
   for (const e of entries) {
     if (!showHidden && e.name.startsWith(".")) continue;
     const full = join(resolved, e.name);
@@ -66,6 +82,15 @@ export async function listDirs(
       }
     }
   }
+  // A failure for one entry leaves that entry without a kind. It never fails the listing.
+  await mapLimit(dirs, 16, async (d) => {
+    try {
+      const kind = await classify(reals.get(d) ?? d.path);
+      if (kind) d.kind = kind;
+    } catch {
+      // no kind
+    }
+  });
   dirs.sort((a, b) => {
     const x = a.name.toLowerCase();
     const y = b.name.toLowerCase();

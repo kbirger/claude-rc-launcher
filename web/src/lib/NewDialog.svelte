@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { trustStartArgs, type TrustPrompt } from "./trustprompt";
   import ClonePanel from "./ClonePanel.svelte";
+  import FolderIcon from "./FolderIcon.svelte";
+  import { iconKind } from "./foldericon";
   import { ApiError, browse, getNode, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "./api";
 
   let { host, onclose, onstarted }: { host: string; onclose: () => void; onstarted: () => void } = $props();
@@ -145,7 +147,7 @@
     {:else}
     <ul>
       {#each listing?.dirs ?? [] as d (d.path)}
-        <li><button class="dir" class:untrusted={d.trusted === false} onclick={() => go(d.path)}>{d.name}{#if d.trusted === false}<span class="lock" role="img" aria-label="not trusted">🔒</span>{/if}</button></li>
+        <li><button class="dir" class:untrusted={d.trusted === false} onclick={() => go(d.path)}><FolderIcon kind={iconKind(d)} /><span class="name">{d.name}</span>{#if d.trusted === false}<span class="lock" role="img" aria-label="not trusted">🔒</span>{/if}</button></li>
       {/each}
       {#if listing && listing.dirs.length === 0}<li class="muted pad">No subfolders</li>{/if}
     </ul>
@@ -181,10 +183,11 @@
   .bar { display: flex; gap: 8px; margin-bottom: 8px; }
   ul { list-style: none; margin: 0 0 8px; padding: 0; flex: 1; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
   li + li { border-top: 1px solid var(--border); }
-  .dir { width: 100%; text-align: left; border: none; border-radius: 0; background: transparent; overflow-wrap: anywhere; }
+  .dir { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; border: none; border-radius: 0; background: transparent; }
+  .name { min-width: 0; overflow-wrap: anywhere; }
   .runas { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
   .untrusted { color: var(--muted); }
-  .lock { margin-left: 6px; }
+  .lock { flex: none; }
   .trust { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--surface); }
   .trust p { margin: 0 0 8px; overflow-wrap: anywhere; }
   .pad { padding: 12px; }

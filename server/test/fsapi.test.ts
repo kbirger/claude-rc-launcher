@@ -177,3 +177,68 @@ describe("makeDir", () => {
     expect((await readdir(join(base, "outside"))).includes("evil")).toBe(false);
   });
 });
+
+describe("listDirs kind", () => {
+  let kroot: string;
+  beforeAll(async () => {
+    kroot = join(base, "kroot");
+    await mkdir(join(kroot, "plain"), { recursive: true });
+    await mkdir(join(kroot, "b-git", ".git"), { recursive: true });
+    await mkdir(join(kroot, "c-hub", ".git"), { recursive: true });
+    await writeFile(join(kroot, "c-hub", ".git", "config"), '[remote "origin"]\n\turl = https://github.com/o/r\n');
+    await mkdir(join(kroot, ".hidden-repo", ".git"), { recursive: true });
+  });
+  test("returns git, github and no kind for a regular folder, keeping order", async () => {
+    const r = await listDirs(kroot, [kroot]);
+    expect(r.dirs.map((d) => [d.name, d.kind])).toEqual([["b-git", "git"], ["c-hub", "github"], ["plain", undefined]]);
+    expect("kind" in r.dirs[2]).toBe(false);
+  });
+  test("keeps trusted next to kind", async () => {
+    const r = await listDirs(kroot, [kroot], false, (p) => p.endsWith("c-hub"));
+    expect(r.dirs.map((d) => [d.name, d.trusted, d.kind])).toEqual([
+      ["b-git", false, "git"],
+      ["c-hub", true, "github"],
+      ["plain", false, undefined],
+    ]);
+  });
+  test.skipIf(win)("a symlinked folder is classified by its real path", async () => {
+    await symlink(join(kroot, "c-hub"), join(kroot, "d-link"));
+    const r = await listDirs(kroot, [kroot]);
+    expect(r.dirs.find((d) => d.name === "d-link")?.kind).toBe("github");
+    const seen: string[] = [];
+    await listDirs(kroot, [kroot], false, undefined, async (p) => {
+      seen.push(p);
+      return undefined;
+    });
+    expect(seen).toContain(join(kroot, "c-hub"));
+    expect(seen.filter((p) => p.endsWith("c-hub")).length).toBe(2); // the folder and the link, both by real path
+    expect(seen.some((p) => p.endsWith("d-link"))).toBe(false);
+    await rm(join(kroot, "d-link"));
+  });
+  test("a failing classification does not fail the listing", async () => {
+    const r = await listDirs(kroot, [kroot], false, undefined, async (p) => {
+      if (p.endsWith("b-git")) throw new Error("boom");
+      return "git";
+    });
+    expect(r.dirs.map((d) => [d.name, d.kind])).toEqual([["b-git", undefined], ["c-hub", "git"], ["plain", "git"]]);
+    expect("kind" in r.dirs[0]).toBe(false);
+  });
+  test("classifies at most 16 entries at once and reaches 16", async () => {
+    const croot = join(base, "croot");
+    for (let i = 0; i < 40; i++) await mkdir(join(croot, `d${i}`), { recursive: true });
+    let cur = 0;
+    let max = 0;
+    await listDirs(croot, [croot], false, undefined, async () => {
+      cur++;
+      max = Math.max(max, cur);
+      await new Promise((r) => setTimeout(r, 5));
+      cur--;
+      return undefined;
+    });
+    expect(max).toBe(16);
+  });
+  test("the roots-level listing has no kind", async () => {
+    const r = await listDirs(undefined, [kroot]);
+    expect(r.dirs.every((d) => !("kind" in d))).toBe(true);
+  });
+});
