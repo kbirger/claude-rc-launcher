@@ -19,7 +19,10 @@ function clientVersionOf(body: unknown): string | undefined {
   return stalestVersion(body.clients.map((x) => (isObject(x) && typeof x.version === "string" ? x.version : undefined)));
 }
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; stale: boolean; target?: string };
+/** True when the `/node` body lists no client at all: `clients` is an empty array. */
+const noClientOf = (body: unknown): boolean => isObject(body) && Array.isArray(body.clients) && body.clients.length === 0;
+
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; noClient?: true; stale: boolean; target?: string };
 
 /** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
 const LATEST_MAX_AGE_MS = 3_600_000;
@@ -80,7 +83,7 @@ export function hostsApi(o: {
           if (r.status === 200) {
             const version = isObject(r.body) && typeof r.body.version === "string" ? r.body.version : undefined;
             const clientVersion = clientVersionOf(r.body);
-            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}), ...staleness(hubTarget, version, clientVersion) };
+            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}), ...(noClientOf(r.body) ? { noClient: true as const } : {}), ...staleness(hubTarget, version, clientVersion) };
           }
           return { id: h.id, name: h.name, status: "error", error: "bad response", source, stale: false };
         } catch (e) {
@@ -90,15 +93,18 @@ export function hostsApi(o: {
       }),
     );
     let localClient: string | undefined;
+    let localNoClient = false;
     try {
-      localClient = clientVersionOf(await (await local.request("/node")).json());
+      const localBody = await (await local.request("/node")).json();
+      localClient = clientVersionOf(localBody);
+      localNoClient = noClientOf(localBody);
     } catch (e) {
       // The host list does not fail without the local client version.
       console.error(`local client version failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     const latestVersion = cachedLatest ? normalizeVersion(cachedLatest.version) : undefined;
     const localTarget = isKnownVersion(latestVersion) ? latestVersion : undefined;
-    return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...staleness(localTarget, hubVersion, localClient) } satisfies HostInfo, ...rest]);
+    return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...(localNoClient ? { noClient: true as const } : {}), ...staleness(localTarget, hubVersion, localClient) } satisfies HostInfo, ...rest]);
   });
 
   // Audit every state-changing request, local or remote.

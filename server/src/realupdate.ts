@@ -1,7 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Config } from "./config";
+import { readRegisteredClients } from "./installs";
 import type { RunResult } from "./release";
 import type { UpdateEnv } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -24,6 +25,18 @@ function run(args: string[], opts?: { timeoutMs?: number }): RunResult {
     return { code: r.exitCode ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
   } catch (e) {
     return { code: 127, stdout: "", stderr: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** `lstat` for the registry reader: it does not follow symlinks, and a missing path is `undefined`. */
+function registryStat(p: string): { uid: number; mode: number } | undefined {
+  try {
+    const s = lstatSync(p);
+    return process.platform === "win32" ? { uid: 0, mode: 0o100644 } : { uid: s.uid, mode: s.mode };
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw e;
   }
 }
 
@@ -80,7 +93,9 @@ export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">): Updat
     exists: (p) => existsSync(p),
     readFile: (p) => readFileSync(p),
     realpath: (p) => realpathSync(p),
-    pathEnv: process.env.PATH ?? "",
+    pathEnv: process.env.PATH ?? process.env.Path ?? "",
+    programFiles: process.env.ProgramFiles,
+    registeredClients: () => readRegisteredClients({ platform: process.platform, env: process.env, readFile: (p) => readFileSync(p, "utf8"), stat: registryStat }, console.warn),
     homes: [cfg.serviceHome, "/root"],
     startWatchdog(script) {
       const unit = `claude-rc-update-${Date.now()}`;

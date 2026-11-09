@@ -15,6 +15,12 @@ describe("realUpdateEnv", () => {
     for (const f of ["fetch", "run", "writeTemp", "removeTemp", "exists", "readFile", "realpath", "startWatchdog"] as const) expect(typeof env[f]).toBe("function");
   });
 
+  test("registeredClients is empty when the registry file is missing", () => {
+    const env = realUpdateEnv({ serviceHome: "/root", scope: "system" } as Config);
+    expect(env.registeredClients?.()).toEqual([]);
+    expect(env.programFiles).toBe(process.env.ProgramFiles);
+  });
+
   test("run, writeTemp and removeTemp work on this machine", () => {
     const env = realUpdateEnv({ serviceHome: "/root", scope: "system" } as Config);
     expect(env.run(["sh", "-c", "echo hi; exit 3"])).toEqual({ code: 3, stdout: "hi\n", stderr: "" });

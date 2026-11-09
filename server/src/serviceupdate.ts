@@ -1,3 +1,4 @@
+import path from "node:path";
 import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256, type ReleaseIo, type RunResult } from "./release";
 
 /** The installed service. The updater works on this layout only. */
@@ -23,19 +24,15 @@ export type UpdateReport = {
 };
 
 /** What the updater needs from the machine. Commands in `run` already run as root, because the service does. */
-export interface UpdateEnv extends ReleaseIo {
+export interface UpdateEnv extends ReleaseIo, Omit<FindClientsInput, "registered"> {
   platform: string;
   arch: string;
   execPath: string;
   version: string;
   scope: "system" | "user";
-  exists(p: string): boolean;
   readFile(p: string): Uint8Array;
-  realpath(p: string): string;
-  /** The service's own PATH, for the `which claude-rc` lookup. */
-  pathEnv: string;
-  /** Homes whose `~/.local/bin/claude-rc` is a client copy: the service user's and root's. */
-  homes: string[];
+  /** The client paths in the registry file (`pathEnv` is the service's own PATH, `homes` the service user's and root's). */
+  registeredClients?(): string[];
   /** Like `run`, without blocking the event loop. When it is missing, callers fall back to `run`. */
   runAsync?(args: string[], opts?: { timeoutMs?: number }): Promise<RunResult>;
   /** Starts the watchdog script outside this service, so that it survives the restart. */
@@ -53,34 +50,72 @@ export class UpdateRefused extends Error {
   }
 }
 
+export type FindClientsInput = {
+  pathEnv: string;
+  homes: string[];
+  exists(p: string): boolean;
+  realpath(p: string): string;
+  /** `process.platform`. Anything but `win32` is scanned as POSIX. */
+  platform?: string;
+  /** Windows only: the Program Files directory, where the installer puts `claude-rc\\claude-rc.exe`. */
+  programFiles?: string;
+  /** Paths from the client registry. They come first, in the order given. */
+  registered?: string[];
+};
+
 /**
- * The client copies on this machine: the first `claude-rc` on `pathEnv` (as `which` finds it) and
- * `~/.local/bin/claude-rc` of each home. Each entry is a real path, and each real file is listed once.
+ * The client copies on this machine: the registered ones first, then the first `claude-rc` on `pathEnv` (as `which`
+ * finds it) and `~/.local/bin/claude-rc` of each home. On Windows the scan looks for `claude-rc.exe` on `pathEnv`
+ * (split on `;`) and in Program Files, and skips the homes. A registered path is listed as given. A scanned one is its
+ * real path. Each real file is listed once.
  */
-export function findClients(o: { pathEnv: string; homes: string[]; exists(p: string): boolean; realpath(p: string): string }): string[] {
-  const candidates: string[] = [];
-  const onPath = o.pathEnv
-    .split(":")
-    .filter((d) => d !== "")
-    .map((d) => `${d.replace(/\/+$/, "")}/${CLIENT}`)
-    .find((p) => o.exists(p));
-  if (onPath) candidates.push(onPath);
-  for (const h of o.homes) {
-    const p = `${h.replace(/\/+$/, "")}/.local/bin/${CLIENT}`;
-    if (o.exists(p)) candidates.push(p);
+export function findClients(o: FindClientsInput): string[] {
+  const win = o.platform === "win32";
+  const candidates: { path: string; real: boolean }[] = (o.registered ?? []).filter((p) => o.exists(p)).map((path) => ({ path, real: false }));
+  const scanned: string[] = [];
+  if (win) {
+    const onPath = o.pathEnv
+      .split(";")
+      .filter((d) => d !== "")
+      .map((d) => path.win32.join(d, `${CLIENT}.exe`))
+      .find((p) => o.exists(p));
+    if (onPath) scanned.push(onPath);
+    if (o.programFiles) {
+      const p = path.win32.join(o.programFiles, CLIENT, `${CLIENT}.exe`);
+      if (o.exists(p)) scanned.push(p);
+    }
+  } else {
+    const onPath = o.pathEnv
+      .split(":")
+      .filter((d) => d !== "")
+      .map((d) => `${d.replace(/\/+$/, "")}/${CLIENT}`)
+      .find((p) => o.exists(p));
+    if (onPath) scanned.push(onPath);
+    for (const h of o.homes) {
+      const p = `${h.replace(/\/+$/, "")}/.local/bin/${CLIENT}`;
+      if (o.exists(p)) scanned.push(p);
+    }
   }
+  for (const p of scanned) candidates.push({ path: p, real: true });
   const found: string[] = [];
+  const seen = new Set<string>();
   for (const c of candidates) {
     let real: string;
     try {
-      real = o.realpath(c);
+      real = o.realpath(c.path);
     } catch {
       continue;
     }
-    if (!found.includes(real)) found.push(real);
+    const key = win ? real.toLowerCase() : real;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push(c.real ? real : c.path);
   }
   return found;
 }
+
+/** The client copies of the machine `env` describes: the one place that passes the registry to `findClients`. */
+const clientsOf = (env: UpdateEnv): string[] => findClients({ ...env, registered: env.registeredClients?.() ?? [] });
 
 const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -169,7 +204,7 @@ export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: 
       // Run the body from a microtask, so that a synchronous throw is a rejection of `p` and `inflight` is set first.
       const gen = generation;
       const p: Promise<ClientVersion[]> = Promise.resolve().then(async () => {
-        const list = await Promise.all(findClients(env).map(ask));
+        const list = await Promise.all(clientsOf(env).map(ask));
         if (gen === generation) cached = { at: now(), list };
         return list;
       });
@@ -247,7 +282,7 @@ export function createServiceUpdater(env: UpdateEnv): { run(release?: string): P
     }
 
     // The client copies, before the service
-    const paths = findClients(env);
+    const paths = clientsOf(env);
     if (paths.length > 0) {
       let client: Uint8Array | undefined;
       let error = "";
