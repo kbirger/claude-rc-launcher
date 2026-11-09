@@ -592,8 +592,11 @@ The hub keeps the last update of each machine in `<state_dir>/updates.json`. The
 
 Keep these limits in mind:
 
-- Only a Linux system-scope service that the installer made can update from the UI. A Windows node and a user-scope
-  service answer 409, and the banner shows the message.
+- A user-scope service answers 409. A Linux machine whose service is not the installed one answers 409 too. The banner
+  shows the message. A Windows node updates like any other node.
+- A successful update shows no success message. The banner item disappears and the version text changes.
+- The watchdog can roll back a new hub binary that starts and then fails within its first 30 seconds. The record may
+  still say `updated` until the next update.
 - A node that is too old to have the update route needs `claude-rc node update` once.
 - Some releases change how the hub talks to the nodes. After such a release, the hub can lose the nodes. Roll such a
   release out by hand.
