@@ -23,7 +23,7 @@ async function fail(p: Promise<unknown>): Promise<HttpError> {
   try { await p; } catch (e) { if (e instanceof HttpError) return e; throw e; }
   throw new Error("did not throw");
 }
-const owner = (a: string[]) => (a[2].startsWith("--") ? "" : a[2]);
+const owner = (a: string[]) => (a.includes("--") ? a[a.indexOf("--") + 1] : "");
 
 describe("repos", () => {
   test("own account first, orgs alphabetical, repos newest first, empty orgs omitted", async () => {
@@ -46,7 +46,7 @@ describe("repos", () => {
     expect(calls[0].args).toEqual(["api", "user", "--jq", ".login"]);
     expect(calls[1].args).toEqual(["api", "user/orgs", "--paginate", "--jq", ".[].login"]);
     expect(calls.some((c) => c.args.join(" ") === "repo list --limit 200 --json nameWithOwner,isPrivate,pushedAt")).toBe(true);
-    expect(calls.some((c) => c.args.join(" ") === "repo list Alpha --limit 200 --json nameWithOwner,isPrivate,pushedAt")).toBe(true);
+    expect(calls.some((c) => c.args.join(" ") === "repo list --limit 200 --json nameWithOwner,isPrivate,pushedAt -- Alpha")).toBe(true);
     expect(calls[0].opts?.timeoutMs).toBe(60_000);
     expect(calls[0].opts?.env?.HOME).toBe("/home/u");
   });
@@ -125,5 +125,76 @@ describe("repos", () => {
     });
     await cloner.repos();
     expect(peak).toBe(4);
+  });
+
+  test("null or missing pushedAt is listed last and does not fail", async () => {
+    const raw = JSON.stringify([
+      { nameWithOwner: "me/empty", isPrivate: false, pushedAt: null },
+      { nameWithOwner: "me/none", isPrivate: false },
+      { nameWithOwner: "me/pushed", isPrivate: true, pushedAt: "2024-01-01T00:00:00Z" },
+    ]);
+    const { cloner } = setup((a) => (a[0] === "api" ? ok(a[1] === "user" ? "me" : "") : ok(raw)));
+    const out = await cloner.repos();
+    expect(out.groups[0].repos.map((r) => [r.name, r.pushedAt])).toEqual([
+      ["me/pushed", "2024-01-01T00:00:00Z"], ["me/empty", ""], ["me/none", ""],
+    ]);
+  });
+
+  test("other wrong shapes still give 502", async () => {
+    for (const bad of [
+      [{ nameWithOwner: "a/b", isPrivate: false, pushedAt: 5 }],
+      [{ isPrivate: false, pushedAt: null }],
+      [{ nameWithOwner: "a/b", isPrivate: "no", pushedAt: null }],
+    ]) {
+      const { cloner } = setup((a) => (a[0] === "api" ? ok(a[1] === "user" ? "me" : "") : ok(JSON.stringify(bad))));
+      expect((await fail(cloner.repos())).status).toBe(502);
+    }
+  });
+
+  test("unparsable dates sort last, stable by name", async () => {
+    const raw = list(["me/z", false, "garbage"], ["me/a", false, ""], ["me/good", false, "2020-01-01T00:00:00Z"], ["me/m", false, "nope"]);
+    const { cloner } = setup((a) => (a[0] === "api" ? ok(a[1] === "user" ? "me" : "") : ok(raw)));
+    const out = await cloner.repos();
+    expect(out.groups[0].repos.map((r) => r.name)).toEqual(["me/good", "me/a", "me/m", "me/z"]);
+  });
+
+  test("a login starting with a dash goes after --", async () => {
+    const { cloner, calls } = setup((a) => (a[0] === "api" ? ok(a[1] === "user" ? "me" : "-evil\n") : ok("[]")));
+    await cloner.repos();
+    expect(calls.some((c) => c.args.join(" ").endsWith("--json nameWithOwner,isPrivate,pushedAt -- -evil"))).toBe(true);
+  });
+
+  test("an org-level 409 is skipped and logged", async () => {
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { errs.push(a.join(" ")); };
+    try {
+      const { cloner } = setup((a) => {
+        if (a[0] === "api") return ok(a[1] === "user" ? "me" : "org1\n");
+        return owner(a) === "org1" ? { code: 4, stdout: "", stderr: "" } : ok(list(["me/r", false, "2024-01-01T00:00:00Z"]));
+      });
+      expect((await cloner.repos()).groups.map((g) => g.owner)).toEqual(["me"]);
+      expect(errs).toHaveLength(1);
+      expect(errs[0]).toContain("org1");
+    } finally { console.error = orig; }
+  });
+
+  test("a 409 from the own list or from user/orgs fails the whole call", async () => {
+    const own = setup((a) => (a[0] === "api" ? ok(a[1] === "user" ? "me" : "") : { code: 4, stdout: "", stderr: "" }));
+    expect((await fail(own.cloner.repos())).status).toBe(409);
+    const orgs = setup((a) => (a[0] === "api" && a[1] === "user/orgs" ? { code: 4, stdout: "", stderr: "" } : ok("me")));
+    expect((await fail(orgs.cloner.repos())).status).toBe(409);
+  });
+
+  test("an empty login gives 502", async () => {
+    const { cloner } = setup(() => ok("\n"));
+    const e = await fail(cloner.repos());
+    expect([e.status, e.message]).toEqual([502, "unexpected output from gh"]);
+  });
+
+  test("a timed-out gh gives 504", async () => {
+    const { cloner } = setup(() => ({ code: 143, stdout: "", stderr: "", timedOut: true }));
+    const e = await fail(cloner.repos());
+    expect([e.status, e.message]).toEqual([504, "gh timed out"]);
   });
 });

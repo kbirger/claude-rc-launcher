@@ -48,12 +48,18 @@ function parseRepoList(stdout: string): RepoGroup["repos"] {
   if (!Array.isArray(data)) throw new HttpError(502, "unexpected output from gh");
   const repos = data.map((d) => {
     const r = d as { nameWithOwner?: unknown; isPrivate?: unknown; pushedAt?: unknown } | null;
-    if (!r || typeof r.nameWithOwner !== "string" || typeof r.isPrivate !== "boolean" || typeof r.pushedAt !== "string") {
+    if (!r || typeof r.nameWithOwner !== "string" || typeof r.isPrivate !== "boolean" ||
+      (r.pushedAt != null && typeof r.pushedAt !== "string")) {
       throw new HttpError(502, "unexpected output from gh");
     }
-    return { name: r.nameWithOwner, private: r.isPrivate, pushedAt: r.pushedAt };
+    return { name: r.nameWithOwner, private: r.isPrivate, pushedAt: r.pushedAt ?? "" };
   });
-  return repos.sort((a, b) => Date.parse(b.pushedAt) - Date.parse(a.pushedAt));
+  const time = (s: string) => { const t = Date.parse(s); return Number.isNaN(t) ? -Infinity : t; };
+  return repos.sort((a, b) => {
+    const ta = time(a.pushedAt), tb = time(b.pushedAt);
+    if (ta !== tb) return ta < tb ? 1 : -1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
 }
 
 export function createCloner(deps: {
@@ -120,7 +126,7 @@ export function createCloner(deps: {
         return r.stdout;
       };
       const list = (owner?: string) =>
-        gh(["repo", "list", ...(owner ? [owner] : []), "--limit", "200", "--json", "nameWithOwner,isPrivate,pushedAt"]).then(parseRepoList);
+        gh(["repo", "list", "--limit", "200", "--json", "nameWithOwner,isPrivate,pushedAt", ...(owner ? ["--", owner] : [])]).then(parseRepoList);
       const login = (await gh(["api", "user", "--jq", ".login"])).trim();
       if (!login) throw new HttpError(502, "unexpected output from gh");
       const orgs = (await gh(["api", "user/orgs", "--paginate", "--jq", ".[].login"]))
