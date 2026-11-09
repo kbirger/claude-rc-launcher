@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../src/instances";
-import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest } from "../src/requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest } from "../src/requests";
 
 const rejects = (fn: () => unknown) => {
   try {
@@ -79,6 +79,38 @@ describe("parseUpdateRequest", () => {
     [{ release: "" }, "release must be a version tag such as v1.2.3"],
   ])("rejects %j with 400", (body, message) => {
     expect(rejects(() => parseUpdateRequest(body))).toEqual({ status: 400, message });
+  });
+});
+
+describe("parseCloneRequest", () => {
+  test("keeps only known fields", () => {
+    expect(parseCloneRequest({ repo: "a/b", parent: "/srv", extra: 1 })).toEqual({ repo: "a/b", parent: "/srv" });
+    expect(parseCloneRequest({ repo: "a/b", parent: "/srv", user: "alice" })).toEqual({ repo: "a/b", parent: "/srv", user: "alice" });
+  });
+  test.each([
+    [[], "body must be an object"],
+    [{ parent: "/srv" }, "repo and parent are required strings"],
+    [{ repo: 5, parent: "/srv" }, "repo and parent are required strings"],
+    [{ repo: "a/b" }, "repo and parent are required strings"],
+    [{ repo: "a/b", parent: 1 }, "repo and parent are required strings"],
+    [{ repo: "a/b", parent: "/srv", user: "" }, "user must not be empty"],
+    [{ repo: "a/b", parent: "/srv", user: 3 }, "user must be a string"],
+  ])("rejects %j with 400", (body, message) => {
+    expect(rejects(() => parseCloneRequest(body))).toEqual({ status: 400, message });
+  });
+});
+
+describe("parseLoginRequest", () => {
+  test("allows an empty object and keeps only user", () => {
+    expect(parseLoginRequest({})).toEqual({});
+    expect(parseLoginRequest({ user: "alice", x: 1 })).toEqual({ user: "alice" });
+  });
+  test.each([
+    [null, "body must be an object"],
+    ["x", "body must be an object"],
+    [{ user: "" }, "user must not be empty"],
+  ])("rejects %j with 400", (body, message) => {
+    expect(rejects(() => parseLoginRequest(body))).toEqual({ status: 400, message });
   });
 });
 

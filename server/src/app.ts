@@ -3,6 +3,7 @@ import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
 import { listDirs, makeDir, type DirOwner } from "./fsapi";
+import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
 import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
@@ -10,7 +11,7 @@ import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { HttpError, type Instances } from "./instances";
 import { PathError } from "./paths";
-import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
 
@@ -20,9 +21,10 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner };
 
 const ID_RE = /^[0-9a-f]{12}$/;
+const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 
 function csrf(cfg: Config): MiddlewareHandler {
   let allowed: string;
@@ -41,14 +43,14 @@ function csrf(cfg: Config): MiddlewareHandler {
   };
 }
 
-export type InstanceApiDeps = { cfg: Config; instances: Instances; dirOwner?: DirOwner; update?: Updater };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner };
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
-  const { cfg, instances, dirOwner, update } = deps;
+  const { cfg, instances, dirOwner, update, cloner } = deps;
   const r = new Hono();
 
-  r.get("/node", (c) => c.json({ ok: true, name: cfg.name, version: VERSION }));
+  r.get("/node", (c) => c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined }));
   r.post("/update", async (c) => {
     const { release } = parseUpdateRequest(await readJson(c));
     if (!update) throw new HttpError(501, "update is not available on this host");
@@ -102,6 +104,21 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     return c.json(await makeDir(body.parent, body.name, cfg.roots, owner), 201);
   });
 
+  if (cloner) {
+    r.post("/clone", async (c) => c.json(await cloner.clone(parseCloneRequest(await readJson(c))), 201));
+    r.get("/github/repos", async (c) => {
+      const user = c.req.query("user");
+      if (user === "") throw new HttpError(400, "user must not be empty");
+      return c.json(await cloner.repos(user));
+    });
+    r.post("/github/login", async (c) => c.json(await cloner.loginStart(parseLoginRequest(await readJson(c)).user), 202));
+    r.get("/github/login/:id", async (c) => {
+      const id = c.req.param("id");
+      if (!LOGIN_ID_RE.test(id)) throw new HttpError(400, "invalid login id");
+      return c.json(await cloner.loginStatus(id));
+    });
+  }
+
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;
 }
@@ -118,8 +135,8 @@ export function onError(err: Error, c: Context) {
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater }): Hono {
-  const { cfg, instances, auth, dirOwner, update } = deps;
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner }): Hono {
+  const { cfg, instances, auth, dirOwner, update, cloner } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));
 
@@ -137,14 +154,14 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
-  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}) }));
+  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}) }));
   app.route("/api", api);
   app.onError(onError);
   return app;
 }
 
 export function createApp(deps: Deps): Hono {
-  const { cfg, instances, userAuth, staticHandler, dirOwner, update } = deps;
+  const { cfg, instances, userAuth, staticHandler, dirOwner, update, cloner } = deps;
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -160,7 +177,7 @@ export function createApp(deps: Deps): Hono {
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}) }),
+      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}) }),
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,

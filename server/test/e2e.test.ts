@@ -196,7 +196,7 @@ describe("update end to end", () => {
     expect(nodeUp.releases).toEqual(["v9.9.9"]);
 
     const node2 = await (await fetch(hubUrl("/cli/api/hosts/pi/node"), { headers: cliH })).json();
-    expect(node2).toEqual({ ok: true, name: "pi", version: VERSION });
+    expect(node2).toEqual({ ok: true, name: "pi", version: VERSION, clone: false });
 
     const local = await quiet(() => fetch(hubUrl("/cli/api/hosts/local/update"), { method: "POST", headers: cliH, body: "{}" }));
     expect(local.status).toBe(202);

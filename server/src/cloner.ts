@@ -4,7 +4,8 @@ import { asUser, type IdentityFor } from "./asuser";
 import type { Config } from "./config";
 import { createLoginManager, type LoginClock, type LoginSpawner } from "./ghlogin";
 import { resolveChecked } from "./fsapi";
-import { HttpError } from "./instances";
+import type { DirOwner } from "./fsapi";
+import { bunRunner, HttpError, InstanceService, type Instances } from "./instances";
 import { parseRepoLink } from "./repolink";
 import type { Runner } from "./runner";
 
@@ -150,4 +151,17 @@ export function createCloner(deps: {
     loginStart: (user) => logins.start(user),
     loginStatus: (id) => logins.status(id),
   };
+}
+
+/**
+ * The cloner of a real service host, or `undefined` for any other `Instances` (the Windows backend has none).
+ * When the launcher runs as root for a non-root service user, the default identity is that user, not root.
+ */
+export function serviceCloner(cfg: Config, instances: Instances, dirOwner: DirOwner | undefined): Cloner | undefined {
+  if (!(instances instanceof InstanceService)) return undefined;
+  const identityFor: IdentityFor = async (u) => {
+    const id = await instances.identityFor(u);
+    return id.uid !== undefined ? id : { ...id, ...(dirOwner ?? {}) };
+  };
+  return createCloner({ cfg, run: bunRunner, identityFor });
 }

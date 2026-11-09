@@ -1,4 +1,5 @@
 import { createNodeApp, type Updater } from "./app";
+import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
 import { bunRunner, InstanceService, type Instances } from "./instances";
 import { nodeAuth } from "./nodeauth";
@@ -24,7 +25,8 @@ export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ por
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
-  const app = createNodeApp({ cfg, instances, auth, dirOwner, update });
+  const cloner = serviceCloner(cfg, instances, dirOwner);
+  const app = createNodeApp({ cfg, instances, auth, dirOwner, update, ...(cloner ? { cloner } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, maxRequestBodySize: 1024 * 1024, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`node "${cfg.name}" listening on https://${cfg.host}:${server.port}`);
   return { port: server.port!, fingerprint: cert.fingerprintSha256, stop: () => void server.stop(true) };

@@ -461,8 +461,8 @@ describe("node and update routes", () => {
   test("GET node returns name and version for local and for a node", async () => {
     const n = await startNode("nas");
     const app = hub([n.host], new Map([["nas", n.client]]));
-    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION });
-    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION });
+    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, clone: false });
+    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, clone: false });
   });
 
   test("the host list takes a node's version from its probe answer", async () => {

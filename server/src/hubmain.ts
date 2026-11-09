@@ -1,6 +1,7 @@
 import { createApp, type CliDeps, type Updater } from "./app";
 import { cliBearerAuth } from "./cliauth";
 import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
+import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
 import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
 import { loadOrCreateHubKey, type HubKey } from "./hubproof";
@@ -69,7 +70,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, ...(cli ? { cli } : {}) });
+  const cloner = serviceCloner(cfg, instances, dirOwner);
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);

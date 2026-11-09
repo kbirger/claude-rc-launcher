@@ -60,6 +60,25 @@ export function parseMkdirRequest(body: unknown): MkdirRequest {
   return { parent: body.parent, name: body.name, ...(user === undefined ? {} : { user }) };
 }
 
+export type CloneRequest = { repo: string; parent: string; user?: string };
+
+/** The body of `POST /clone`. Only the known fields are returned. */
+export function parseCloneRequest(body: unknown): CloneRequest {
+  if (!isObject(body)) throw new HttpError(400, "body must be an object");
+  if (typeof body.repo !== "string" || typeof body.parent !== "string") throw new HttpError(400, "repo and parent are required strings");
+  const user = optionalUser(body);
+  return { repo: body.repo, parent: body.parent, ...(user === undefined ? {} : { user }) };
+}
+
+export type LoginRequest = { user?: string };
+
+/** The body of `POST /github/login`. An empty object means no user. */
+export function parseLoginRequest(body: unknown): LoginRequest {
+  if (!isObject(body)) throw new HttpError(400, "body must be an object");
+  const user = optionalUser(body);
+  return user === undefined ? {} : { user };
+}
+
 export type UpdateRequest = { release?: string };
 
 /** The body of `POST /update`. Only `release` is kept, and only as a version tag: it becomes part of a download URL. */

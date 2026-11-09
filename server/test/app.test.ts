@@ -466,6 +466,71 @@ describe("POST /update on the local host", () => {
   test("GET /node returns ok, name and version", async () => {
     const r = await withUpdate().request("/api/hosts/local/node", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION });
+    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION, clone: false });
+  });
+});
+
+describe("clone routes", () => {
+  const calls: any[] = [];
+  const cloner: any = {
+    clone: async (i: any) => { calls.push(["clone", i]); return { path: "/r/x" }; },
+    repos: async (u?: string) => { calls.push(["repos", u]); return { groups: [{ owner: "o", repos: [] }] }; },
+    loginStart: async (u?: string) => { calls.push(["start", u]); return { id: "a".repeat(32), code: "ABCD-1234", url: "https://github.com/login/device" }; },
+    loginStatus: async (id: string) => {
+      if (id === "b".repeat(32)) throw new HttpError(404, "unknown login");
+      return { state: "failed", error: "denied" };
+    },
+  };
+  const withCloner = () => createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), cloner });
+  const base = "/api/hosts/local";
+  const req = (app: any, method: string, p: string, body?: unknown, headers = H()) =>
+    app.request(base + p, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+
+  test("each route returns the cloner's result", async () => {
+    calls.length = 0;
+    const app = withCloner();
+    const c = await req(app, "POST", "/clone", { repo: "o/x", parent: "/r", user: "alice", junk: 1 });
+    expect([c.status, await c.json()]).toEqual([201, { path: "/r/x" }]);
+    expect(calls[0]).toEqual(["clone", { repo: "o/x", parent: "/r", user: "alice" }]);
+    const g = await req(app, "GET", "/github/repos?user=alice");
+    expect([g.status, await g.json()]).toEqual([200, { groups: [{ owner: "o", repos: [] }] }]);
+    expect(calls[1]).toEqual(["repos", "alice"]);
+    const l = await req(app, "POST", "/github/login", { user: "alice" });
+    expect([l.status, await l.json()]).toEqual([202, { id: "a".repeat(32), code: "ABCD-1234", url: "https://github.com/login/device" }]);
+    expect(calls[2]).toEqual(["start", "alice"]);
+    const s = await req(app, "GET", `/github/login/${"a".repeat(32)}`);
+    expect([s.status, await s.json()]).toEqual([200, { state: "failed", error: "denied" }]);
+  });
+  test("login without a body object field means no user; repos without user passes undefined", async () => {
+    calls.length = 0;
+    const app = withCloner();
+    expect((await req(app, "POST", "/github/login", {})).status).toBe(202);
+    expect((await req(app, "GET", "/github/repos")).status).toBe(200);
+    expect(calls).toEqual([["start", undefined], ["repos", undefined]]);
+  });
+  test("validation and error cases", async () => {
+    const app = withCloner();
+    expect((await req(app, "POST", "/clone", { repo: "o/x" })).status).toBe(400);
+    const e = await req(app, "GET", "/github/repos?user=");
+    expect([e.status, await e.json()]).toEqual([400, { error: "user must not be empty" }]);
+    const bad = await req(app, "GET", "/github/login/xyz");
+    expect([bad.status, await bad.json()]).toEqual([400, { error: "invalid login id" }]);
+    expect((await req(app, "GET", `/github/login/${"b".repeat(32)}`)).status).toBe(404);
+    expect((await req(app, "POST", "/github/login", [])).status).toBe(400);
+  });
+  test("POST routes need a JSON content type", async () => {
+    const app = withCloner();
+    const h = { cookie, "content-type": "text/plain" };
+    expect((await req(app, "POST", "/clone", { repo: "o/x", parent: "/r" }, h)).status).toBe(415);
+    expect((await req(app, "POST", "/github/login", {}, h)).status).toBe(415);
+  });
+  test("/node reports clone: true", async () => {
+    expect((await (await req(withCloner(), "GET", "/node")).json()).clone).toBe(true);
+  });
+  test("without a cloner the routes are 404", async () => {
+    const app = mk().app;
+    for (const [m, p] of [["POST", "/clone"], ["GET", "/github/repos"], ["POST", "/github/login"], ["GET", `/github/login/${"a".repeat(32)}`]]) {
+      expect((await req(app, m!, p!, m === "POST" ? {} : undefined)).status).toBe(404);
+    }
   });
 });

@@ -42,7 +42,7 @@ describe("node app", () => {
   });
   test("/api/node and instance routes work with auth", async () => {
     const a = app();
-    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION });
+    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, clone: false });
     expect(await (await a.request("/api/instances", { headers: ok })).json()).toEqual([inst]);
     expect((await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) })).status).toBe(201);
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);
@@ -72,5 +72,49 @@ describe("node app", () => {
   test("GETs are not audited", async () => {
     await app().request("/api/instances", { headers: ok });
     expect(logged.filter((l) => l.startsWith("audit"))).toEqual([]);
+  });
+
+  describe("clone routes", () => {
+    const code = "WDJB-MJHT";
+    const cloner: any = {
+      clone: async () => ({ path: "/srv/x" }),
+      repos: async () => ({ groups: [] }),
+      loginStart: async () => ({ id: "a".repeat(32), code, url: "https://github.com/login/device" }),
+      loginStatus: async () => ({ state: "pending" }),
+    };
+    const capp = () => createNodeApp({ cfg, instances, auth, cloner });
+    test("need the bearer proof", async () => {
+      const a = capp();
+      expect((await a.request("/api/clone", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+      expect((await a.request("/api/github/repos")).status).toBe(401);
+      expect((await a.request(`/api/github/login/${"a".repeat(32)}`)).status).toBe(401);
+    });
+    test("work with auth, need JSON, and /node says clone: true", async () => {
+      const a = capp();
+      expect((await (await a.request("/api/node", { headers: ok })).json()).clone).toBe(true);
+      const c = await a.request("/api/clone", { method: "POST", headers: json, body: JSON.stringify({ repo: "o/x", parent: "/srv" }) });
+      expect([c.status, await c.json()]).toEqual([201, { path: "/srv/x" }]);
+      expect((await a.request("/api/clone", { method: "POST", headers: { ...ok, "content-type": "text/plain" }, body: "{}" })).status).toBe(415);
+      expect((await a.request("/api/github/repos", { headers: ok })).status).toBe(200);
+      expect((await (await a.request(`/api/github/login/${"a".repeat(32)}`, { headers: ok })).json())).toEqual({ state: "pending" });
+    });
+    test("each write is audited once and the audit line holds no login code", async () => {
+      const a = capp();
+      const r = await a.request("/api/github/login", { method: "POST", headers: json, body: "{}" });
+      expect(r.status).toBe(202);
+      expect((await r.json()).code).toBe(code);
+      await a.request("/api/clone", { method: "POST", headers: json, body: JSON.stringify({ repo: "o/x", parent: "/srv" }) });
+      await a.request("/api/github/repos", { headers: ok });
+      expect(logged).toEqual([
+        "audit caller=secret POST /api/github/login 202",
+        "audit caller=secret POST /api/clone 201",
+      ]);
+      expect(logged.join("\n")).not.toContain(code);
+    });
+    test("without a cloner the routes are 404", async () => {
+      const a = app();
+      expect((await a.request("/api/github/repos", { headers: ok })).status).toBe(404);
+      expect((await a.request("/api/clone", { method: "POST", headers: json, body: "{}" })).status).toBe(404);
+    });
   });
 });
