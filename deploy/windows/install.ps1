@@ -53,6 +53,8 @@ param(
   [string]$InstallDir = (Join-Path $env:ProgramFiles 'claude-rc-launcher'),
   [string]$ClientDir = (Join-Path $env:ProgramFiles 'claude-rc'),
   [string]$DataDir = (Join-Path $env:ProgramData 'claude-rc-launcher'),
+  # The folder of the client registry file `installs`, which the node reads to find installed clients.
+  [string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-launcher'),
   [string]$Account = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
   # The registry key that holds the machine PATH. Only tests give another one.
   [string]$PathRegistryKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
@@ -185,6 +187,33 @@ function Get-ClientSource([string]$TempDir) {
   $path
 }
 
+# Adds "client <path>" to the registry file the node reads (once). Only SYSTEM and Administrators may change the file,
+# because the node runs the programs it lists. The folder is by default the node's data folder, which holds the
+# certificate key: its permissions are left alone when it exists (Users get read access on the file, never on the folder).
+# A failure here is a warning: the client is installed and the node still finds it by scanning.
+function Register-Client([string]$ClientPath) {
+  $file = Join-Path $RegistryDir 'installs'
+  $line = "client $ClientPath"
+  try {
+    if (-not (Test-Path -LiteralPath $RegistryDir)) {
+      New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
+      & icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "icacls failed on $RegistryDir" }
+    }
+    $old = if (Test-Path -LiteralPath $file) { [IO.File]::ReadAllText($file) } else { '' }
+    $known = @($old -split "`n" | Where-Object { $_.TrimEnd("`r") -ieq $line }).Count -gt 0
+    if (-not $known) {
+      $sep = if ($old -and -not $old.EndsWith("`n")) { "`n" } else { '' }
+      [IO.File]::AppendAllText($file, "$sep$line`n", (New-Object Text.UTF8Encoding($false)))
+    }
+    & icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $file" }
+    if (-not $known) { Write-Host "Registered $ClientPath in $file" }
+  } catch {
+    Write-Warning "cannot write the client registry $file (the client is installed; the node still finds it by scanning): $($_.Exception.Message)"
+  }
+}
+
 # The client lives in a folder of its own. Only administrators can write there, so a program on the PATH cannot be
 # replaced by the service account (which can write to the node's install folder).
 function Install-ClientAndPath([string]$Source) {
@@ -194,6 +223,7 @@ function Install-ClientAndPath([string]$Source) {
     Copy-Item -LiteralPath $Source -Destination "$clientDest.new" -Force
     Move-Item -LiteralPath "$clientDest.new" -Destination $clientDest -Force
     Write-Host "Installed $clientDest"
+    Register-Client $clientDest
   } catch {
     Remove-Item -LiteralPath "$clientDest.new" -Force -ErrorAction SilentlyContinue
     Write-Warning "cannot install $clientDest (is claude-rc running? close it and run this script again): $($_.Exception.Message)"

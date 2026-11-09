@@ -88,3 +88,51 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
     expect(err).toContain("invalid release tag");
   });
 });
+
+// PowerShell is not available on every machine that runs these tests, so the registry step is also checked by text.
+describe("install.ps1: the client registry (text checks)", () => {
+  let script: string;
+  beforeEach(async () => { script = await readFile(SCRIPT, "utf8"); });
+
+  test("the registry folder is claude-rc-launcher under ProgramData, overridable with -RegistryDir", () => {
+    expect(script).toContain("[string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-launcher')");
+  });
+
+  test("the folder, when created, and the file are locked to SYSTEM and Administrators; Users only read the file", () => {
+    expect(script).toContain("& icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'");
+    expect(script).toContain("& icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R'");
+    expect(script).toContain("icacls failed on $RegistryDir");
+    expect(script).toContain("icacls failed on $file");
+  });
+
+  test("it adds `client <path>` once: a case-insensitive exact-line check, UTF-8 without BOM", () => {
+    expect(script).toContain('$line = "client $ClientPath"');
+    expect(script).toContain("$_.TrimEnd(\"`r\") -ieq $line");
+    expect(script).toContain("New-Object Text.UTF8Encoding($false)");
+  });
+
+  test("a failure is a warning, and the step lives in the client branch that -NoClient skips", () => {
+    expect(script).toContain("Write-Warning \"cannot write the client registry");
+    expect(script).toMatch(/Write-Host "Installed \$clientDest"\r?\n\s+Register-Client \$clientDest/);
+    expect(script).toContain("if (-not $NoClient) { Install-ClientAndPath $clientSource }");
+    expect(script.match(/Register-Client \$clientDest/g)!.length).toBe(1);
+  });
+});
+
+describe.skipIf(!windows)("install.ps1: the client registry (Windows)", () => {
+  test("writes `client <ClientDir>\\claude-rc.exe` once, even on a second run, and -NoClient writes nothing", async () => {
+    const reg = join(dir, "registry");
+    const clientDir = join(dir, "clients");
+    const client = join(dir, "claude-rc-windows-x64.exe");
+    await writeFile(client, "MZ client");
+    const run = (extra: string[]) => Bun.spawn(
+      ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", bin, "-WinSW", winsw, "-ClientBinary", client,
+        "-InstallDir", join(dir, "bin"), "-DataDir", join(dir, "data"), "-ClientDir", clientDir, "-RegistryDir", reg, "-PathRegistryKey", "HKCU:\\Software\\claude-rc-regtest", ...extra],
+      { stdout: "pipe", stderr: "pipe" }).exited;
+    expect(await run(["-NoClient"])).toBe(0);
+    expect(await Bun.file(join(reg, "installs")).exists()).toBe(false);
+    expect(await run([])).toBe(0);
+    expect(await run([])).toBe(0);
+    expect((await readFile(join(reg, "installs"), "utf8")).split(/\r?\n/).filter(Boolean)).toEqual([`client ${join(clientDir, "claude-rc.exe")}`]);
+  });
+});

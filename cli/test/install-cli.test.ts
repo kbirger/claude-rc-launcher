@@ -34,10 +34,13 @@ function world(o: { os?: string; arch?: string; sums?: (asset: string, body: str
   // curl -fsSL -o <file> <url>: copies release/<basename of url> and records the url.
   sh("curl", `echo "$@" >> ${log}\nout=""; url=""\nwhile [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; -*) shift;; *) url="$1"; shift;; esac; done\nf="${release}/$(basename "$url")"\n[ -f "$f" ] || { echo "curl: (22) 404 $url" >&2; exit 22; }\ncp "$f" "$out"`);
   sh("uname", `case "$1" in -s) echo "${o.os ?? "Linux"}";; -m) echo "${o.arch ?? "x86_64"}";; esac`);
+  // `id -u` answers FAKE_UID when set, so a test can act as root or as a normal user whatever user runs the tests.
+  sh("id", `[ "$1" = -u ] && [ -n "\${FAKE_UID:-}" ] && { echo "$FAKE_UID"; exit 0; }\nexec /usr/bin/id "$@"`);
   sh("sudo", `echo "sudo $*" >> ${log}\nexec "$@"`);
+  const registry = path.join(dir, "registry"); // stands in for /etc/claude-rc-launcher; no test touches the real one
   const run = (args: string[] = [], env: Record<string, string> = {}) =>
-    Bun.spawnSync(["sh", SCRIPT, ...args], { env: { PATH: `${shims}:/usr/bin:/bin`, HOME: dir, CLAUDE_RC_PREFIX: prefix, ...env }, stdin: null });
-  return { dir, prefix, run, urls: () => readFileSync(log, "utf8"), installed: () => path.join(prefix, "claude-rc") };
+    Bun.spawnSync(["sh", SCRIPT, ...args], { env: { PATH: `${shims}:/usr/bin:/bin`, HOME: dir, CLAUDE_RC_PREFIX: prefix, CLAUDE_RC_REGISTRY_DIR: registry, ...env }, stdin: null });
+  return { dir, prefix, registry, run, urls: () => readFileSync(log, "utf8"), installed: () => path.join(prefix, "claude-rc") };
 }
 const text = (b: Uint8Array | undefined) => new TextDecoder().decode(b ?? new Uint8Array());
 
@@ -123,6 +126,79 @@ describe("install-cli.sh", () => {
     const w = world();
     const r = w.run(["--version"]);
     expect(text(r.stdout)).toContain("ran: --version");
+  });
+});
+
+describe("install-cli.sh: the client registry", () => {
+  const mode = (p: string) => statSync(p).mode & 0o777;
+  const lines = (p: string) => readFileSync(p, "utf8").split("\n").filter(Boolean);
+
+  test("an install with root rights writes `client <path>` to a new registry: file 0644, directory 0755", () => {
+    const w = world();
+    const r = w.run([], { FAKE_UID: "0" });
+    expect(r.exitCode).toBe(0);
+    const file = path.join(w.registry, "installs");
+    expect(lines(file)).toEqual([`client ${w.installed()}`]);
+    expect(mode(file)).toBe(0o644);
+    expect(mode(w.registry)).toBe(0o755);
+  });
+
+  test("a second run adds no second line", () => {
+    const w = world();
+    expect(w.run([], { FAKE_UID: "0" }).exitCode).toBe(0);
+    expect(w.run([], { FAKE_UID: "0" }).exitCode).toBe(0);
+    expect(lines(path.join(w.registry, "installs"))).toEqual([`client ${w.installed()}`]);
+  });
+
+  test("an existing registry directory keeps its mode, an existing file keeps its other lines and its mode", () => {
+    const w = world();
+    mkdirSync(w.registry, { mode: 0o750 });
+    chmodSync(w.registry, 0o750);
+    const file = path.join(w.registry, "installs");
+    writeFileSync(file, "client /opt/other/claude-rc"); // no final newline
+    chmodSync(file, 0o600);
+    expect(w.run([], { FAKE_UID: "0" }).exitCode).toBe(0);
+    expect(mode(w.registry)).toBe(0o750);
+    expect(mode(file)).toBe(0o600);
+    expect(lines(file)).toEqual(["client /opt/other/claude-rc", `client ${w.installed()}`]);
+  });
+
+  test("a relative CLAUDE_RC_PREFIX is written as an absolute path", () => {
+    const w = world();
+    const r = w.run([], { FAKE_UID: "0", CLAUDE_RC_PREFIX: "rel-bin", PWD: w.dir });
+    expect(r.exitCode).toBe(0); // the script runs in the test's own directory: find the entry by its tail
+    const entry = lines(path.join(w.registry, "installs"))[0]!;
+    expect(entry.startsWith("client /")).toBe(true);
+    expect(entry.endsWith("/rel-bin/claude-rc")).toBe(true);
+    require("node:fs").rmSync(path.resolve("rel-bin"), { recursive: true, force: true });
+  });
+
+  test("an install in a user's own directory without root rights writes nothing", () => {
+    const w = world();
+    const r = w.run([], { FAKE_UID: "1000" });
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(w.registry)).toBe(false);
+    expect(w.urls()).not.toContain("sudo");
+  });
+
+  test("a registry that cannot be written is a warning, and the install still succeeds", () => {
+    const w = world();
+    writeFileSync(path.join(w.dir, "afile"), "x");
+    const r = w.run([], { FAKE_UID: "0", CLAUDE_RC_REGISTRY_DIR: path.join(w.dir, "afile", "sub") });
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(w.installed())).toBe(true);
+    expect(text(r.stderr)).toContain("warning");
+    expect(text(r.stderr)).toContain("installs");
+  });
+
+  test.skipIf(process.getuid?.() === 0)("an install that needs sudo writes the registry through sudo", () => {
+    const w = world();
+    mkdirSync(w.prefix, { mode: 0o555 });
+    chmodSync(w.prefix, 0o555);
+    const r = w.run(); // the fake sudo runs the command as the same user, so the prefix stays unwritable: only the logged sudo calls count
+    expect(w.urls()).toContain(`sudo grep`);
+    void r;
+    chmodSync(w.prefix, 0o755);
   });
 });
 
