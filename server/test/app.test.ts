@@ -321,16 +321,24 @@ describe("me, errors, static", () => {
 });
 
 describe("mkdir owner", () => {
-  test("dirOwner is forwarded to makeDir (chown attempted)", async () => {
-    if (process.platform === "win32") return; // chown is a no-op on Windows
-    // A non-root test process cannot chown to another uid; a failing chown must yield 500.
+  test("dirOwner is forwarded to makeDir (owner change attempted)", async () => {
     const f = fake();
-    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), dirOwner: { uid: 0x7ffffff0, gid: 0x7ffffff0 } });
+    const seen: unknown[][] = [];
+    const adoptDir = async (p: string, o: { uid: number; gid: number }) => { seen.push([p, o.uid, o.gid]); return { dev: 0, ino: 0 }; };
+    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), dirOwner: { uid: 0x7ffffff0, gid: 0x7ffffff0 }, adoptDir });
     const r = await app.request("/api/hosts/local/fs/mkdir", {
       method: "POST", headers: H(), body: JSON.stringify({ parent: root, name: "ownedtest" }),
     });
-    if (process.getuid?.() === 0) expect(r.status).toBe(201);
-    else expect(r.status).toBe(500);
+    expect(r.status).toBe(201);
+    expect(seen).toEqual([[join(root, "ownedtest"), 0x7ffffff0, 0x7ffffff0]]);
+  });
+  test("a failed owner change gives 500", async () => {
+    const f = fake();
+    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), dirOwner: { uid: 1, gid: 1 }, adoptDir: async () => { throw new Error("EPERM"); } });
+    const r = await app.request("/api/hosts/local/fs/mkdir", {
+      method: "POST", headers: H(), body: JSON.stringify({ parent: root, name: "ownedfail" }),
+    });
+    expect(r.status).toBe(500);
   });
 });
 

@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { Stats } from "node:fs";
-import { lstat, mkdtemp, mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readdir, realpath, rename, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCloner } from "../src/cloner";
 import type { Config } from "../src/config";
 import { HttpError } from "../src/instances";
+import { adoptNewDir, type AdoptDir, DirChanged } from "../src/ownedir";
 import type { RunOptions, RunResult } from "../src/runner";
 
 let base: string;
@@ -20,11 +20,10 @@ function setup(
   res: RunResult | ((target: string) => Promise<RunResult>),
   identity: Ident = id,
   chownOverride?: () => Promise<void>,
-  lstatOverride?: (p: string) => Promise<Stats>,
+  adoptOverride?: AdoptDir,
 ) {
   const calls: Call[] = [];
   const chowns: [string, number, number][] = [];
-  const owners = new Map<string, [number, number]>();
   const cloner = createCloner({
     cfg: { roots: [root] } as unknown as Config,
     run: async (cmd, args, opts) => {
@@ -35,13 +34,12 @@ function setup(
       return typeof res === "function" ? res(args[args.length - 1]) : res;
     },
     identityFor: async () => identity,
-    lchownFn: async (p, u, g) => { chowns.push([p, u, g]); await chownOverride?.(); owners.set(p, [u, g]); },
-    // A fake lchown changes nothing on disk, so report the owner it was asked to set.
-    lstatFn: lstatOverride ?? (async (p) => {
+    // A fake adoptDir changes no owner on disk; it records the call and names the inode at the path.
+    adoptDir: adoptOverride ?? (async (p, o) => {
+      chowns.push([p, o.uid, o.gid]);
+      await chownOverride?.();
       const st = await lstat(p);
-      const o = owners.get(p);
-      if (o) Object.assign(st, { uid: o[0], gid: o[1] });
-      return st;
+      return { dev: st.dev, ino: st.ino };
     }),
   });
   const gitCalls = () => calls.filter((c) => inner(c.cmd, c.args).cmd === "git");
@@ -245,39 +243,69 @@ describe("clone", () => {
 
   test("chown failure gives 500 at once, removes the folder, never runs git", async () => {
     const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, async () => { throw new Error("EPERM"); });
-    expect((await status(cloner.cloneStart({ repo: "octo/chownfail", parent: root })))[0]).toBe(500);
+    expect(await status(cloner.cloneStart({ repo: "octo/chownfail", parent: root }))).toEqual([500, "cannot set directory owner"]);
     expect(calls).toHaveLength(0);
     expect(await exists(join(root, "chownfail"))).toBe(false);
   });
 
-  test("the folder is owned with lchown, which never follows a symlink", async () => {
-    // The real default must be lchown: a swapped-in symlink must not pass ownership of its target.
+  test("the owner is set through an open handle (adoptNewDir), never by path", async () => {
+    // The real default must be the fd-based adoptNewDir: a path-based chown can be redirected by a rename.
     const src = await Bun.file(join(import.meta.dir, "../src/cloner.ts")).text();
-    expect(src).toMatch(/\blchown\b/);
-    expect(src).not.toMatch(/\bchown\b(?!Fn)/);
+    expect(src).toMatch(/import \{[^}]*\badoptNewDir\b[^}]*\} from "\.\/ownedir"/);
+    expect(src).not.toMatch(/\bl?chown\b/);
+    expect(src).not.toMatch(/\blstatFn\b/);
   });
 
-  test("a folder swapped for a symlink before git runs gives 500, runs no git and deletes nothing", async () => {
+  test("a folder swapped for a symlink before the owner is set gives 500, runs no git and deletes nothing", async () => {
     const victim = join(base, "victim");
     await mkdir(victim, { recursive: true });
     await writeFile(join(victim, "keep"), "x");
     const target = join(root, "swapped");
-    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, async () => {
-      // The instance user renames the new folder and puts a symlink in its place.
+    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, undefined, async (p, o) => {
+      // The instance user renames the new folder and puts a symlink in its place; then the real adoptNewDir runs.
       await rm(target, { recursive: true });
       await symlink(victim, target);
+      return adoptNewDir(p, o);
     });
     expect(await status(cloner.cloneStart({ repo: "octo/swapped", parent: root }))).toEqual([500, "clone folder changed"]);
     expect(calls).toHaveLength(0);
     expect(await exists(join(victim, "keep"))).toBe(true);
+    expect((await lstat(victim)).uid).toBe(process.getuid!());
     await rm(target, { force: true });
   });
 
+  test("a non-empty folder renamed onto the target before the owner is set gives 500, keeps its files and runs no git", async () => {
+    const foreign = join(root, "foreign");
+    await mkdir(foreign);
+    await writeFile(join(foreign, "keep"), "x");
+    const target = join(root, "renamed");
+    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, undefined, async (p, o) => {
+      await rmdir(target);
+      await rename(foreign, target);
+      return adoptNewDir(p, o);
+    });
+    expect(await status(cloner.cloneStart({ repo: "octo/renamed", parent: root }))).toEqual([500, "clone folder changed"]);
+    expect(calls).toHaveLength(0);
+    expect(await readdir(target)).toEqual(["keep"]);
+    expect((await lstat(target)).uid).toBe(process.getuid!());
+    await rm(target, { recursive: true });
+  });
+
   test("a folder with the wrong owner before git runs gives 500 and runs no git", async () => {
-    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, undefined, async (p) => Object.assign(await lstat(p), { uid: 4242, gid: 4242 }));
+    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, undefined, async () => { throw new DirChanged("owned by 4242"); });
     expect(await status(cloner.cloneStart({ repo: "octo/wrongowner", parent: root }))).toEqual([500, "clone folder changed"]);
     expect(calls).toHaveLength(0);
     expect(await exists(join(root, "wrongowner"))).toBe(false);
+  });
+
+  test("a folder that is no longer the adopted inode after the owner change gives 500 and runs no git", async () => {
+    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, undefined, async (p) => {
+      const st = await lstat(p);
+      return { dev: st.dev, ino: st.ino + 1 };
+    });
+    expect(await status(cloner.cloneStart({ repo: "octo/otherinode", parent: root }))).toEqual([500, "clone folder changed"]);
+    expect(calls).toHaveLength(0);
+    expect(await exists(join(root, "otherinode"))).toBe(false);
   });
 
   test("with a uid, a failed clone is removed by rm -rf run as the user, then a non-recursive rmdir", async () => {
@@ -306,8 +334,7 @@ describe("clone", () => {
         return { code: 128, stdout: "", stderr: "fatal: boom\n" };
       },
       identityFor: async () => ({ ...id, uid: 1001, gid: 1002 }),
-      lchownFn: async () => {},
-      lstatFn: async (p) => Object.assign(await lstat(p), { uid: 1001, gid: 1002 }),
+      adoptDir: async (p) => { const st = await lstat(p); return { dev: st.dev, ino: st.ino }; },
     });
     const r = await runClone(cloner, { repo: "octo/stays", parent: root });
     expect(r.state).toBe("failed");

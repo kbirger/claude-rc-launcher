@@ -1,4 +1,4 @@
-import { lchown, lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { asUser, type IdentityFor } from "./asuser";
 import type { Config } from "./config";
@@ -6,6 +6,7 @@ import { createLoginManager, type LoginClock, type LoginSpawner } from "./ghlogi
 import { resolveChecked } from "./fsapi";
 import type { DirOwner } from "./fsapi";
 import { bunRunner, HttpError, InstanceService, type Instances } from "./instances";
+import { adoptNewDir, type AdoptDir, type AdoptedDir, DirChanged } from "./ownedir";
 import { parseRepoLink } from "./repolink";
 import type { Runner } from "./runner";
 
@@ -77,15 +78,13 @@ export function createCloner(deps: {
   identityFor: IdentityFor;
   spawnLogin?: LoginSpawner;
   loginClock?: LoginClock;
-  /** Sets the owner of the new folder. It must not follow a symlink (the default is `lchown`). */
-  lchownFn?: (path: string, uid: number, gid: number) => Promise<void>;
-  lstatFn?: (path: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; uid: number; gid: number }>;
+  /** Gives the new folder to the user through an open handle, after checking it (the default is `adoptNewDir`). */
+  adoptDir?: AdoptDir;
   /** Milliseconds, for the repo list deadline. */
   now?: () => number;
 }): Cloner {
   const now = deps.now ?? Date.now;
-  const lchownFn = deps.lchownFn ?? lchown;
-  const lstatFn = deps.lstatFn ?? lstat;
+  const adoptDir = deps.adoptDir ?? adoptNewDir;
   const logins = createLoginManager({ run: deps.run, identityFor: deps.identityFor, spawn: deps.spawnLogin, clock: deps.loginClock, missingTool });
   const clock: LoginClock = deps.loginClock ?? { setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t as ReturnType<typeof setTimeout>) };
   const jobs = new Map<string, CloneJob>();
@@ -137,20 +136,24 @@ export function createCloner(deps: {
         throw new HttpError(500, msg);
       };
       const hasUid = id.uid !== undefined && id.gid !== undefined;
+      // The instance user can write to the parent, so it can swap the folder before the owner change.
+      // adoptDir checks the folder through an open handle and changes the owner through that same handle.
+      let adopted: AdoptedDir | undefined;
       if (hasUid) {
         try {
-          await lchownFn(target, id.uid!, id.gid!);
+          adopted = await adoptDir(target, { uid: id.uid!, gid: id.gid! });
         } catch (e) {
+          if (e instanceof DirChanged) await refuse("clone folder changed", e);
           await refuse("cannot set directory owner", e);
         }
       }
-      // The instance user can write to the parent, so it can swap the folder. Check it before git runs.
+      // A second check by path before git runs: the path must still name that folder.
       let ok = false;
       try {
-        const st = await lstatFn(target);
-        const uid = hasUid ? id.uid : process.getuid?.();
-        const gid = hasUid ? id.gid : undefined;
-        ok = st.isDirectory() && !st.isSymbolicLink() && (uid === undefined || st.uid === uid) && (gid === undefined || st.gid === gid);
+        const st = await lstat(target);
+        const uid = process.getuid?.();
+        ok = st.isDirectory() && !st.isSymbolicLink() &&
+          (adopted ? st.dev === adopted.dev && st.ino === adopted.ino : uid === undefined || st.uid === uid);
       } catch {}
       if (!ok) await refuse("clone folder changed");
       const jobId = crypto.randomUUID().replaceAll("-", "");

@@ -1,6 +1,7 @@
-import { lchown, mkdir, readdir, realpath, rmdir } from "node:fs/promises";
+import { mkdir, readdir, realpath, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
+import { adoptNewDir, type AdoptDir } from "./ownedir";
 import { PathError, resolveWithinRoots } from "./paths";
 
 export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
@@ -96,8 +97,9 @@ export async function makeDir(
   name: string,
   roots: string[],
   owner?: DirOwner,
-  // lchown never follows a symlink, so a folder swapped for a link cannot pass the owner to its target.
-  chownFn: (path: string, uid: number, gid: number) => Promise<void> = lchown,
+  // Checks the new folder through an open handle and changes the owner through it, so a symlink, file or
+  // foreign folder renamed onto the name is refused instead of given to the user.
+  adoptDir: AdoptDir = adoptNewDir,
 ): Promise<{ path: string }> {
   if (!isValidDirName(name)) {
     throw new HttpError(400, "invalid directory name");
@@ -115,10 +117,12 @@ export async function makeDir(
   await resolveChecked(real, roots);
   if (owner) {
     try {
-      await chownFn(real, owner.uid, owner.gid);
+      // The name itself, not its real path: the open must not follow a symlink put in its place.
+      await adoptDir(target, owner);
     } catch (e) {
-      console.error("chown of new directory failed:", e);
-      await rmdir(real).catch(() => {});
+      console.error("owner change of new directory failed:", e);
+      // Not recursive, and by the name: a symlink there makes rmdir fail instead of removing its target.
+      await rmdir(target).catch(() => {});
       throw new HttpError(500, "cannot set directory owner");
     }
   }

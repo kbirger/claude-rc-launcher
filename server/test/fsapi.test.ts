@@ -1,9 +1,10 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { mkdtemp, mkdir, writeFile, symlink, realpath, rm, readdir } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, writeFile, symlink, realpath, rename, rm, rmdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpError } from "../src/instances";
 import { listDirs, makeDir } from "../src/fsapi";
+import { adoptNewDir, DirChanged } from "../src/ownedir";
 
 const win = process.platform === "win32";
 let base: string;
@@ -119,19 +120,54 @@ describe("makeDir", () => {
       expect((await readdir(root)).sort()).toEqual(beforeRoot);
     });
   }
-  test("chown called with created path and owner; none without owner", async () => {
+  const adopted = async (p: string) => { const st = await lstat(p); return { dev: st.dev, ino: st.ino }; };
+  test("adoptDir called with created path and owner; none without owner", async () => {
     const calls: unknown[][] = [];
     const owner = { uid: 1234, gid: 5678 };
-    const r = await makeDir(root, "owned", roots, owner, async (p, u, g) => { calls.push([p, u, g]); });
+    const r = await makeDir(root, "owned", roots, owner, async (p, o) => { calls.push([p, o.uid, o.gid]); return adopted(p); });
     expect(calls).toEqual([[r.path, 1234, 5678]]);
     const none: unknown[][] = [];
-    await makeDir(root, "unowned", roots, undefined, async (p, u, g) => { none.push([p, u, g]); });
+    await makeDir(root, "unowned", roots, undefined, async (p, o) => { none.push([p, o.uid, o.gid]); return adopted(p); });
     expect(none).toEqual([]);
   });
-  test("chown failure removes the directory and returns 500", async () => {
-    const st = await status(makeDir(root, "willfail", roots, { uid: 1, gid: 1 }, async () => { throw new Error("EPERM"); }));
-    expect(st).toBe(500);
+  test("owner change failure removes the directory and returns 500", async () => {
+    const e = await makeDir(root, "willfail", roots, { uid: 1, gid: 1 }, async () => { throw new Error("EPERM"); }).catch((x) => x);
+    expect([e.status, e.message]).toEqual([500, "cannot set directory owner"]);
     expect((await readdir(root)).includes("willfail")).toBe(false);
+  });
+  test("a changed folder (DirChanged) gives the same 500 and removes the empty folder", async () => {
+    const e = await makeDir(root, "changed", roots, { uid: 1, gid: 1 }, async () => { throw new DirChanged("swapped"); }).catch((x) => x);
+    expect([e.status, e.message]).toEqual([500, "cannot set directory owner"]);
+    expect((await readdir(root)).includes("changed")).toBe(false);
+  });
+  test.skipIf(win)("a non-empty folder renamed onto the name before the owner is set: 500, files kept (real adoptNewDir)", async () => {
+    await mkdir(join(root, "other"));
+    await writeFile(join(root, "other", "keep"), "x");
+    const target = join(root, "raced");
+    const e = await makeDir(root, "raced", roots, { uid: process.getuid!(), gid: process.getgid!() }, async (p, o) => {
+      await rmdir(target);
+      await rename(join(root, "other"), target);
+      return adoptNewDir(p, o);
+    }).catch((x) => x);
+    expect([e.status, e.message]).toEqual([500, "cannot set directory owner"]);
+    expect(await readdir(target)).toEqual(["keep"]);
+    await rm(target, { recursive: true });
+  });
+  test.skipIf(win)("a symlink swapped onto the name before the owner is set: 500, link target untouched (real adoptNewDir)", async () => {
+    const target = join(root, "linked");
+    const e = await makeDir(root, "linked", roots, { uid: process.getuid!(), gid: process.getgid!() }, async (p, o) => {
+      await rmdir(target);
+      await symlink(join(base, "outside", "secret"), target);
+      return adoptNewDir(p, o);
+    }).catch((x) => x);
+    expect([e.status, e.message]).toEqual([500, "cannot set directory owner"]);
+    expect(await realpath(join(base, "outside", "secret"))).toBe(join(base, "outside", "secret"));
+    await rm(target);
+  });
+  test("the default owner change is the fd-based adoptNewDir, never a path chown", async () => {
+    const src = await Bun.file(join(import.meta.dir, "../src/fsapi.ts")).text();
+    expect(src).toMatch(/import \{[^}]*\badoptNewDir\b[^}]*\} from "\.\/ownedir"/);
+    expect(src).not.toMatch(/\bl?chown\b/);
   });
   test("existing name -> 409", async () => {
     expect(await status(makeDir(root, "beta", roots))).toBe(409);

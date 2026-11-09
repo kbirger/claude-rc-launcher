@@ -5,6 +5,7 @@ import { cliConfigRoute } from "./cliauth";
 import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
+import type { AdoptDir } from "./ownedir";
 import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
 import type { HostClient, HostConfig } from "./hostclient";
@@ -21,7 +22,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -43,11 +44,12 @@ function csrf(cfg: Config): MiddlewareHandler {
   };
 }
 
-export type InstanceApiDeps = { cfg: Config; instances: Instances; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner };
+/** `adoptDir` replaces the owner change of a new folder (tests). */
+export type InstanceApiDeps = { cfg: Config; instances: Instances; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
-  const { cfg, instances, dirOwner, update, cloner } = deps;
+  const { cfg, instances, dirOwner, update, cloner, adoptDir } = deps;
   const r = new Hono();
 
   r.get("/node", (c) => c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined }));
@@ -108,7 +110,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     const body = parseMkdirRequest(await readJson(c));
     // The owner is resolved first, so an unknown user makes no folder.
     const owner = body.user === undefined ? dirOwner : ((await instances.dirOwnerFor(body.user)) ?? dirOwner);
-    return c.json(await makeDir(body.parent, body.name, cfg.roots, owner), 201);
+    return c.json(await makeDir(body.parent, body.name, cfg.roots, owner, adoptDir), 201);
   });
 
   if (cloner) {
@@ -173,7 +175,7 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
 }
 
 export function createApp(deps: Deps): Hono {
-  const { cfg, instances, userAuth, staticHandler, dirOwner, update, cloner } = deps;
+  const { cfg, instances, userAuth, staticHandler, dirOwner, update, cloner, adoptDir } = deps;
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -189,7 +191,7 @@ export function createApp(deps: Deps): Hono {
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}) }),
+      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}) }),
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
