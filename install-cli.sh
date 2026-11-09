@@ -90,11 +90,11 @@ REGISTRY_DIR=${CLAUDE_RC_REGISTRY_DIR:-/etc/claude-rc-launcher}
 register_client() {
   rdest=$1
   rfile=$REGISTRY_DIR/installs
-  if [ ! -d "$REGISTRY_DIR" ]; then
+  if ! $SUDO test -d "$REGISTRY_DIR"; then
     $SUDO mkdir -p "$REGISTRY_DIR" || return 1
     $SUDO chmod 755 "$REGISTRY_DIR" || return 1   # only a directory made here; an existing one keeps its mode and owner
   fi
-  if [ ! -e "$rfile" ]; then $SUDO install -m 644 /dev/null "$rfile" || return 1; fi
+  if ! $SUDO test -e "$rfile"; then $SUDO install -m 644 /dev/null "$rfile" || return 1; fi
   if $SUDO grep -Fxq "client $rdest" "$rfile"; then return 0; fi
   # An old file that does not end in a newline must not get the new entry glued to its last line.
   if [ -n "$($SUDO tail -c 1 "$rfile")" ]; then printf '\n' | $SUDO tee -a "$rfile" >/dev/null || return 1; fi
@@ -103,9 +103,9 @@ register_client() {
 if [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; then
   case "$DEST" in
     /*) REG_DEST=$DEST ;;
-    *) REG_DEST="$(cd "$DIR" && pwd)/claude-rc" ;;
+    *) REG_DEST=$(cd "$DIR" 2>/dev/null && pwd) && REG_DEST="$REG_DEST/claude-rc" || REG_DEST="" ;;
   esac
-  register_client "$REG_DEST" || printf 'install-cli: warning: could not write %s/installs; the client is installed and the node will still find it by scanning\n' "$REGISTRY_DIR" >&2
+  [ -n "$REG_DEST" ] && register_client "$REG_DEST" || printf 'install-cli: warning: could not write %s/installs; the client is installed and the node will still find it by scanning\n' "$REGISTRY_DIR" >&2
 fi
 case ":$PATH:" in *":$DIR:"*) ;; *) say "Note: $DIR is not on your PATH. Add it, or run $DEST" ;; esac
 

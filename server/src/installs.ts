@@ -2,7 +2,7 @@ import path from "node:path";
 
 /** Where the installers record the claude-rc clients they put on this machine. */
 export function registryPath(platform: string, env: Record<string, string | undefined>): string {
-  if (platform === "win32") return path.win32.join(env.ProgramData || "C:\\ProgramData", "claude-rc-launcher", "installs");
+  if (platform === "win32") return path.win32.join(env.ProgramData || "C:\\ProgramData", "claude-rc-registry", "installs");
   return "/etc/claude-rc-launcher/installs";
 }
 

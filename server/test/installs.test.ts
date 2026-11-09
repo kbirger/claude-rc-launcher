@@ -3,7 +3,7 @@ import { readRegisteredClients, registryPath, type RegistryIo } from "../src/ins
 
 const FILE = "/etc/claude-rc-launcher/installs";
 const DIR = "/etc/claude-rc-launcher";
-const WFILE = "C:\\ProgramData\\claude-rc-launcher\\installs";
+const WFILE = "C:\\ProgramData\\claude-rc-registry\\installs";
 
 type St = { uid: any; mode: any } | undefined;
 const REG: St = { uid: 0, mode: 0o100644 };
@@ -41,7 +41,7 @@ describe("registryPath", () => {
   test("linux and others use /etc, win32 uses ProgramData", () => {
     expect(registryPath("linux", {})).toBe(FILE);
     expect(registryPath("darwin", {})).toBe(FILE);
-    expect(registryPath("win32", { ProgramData: "D:\\PD" })).toBe("D:\\PD\\claude-rc-launcher\\installs");
+    expect(registryPath("win32", { ProgramData: "D:\\PD" })).toBe("D:\\PD\\claude-rc-registry\\installs");
     expect(registryPath("win32", {})).toBe(WFILE);
   });
 });

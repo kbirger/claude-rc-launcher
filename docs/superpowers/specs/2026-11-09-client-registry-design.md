@@ -36,12 +36,12 @@ Plain text, one entry per line: `client <absolute path>`. Blank lines and lines 
 | Platform | Path |
 |---|---|
 | Linux | `/etc/claude-rc-launcher/installs` |
-| Windows | `%ProgramData%\claude-rc-launcher\installs` |
+| Windows | `%ProgramData%\claude-rc-registry\installs` |
 
 ### Trust rule (the node enforces it on Linux, the installer enforces it on Windows)
 
 - Linux: if the file is owned by uid 0 and neither the group nor others can write it (`mode & 0o022 === 0`), the node reads it. Otherwise it ignores the whole file and logs one line that names the file and the reason. The directory must pass the same check.
-- Windows: Bun cannot check an ACL at runtime. `install.ps1` creates the folder and the file with an explicit ACL: Administrators and SYSTEM have full control, Users have read only, and inheritance is off. The service only reads the file and runs `--version` on a path from it. It never overwrites a Windows client.
+- Windows: the registry has a folder of its own, like the client folder, because the service account can write the data folder (`claude-rc-launcher`). Bun cannot check an ACL at runtime. `install.ps1` creates the folder and the file with an explicit ACL: Administrators and SYSTEM have full control, Users have read only, and inheritance is off. The service only reads the file and runs `--version` on a path from it. It never overwrites a Windows client.
 - Every entry must be an absolute path of a file named `claude-rc` (Linux) or `claude-rc.exe` (Windows, any letter case). Any other entry is ignored. The node never follows an entry to a directory.
 
 ### Finding the copies

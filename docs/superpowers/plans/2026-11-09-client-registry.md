@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Registry file: Linux `/etc/claude-rc-launcher/installs`, Windows `%ProgramData%\claude-rc-launcher\installs`. Plain text, one entry per line: `client <absolute path>`. Blank lines and lines that start with `#` are ignored. Unknown line kinds are ignored.
+- Registry file: Linux `/etc/claude-rc-launcher/installs`, Windows `%ProgramData%\claude-rc-registry\installs`. Plain text, one entry per line: `client <absolute path>`. Blank lines and lines that start with `#` are ignored. Unknown line kinds are ignored.
 - Trust rule on Linux: read the file only if it is owned by uid 0 and `mode & 0o022 === 0`, and its directory passes the same check. Otherwise ignore the whole file and log one line that names the file and the reason. On Windows the installer sets the ACL (Administrators and SYSTEM full control, Users read only, inheritance off). The node does not check an ACL.
 - Entries must be absolute paths of a file named `claude-rc` (Linux) or `claude-rc.exe` (Windows, any letter case). Anything else is ignored.
 - `findClients` returns registered paths first, then scanned paths, each real file once. Windows scan: split PATH on `;`, look for `claude-rc.exe`, and also `%ProgramFiles%\claude-rc\claude-rc.exe`. Linux scan: unchanged.
@@ -39,7 +39,7 @@
 
 **Interfaces:**
 - Produces:
-  - `registryPath(platform: string, env: Record<string, string | undefined>): string` returns `/etc/claude-rc-launcher/installs` for any platform except `win32`, and `<ProgramData>\claude-rc-launcher\installs` for `win32` (ProgramData from `env.ProgramData`, default `C:\ProgramData`).
+  - `registryPath(platform: string, env: Record<string, string | undefined>): string` returns `/etc/claude-rc-launcher/installs` for any platform except `win32`, and `<ProgramData>\claude-rc-registry\installs` for `win32` (ProgramData from `env.ProgramData`, default `C:\ProgramData`).
   - `type RegistryIo = { platform: string; env: Record<string, string | undefined>; readFile(p: string): string; stat(p: string): { uid: number; mode: number } | undefined }`
   - `readRegisteredClients(io: RegistryIo, log?: (line: string) => void): string[]` returns the valid client paths in file order, or `[]`. It never throws: a read error other than "missing" is logged and gives `[]`.
 
@@ -82,9 +82,9 @@
 - Consumes: the file format and trust rule in Global Constraints.
 - Produces: no code interface.
 
-- [ ] **Step 1: Write the failing tests.** `install-cli.test.ts`: with a fake `sudo` that runs the command and a temp directory standing in for `/etc/claude-rc-launcher` (add an environment variable `CLAUDE_RC_REGISTRY_DIR` that defaults to `/etc/claude-rc-launcher`, so the test can redirect it), a run that installs through `sudo` creates the file with the line `client <DIR>/claude-rc`, mode 0644, and the directory with mode 0755. A second run adds no second line. A run where the install directory is writable by a non-root user and no `sudo` is used writes nothing. `win-install.test.ts`: follow what the existing tests assert about `install.ps1` (read it first; if it tests by text checks of the script, add checks that the script contains the `icacls` call with Administrators and SYSTEM full control, Users read only, `/inheritance:r`, the folder `claude-rc-launcher` under `%ProgramData%`, the line `client <ClientDir>\claude-rc.exe`, an idempotence check before it appends, and that `-NoClient` skips all of it).
+- [ ] **Step 1: Write the failing tests.** `install-cli.test.ts`: with a fake `sudo` that runs the command and a temp directory standing in for `/etc/claude-rc-launcher` (add an environment variable `CLAUDE_RC_REGISTRY_DIR` that defaults to `/etc/claude-rc-launcher`, so the test can redirect it), a run that installs through `sudo` creates the file with the line `client <DIR>/claude-rc`, mode 0644, and the directory with mode 0755. A second run adds no second line. A run where the install directory is writable by a non-root user and no `sudo` is used writes nothing. `win-install.test.ts`: follow what the existing tests assert about `install.ps1` (read it first; if it tests by text checks of the script, add checks that the script contains the `icacls` call with Administrators and SYSTEM full control, Users read only, `/inheritance:r`, the folder `claude-rc-registry` under `%ProgramData%`, the line `client <ClientDir>\claude-rc.exe`, an idempotence check before it appends, and that `-NoClient` skips all of it).
 - [ ] **Step 2: Run** `bun test ./cli server/test/win-install.test.ts`. Expected: FAIL.
-- [ ] **Step 3: Implement** the registry write in `install-cli.sh` after the install. It runs only when the install used `sudo` or when the user is root. It creates the directory and file when missing, sets owner root and the modes, and appends the line once (a `grep -Fxq` check). Implement the Windows part in `install.ps1` right after the client install: create `%ProgramData%\claude-rc-launcher`, apply the ACL with `icacls`, create or append the file once (a case-insensitive exact-line check), and skip all of it for `-NoClient`.
+- [ ] **Step 3: Implement** the registry write in `install-cli.sh` after the install. It runs only when the install used `sudo` or when the user is root. It creates the directory and file when missing, sets owner root and the modes, and appends the line once (a `grep -Fxq` check). Implement the Windows part in `install.ps1` right after the client install: create `%ProgramData%\claude-rc-registry`, apply the ACL with `icacls`, create or append the file once (a case-insensitive exact-line check), and skip all of it for `-NoClient`.
 - [ ] **Step 4: Run** the same command. Expected: PASS. Run `sh -n install-cli.sh` for a syntax check. PowerShell cannot run here: state that in the commit message body.
 - [ ] **Step 5: Commit** `feat: record the installed client in a root-owned registry`.
 

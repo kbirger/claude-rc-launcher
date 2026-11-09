@@ -94,12 +94,14 @@ describe("install.ps1: the client registry (text checks)", () => {
   let script: string;
   beforeEach(async () => { script = await readFile(SCRIPT, "utf8"); });
 
-  test("the registry folder is claude-rc-launcher under ProgramData, overridable with -RegistryDir", () => {
-    expect(script).toContain("[string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-launcher')");
+  test("the registry folder is claude-rc-registry under ProgramData, overridable with -RegistryDir, and not the data folder", () => {
+    expect(script).toContain("[string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-registry')");
+    expect(script).toContain("[string]$DataDir = (Join-Path $env:ProgramData 'claude-rc-launcher')");
+    expect(script).not.toContain("$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-launcher')");
   });
 
-  test("the folder, when created, and the file are locked to SYSTEM and Administrators; Users only read the file", () => {
-    expect(script).toContain("& icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'");
+  test("the folder and the file are locked on every run: SYSTEM and Administrators full control, Users read only", () => {
+    expect(script).toContain("& icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)R'");
     expect(script).toContain("& icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R'");
     expect(script).toContain("icacls failed on $RegistryDir");
     expect(script).toContain("icacls failed on $file");

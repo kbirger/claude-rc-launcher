@@ -54,7 +54,7 @@ param(
   [string]$ClientDir = (Join-Path $env:ProgramFiles 'claude-rc'),
   [string]$DataDir = (Join-Path $env:ProgramData 'claude-rc-launcher'),
   # The folder of the client registry file `installs`, which the node reads to find installed clients.
-  [string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-launcher'),
+  [string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-registry'),
   [string]$Account = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
   # The registry key that holds the machine PATH. Only tests give another one.
   [string]$PathRegistryKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
@@ -187,29 +187,33 @@ function Get-ClientSource([string]$TempDir) {
   $path
 }
 
-# Adds "client <path>" to the registry file the node reads (once). Only SYSTEM and Administrators may change the file,
-# because the node runs the programs it lists. The folder is by default the node's data folder, which holds the
-# certificate key: its permissions are left alone when it exists (Users get read access on the file, never on the folder).
+# Adds "client <path>" to the registry file the node reads (once). The registry has a folder of its own, like ClientDir,
+# because the service account can write the data folder: only SYSTEM and Administrators may change this folder and
+# file, and Users may read them (they hold no secret). The node runs the programs the file lists.
 # A failure here is a warning: the client is installed and the node still finds it by scanning.
 function Register-Client([string]$ClientPath) {
   $file = Join-Path $RegistryDir 'installs'
   $line = "client $ClientPath"
+  $createdFile = $false
   try {
-    if (-not (Test-Path -LiteralPath $RegistryDir)) {
-      New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
-      & icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
-      if ($LASTEXITCODE -ne 0) { throw "icacls failed on $RegistryDir" }
+    New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
+    & icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)R' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $RegistryDir" }
+    if (-not (Test-Path -LiteralPath $file)) {
+      [IO.File]::WriteAllText($file, '', (New-Object Text.UTF8Encoding($false)))
+      $createdFile = $true
     }
-    $old = if (Test-Path -LiteralPath $file) { [IO.File]::ReadAllText($file) } else { '' }
+    & icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $file" }
+    $old = [IO.File]::ReadAllText($file)
     $known = @($old -split "`n" | Where-Object { $_.TrimEnd("`r") -ieq $line }).Count -gt 0
     if (-not $known) {
       $sep = if ($old -and -not $old.EndsWith("`n")) { "`n" } else { '' }
       [IO.File]::AppendAllText($file, "$sep$line`n", (New-Object Text.UTF8Encoding($false)))
+      Write-Host "Registered $ClientPath in $file"
     }
-    & icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $file" }
-    if (-not $known) { Write-Host "Registered $ClientPath in $file" }
   } catch {
+    if ($createdFile) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
     Write-Warning "cannot write the client registry $file (the client is installed; the node still finds it by scanning): $($_.Exception.Message)"
   }
 }
