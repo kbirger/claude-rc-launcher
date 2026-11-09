@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/svelte-query";
 import { connectEvents } from "./events";
 import type { UpdateEntry } from "./api";
@@ -74,7 +74,7 @@ test("update replaces the entry of the same host or appends", () => {
 });
 
 test("a closed stream reopens once on the next focus", () => {
-  connectEvents({ client, open });
+  connectEvents({ client, open, delays: [] });
   const es = FakeES.all[0]!;
   es.readyState = 2;
   es.emit("error");
@@ -86,7 +86,7 @@ test("a closed stream reopens once on the next focus", () => {
 });
 
 test("a transient error is left to the browser", () => {
-  connectEvents({ client, open });
+  connectEvents({ client, open, delays: [] });
   const es = FakeES.all[0]!;
   es.readyState = 0;
   es.emit("error");
@@ -95,7 +95,7 @@ test("a transient error is left to the browser", () => {
 });
 
 test("stop closes the stream and removes the focus listener", () => {
-  const stop = connectEvents({ client, open });
+  const stop = connectEvents({ client, open, delays: [] });
   const es = FakeES.all[0]!;
   es.readyState = 2;
   es.emit("error");
@@ -107,10 +107,86 @@ test("stop closes the stream and removes the focus listener", () => {
 });
 
 test("stop closes a reopened stream", () => {
-  const stop = connectEvents({ client, open });
+  const stop = connectEvents({ client, open, delays: [] });
   FakeES.all[0]!.readyState = 2;
   FakeES.all[0]!.emit("error");
   focusHandlers[0]!();
   stop();
   expect(FakeES.all[1]!.closed).toBe(true);
+});
+
+describe("retries", () => {
+  let timers: { f: () => void; ms: number; cleared: boolean }[];
+  const o = () => ({
+    client,
+    open,
+    setTimeout: ((f: () => void, ms: number) => {
+      const t = { f, ms, cleared: false };
+      timers.push(t);
+      return t as any;
+    }) as any,
+    clearTimeout: ((t: any) => void (t.cleared = true)) as any,
+  });
+  const live = () => timers.filter((t) => !t.cleared);
+  const close = () => {
+    const es = FakeES.all[FakeES.all.length - 1]!;
+    es.readyState = 2;
+    es.emit("error");
+  };
+  beforeEach(() => {
+    timers = [];
+  });
+
+  test("a closed stream reopens after 5 s, 15 s and 45 s, then waits for focus", () => {
+    connectEvents(o());
+    for (const [i, ms] of [5000, 15000, 45000].entries()) {
+      close();
+      expect(live().length).toBe(1);
+      expect(live()[0]!.ms).toBe(ms);
+      timers.pop()!.f();
+      expect(FakeES.all.length).toBe(i + 2);
+    }
+    close();
+    expect(live().length).toBe(0);
+    expect(focusHandlers.length).toBe(1);
+  });
+
+  test("a message resets the retries", () => {
+    connectEvents(o());
+    close();
+    timers.pop()!.f();
+    FakeES.all[1]!.emit("snapshot", { data: "[]" });
+    close();
+    expect(timers.pop()!.ms).toBe(5000);
+  });
+
+  test("the open event resets the retries", () => {
+    connectEvents(o());
+    close();
+    timers.pop()!.f();
+    FakeES.all[1]!.emit("open");
+    close();
+    expect(timers.pop()!.ms).toBe(5000);
+  });
+
+  test("stop clears a pending timer", () => {
+    const stop = connectEvents(o());
+    close();
+    stop();
+    expect(live().length).toBe(0);
+    expect(FakeES.all.length).toBe(1);
+  });
+
+  test("a focus after the retries are used up reopens once and resets the count", () => {
+    connectEvents({ ...o(), delays: [10] });
+    close();
+    timers.pop()!.f();
+    close();
+    expect(focusHandlers.length).toBe(1);
+    focusHandlers[0]!();
+    expect(FakeES.all.length).toBe(3);
+    expect(focusHandlers.length).toBe(0);
+    close();
+    expect(timers.pop()!.ms).toBe(10);
+  });
 });
