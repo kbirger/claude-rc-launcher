@@ -2,14 +2,14 @@
   import { onMount } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
-  import { bannerKey, bannerModel, isRunning, mergeCallErrors, pruneCallErrors, type BannerItem } from "./updatebanner";
+  import { bannerKey, bannerModel, isRunning, lastEntry, mergeCallErrors, pruneCallErrors, type BannerItem, type CallError } from "./updatebanner";
 
   let { hosts, updates, latestError }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean } = $props();
 
   const client = useQueryClient();
   let busy = $state(false);
   // Errors of update calls made from this page, by host name; they stay until the next call for that host succeeds.
-  let callErrors = $state<Record<string, string>>({});
+  let callErrors = $state<Record<string, CallError>>({});
   let dismissed = $state("");
   let now = $state(new Date());
 
@@ -21,7 +21,7 @@
   const nameOf = (id: string) => hosts.find((h) => h.id === id)?.name ?? id;
   const items = $derived<BannerItem[]>(mergeCallErrors(bannerModel({ hosts, updates, latestError, now }), callErrors));
   $effect(() => {
-    const next = pruneCallErrors(callErrors, hosts, updates);
+    const next = pruneCallErrors(callErrors, hosts, updates, now);
     if (Object.keys(next).length !== Object.keys(callErrors).length) callErrors = next;
   });
   const key = $derived(items.map(bannerKey).join("|"));
@@ -35,7 +35,7 @@
     } catch (e) {
       // The hub answers 202 and then restarts: a lost connection right after the hub call is expected.
       if (id === "local" && !(e instanceof ApiError)) delete callErrors[name];
-      else callErrors[name] = e instanceof Error ? e.message : String(e);
+      else callErrors[name] = { error: e instanceof Error ? e.message : String(e), at: Date.now() };
     } finally {
       void client.invalidateQueries({ queryKey: ["hosts"] });
       void client.invalidateQueries({ queryKey: ["updates"] });
@@ -54,7 +54,7 @@
   async function updateNodes(list: { id: string; target: string }[]) {
     busy = true;
     try {
-      for (const n of list) if (!isRunning(updates, n.id)) await run(n.id, n.target);
+      for (const n of list) if (!isRunning(lastEntry(updates, n.id), new Date())) await run(n.id, n.target);
     } finally {
       busy = false;
     }

@@ -33,6 +33,7 @@
   const updatesQ = createQuery(updatesQuery);
   const hosts = $derived<HostInfo[]>(hostsQ.data ?? [{ id: "local", name: "local", status: "ok" }]);
   let selected = $state(remembered());
+  let now = $state(new Date());
   let showNew = $state(false);
   let refreshKey = $state(0);
 
@@ -51,14 +52,19 @@
 
   onMount(() => {
     getMe().then((m) => (me = m)).catch(() => {});
-    return connectEvents({ client });
+    const t = setInterval(() => (now = new Date()), 30_000);
+    const stop = connectEvents({ client });
+    return () => {
+      clearInterval(t);
+      stop();
+    };
   });
 </script>
 
 <header>
   <h1>Claude RC</h1>
   {#if hosts.length > 1}
-    <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} onselect={select} />
+    <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
   <span class="user">{me?.name ?? ""}</span>
   <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>

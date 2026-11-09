@@ -15,26 +15,29 @@ export const BY_HAND_NODE = "run claude-rc node update on it once";
 const BY_HAND_HUB = "the hub did not reach the latest version, update it by hand";
 const ROLLED_BACK = "the new version did not start, the old version was restored";
 
-export const isRunning = (updates: UpdateEntry[], id: string) => [...updates].reverse().find((u) => u.host === id)?.status === "running";
+const RUNNING_MAX_MS = 10 * 60_000;
+export const lastEntry = (updates: UpdateEntry[], id: string) => [...updates].reverse().find((u) => u.host === id);
+// A running entry older than 10 minutes counts as dead (the server lets a new update replace it).
+export const isRunning = (e: UpdateEntry | undefined, now: Date) => e?.status === "running" && now.getTime() - Date.parse(e.startedAt) <= RUNNING_MAX_MS;
 
 const unknownVersion = (v?: string) => v === "dev" || (v !== undefined && v.includes("+"));
 
 export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; now: Date }): BannerItem[] {
   const items: BannerItem[] = [];
   const hub = o.hosts.find((h) => h.id === "local");
-  const last = (id: string) => [...o.updates].reverse().find((u) => u.host === id);
+  const last = (id: string) => lastEntry(o.updates, id);
   const nameOf = (id: string) => o.hosts.find((h) => h.id === id)?.name ?? id;
   const hubEntry = last("local");
 
   for (const id of new Set(o.updates.map((u) => u.host))) {
-    if (isRunning(o.updates, id)) items.push({ kind: "updating", host: id, name: nameOf(id) });
+    if (isRunning(last(id), o.now)) items.push({ kind: "updating", host: id, name: nameOf(id) });
   }
 
-  if (hub?.stale && hub.target && hubEntry?.status !== "running") items.push({ kind: "hub-update", target: hub.target });
+  if (hub?.stale && hub.target && !isRunning(hubEntry, o.now)) items.push({ kind: "hub-update", target: hub.target });
 
-  if (hubEntry?.status !== "running") {
+  if (!isRunning(hubEntry, o.now)) {
     const nodes = o.hosts
-      .filter((h) => h.id !== "local" && h.status === "ok" && h.stale && h.target && !isRunning(o.updates, h.id))
+      .filter((h) => h.id !== "local" && h.status === "ok" && h.stale && h.target && !isRunning(last(h.id), o.now))
       .map((h) => ({ id: h.id, name: h.name, target: h.target as string }));
     if (nodes.length) items.push({ kind: "node-update", hosts: nodes });
   }
@@ -90,14 +93,14 @@ export function bannerKey(item: BannerItem): string {
 
 // Errors of update calls made from this page, by host name. A call error is dropped when the model already reports
 // the host (failed, by-hand, updating); the rest are shown as failed items. The final list has unique keys.
-export function mergeCallErrors(items: BannerItem[], callErrors: Record<string, string>): BannerItem[] {
+export function mergeCallErrors(items: BannerItem[], callErrors: Record<string, CallError>): BannerItem[] {
   const reported = new Set<string>();
   for (const i of items) {
     if (i.kind === "failed" || i.kind === "by-hand") reported.add(i.host);
     if (i.kind === "updating") reported.add(i.name);
   }
   const out = [...items];
-  for (const [host, error] of Object.entries(callErrors)) if (!reported.has(host)) out.push({ kind: "failed", host, error });
+  for (const [host, c] of Object.entries(callErrors)) if (!reported.has(host)) out.push({ kind: "failed", host, error: c.error });
   const seen = new Set<string>();
   return out.filter((i) => {
     const k = bannerKey(i);
@@ -107,14 +110,17 @@ export function mergeCallErrors(items: BannerItem[], callErrors: Record<string, 
   });
 }
 
-// Drops call errors that are out of date: the host updated, is no longer stale, or runs a new update.
-export function pruneCallErrors(callErrors: Record<string, string>, hosts: HostInfo[], updates: UpdateEntry[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [name, error] of Object.entries(callErrors)) {
+export type CallError = { error: string; at: number };
+
+// Drops call errors that are out of date: the host finished an update after the call, is no longer stale, or runs a new update.
+export function pruneCallErrors(callErrors: Record<string, CallError>, hosts: HostInfo[], updates: UpdateEntry[], now: Date): Record<string, CallError> {
+  const out: Record<string, CallError> = {};
+  for (const [name, c] of Object.entries(callErrors)) {
     const h = hosts.find((x) => x.name === name);
-    const e = h ? [...updates].reverse().find((u) => u.host === h.id) : undefined;
-    if (!h || !h.stale || e?.status === "updated" || e?.status === "up-to-date" || e?.status === "running") continue;
-    out[name] = error;
+    const e = h ? lastEntry(updates, h.id) : undefined;
+    if (!h || !h.stale || isRunning(e, now)) continue;
+    if (e && (e.status === "updated" || e.status === "up-to-date") && Date.parse(e.finishedAt ?? e.startedAt) > c.at) continue;
+    out[name] = c;
   }
   return out;
 }

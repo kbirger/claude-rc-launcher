@@ -1,9 +1,9 @@
 <script lang="ts">
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
-  import { isRunning } from "./updatebanner";
+  import { isRunning, lastEntry } from "./updatebanner";
 
-  let { hosts, selected, onselect, updates = [] }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[] } = $props();
+  let { hosts, selected, onselect, updates = [], now = new Date() }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date } = $props();
 
   const client = useQueryClient();
   let busy = $state(false);
@@ -44,7 +44,7 @@
   </select>
 </label>
 {#if canUpdate}
-  <button class="primary" disabled={busy || isRunning(updates, current?.id ?? "")} onclick={update}>Update</button>
+  <button class="primary" disabled={busy || isRunning(lastEntry(updates, current?.id ?? ""), now)} onclick={update}>Update</button>
 {/if}
 {#if error}<span class="error" role="alert">{error}</span>{/if}
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { HostInfo, UpdateEntry } from "./api";
-import { bannerKey, bannerModel, mergeCallErrors, pruneCallErrors } from "./updatebanner";
+import { bannerKey, bannerModel, isRunning, mergeCallErrors, pruneCallErrors } from "./updatebanner";
 
 const now = new Date("2026-11-09T12:00:00Z");
 const hub = (o: Partial<HostInfo> = {}): HostInfo => ({ id: "local", name: "local", status: "ok", version: "1.2.0", clientVersion: "1.2.0", ...o });
@@ -93,28 +93,49 @@ test("a hub failed with 404 stays a failed item", () => {
 test("a running entry gives updating and hides the matching update item", () => {
   const running = entry({ host: "n1", status: "running" });
   const hosts = [hub(), node({ stale: true, target: "1.3.0" })];
-  expect(model(hosts, [running])).toEqual([{ kind: "updating", host: "n1", name: "node one" }]);
+  expect(model(hosts, [{ ...running, startedAt: "2026-11-09T11:58:00Z" }])).toEqual([{ kind: "updating", host: "n1", name: "node one" }]);
   expect(model([hub({ stale: true, target: "1.3.0" }), node()], [entry({ status: "running" })])).toEqual([{ kind: "updating", host: "local", name: "local" }]);
   expect(bannerKey({ kind: "updating", host: "n1", name: "x" })).toBe("updating:n1");
 });
 
 test("a call error equal to the entry error shows once", () => {
   const items = model([hub(), node()], [entry({ host: "n1", status: "failed", error: "disk full" })]);
-  expect(mergeCallErrors(items, { "node one": "disk full" })).toEqual([{ kind: "failed", host: "node one", error: "disk full" }]);
+  expect(mergeCallErrors(items, { "node one": { error: "disk full", at: 0 } })).toEqual([{ kind: "failed", host: "node one", error: "disk full" }]);
 });
 
 test("a 404 gives only by-hand", () => {
   const items = model([hub(), node()], [entry({ host: "n1", status: "failed", error: "not found" })]);
-  expect(mergeCallErrors(items, { "node one": "not found" }).map((i) => i.kind)).toEqual(["by-hand"]);
+  expect(mergeCallErrors(items, { "node one": { error: "not found", at: 0 } }).map((i) => i.kind)).toEqual(["by-hand"]);
 });
 
 test("a 409 call error with no entry shows once and clears when the entry says updated", () => {
   const hosts = [hub(), node({ stale: true, target: "1.3.0" })];
-  const errs = { "node one": "update already running" };
+  const errs = { "node one": { error: "update already running", at: Date.parse("2026-11-09T11:59:30Z") } };
   const shown = mergeCallErrors(model(hosts), errs);
   expect(shown.filter((i) => i.kind === "failed")).toEqual([{ kind: "failed", host: "node one", error: "update already running" }]);
-  expect(pruneCallErrors(errs, hosts, [])).toEqual(errs);
-  expect(pruneCallErrors(errs, hosts, [entry({ host: "n1", status: "updated" })])).toEqual({});
-  expect(pruneCallErrors(errs, [hub(), node({ stale: false })], [])).toEqual({});
-  expect(pruneCallErrors(errs, hosts, [entry({ host: "n1", status: "running" })])).toEqual({});
+  expect(pruneCallErrors(errs, hosts, [], now)).toEqual(errs);
+  expect(pruneCallErrors(errs, hosts, [entry({ host: "n1", status: "updated", startedAt: "2026-11-09T11:59:40Z" })], now)).toEqual({});
+  expect(pruneCallErrors(errs, [hub(), node({ stale: false })], [], now)).toEqual({});
+  expect(pruneCallErrors(errs, hosts, [entry({ host: "n1", status: "running", startedAt: "2026-11-09T11:59:30Z" })], now)).toEqual({});
+});
+
+test("an old updated entry does not clear a newer call error; a newer one does", () => {
+  const hosts = [hub(), node({ stale: true, target: "1.3.0" })];
+  const errs = { "node one": { error: "boom", at: Date.parse("2026-11-09T11:59:00Z") } };
+  const old = entry({ host: "n1", status: "updated", startedAt: "2026-11-02T10:00:00Z", finishedAt: "2026-11-02T10:01:00Z" });
+  expect(pruneCallErrors(errs, hosts, [old], now)).toEqual(errs);
+  const fresh = entry({ host: "n1", status: "up-to-date", startedAt: "2026-11-09T11:59:30Z", finishedAt: "2026-11-09T11:59:40Z" });
+  expect(pruneCallErrors(errs, hosts, [fresh], now)).toEqual({});
+});
+
+test("a running entry ages out after 10 minutes: updating goes, hub-update and node-update come back", () => {
+  const hosts = [hub({ stale: true, target: "1.3.0" }), node({ stale: true, target: "1.3.0" })];
+  const at = (startedAt: string) => model(hosts, [entry({ status: "running", startedAt, finishedAt: undefined })]).map((i) => i.kind);
+  expect(at("2026-11-09T11:50:00Z")).toEqual(["updating"]);
+  expect(at("2026-11-09T11:49:59Z")).toEqual(["hub-update", "node-update"]);
+  const nodeRun = (startedAt: string) => model([hub(), node({ stale: true, target: "1.3.0" })], [entry({ host: "n1", status: "running", startedAt })]).map((i) => i.kind);
+  expect(nodeRun("2026-11-09T11:50:00Z")).toEqual(["updating"]);
+  expect(nodeRun("2026-11-09T11:49:59Z")).toEqual(["node-update"]);
+  expect(isRunning(entry({ status: "running", startedAt: "2026-11-09T11:50:00Z" }), now)).toBe(true);
+  expect(isRunning(entry({ status: "running", startedAt: "2026-11-09T11:49:59Z" }), now)).toBe(false);
 });
