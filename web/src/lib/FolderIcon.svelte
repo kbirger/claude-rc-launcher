@@ -16,6 +16,6 @@
 <span class="icon" title={titles[kind]} aria-hidden="true"><svg viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" focusable="false"><path d={paths[kind]} /></svg></span>
 
 <style>
-  .icon { display: inline-flex; flex: none; align-self: flex-start; margin-top: 0.2em; line-height: 1; }
+  .icon { display: inline-flex; flex: none; align-self: center; line-height: 1; }
   svg { display: block; fill: currentColor; }
 </style>
