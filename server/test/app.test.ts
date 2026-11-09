@@ -11,6 +11,7 @@ import { HttpError, type Instance } from "../src/instances";
 import { PathError } from "../src/paths";
 import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
+import { LatestError } from "../src/latest";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const ID = "0123456789ab";
@@ -575,5 +576,28 @@ describe("clone routes", () => {
     for (const [m, p] of [["POST", "/clone"], ["GET", `/clone/${"a".repeat(32)}`], ["GET", "/github/repos"], ["POST", "/github/login"], ["GET", `/github/login/${"a".repeat(32)}`]]) {
       expect((await req(app, m!, p!, m === "POST" ? {} : undefined)).status).toBe(404);
     }
+  });
+});
+
+describe("GET /api/latest", () => {
+  const withLatest = (latest?: { get(): Promise<any>; peek(): any }) =>
+    createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), ...(latest ? { latest } : {}) });
+  const get = (app: any) => app.request("/api/latest", { headers: H() });
+
+  test("returns the latest release", async () => {
+    const body = { version: "0.8.3", checkedAt: "2026-11-09T00:00:00.000Z" };
+    const r = await get(withLatest({ get: async () => body, peek: () => body }));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual(body);
+  });
+
+  test("503 when GitHub cannot be reached and nothing is cached", async () => {
+    const r = await get(withLatest({ get: async () => { throw new LatestError("offline"); }, peek: () => undefined }));
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({ error: "offline" });
+  });
+
+  test("501 without a latest cache", async () => {
+    expect((await get(withLatest())).status).toBe(501);
   });
 });

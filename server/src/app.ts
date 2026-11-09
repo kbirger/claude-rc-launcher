@@ -10,6 +10,7 @@ import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
+import { LatestError, type createLatestRelease } from "./latest";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
@@ -22,7 +23,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; latest?: ReturnType<typeof createLatestRelease> };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -186,6 +187,16 @@ export function createApp(deps: Deps): Hono {
   api.use("*", csrf(cfg));
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
+
+  api.get("/latest", async (c) => {
+    if (!deps.latest) throw new HttpError(501, "latest release is not available on this host");
+    try {
+      return c.json(await deps.latest.get());
+    } catch (e) {
+      if (e instanceof LatestError) throw new HttpError(503, e.message);
+      throw e;
+    }
+  });
 
   const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
   const forwarding = () =>
