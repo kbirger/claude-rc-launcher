@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { UpdateRecord, type UpdateEntry } from "../src/updaterecord";
@@ -109,6 +109,7 @@ describe("UpdateRecord", () => {
     expect(r.list().find((e) => e.host === "other")?.status).toBe("running");
     expect(r.list().find((e) => e.host === "local")?.status).toBe("updated");
     expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
+    expect(seen).toEqual([]);
   });
 
   test("a corrupt file loads as empty and the next set replaces it", async () => {
@@ -117,6 +118,11 @@ describe("UpdateRecord", () => {
     expect(r.list()).toEqual([]);
     await r.set(entry());
     expect((await UpdateRecord.load({ stateDir: dir })).list()).toEqual([entry()]);
+  });
+
+  test("an unreadable file makes load reject instead of loading empty", async () => {
+    await mkdir(path.join(dir, "updates.json"));
+    await expect(UpdateRecord.load({ stateDir: dir })).rejects.toThrow(/cannot read .*updates\.json/);
   });
 
   test("invalid entries are dropped when loading", async () => {

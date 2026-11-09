@@ -1,5 +1,6 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { writeAtomic } from "./hostregistry";
 
 export type UpdateStatus = "running" | "updated" | "up-to-date" | "failed" | "rolled back" | "unknown";
 export type UpdateEntry = {
@@ -32,11 +33,20 @@ export class UpdateRecord {
 
   static async load(o: { stateDir: string; now?: () => Date }): Promise<UpdateRecord> {
     let entries: UpdateEntry[] = [];
+    const file = path.join(o.stateDir, FILE);
+    let text: string | undefined;
     try {
-      const parsed = JSON.parse(await readFile(path.join(o.stateDir, FILE), "utf8"));
-      if (Array.isArray(parsed?.updates)) entries = parsed.updates.filter(valid).map(clean);
-    } catch {
-      // missing or corrupt: start empty
+      text = await readFile(file, "utf8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`cannot read ${file}: ${(e as Error).message}`);
+    }
+    if (text !== undefined) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed?.updates)) entries = parsed.updates.filter(valid).map(clean);
+      } catch {
+        // corrupt: start empty, the next set replaces the file
+      }
     }
     return new UpdateRecord(entries, o.stateDir, o.now ?? (() => new Date()));
   }
@@ -120,11 +130,4 @@ function clean(e: UpdateEntry): UpdateEntry {
     status,
     ...(error !== undefined ? { error } : {}),
   };
-}
-
-async function writeAtomic(file: string, data: string, mode: number): Promise<void> {
-  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(tmp, data, { mode });
-  if (process.platform !== "win32") await chmod(tmp, mode);
-  await rename(tmp, file);
 }

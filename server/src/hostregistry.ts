@@ -142,7 +142,7 @@ async function ensureDirs(dir: string): Promise<void> {
   if (process.platform !== "win32") await chmod(path.join(dir, "pins"), 0o700);
 }
 
-async function writeAtomic(file: string, data: string, mode: number): Promise<void> {
+export async function writeAtomic(file: string, data: string, mode: number): Promise<void> {
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   await writeFile(tmp, data, { mode });
   if (process.platform !== "win32") await chmod(tmp, mode);
