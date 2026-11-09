@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config";
+import { HttpError } from "../src/instances";
 import { VERSION } from "../src/version";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;
@@ -77,7 +78,11 @@ describe("node app", () => {
   describe("clone routes", () => {
     const code = "WDJB-MJHT";
     const cloner: any = {
-      clone: async () => ({ path: "/srv/x" }),
+      cloneStart: async () => ({ id: "c".repeat(32), path: "/srv/x" }),
+      cloneStatus: async (id: string) => {
+        if (id === "b".repeat(32)) throw new HttpError(404, "unknown clone");
+        return { state: "running" };
+      },
       repos: async () => ({ groups: [] }),
       loginStart: async () => ({ id: "a".repeat(32), code, url: "https://github.com/login/device" }),
       loginStatus: async () => ({ state: "pending" }),
@@ -87,13 +92,18 @@ describe("node app", () => {
       const a = capp();
       expect((await a.request("/api/clone", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
       expect((await a.request("/api/github/repos")).status).toBe(401);
+      expect((await a.request(`/api/clone/${"a".repeat(32)}`)).status).toBe(401);
       expect((await a.request(`/api/github/login/${"a".repeat(32)}`)).status).toBe(401);
     });
     test("work with auth, need JSON, and /node says clone: true", async () => {
       const a = capp();
       expect((await (await a.request("/api/node", { headers: ok })).json()).clone).toBe(true);
       const c = await a.request("/api/clone", { method: "POST", headers: json, body: JSON.stringify({ repo: "o/x", parent: "/srv" }) });
-      expect([c.status, await c.json()]).toEqual([201, { path: "/srv/x" }]);
+      expect([c.status, await c.json()]).toEqual([202, { id: "c".repeat(32), path: "/srv/x" }]);
+      expect((await (await a.request(`/api/clone/${"c".repeat(32)}`, { headers: ok })).json())).toEqual({ state: "running" });
+      const bad = await a.request("/api/clone/xyz", { headers: ok });
+      expect([bad.status, await bad.json()]).toEqual([400, { error: "invalid clone id" }]);
+      expect((await a.request(`/api/clone/${"b".repeat(32)}`, { headers: ok })).status).toBe(404);
       expect((await a.request("/api/clone", { method: "POST", headers: { ...ok, "content-type": "text/plain" }, body: "{}" })).status).toBe(415);
       expect((await a.request("/api/github/repos", { headers: ok })).status).toBe(200);
       expect((await (await a.request(`/api/github/login/${"a".repeat(32)}`, { headers: ok })).json())).toEqual({ state: "pending" });
@@ -107,7 +117,7 @@ describe("node app", () => {
       await a.request("/api/github/repos", { headers: ok });
       expect(logged).toEqual([
         "audit caller=secret POST /api/github/login 202",
-        "audit caller=secret POST /api/clone 201",
+        "audit caller=secret POST /api/clone 202",
       ]);
       expect(logged.join("\n")).not.toContain(code);
     });

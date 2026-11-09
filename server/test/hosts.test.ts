@@ -558,6 +558,7 @@ describe("node and update routes", () => {
 
 describe("clone, repo list and login forwarding", () => {
   const LOGIN_ID = "0123456789abcdef0123456789abcdef";
+  const CLONE_ID = "fedcba9876543210fedcba9876543210";
   const hostCfg = (id: string): HostConfig => ({ id, name: id, url: "https://x", ca: "pem", auth: { type: "secret", secret: "s" } });
   const send = (app: any, m: string, p: string, body?: unknown) =>
     app.request(p, { method: m, headers: m === "GET" ? {} : JSON_H, ...(body !== undefined ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}) });
@@ -574,7 +575,8 @@ describe("clone, repo list and login forwarding", () => {
   function fakeCloner() {
     const seen: any[] = [];
     const cloner: Cloner = {
-      clone: async (i) => (seen.push(["clone", i]), { path: `${i.parent}/r` }),
+      cloneStart: async (i) => (seen.push(["clone", i]), { id: CLONE_ID, path: `${i.parent}/r` }),
+      cloneStatus: async (id) => (seen.push(["cstatus", id]), { state: "done", path: "/p/r" }),
       repos: async (u) => (seen.push(["repos", u]), { groups: [{ owner: "me", repos: [{ name: "r", private: false, pushedAt: "2026-01-01T00:00:00Z" }] }] }),
       loginStart: async (u) => (seen.push(["login", u]), { id: LOGIN_ID, code: "ABCD-1234", url: "https://github.com/login/device" }),
       loginStatus: async (id) => (seen.push(["status", id]), { state: "failed", error: "denied" }),
@@ -583,7 +585,7 @@ describe("clone, repo list and login forwarding", () => {
   }
 
   for (const prefix of ["/api/hosts", "/cli/api/hosts"]) {
-    test(`${prefix}: the four routes reach a real node with the hub credential`, async () => {
+    test(`${prefix}: the five routes reach a real node with the hub credential`, async () => {
       const f = fakeCloner();
       const n = await startNode("nas", { cloner: f.cloner });
       const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [n.host], clients: new Map([["nas", n.client]]), makeClient: () => n.client });
@@ -591,8 +593,11 @@ describe("clone, repo list and login forwarding", () => {
       const app = createApp({ cfg: { name: "box", hosts: [n.host], roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config, instances: localSvc, userAuth, hosts: registry, cli: cli as any });
       const base = `${prefix}/nas`;
       const clone = await send(app, "POST", `${base}/clone`, { repo: "o/r", parent: "/p", user: "alice", evil: 1 });
-      expect(clone.status).toBe(201);
-      expect(await clone.json()).toEqual({ path: "/p/r" });
+      expect(clone.status).toBe(202);
+      expect(await clone.json()).toEqual({ id: CLONE_ID, path: "/p/r" });
+      const cst = await get(app, `${base}/clone/${CLONE_ID}`);
+      expect(cst.status).toBe(200);
+      expect(await cst.json()).toEqual({ state: "done", path: "/p/r" });
       const repos = await get(app, `${base}/github/repos?user=alice&evil=1`);
       expect(repos.status).toBe(200);
       expect((await repos.json()).groups[0].owner).toBe("me");
@@ -602,7 +607,7 @@ describe("clone, repo list and login forwarding", () => {
       const st = await get(app, `${base}/github/login/${LOGIN_ID}`);
       expect(st.status).toBe(200);
       expect(await st.json()).toEqual({ state: "failed", error: "denied" });
-      expect(f.seen).toEqual([["clone", { repo: "o/r", parent: "/p", user: "alice" }], ["repos", "alice"], ["login", "alice"], ["status", LOGIN_ID]]);
+      expect(f.seen).toEqual([["clone", { repo: "o/r", parent: "/p", user: "alice" }], ["cstatus", CLONE_ID], ["repos", "alice"], ["login", "alice"], ["status", LOGIN_ID]]);
       for (const h of n.seen) expect(h.get("authorization")).toBe(`Bearer ${n.secret}`);
     });
   }
@@ -611,13 +616,15 @@ describe("clone, repo list and login forwarding", () => {
     const r = recorder();
     const app = hub([hostCfg("nas")], new Map([["nas", r.client]]), { requestTimeoutMs: 1_234 });
     await send(app, "POST", "/api/hosts/nas/clone", { repo: "o/r", parent: "/p", evil: 1 });
+    await get(app, `/api/hosts/nas/clone/${CLONE_ID}?evil=1`);
     await get(app, "/api/hosts/nas/github/repos?user=alice&evil=1");
     await get(app, "/api/hosts/nas/github/repos");
     await send(app, "POST", "/api/hosts/nas/github/login", { user: "alice", evil: 1 });
     await send(app, "POST", "/api/hosts/nas/github/login", {});
     await get(app, `/api/hosts/nas/github/login/${LOGIN_ID}?evil=1`);
     expect(r.calls).toEqual([
-      ["POST", "/api/clone", undefined, { repo: "o/r", parent: "/p" }, 660_000],
+      ["POST", "/api/clone", undefined, { repo: "o/r", parent: "/p" }, 1_234],
+      ["GET", `/api/clone/${CLONE_ID}`, undefined, undefined, 1_234],
       ["GET", "/api/github/repos", { user: "alice" }, undefined, 120_000],
       ["GET", "/api/github/repos", undefined, undefined, 120_000],
       ["POST", "/api/github/login", undefined, { user: "alice" }, 20_000],
@@ -643,6 +650,8 @@ describe("clone, repo list and login forwarding", () => {
       expect([id, x.status]).toEqual([id, 400]);
     }
     expect(await (await get(app, "/api/hosts/nas/github/login/abc")).json()).toEqual({ error: "invalid login id" });
+    for (const id of ["abc", CLONE_ID.toUpperCase(), `${CLONE_ID}0`, "..%2Fnode"]) expect([id, (await get(app, `/api/hosts/nas/clone/${id}`)).status]).toEqual([id, 400]);
+    expect(await (await get(app, "/api/hosts/nas/clone/abc")).json()).toEqual({ error: "invalid clone id" });
     expect(r.calls).toEqual([]);
   });
 
@@ -657,7 +666,7 @@ describe("clone, repo list and login forwarding", () => {
   });
 
   test("a node 404 and a node 409 with a code pass through", async () => {
-    const paths = [["POST", "/clone", { repo: "o/r", parent: "/p" }], ["GET", "/github/repos"], ["POST", "/github/login", {}], ["GET", `/github/login/${LOGIN_ID}`]] as const;
+    const paths = [["POST", "/clone", { repo: "o/r", parent: "/p" }], ["GET", `/clone/${CLONE_ID}`], ["GET", "/github/repos"], ["POST", "/github/login", {}], ["GET", `/github/login/${LOGIN_ID}`]] as const;
     const a1 = hub([hostCfg("nas")], new Map([["nas", recorder(404, { error: "not found" }).client]]));
     for (const [m, p, b] of paths) {
       const x = await send(a1, m, `/api/hosts/nas${p}`, b);

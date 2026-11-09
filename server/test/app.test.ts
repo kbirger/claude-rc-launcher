@@ -473,7 +473,11 @@ describe("POST /update on the local host", () => {
 describe("clone routes", () => {
   const calls: any[] = [];
   const cloner: any = {
-    clone: async (i: any) => { calls.push(["clone", i]); return { path: "/r/x" }; },
+    cloneStart: async (i: any) => { calls.push(["clone", i]); return { id: "c".repeat(32), path: "/r/x" }; },
+    cloneStatus: async (id: string) => {
+      if (id === "b".repeat(32)) throw new HttpError(404, "unknown clone");
+      return { state: "done", path: "/r/x" };
+    },
     repos: async (u?: string) => { calls.push(["repos", u]); return { groups: [{ owner: "o", repos: [] }] }; },
     loginStart: async (u?: string) => { calls.push(["start", u]); return { id: "a".repeat(32), code: "ABCD-1234", url: "https://github.com/login/device" }; },
     loginStatus: async (id: string) => {
@@ -490,8 +494,10 @@ describe("clone routes", () => {
     calls.length = 0;
     const app = withCloner();
     const c = await req(app, "POST", "/clone", { repo: "o/x", parent: "/r", user: "alice", junk: 1 });
-    expect([c.status, await c.json()]).toEqual([201, { path: "/r/x" }]);
+    expect([c.status, await c.json()]).toEqual([202, { id: "c".repeat(32), path: "/r/x" }]);
     expect(calls[0]).toEqual(["clone", { repo: "o/x", parent: "/r", user: "alice" }]);
+    const cs = await req(app, "GET", `/clone/${"c".repeat(32)}`);
+    expect([cs.status, await cs.json()]).toEqual([200, { state: "done", path: "/r/x" }]);
     const g = await req(app, "GET", "/github/repos?user=alice");
     expect([g.status, await g.json()]).toEqual([200, { groups: [{ owner: "o", repos: [] }] }]);
     expect(calls[1]).toEqual(["repos", "alice"]);
@@ -516,6 +522,10 @@ describe("clone routes", () => {
     const bad = await req(app, "GET", "/github/login/xyz");
     expect([bad.status, await bad.json()]).toEqual([400, { error: "invalid login id" }]);
     expect((await req(app, "GET", `/github/login/${"b".repeat(32)}`)).status).toBe(404);
+    const badc = await req(app, "GET", "/clone/xyz");
+    expect([badc.status, await badc.json()]).toEqual([400, { error: "invalid clone id" }]);
+    const unk = await req(app, "GET", `/clone/${"b".repeat(32)}`);
+    expect([unk.status, await unk.json()]).toEqual([404, { error: "unknown clone" }]);
     expect((await req(app, "POST", "/github/login", [])).status).toBe(400);
   });
   test("POST routes need a JSON content type", async () => {
@@ -529,7 +539,7 @@ describe("clone routes", () => {
   });
   test("without a cloner the routes are 404", async () => {
     const app = mk().app;
-    for (const [m, p] of [["POST", "/clone"], ["GET", "/github/repos"], ["POST", "/github/login"], ["GET", `/github/login/${"a".repeat(32)}`]]) {
+    for (const [m, p] of [["POST", "/clone"], ["GET", `/clone/${"a".repeat(32)}`], ["GET", "/github/repos"], ["POST", "/github/login"], ["GET", `/github/login/${"a".repeat(32)}`]]) {
       expect((await req(app, m!, p!, m === "POST" ? {} : undefined)).status).toBe(404);
     }
   });

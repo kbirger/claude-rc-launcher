@@ -13,8 +13,6 @@ export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "e
 /** A node's update downloads two release assets and checks them before it answers. */
 export const UPDATE_TIMEOUT_MS = 180_000;
 
-/** A clone runs up to 10 minutes on the node (its own limit), so the hub waits a minute longer. */
-export const CLONE_TIMEOUT_MS = 11 * 60_000;
 /** `gh repo list` over many organizations can be slow. */
 export const REPOS_TIMEOUT_MS = 120_000;
 /** The node waits up to 15 seconds for the device code. */
@@ -147,7 +145,15 @@ export function hostsApi(o: {
     "/clone",
     forward(async (c, k) => {
       const json = parseCloneRequest(await readJson(c));
-      return k.call("POST", "/api/clone", { json, timeoutMs: CLONE_TIMEOUT_MS });
+      return k.call("POST", "/api/clone", { json, timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get(
+    "/clone/:id",
+    forward((c, k) => {
+      const id = c.req.param("id") ?? "";
+      if (!LOGIN_ID_RE.test(id)) throw new HttpError(400, "invalid clone id");
+      return k.call("GET", `/api/clone/${id}`, { timeoutMs: requestTimeoutMs });
     }),
   );
   remote.get(

@@ -12,13 +12,16 @@ import type { Runner } from "./runner";
 export type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] };
 
 export interface Cloner {
-  clone(input: { repo: string; parent: string; user?: string }): Promise<{ path: string }>;
+  cloneStart(input: { repo: string; parent: string; user?: string }): Promise<{ id: string; path: string }>;
+  cloneStatus(id: string): Promise<{ state: "running" | "done" | "failed"; path?: string; error?: string }>;
   repos(user?: string): Promise<{ groups: RepoGroup[] }>;
   loginStart(user?: string): Promise<{ id: string; code: string; url: string }>;
   loginStatus(id: string): Promise<{ state: "pending" | "done" | "failed"; error?: string }>;
 }
 
 const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+const CLONE_FORGET_MS = 10 * 60 * 1000;
+type CloneJob = { state: "running" | "done" | "failed"; path?: string; error?: string };
 const GH_TIMEOUT_MS = 60 * 1000;
 const REPO_LIST_PARALLEL = 4;
 
@@ -72,8 +75,10 @@ export function createCloner(deps: {
 }): Cloner {
   const chownFn = deps.chownFn ?? chown;
   const logins = createLoginManager({ run: deps.run, identityFor: deps.identityFor, spawn: deps.spawnLogin, clock: deps.loginClock, missingTool });
+  const clock: LoginClock = deps.loginClock ?? { setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t as ReturnType<typeof setTimeout>) };
+  const jobs = new Map<string, CloneJob>();
   return {
-    async clone({ repo, parent, user }) {
+    async cloneStart({ repo, parent, user }) {
       const ref = parseRepoLink(repo);
       const id = await deps.identityFor(user);
       const resolved = await resolveChecked(parent, deps.cfg.roots);
@@ -86,15 +91,19 @@ export function createCloner(deps: {
         throw new HttpError(400, "cannot create directory");
       }
       const cleanup = () => rm(target, { recursive: true, force: true }).catch(() => {});
-      try {
-        if (id.uid !== undefined && id.gid !== undefined) {
-          try {
-            await chownFn(target, id.uid, id.gid);
-          } catch (e) {
-            console.error("chown of clone folder failed:", e);
-            throw new HttpError(500, "cannot set directory owner");
-          }
+      if (id.uid !== undefined && id.gid !== undefined) {
+        try {
+          await chownFn(target, id.uid, id.gid);
+        } catch (e) {
+          console.error("chown of clone folder failed:", e);
+          await cleanup();
+          throw new HttpError(500, "cannot set directory owner");
         }
+      }
+      const jobId = crypto.randomUUID().replaceAll("-", "");
+      const job: CloneJob = { state: "running" };
+      jobs.set(jobId, job);
+      const work = async () => {
         const w = asUser(id, "git", ["-c", "credential.helper=!gh auth git-credential", "clone", "-q", "--", ref.url, target]);
         const r = await deps.run(w.cmd, w.args, { env: w.env, timeoutMs: CLONE_TIMEOUT_MS });
         if (r.timedOut) throw new HttpError(504, "clone timed out");
@@ -108,11 +117,24 @@ export function createCloner(deps: {
         }
         const real = await realpath(target);
         await resolveChecked(real, deps.cfg.roots);
-        return { path: real };
-      } catch (e) {
-        await cleanup();
-        throw e;
-      }
+        return real;
+      };
+      void work().then(
+        (real) => { job.path = real; job.state = "done"; },
+        async (e) => {
+          await cleanup();
+          job.error = e instanceof HttpError ? e.message : "clone failed";
+          if (!(e instanceof HttpError)) console.error("clone failed:", e);
+          job.state = "failed";
+        },
+      ).catch((e) => { console.error("clone job error:", e); job.state = "failed"; job.error ??= "clone failed"; })
+        .finally(() => { clock.setTimeout(() => { jobs.delete(jobId); }, CLONE_FORGET_MS); });
+      return { id: jobId, path: target };
+    },
+    async cloneStatus(id) {
+      const j = jobs.get(id);
+      if (!j) throw new HttpError(404, "unknown clone");
+      return { state: j.state, ...(j.path !== undefined ? { path: j.path } : {}), ...(j.error !== undefined ? { error: j.error } : {}) };
     },
     async repos(user) {
       const id = await deps.identityFor(user);

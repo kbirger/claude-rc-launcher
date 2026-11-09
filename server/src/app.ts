@@ -105,7 +105,12 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   });
 
   if (cloner) {
-    r.post("/clone", async (c) => c.json(await cloner.clone(parseCloneRequest(await readJson(c))), 201));
+    r.post("/clone", async (c) => c.json(await cloner.cloneStart(parseCloneRequest(await readJson(c))), 202));
+    r.get("/clone/:id", async (c) => {
+      const id = c.req.param("id");
+      if (!LOGIN_ID_RE.test(id)) throw new HttpError(400, "invalid clone id");
+      return c.json(await cloner.cloneStatus(id));
+    });
     r.get("/github/repos", async (c) => {
       const user = c.req.query("user");
       if (user === "") throw new HttpError(400, "user must not be empty");
