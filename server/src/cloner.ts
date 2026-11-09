@@ -2,14 +2,13 @@ import { chown, mkdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { asUser, type IdentityFor } from "./asuser";
 import type { Config } from "./config";
+import { createLoginManager, type LoginClock, type LoginSpawner } from "./ghlogin";
 import { resolveChecked } from "./fsapi";
 import { HttpError } from "./instances";
 import { parseRepoLink } from "./repolink";
 import type { Runner } from "./runner";
 
 export type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] };
-/** Filled in by the login task. */
-export type LoginSpawner = unknown;
 
 export interface Cloner {
   clone(input: { repo: string; parent: string; user?: string }): Promise<{ path: string }>;
@@ -67,9 +66,11 @@ export function createCloner(deps: {
   run: Runner;
   identityFor: IdentityFor;
   spawnLogin?: LoginSpawner;
+  loginClock?: LoginClock;
   chownFn?: (path: string, uid: number, gid: number) => Promise<void>;
 }): Cloner {
   const chownFn = deps.chownFn ?? chown;
+  const logins = createLoginManager({ run: deps.run, identityFor: deps.identityFor, spawn: deps.spawnLogin, clock: deps.loginClock, missingTool });
   return {
     async clone({ repo, parent, user }) {
       const ref = parseRepoLink(repo);
@@ -146,7 +147,7 @@ export function createCloner(deps: {
       for (const g of orgGroups) if (g) groups.push(g);
       return { groups };
     },
-    async loginStart() { throw new HttpError(501, "not implemented"); },
-    async loginStatus() { throw new HttpError(501, "not implemented"); },
+    loginStart: (user) => logins.start(user),
+    loginStatus: (id) => logins.status(id),
   };
 }
