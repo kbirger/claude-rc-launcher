@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { trustStartArgs, type TrustPrompt } from "./trustprompt";
   import ClonePanel from "./ClonePanel.svelte";
+  import ActionIcon from "./ActionIcon.svelte";
   import FolderIcon from "./FolderIcon.svelte";
   import { iconKind } from "./foldericon";
   import { ApiError, browse, getNode, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "./api";
@@ -132,9 +133,9 @@
       {/each}
     </nav>
     <div class="bar">
-      <button disabled={!listing || listing.parent === null || cloning} onclick={() => go(listing!.parent!)}>Up</button>
-      <button disabled={atTop} onclick={() => (creating = !creating)}>New folder</button>
-      {#if canClone}<button disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}>Clone repo here</button>{/if}
+      <button class="icon-btn" aria-label="Up one folder" title="Up one folder" disabled={!listing || listing.parent === null || cloning} onclick={() => go(listing!.parent!)}><ActionIcon name="up" /></button>
+      <button class="icon-btn" aria-label="New folder" title="New folder" aria-pressed={creating} disabled={atTop} onclick={() => (creating = !creating)}><ActionIcon name="new-folder" /></button>
+      {#if canClone}<button class="icon-btn" aria-label="Clone repo here" title="Clone repo here" disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}><ActionIcon name="clone" /></button>{/if}
     </div>
     {#if creating}
       <form class="bar" onsubmit={(e) => { e.preventDefault(); createFolder(); }}>
@@ -181,6 +182,7 @@
   .crumbs { display: flex; flex-wrap: wrap; align-items: center; margin: 4px 0; }
   .crumb { border: none; background: transparent; padding: 0 6px; color: var(--accent); }
   .bar { display: flex; gap: 8px; margin-bottom: 8px; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
   ul { list-style: none; margin: 0 0 8px; padding: 0; flex: 1; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
   li + li { border-top: 1px solid var(--border); }
   .dir { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; border: none; border-radius: 0; background: transparent; }

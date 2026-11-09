@@ -412,8 +412,8 @@ Windows nodes do not support clone in this version.
 ### In the web UI
 
 1. Choose "+ New". The "New instance" dialog opens. Open the folder where the repo must go.
-2. Choose "Clone repo here". For a host that cannot clone, the button is hidden. At the roots level the button is
-   disabled, because the clone needs a parent folder.
+2. Choose the clone button, an arrow that points into a tray. Its label is "Clone repo here". For a host that cannot
+   clone, the button is hidden. At the roots level the button is disabled, because the clone needs a parent folder.
 3. Paste a link or `owner/repo`, or pick a repo from the searchable list. The list is grouped by owner.
 4. The UI clones the repo, opens the new folder and starts the instance there. While the clone runs, the dialog
    locks its Close button.
