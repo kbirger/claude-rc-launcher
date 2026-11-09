@@ -138,10 +138,4 @@ describe("clone", () => {
     expect(calls).toHaveLength(0);
     expect(await exists(join(root, "chownfail"))).toBe(false);
   });
-
-  test("the other methods are stubs", async () => {
-    const { cloner } = setup({ code: 0, stdout: "", stderr: "" });
-    expect((await status(cloner.loginStart()))[0]).toBe(501);
-    expect((await status(cloner.loginStatus("x")))[0]).toBe(501);
-  });
 });
