@@ -214,6 +214,7 @@ export function createApp(deps: Deps): Hono {
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
+      ...(deps.latest ? { latest: deps.latest } : {}),
     });
   api.route("/hosts", forwarding());
   api.all("*", (c) => c.json({ error: "not found" }, 404));

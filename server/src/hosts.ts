@@ -5,7 +5,8 @@ import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
-import { stalestVersion } from "./versions";
+import type { LatestRelease } from "./latest";
+import { isKnownVersion, isStale, normalizeVersion, stalestVersion } from "./versions";
 import { VERSION } from "./version";
 import type { User } from "./userauth";
 
@@ -15,7 +16,16 @@ function clientVersionOf(body: unknown): string | undefined {
   return stalestVersion(body.clients.map((x) => (isObject(x) && typeof x.version === "string" ? x.version : undefined)));
 }
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; stale: boolean; target?: string };
+
+/** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
+const LATEST_MAX_AGE_MS = 3_600_000;
+
+/** `stale` and `target` of a host: stale only when `target` is known and the host or its clients are older. */
+function staleness(target: string | undefined, version: string | undefined, clientVersion: string | undefined): { stale: boolean; target?: string } {
+  if (target === undefined) return { stale: false };
+  return { stale: isStale(version, target) || isStale(clientVersion, target), target };
+}
 
 /** A node's update downloads two release assets and checks them before it answers. */
 export const UPDATE_TIMEOUT_MS = 180_000;
@@ -42,13 +52,21 @@ export function hostsApi(o: {
   registry: HostRegistry;
   probeTimeoutMs?: number;
   requestTimeoutMs?: number;
+  latest?: { peek(): LatestRelease | undefined; get(): Promise<LatestRelease> };
+  /** The hub's own version; only tests set it. */
+  version?: string;
 }): Hono {
   const { cfg, local } = o;
   const probeTimeoutMs = o.probeTimeoutMs ?? 3_000;
   const requestTimeoutMs = o.requestTimeoutMs ?? 10_000;
+  const hubVersion = o.version ?? VERSION;
   const app = new Hono();
 
   app.get("/", async (c) => {
+    // The host list never waits on GitHub: it reads what is cached and refreshes in the background.
+    const cachedLatest = o.latest?.peek();
+    if (o.latest && (!cachedLatest || Date.now() - Date.parse(cachedLatest.checkedAt) > LATEST_MAX_AGE_MS)) void o.latest.get().catch(() => {});
+    const hubTarget = isKnownVersion(hubVersion) ? hubVersion : undefined;
     const rest = await Promise.all(
       o.registry.list().map(async ({ host: h, client, source }): Promise<HostInfo> => {
         try {
@@ -56,12 +74,12 @@ export function hostsApi(o: {
           if (r.status === 200) {
             const version = isObject(r.body) && typeof r.body.version === "string" ? r.body.version : undefined;
             const clientVersion = clientVersionOf(r.body);
-            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}) };
+            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}), ...staleness(hubTarget, version, clientVersion) };
           }
-          return { id: h.id, name: h.name, status: "error", error: "bad response", source };
+          return { id: h.id, name: h.name, status: "error", error: "bad response", source, stale: false };
         } catch (e) {
-          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response", source };
-          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason, source };
+          if (!(e instanceof HostError)) return { id: h.id, name: h.name, status: "error", error: "bad response", source, stale: false };
+          return { id: h.id, name: h.name, status: OFFLINE.includes(e.reason) ? "offline" : "error", error: e.reason, source, stale: false };
         }
       }),
     );
@@ -72,7 +90,9 @@ export function hostsApi(o: {
       // The host list does not fail without the local client version.
       console.error(`local client version failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    return c.json([{ id: "local", name: cfg.name, status: "ok", version: VERSION, ...(localClient !== undefined ? { clientVersion: localClient } : {}) } satisfies HostInfo, ...rest]);
+    const latestVersion = cachedLatest ? normalizeVersion(cachedLatest.version) : undefined;
+    const localTarget = isKnownVersion(latestVersion) ? latestVersion : undefined;
+    return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...staleness(localTarget, hubVersion, localClient) } satisfies HostInfo, ...rest]);
   });
 
   // Audit every state-changing request, local or remote.

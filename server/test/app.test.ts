@@ -417,7 +417,7 @@ describe("host-scoped API", () => {
     const app = createApp({ cfg: local, instances: f.svc, userAuth: oidcUserAuth(local, oidc) });
     const r = await app.request("/api/hosts", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION }]);
+    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION, stale: false }]);
   });
   test("an unknown host is 404", async () => {
     const r = await mk().app.request("/api/hosts/other/instances", { headers: H() });

@@ -77,8 +77,8 @@ async function setup() {
 describe("hub + node end to end", () => {
   test("the host list shows both ok; instances and fs go through to the node", async () => {
     const s = await setup();
-    // The client copies on the machine running the test decide `clientVersion`, so it is left out here.
-    const list = ((await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[]).map(({ clientVersion: _c, ...h }) => h);
+    // The client copies on the machine running the test decide `clientVersion`, and the latest release decides `stale` and `target`, so they are left out here.
+    const list = ((await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[]).map(({ clientVersion: _c, stale: _s, target: _t, ...h }) => h);
     expect(list).toEqual([
       { id: "local", name: "hub", status: "ok", version: VERSION },
       { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION },
