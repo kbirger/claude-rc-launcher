@@ -408,7 +408,7 @@ Windows nodes do not support clone in this version.
 ### In the web UI
 
 1. Choose "+ New". The "New instance" dialog opens. Open the folder where the repo must go.
-2. Choose "Clone repo here". The button is hidden for a host that cannot clone. At the roots level the button is
+2. Choose "Clone repo here". For a host that cannot clone, the button is hidden. At the roots level the button is
    disabled, because the clone needs a parent folder.
 3. Paste a link or `owner/repo`, or pick a repo from the searchable list. The list is grouped by owner.
 4. The UI clones the repo, opens the new folder and starts the instance there. While the clone runs, the dialog
@@ -459,8 +459,8 @@ The node rejects other hosts, SSH addresses and links with embedded credentials.
   For the configured `service_user`, the `PATH` is `instance.service_path`. Its default is
   `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
   For another user, the `PATH` is `<home of that user>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
-- `setpriv` (from util-linux) must be installed if the clone runs as a different user from the launcher. This is also the
-  case when the launcher runs as root with a non-root `service_user`. The clone then runs as that user.
+- If the clone runs as a different user from the launcher, `setpriv` (from util-linux) must be installed.
+  If the launcher runs as root with a non-root `service_user`, the clone runs as that user. Then it needs `setpriv` too.
 - Private repos and the repo list need a GitHub login for that user. A public repo needs no login.
 
 You can log in in one of two ways. Run `gh auth login` on the machine as that user. Or use the launcher: the web
@@ -470,7 +470,7 @@ enter a short code on github.com. It then runs `gh auth setup-git`, so that a la
 
 If `gh` keeps its token in a desktop keyring, the node cannot read the token. The reason is that `setpriv` starts
 `gh` with no D-Bus session. The repo list then asks for a login. The login from the launcher writes the token to
-`hosts.yml` in the `gh` configuration folder of that user, so it works.
+`hosts.yml` in the `gh` configuration folder of that user. After that login, the repo list works.
 
 ### Limits
 
