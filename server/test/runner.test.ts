@@ -45,3 +45,21 @@ test("a missing command gives code 127", async () => {
   const r = await bunRunner("definitely-not-a-command-xyz", []);
   expect(r.code).toBe(127);
 });
+
+test("timeout with an escaped descendant causes no unhandled rejection", async () => {
+  if (!Bun.which("setsid")) return;
+  const seen: unknown[] = [];
+  const h = (e: unknown) => { seen.push(e); };
+  process.on("unhandledRejection", h);
+  try {
+    const t0 = Date.now();
+    const r = await bunRunner("sh", ["-c", "echo hi; setsid sleep 3 & wait"], { timeoutMs: 100 });
+    const elapsed = Date.now() - t0;
+    await new Promise((res) => setTimeout(res, 200));
+    expect(seen).toEqual([]);
+    expect(r.timedOut).toBe(true);
+    expect(elapsed).toBeLessThan(1500);
+  } finally {
+    process.off("unhandledRejection", h);
+  }
+});

@@ -11,10 +11,19 @@ export type Runner = (cmd: string, args: string[], opts?: RunOptions) => Promise
 /** Reads a stream into a buffer that stays readable even if the read never ends. */
 function collect(stream: ReadableStream<Uint8Array>) {
   const dec = new TextDecoder();
-  const box = { text: "", done: Promise.resolve() };
+  const reader = stream.getReader();
+  const box = {
+    text: "",
+    done: Promise.resolve(),
+    cancel: () => { try { reader.cancel().catch(() => {}); } catch {} },
+  };
   box.done = (async () => {
     try {
-      for await (const chunk of stream) box.text += dec.decode(chunk, { stream: true });
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        box.text += dec.decode(value, { stream: true });
+      }
     } catch {}
   })();
   return box;
@@ -52,7 +61,8 @@ export const bunRunner: Runner = async (cmd, args, opts = {}) => {
         new Promise((r) => { grace = setTimeout(r, 300); }),
       ]);
       clearTimeout(grace);
-      try { proc.stdout.cancel(); proc.stderr.cancel(); } catch {}
+      out.cancel();
+      err.cancel();
       return { code: code || 124, stdout: out.text, stderr: err.text, timedOut: true };
     }
     await Promise.all([out.done, err.done]);
