@@ -12,6 +12,7 @@ import { PathError } from "../src/paths";
 import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
 import { LatestError, type createLatestRelease } from "../src/latest";
+import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const ID = "0123456789ab";
@@ -605,5 +606,74 @@ describe("GET /api/latest", () => {
 
   test("501 without a latest cache", async () => {
     expect((await get(withLatest())).status).toBe(501);
+  });
+});
+
+describe("GET /api/updates and /api/events", () => {
+  const entry = (host: string): UpdateEntry => ({ host, startedAt: "2026-11-09T00:00:00.000Z", startedBy: "a", from: "0.8.2", status: "running" });
+  const fakeRecord = (initial: UpdateEntry[] = []) => {
+    const listeners = new Set<(e: UpdateEntry) => void>();
+    const rec = {
+      list: () => initial.map((e) => ({ ...e })),
+      onChange: (fn: (e: UpdateEntry) => void) => (listeners.add(fn), () => void listeners.delete(fn)),
+      emit: (e: UpdateEntry) => listeners.forEach((l) => l(e)),
+      count: () => listeners.size,
+    };
+    return rec;
+  };
+  const mk = (rec?: ReturnType<typeof fakeRecord>, keepaliveMs?: number) =>
+    createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), ...(rec ? { updates: rec as unknown as UpdateRecord } : {}), ...(keepaliveMs ? { keepaliveMs } : {}) });
+  const readUntil = async (reader: ReadableStreamDefaultReader<Uint8Array>, re: RegExp) => {
+    const dec = new TextDecoder();
+    let text = "";
+    while (!re.test(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += dec.decode(value);
+    }
+    return text;
+  };
+
+  test("GET /api/updates returns the list", async () => {
+    const r = await mk(fakeRecord([entry("nas")])).request("/api/updates", { headers: H() });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual([entry("nas")]);
+  });
+
+  test("events: snapshot first (even when empty), then an update per change; cancel removes the listener", async () => {
+    const rec = fakeRecord();
+    const r = await mk(rec).request("/api/events", { headers: H() });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("text/event-stream");
+    expect(r.headers.get("cache-control")).toBe("no-cache");
+    expect(r.headers.get("content-encoding")).toBeNull();
+    const reader = r.body!.getReader();
+    expect(await readUntil(reader, /\n\n/)).toBe("event: snapshot\ndata: []\n\n");
+    expect(rec.count()).toBe(1);
+    rec.emit(entry("nas"));
+    expect(await readUntil(reader, /\n\n/)).toBe(`event: update\ndata: ${JSON.stringify(entry("nas"))}\n\n`);
+    await reader.cancel();
+    for (let i = 0; i < 50 && rec.count() > 0; i++) await Bun.sleep(10);
+    expect(rec.count()).toBe(0);
+  });
+
+  test("events: a keepalive comment arrives on the interval", async () => {
+    const rec = fakeRecord([entry("nas")]);
+    const r = await mk(rec, 20).request("/api/events", { headers: H() });
+    const reader = r.body!.getReader();
+    const text = await readUntil(reader, /: keepalive\n\n/);
+    expect(text).toStartWith(`event: snapshot\ndata: ${JSON.stringify([entry("nas")])}\n\n`);
+    await reader.cancel();
+  });
+
+  test("without a session both are rejected", async () => {
+    const app = mk(fakeRecord());
+    expect((await app.request("/api/updates")).status).toBe(401);
+    expect((await app.request("/api/events")).status).toBe(401);
+  });
+
+  test("501 without an update record", async () => {
+    expect((await mk().request("/api/updates", { headers: H() })).status).toBe(501);
+    expect((await mk().request("/api/events", { headers: H() })).status).toBe(501);
   });
 });

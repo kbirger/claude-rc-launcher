@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { streamSSE } from "hono/streaming";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
@@ -25,7 +26,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: () => Promise<ClientVersion[]>; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: () => Promise<ClientVersion[]>; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; keepaliveMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -232,6 +233,31 @@ export function createApp(deps: Deps): Hono {
       ...(updates ? { updates } : {}),
     });
   api.route("/hosts", forwarding());
+  api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
+  api.get("/events", (c) => {
+    const record = deps.updates;
+    if (!record) return c.json({ error: "update record not available" }, 501);
+    const keepaliveMs = deps.keepaliveMs ?? 15_000;
+    return streamSSE(c, async (stream) => {
+      // Listen before reading the list so a change in between is not lost (a duplicate is fine: the client replaces by host).
+      const unsubscribe = record.onChange((e) => void stream.writeSSE({ event: "update", data: JSON.stringify(e) }).catch(() => {}));
+      const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
+      const done = new Promise<void>((resolve) =>
+        stream.onAbort(() => {
+          clearInterval(timer);
+          unsubscribe();
+          resolve();
+        }),
+      );
+      try {
+        await stream.writeSSE({ event: "snapshot", data: JSON.stringify(record.list()) });
+        await done;
+      } finally {
+        clearInterval(timer);
+        unsubscribe();
+      }
+    });
+  });
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
 

@@ -64,3 +64,18 @@ describe("withLongUpdates: GitHub routes", () => {
     expect(await timeouts("POST", "/api/hosts/nas/update")).toEqual([["/api/hosts/nas/update", 190]]);
   });
 });
+
+describe("withLongUpdates: event stream", () => {
+  const timeouts = async (method: string, p: string) => {
+    const seen: [string, number][] = [];
+    const server = { timeout: (req: Request, s: number) => void seen.push([new URL(req.url).pathname, s]) };
+    await withLongUpdates({ fetch: () => new Response("ok") }, 190, 125)(new Request(`http://x${p}`, { method }), server as any);
+    return seen;
+  };
+
+  test("GET /api/events turns the idle timeout off; other GET paths keep it", async () => {
+    expect(await timeouts("GET", "/api/events")).toEqual([["/api/events", 0]]);
+    for (const p of ["/api/hosts", "/api/updates", "/cli/api/events", "/api/hosts/nas/events"]) expect([p, await timeouts("GET", p)]).toEqual([p, []]);
+    expect(await timeouts("POST", "/api/events")).toEqual([]);
+  });
+});
