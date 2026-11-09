@@ -232,4 +232,21 @@ describe("repos", () => {
     });
     expect((await fail(cloner.repos())).status).toBe(504);
   });
+
+  test("an org call that times out on the time left also fails the call", async () => {
+    let t = 0;
+    const cloner = createCloner({
+      cfg: { roots: [] } as unknown as Config,
+      now: () => t,
+      run: async (_cmd, args, opts) => {
+        if (args[0] === "api") return ok(args[1] === "user" ? "me" : "org1\n");
+        if (owner(args) === "") { t = 90_000; return ok("[]"); }
+        expect(opts?.timeoutMs).toBe(10_000);
+        t = 100_000;
+        return { code: 143, stdout: "", stderr: "", timedOut: true };
+      },
+      identityFor: async () => id,
+    });
+    expect((await fail(cloner.repos())).status).toBe(504);
+  });
 });

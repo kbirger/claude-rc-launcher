@@ -206,7 +206,11 @@ export function createCloner(deps: {
         }
         const w = asUser(id, "gh", args);
         const r = await deps.run(w.cmd, w.args, { env: w.env, timeoutMs: Math.min(GH_TIMEOUT_MS, left) });
-        if (r.timedOut) throw new HttpError(504, "gh timed out");
+        if (r.timedOut) {
+          // A call cut short by the deadline, not by its own 60 s limit, also ends the whole list.
+          if (left < GH_TIMEOUT_MS) expired = true;
+          throw new HttpError(504, "gh timed out");
+        }
         if (r.code === 127) throw new HttpError(500, `${missingTool(w.cmd, r.stderr, "gh")} is not installed`);
         if (r.code === 4 || r.stderr.includes("gh auth login")) {
           throw new HttpError(409, "GitHub login required", { code: "github-login-required" });
