@@ -2,7 +2,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveCreds, type Credentials } from "../src/creds";
+import type { Flags } from "../src/args";
+import { runCommand } from "../src/commands";
+import { ExitError, LOGIN_MESSAGE, saveCreds, type Credentials } from "../src/creds";
+import type { HubClient } from "../src/hub";
 import { main, type Env } from "../src/index";
 
 const stops: (() => void)[] = [];
@@ -415,6 +418,31 @@ describe("clone, repos and gh-login", () => {
     expect(r2.err[0]).toContain('"claude-rc start /srv/r --force --host nas --user alice"');
   });
 
+  test("the start hint after a clone quotes a path with spaces or quotes and keeps --name", async () => {
+    const done = (p: string) => ({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: p }), [`POST ${H}/instances`]: err(428, { error: "not trusted" }) });
+    const a = await setup(done("/srv/my repo")).run("clone", "o/r", "/srv", "--name", "my name");
+    expect(a.err[0]).toContain(`"claude-rc start '/srv/my repo' --force --name 'my name'"`);
+    const b = await setup(done("/srv/it's")).run("clone", "o/r", "/srv", "--name", "x");
+    expect(b.err[0]).toContain(`"claude-rc start '/srv/it'\\''s' --force --name x"`);
+    const c = await setup(done("/srv/plain_1.2-x")).run("clone", "o/r", "/srv");
+    expect(c.err[0]).toContain(`"claude-rc start /srv/plain_1.2-x --force"`);
+  });
+
+  test("an expired login (code 2) mid-poll surfaces at once", async () => {
+    let polls = 0;
+    const hub = {
+      request: async (method: string, p: string) => {
+        if (method === "POST") return { id: "job1", path: "/srv/r" };
+        polls++;
+        throw new ExitError(LOGIN_MESSAGE, 2);
+      },
+    } as unknown as HubClient;
+    const e = await runCommand("clone", ["o/r", "/srv"], {} as Flags, hub, () => {}, async () => {}).then(() => undefined, (x) => x);
+    expect(e).toBeInstanceOf(ExitError);
+    expect([(e as ExitError).code, (e as ExitError).message]).toEqual([2, LOGIN_MESSAGE]);
+    expect(polls).toBe(1);
+  });
+
   test("a 409 or a 500 after a successful clone still names the clone path", async () => {
     for (const status of [409, 500]) {
       const s = setup({ ...cloneDone, [`POST ${H}/instances`]: err(status, { error: "boom" }) });
@@ -424,7 +452,7 @@ describe("clone, repos and gh-login", () => {
     }
   });
 
-  test("a 401 mid-poll surfaces at once, and the give-up text has the last error", async () => {
+  test("a 403 mid-poll surfaces at once, and the give-up text has the last error", async () => {
     const a = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: err(403, { error: "forbidden" }) });
     const r = await a.run("clone", "o/r", "/srv");
     expect(r.err).toEqual(["forbidden"]);

@@ -18,6 +18,9 @@ const POLL_LIMIT_MS = 11 * 60 * 1000;
 const MAX_POLL_FAILURES = 5;
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Quotes a word for a POSIX shell when it holds anything outside [A-Za-z0-9_./-]. */
+export const shellQuote = (s: string) => (/^[A-Za-z0-9_./-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
+
 const need = (args: string[], n: number, usage: string) => {
   if (args.length < n) throw new ExitError(`usage: claude-rc ${usage}`, 1);
 };
@@ -70,8 +73,9 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
         // An older hub drops addTrust, so --force can still end in a 428.
         if (flags.force) throw new ExitError(`${e.message}. The host did not accept --force. Update the hub and the node.${cloned ? ` The repository was cloned to ${path}` : ""}`, 1);
         if (cloned) {
-          const extra = `${flags.host ? ` --host ${flags.host}` : ""}${flags.user !== undefined ? ` --user ${flags.user}` : ""}`;
-          throw new ExitError(`${e.message}. The repository was cloned to ${path}. Run "claude-rc start ${path} --force${extra}" to trust it and start`, 1);
+          const q = shellQuote;
+          const extra = `${flags.name ? ` --name ${q(flags.name)}` : ""}${flags.host ? ` --host ${q(flags.host)}` : ""}${flags.user !== undefined ? ` --user ${q(flags.user)}` : ""}`;
+          throw new ExitError(`${e.message}. The repository was cloned to ${path}. Run "claude-rc start ${q(path)} --force${extra}" to trust it and start`, 1);
         }
         throw new ExitError(`${e.message}. Use --force to trust it`, 1);
       }
