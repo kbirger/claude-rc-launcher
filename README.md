@@ -27,6 +27,14 @@ see [Multiple hosts](#multiple-hosts).
   that user is not root (uid/gid resolved once at startup with `id -u`/`id -g`; startup fails if
   the user does not exist), so the instance can write to them.
 - Path-prefix mounting (e.g. `https://host/rc/`) is not supported; serve at a hostname root.
+- **Cloning:** the hub never stores, sees or forwards a GitHub token. A `gh` login stores a long-lived token
+  (the `repo` scope by default) for that OS user on that machine. Anyone with root-equivalent access to that machine
+  can use it. The launcher login is already root-equivalent, so it can use it too. The launcher shows the one-time
+  login code once and does not log or store it.
+- A clone runs `git` as the run-as user. A cloned repo can contain hooks and configuration. Trust a folder only if you
+  trust the repo. The trust question is the existing safeguard.
+- The clone passes the credential helper for that one command (`-c credential.helper=!gh auth git-credential`).
+  It does not write the helper into the repo.
 - **Multi-host:** a hub login is root-equivalent execution on the hub **and on every node** (as each
   node's `instance.service_user`). Compromising the hub gives an attacker everything the hub can reach:
   the hub private key, any shared secrets and every pinned node.
@@ -391,6 +399,78 @@ WantedBy=multi-user.target
 - The launcher only lists/stops unit files carrying the `managed-by` marker line and the
   `claude-rc-` prefix.
 
+## Cloning a repo
+
+You can clone a GitHub repo into a folder on a host and start an instance in it. The host must be a Linux host.
+Windows nodes do not support clone in this version.
+
+### In the web UI
+
+1. Choose New instance and open the folder where the repo must go.
+2. Choose "Clone repo here". The button is hidden for a host that cannot clone.
+3. Paste a link or `owner/repo`, or pick a repo from the searchable list. The list is grouped by owner.
+4. The UI clones the repo, opens the new folder and starts the instance there.
+
+If the folder is not trusted yet, the usual trust question appears before the start.
+
+If the list needs a GitHub login, the panel shows "Sign in to GitHub". The panel then shows a short code and a link.
+Open the link on github.com and enter the code. A pasted link works without a login for a public repo.
+
+### On the command line
+
+```sh
+claude-rc clone <repo> <parent> [--user <u>] [--name <n>] [--force]   # clone, then start, then print the instance id
+claude-rc repos [--user <u>]                                          # your GitHub repos, grouped by owner
+claude-rc gh-login [--user <u>]                                       # sign in to GitHub on the node
+```
+
+All three accept `--host <id>`. `clone` clones into a new folder in `<parent>` and then starts an instance in it.
+`--name`, `--user` and `--force` work as they do for `start`. If the start fails, the CLI prints the path of the cloned folder.
+
+- If no GitHub login exists, `repos` stops with `GitHub login required. Run "claude-rc gh-login"`.
+- `gh-login` prints `Open <url> and enter the code <code>`, waits, and prints `signed in`.
+- If the node is too old to clone, or is a Windows node, the CLI stops with `this host cannot clone. Update the node.`
+
+The repo argument can be any of these:
+
+- A `github.com` link, with or without `.git`, with a trailing slash, with extra path parts or with a query.
+- `owner/repo`.
+
+The node rejects other hosts, SSH addresses and links with embedded credentials.
+
+### How it works
+
+- The node that owns the folder runs the clone. It runs `git` as the run-as user of the instance.
+- The clone goes into a new subfolder. The folder is named after the repo and sits inside the folder you view.
+- The node enforces its own `instance.roots`. The subfolder must not exist yet.
+- The clone is a background job. The request returns at once, and the client polls for the result.
+- A clone that runs longer than 10 minutes fails.
+- If a clone fails, the node removes the folder that it created.
+- The `origin` remote is the plain address `https://github.com/<owner>/<repo>.git`.
+
+### Requirements on each machine
+
+- `git` and `gh` must be on the `PATH` of the instance user. The node does not use its own environment.
+  It runs both with `HOME` set to the home of that user and with a fixed `PATH`.
+  For the configured `service_user`, the `PATH` is `instance.service_path`. Its default is
+  `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
+  For another user, the `PATH` is `<home of that user>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
+- If the clone runs as another user, `setpriv` (from util-linux) must be installed.
+- Private repos and the repo list need a GitHub login for that user. A public repo needs no login.
+
+You can log in in one of two ways. Run `gh auth login` on the machine as that user. Or use the launcher: the web
+"Sign in to GitHub" button or `claude-rc gh-login`. The launcher runs `gh auth login --web`, a device login where you
+enter a short code on github.com. It then runs `gh auth setup-git`, so that a later `git push` works.
+`gh auth setup-git` edits the global git configuration of that user.
+
+### Limits
+
+- Only the first clone exists. There is no pull, no branch switch and no delete.
+- Only `github.com` works.
+- A host in user scope runs the clone as the service user only.
+- The repo list does not show repos where you are only an outside collaborator. You can still clone them by link.
+- Windows nodes do not support clone. They answer 404 on the clone routes, so the web UI hides the button.
+
 ## Multiple hosts
 
 ```
@@ -457,6 +537,9 @@ Instance and filesystem routes are under a host prefix: `GET /api/hosts` and
 failure on the hub side is `502 {error, host}` with `error` one of `host <id>: unreachable | timeout |
 certificate mismatch | rejected our credentials | bad response`. State-changing requests are audit-logged
 (`audit user=... host=... METHOD path status` on the hub, `audit caller=... METHOD path status` on a node).
+
+The clone routes in [API](#api-all-under-api-session-required) exist under `/api/hosts/<host>/...` on the hub and
+under `/api/...` on a node. A node that is too old, and a Windows node, answers 404.
 
 ## Command-line client
 
@@ -851,6 +934,10 @@ from it. State-changing `/api` requests need `Content-Type: application/json` (4
 rejected with 403 when an `Origin` header is present and does not match the origin of `public_url`
 (a request with no `Origin` header is allowed).
 
+Two routes are slow: `GET .../github/repos` and `POST .../github/login`. The repo list can take up to 120 seconds.
+The login start can take up to 20 seconds. The hub waits up to 125 seconds for them. A reverse proxy in front of the
+hub needs a read timeout of at least 125 seconds for those routes. The clone itself does not hold a request open.
+
 ### nginx
 
 ```nginx
@@ -927,6 +1014,17 @@ Since multi-host support these instance and filesystem routes live under a host:
 authenticated by bearer token only. The CLI reaches the same routes at `/cli/api/hosts/<id>/instances`,
 `/cli/api/hosts/<id>/users` and `/cli/api/hosts/<id>/fs`. A node that is too old to serve `/users` returns 404. The web
 UI then hides the selector and the locks.
+
+Clone routes (see [Cloning a repo](#cloning-a-repo)). Each one exists under `/api/hosts/<id>/...` on the hub and
+under `/api/...` on a node. A node that is too old answers 404.
+
+- `GET /node` returns `{ok, name, version, clone}`. `clone` is a boolean. It is false when the node has no clone support.
+- `POST /clone {repo, parent, user?}` returns 202 `{id, path}`. `path` is the new folder.
+- `GET /clone/:id` returns `{state, path?, error?}`. `state` is `running`, `done` or `failed`.
+- `GET /github/repos?user=` returns `{groups: [{owner, repos: [{name, private, pushedAt}]}]}`. If no login exists, it
+  returns 409 `{error, code: "github-login-required"}`.
+- `POST /github/login {user?}` returns 202 `{id, code, url}`. Always send a body, for example `{}`.
+- `GET /github/login/:id` returns `{state, error?}`. `state` is `pending`, `done` or `failed`.
 
 ## First-run verification checklist
 
