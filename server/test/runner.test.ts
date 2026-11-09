@@ -63,3 +63,20 @@ test("timeout with an escaped descendant causes no unhandled rejection", async (
     process.off("unhandledRejection", h);
   }
 });
+
+// Field 5 of /proc/<pid>/stat is the process group (the name in field 2 has no spaces here).
+const pgrpOf = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
+
+test("a call without a timeout stays in the launcher's process group", async () => {
+  if (process.platform !== "linux") return;
+  const own = pgrpOf(await Bun.file(`/proc/${process.pid}/stat`).text());
+  const r = await bunRunner("sh", ["-c", "cat /proc/$$/stat"]);
+  expect(pgrpOf(r.stdout)).toBe(own);
+});
+
+test("a call with a timeout gets its own process group, so the timeout can kill the group", async () => {
+  if (process.platform !== "linux") return;
+  const own = pgrpOf(await Bun.file(`/proc/${process.pid}/stat`).text());
+  const r = await bunRunner("sh", ["-c", "cat /proc/$$/stat"], { timeoutMs: 5000 });
+  expect(pgrpOf(r.stdout)).not.toBe(own);
+});

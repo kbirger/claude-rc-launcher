@@ -41,7 +41,8 @@ export const bunRunner: Runner = async (cmd, args, opts = {}) => {
       stdin: opts.stdin === undefined ? "ignore" : new Blob([opts.stdin]),
       cwd: opts.cwd,
       env: opts.env,
-      detached: true,
+      // Only a call with a timeout needs its own process group, so that the timeout can kill the whole group.
+      detached: opts.timeoutMs !== undefined,
     });
     let timedOut = false;
     if (opts.timeoutMs !== undefined) {
