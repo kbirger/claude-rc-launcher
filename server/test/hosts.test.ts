@@ -48,7 +48,7 @@ const fakeUpdater = (report: UpdateReport = restarting) => {
 const stops: (() => void)[] = [];
 afterAll(() => stops.forEach((s) => s()));
 
-async function startNode(id: string, over: { secret?: string; cloner?: Cloner } = {}): Promise<NodeFixture> {
+async function startNode(id: string, over: { secret?: string; cloner?: Cloner; clientVersions?: () => { path: string; version?: string }[] } = {}): Promise<NodeFixture> {
   const root = realpathSync(tmp());
   const sec = generateSecret();
   const cert = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
@@ -65,7 +65,7 @@ async function startNode(id: string, over: { secret?: string; cloner?: Cloner } 
     logs: async (_id: string, n: number) => `${id} log ${n}`,
   };
   const up = fakeUpdater();
-  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }), update: up.update, ...(over.cloner ? { cloner: over.cloner } : {}) });
+  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }), update: up.update, ...(over.cloner ? { cloner: over.cloner } : {}), ...(over.clientVersions ? { clientVersions: over.clientVersions } : {}) });
   const seen: Headers[] = [];
   const delayNodeMs = { value: 0 };
   const server = Bun.serve({
@@ -85,7 +85,7 @@ async function startNode(id: string, over: { secret?: string; cloner?: Cloner } 
   return { host, client: createHostClient(host, secretAuthorizer(secret)), secret, seen, starts, updates: up.updates, stop, delayNodeMs };
 }
 
-function hub(hosts: HostConfig[], clients: Map<string, HostClient>, o: { probeTimeoutMs?: number; requestTimeoutMs?: number; update?: { run(release?: string): Promise<UpdateReport> } } = {}) {
+function hub(hosts: HostConfig[], clients: Map<string, HostClient>, o: { probeTimeoutMs?: number; requestTimeoutMs?: number; clientVersions?: () => { path: string; version?: string }[]; update?: { run(release?: string): Promise<UpdateReport> } } = {}) {
   const cfg = { name: "box", hosts, roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config;
   return createApp({ cfg, instances: localSvc, userAuth, hostClients: clients, ...o });
 }
@@ -102,6 +102,28 @@ beforeEach(() => {
 afterEach(() => {
   console.log = realLog;
   console.error = realErr;
+});
+
+describe("host list client versions", () => {
+  test("a node's clientVersion is the oldest of its copies, and none without copies", async () => {
+    const a = await startNode("nas", { clientVersions: () => [{ path: "/a", version: "0.8.2" }, { path: "/b", version: "0.8.0" }] });
+    const b = await startNode("pi");
+    const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", b.client]]));
+    const list = await (await get(app, "/api/hosts")).json();
+    expect(list.find((h: any) => h.id === "nas").clientVersion).toBe("0.8.0");
+    expect("clientVersion" in list.find((h: any) => h.id === "pi")).toBe(false);
+  });
+  test("a node that answers without a clients field has no clientVersion", async () => {
+    const fake: HostClient = { call: async () => ({ status: 200, body: { ok: true, name: "x", version: VERSION } }) } as unknown as HostClient;
+    const host: HostConfig = { id: "old", name: "OLD", url: "https://localhost:1", auth: { type: "secret", secret: "s" } } as HostConfig;
+    const app = hub([host], new Map([["old", fake]]));
+    const list = await (await get(app, "/api/hosts")).json();
+    expect("clientVersion" in list.find((h: any) => h.id === "old")).toBe(false);
+  });
+  test("local gets its clientVersion from the local /node", async () => {
+    const app = hub([], new Map(), { clientVersions: () => [{ path: "/a", version: "0.9.0" }, { path: "/b" }] });
+    expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0" });
+  });
 });
 
 describe("host list", () => {
@@ -462,8 +484,8 @@ describe("node and update routes", () => {
   test("GET node returns name and version for local and for a node", async () => {
     const n = await startNode("nas");
     const app = hub([n.host], new Map([["nas", n.client]]));
-    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, clone: false });
-    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, clone: false });
+    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, clone: false, clients: [] });
+    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, clone: false, clients: [] });
   });
 
   test("the host list takes a node's version from its probe answer", async () => {

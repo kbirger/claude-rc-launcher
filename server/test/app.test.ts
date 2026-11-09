@@ -475,7 +475,7 @@ describe("POST /update on the local host", () => {
   test("GET /node returns ok, name and version", async () => {
     const r = await withUpdate().request("/api/hosts/local/node", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION, clone: false });
+    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION, clone: false, clients: [] });
   });
 });
 

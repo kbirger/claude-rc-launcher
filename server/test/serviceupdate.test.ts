@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { sha256, type RunResult } from "../src/release";
 import {
+  createClientVersions,
   createServiceUpdater,
   findClients,
   UpdateRefused,
@@ -458,5 +459,54 @@ describe("watchdogScript in a real shell", () => {
   test("values are quoted for the shell", () => {
     const s = watchdogScript({ bin: "/tmp/a b'c", unit: "u", waitSeconds: 30 });
     expect(s).toContain(`'/tmp/a b'\\''c'`);
+  });
+});
+
+describe("createClientVersions", () => {
+  const make = (answers: Record<string, string | null>) => {
+    const calls: string[][] = [];
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: ["/root"],
+      exists: (p: string) => p in answers,
+      realpath: (p: string) => p,
+      run: (args: string[]) => {
+        calls.push(args);
+        const a = answers[args[0]!];
+        return a === null || a === undefined ? { code: 1, stdout: "", stderr: "boom" } : { code: 0, stdout: a, stderr: "" };
+      },
+    } as unknown as UpdateEnv;
+    return { env, calls };
+  };
+  const A = "/usr/local/bin/claude-rc";
+  const B = "/root/.local/bin/claude-rc";
+
+  test("one copy gives its version", () => {
+    expect(createClientVersions(make({ [A]: "claude-rc 0.8.2\n" }).env)()).toEqual([{ path: A, version: "0.8.2" }]);
+  });
+  test("a copy that exits 1 has no version", () => {
+    expect(createClientVersions(make({ [A]: null }).env)()).toEqual([{ path: A }]);
+  });
+  test("two copies give two entries", () => {
+    expect(createClientVersions(make({ [A]: "claude-rc 0.8.2\n", [B]: "claude-rc 0.8.0\n" }).env)()).toEqual([
+      { path: A, version: "0.8.2" },
+      { path: B, version: "0.8.0" },
+    ]);
+  });
+  test("no copy gives an empty list", () => {
+    expect(createClientVersions(make({}).env)()).toEqual([]);
+  });
+  test("a second call within the ttl runs no command, and one after it does", () => {
+    const { env, calls } = make({ [A]: "claude-rc 0.8.2\n" });
+    let t = 1_000;
+    const get = createClientVersions(env, { now: () => t });
+    get();
+    expect(calls.length).toBe(1);
+    t += 59_000;
+    get();
+    expect(calls.length).toBe(1);
+    t += 2_000;
+    get();
+    expect(calls.length).toBe(2);
   });
 });

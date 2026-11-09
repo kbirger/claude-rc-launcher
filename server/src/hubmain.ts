@@ -13,7 +13,7 @@ import { resolveDirOwner } from "./owner";
 import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates, type ServeLimits } from "./serve";
-import { createServiceUpdater } from "./serviceupdate";
+import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { staticHandler } from "./static";
 import type { UserAuthStrategy } from "./userauth";
 import { loadWebFiles } from "./webfiles";
@@ -70,10 +70,12 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const cli = buildCliDeps(cfg, deps, makeClient, [hubKey.publicKey]);
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
   // One updater for the process: it holds the lock that refuses a second update while one runs.
-  const update = deps.update ?? createServiceUpdater(realUpdateEnv(cfg));
+  const updateEnv = realUpdateEnv(cfg);
+  const update = deps.update ?? createServiceUpdater(updateEnv);
+  const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
   const latest = createLatestRelease({ fetch: globalThis.fetch });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);

@@ -121,6 +121,35 @@ exit 1
 `;
 }
 
+/** The version a binary reports with `--version` (`<prefix> <version>`), or undefined when it does not answer. */
+function binaryVersion(env: Pick<UpdateEnv, "run">, p: string, prefix: string): string | undefined {
+  const r = env.run([p, "--version"], { timeoutMs: VERSION_TIMEOUT_MS });
+  const line = r.stdout.trim().split("\n")[0] ?? "";
+  return r.code === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
+}
+
+export type ClientVersion = { path: string; version?: string };
+
+/**
+ * The client copies on this machine with the version each one reports. The list is cached for `ttlMs`, so a
+ * host poll does not start a process each time. A copy that does not answer has no `version`.
+ */
+export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: () => number } = {}): () => ClientVersion[] {
+  const ttlMs = o.ttlMs ?? 60_000;
+  const now = o.now ?? Date.now;
+  let cached: { at: number; list: ClientVersion[] } | undefined;
+  return () => {
+    const t = now();
+    if (cached && t - cached.at < ttlMs) return cached.list;
+    const list = findClients(env).map((path): ClientVersion => {
+      const version = binaryVersion(env, path, CLIENT);
+      return version !== undefined ? { path, version } : { path };
+    });
+    cached = { at: t, list };
+    return list;
+  };
+}
+
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -131,11 +160,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createServiceUpdater(env: UpdateEnv): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
 
-  const versionOf = (p: string, prefix: string): string | undefined => {
-    const r = env.run([p, "--version"], { timeoutMs: VERSION_TIMEOUT_MS });
-    const line = r.stdout.trim().split("\n")[0] ?? "";
-    return r.code === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
-  };
+  const versionOf = (p: string, prefix: string) => binaryVersion(env, p, prefix);
 
   const refuseUnlessInstalled = () => {
     if (env.platform !== "linux") throw new UpdateRefused(409, `the update works on Linux with systemd only (this is ${env.platform})`);

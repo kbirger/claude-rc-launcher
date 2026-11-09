@@ -5,10 +5,17 @@ import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { stalestVersion } from "./versions";
 import { VERSION } from "./version";
 import type { User } from "./userauth";
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string };
+/** The oldest known version among the `clients` of a node's `/node` body, or undefined. */
+function clientVersionOf(body: unknown): string | undefined {
+  if (!isObject(body) || !Array.isArray(body.clients)) return undefined;
+  return stalestVersion(body.clients.map((x) => (isObject(x) && typeof x.version === "string" ? x.version : undefined)));
+}
+
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string };
 
 /** A node's update downloads two release assets and checks them before it answers. */
 export const UPDATE_TIMEOUT_MS = 180_000;
@@ -48,7 +55,8 @@ export function hostsApi(o: {
           const r = await client.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
           if (r.status === 200) {
             const version = isObject(r.body) && typeof r.body.version === "string" ? r.body.version : undefined;
-            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}) };
+            const clientVersion = clientVersionOf(r.body);
+            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}) };
           }
           return { id: h.id, name: h.name, status: "error", error: "bad response", source };
         } catch (e) {
@@ -57,7 +65,13 @@ export function hostsApi(o: {
         }
       }),
     );
-    return c.json([{ id: "local", name: cfg.name, status: "ok", version: VERSION } satisfies HostInfo, ...rest]);
+    let localClient: string | undefined;
+    try {
+      localClient = clientVersionOf(await (await local.request("/node")).json());
+    } catch {
+      // The local node answer is optional: the host list does not fail without it.
+    }
+    return c.json([{ id: "local", name: cfg.name, status: "ok", version: VERSION, ...(localClient !== undefined ? { clientVersion: localClient } : {}) } satisfies HostInfo, ...rest]);
   });
 
   // Audit every state-changing request, local or remote.

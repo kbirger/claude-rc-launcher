@@ -38,12 +38,17 @@ describe("node app", () => {
   test("/healthz is open", async () => {
     expect((await app().request("/healthz")).status).toBe(200);
   });
+  test("/api/node carries the client versions of the machine", async () => {
+    const clients = [{ path: "/usr/local/bin/claude-rc", version: "0.8.2" }, { path: "/root/.local/bin/claude-rc" }];
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: () => clients });
+    expect((await (await a.request("/api/node", { headers: ok })).json()).clients).toEqual(clients);
+  });
   test("/api routes need auth", async () => {
     for (const p of ["/api/node", "/api/instances", "/api/fs"]) expect((await app().request(p)).status).toBe(401);
   });
   test("/api/node and instance routes work with auth", async () => {
     const a = app();
-    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, clone: false });
+    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, clone: false, clients: [] });
     expect(await (await a.request("/api/instances", { headers: ok })).json()).toEqual([inst]);
     expect((await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) })).status).toBe(201);
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);
