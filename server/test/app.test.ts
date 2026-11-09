@@ -484,6 +484,7 @@ describe("clone routes", () => {
       if (id === "b".repeat(32)) throw new HttpError(404, "unknown login");
       return { state: "failed", error: "denied" };
     },
+    activeClones: () => [],
   };
   const withCloner = () => createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), cloner });
   const base = "/api/hosts/local";
@@ -537,6 +538,30 @@ describe("clone routes", () => {
   test("/node reports clone: true", async () => {
     expect((await (await req(withCloner(), "GET", "/node")).json()).clone).toBe(true);
   });
+  test("a start in or under a folder with a running clone gives 409 before start is called", async () => {
+    const cloning = join(root, "cloning");
+    await mkdir(join(cloning, "deep"), { recursive: true });
+    await mkdir(join(root, "cloning-sibling"), { recursive: true });
+    const f = fake();
+    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), cloner: { ...cloner, activeClones: () => [cloning] } });
+    for (const path of [cloning, join(cloning, "deep"), join(cloning, "deep", "..")]) {
+      const r = await post(app, { path, addTrust: true });
+      expect([r.status, await r.json()]).toEqual([409, { error: "a clone is still running in that folder" }]);
+    }
+    expect(f.calls.filter((c: any[]) => c[0] === "start")).toEqual([]);
+    // A sibling whose name starts the same way is not inside the clone.
+    expect((await post(app, { path: join(root, "cloning-sibling") })).status).toBe(201);
+    // A path that does not resolve goes to start, which gives its own error.
+    expect((await post(app, { path: "/nonexistent/x" })).status).toBe(201);
+    expect(f.calls.filter((c: any[]) => c[0] === "start").length).toBe(2);
+  });
+
+  test("with no running clone, start is called as before", async () => {
+    const f = fake();
+    const app = createApp({ cfg, instances: f.svc, userAuth: oidcUserAuth(cfg, oidc), cloner });
+    expect((await post(app, { path: join(root, "cloning") })).status).toBe(201);
+  });
+
   test("without a cloner the routes are 404", async () => {
     const app = mk().app;
     for (const [m, p] of [["POST", "/clone"], ["GET", `/clone/${"a".repeat(32)}`], ["GET", "/github/repos"], ["POST", "/github/login"], ["GET", `/github/login/${"a".repeat(32)}`]]) {

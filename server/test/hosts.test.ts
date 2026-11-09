@@ -580,6 +580,7 @@ describe("clone, repo list and login forwarding", () => {
       repos: async (u) => (seen.push(["repos", u]), { groups: [{ owner: "me", repos: [{ name: "r", private: false, pushedAt: "2026-01-01T00:00:00Z" }] }] }),
       loginStart: async (u) => (seen.push(["login", u]), { id: LOGIN_ID, code: "ABCD-1234", url: "https://github.com/login/device" }),
       loginStatus: async (id) => (seen.push(["status", id]), { state: "failed", error: "denied" }),
+      activeClones: () => [],
     };
     return { seen, cloner };
   }

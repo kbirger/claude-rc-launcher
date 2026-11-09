@@ -2,7 +2,7 @@ import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
-import { listDirs, makeDir, type DirOwner } from "./fsapi";
+import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
 import { hostAdminApi } from "./hostadmin";
@@ -10,7 +10,7 @@ import { hostsApi } from "./hosts";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { HttpError, type Instances } from "./instances";
-import { PathError } from "./paths";
+import { PathError, within } from "./paths";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -70,6 +70,13 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   r.get("/instances", async (c) => c.json(await instances.list()));
   r.post("/instances", async (c) => {
     const input = parseStartRequest(await readJson(c));
+    // A folder that git still writes to is not ready, and a failed clone removes it. This check comes before trust.
+    const busy = cloner?.activeClones() ?? [];
+    if (busy.length > 0) {
+      // Resolved as `start` resolves it. A path that does not resolve goes on to `start`, which gives its own error.
+      const real = await resolveChecked(input.path, cfg.roots).catch(() => undefined);
+      if (real !== undefined && busy.some((t) => within(real, t))) throw new HttpError(409, "a clone is still running in that folder");
+    }
     return c.json(await instances.start(input), 201);
   });
   r.delete("/instances/:id", async (c) => {

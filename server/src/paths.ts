@@ -17,7 +17,8 @@ function norm(p: string): string {
   return process.platform === "win32" ? p.toLowerCase() : p;
 }
 
-function within(target: string, root: string): boolean {
+/** True when `target` is `root` or inside it. Both must be resolved paths. */
+export function within(target: string, root: string): boolean {
   const t = norm(target);
   const r = norm(root);
   if (t === r) return true;

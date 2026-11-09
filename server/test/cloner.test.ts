@@ -103,6 +103,27 @@ describe("clone", () => {
     expect(await cloner.cloneStatus(started.id)).toEqual({ state: "done", path: join(root, "gate") });
   });
 
+  test("activeClones lists the real target while the job runs and drops it when it ends", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const { cloner } = setup(async () => { await gate; return { code: 128, stdout: "", stderr: "fatal: x\n" }; });
+    expect(cloner.activeClones()).toEqual([]);
+    const started = await cloner.cloneStart({ repo: "octo/active", parent: root });
+    expect(cloner.activeClones()).toEqual([join(root, "active")]);
+    release();
+    for (let i = 0; i < 200 && (await cloner.cloneStatus(started.id)).state === "running"; i++) await Bun.sleep(5);
+    expect(cloner.activeClones()).toEqual([]);
+    const done = setup(ok);
+    await runClone(done.cloner, { repo: "octo/active2", parent: root });
+    expect(done.cloner.activeClones()).toEqual([]);
+  });
+
+  test("a refused start (owner not set) leaves no active clone", async () => {
+    const { cloner } = setup(ok, { ...id, uid: 1001, gid: 1002 }, async () => { throw new Error("EPERM"); });
+    await status(cloner.cloneStart({ repo: "octo/refused", parent: root }));
+    expect(cloner.activeClones()).toEqual([]);
+  });
+
   test("unknown id gives 404", async () => {
     const { cloner } = setup(ok);
     expect(await status(cloner.cloneStatus("f".repeat(32)))).toEqual([404, "unknown clone"]);
