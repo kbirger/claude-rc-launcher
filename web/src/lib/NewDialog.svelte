@@ -135,7 +135,7 @@
     <div class="bar">
       <button class="icon-btn" aria-label="Up one folder" title="Up one folder" disabled={!listing || listing.parent === null || cloning} onclick={() => go(listing!.parent!)}><ActionIcon name="up" /></button>
       <button class="icon-btn" aria-label="New folder" title="New folder" aria-pressed={creating} disabled={atTop} onclick={() => (creating = !creating)}><ActionIcon name="new-folder" /></button>
-      {#if canClone}<button class="icon-btn" aria-label="Clone repo here" title="Clone repo here" disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}><ActionIcon name="clone" /></button>{/if}
+      {#if canClone}<button class="gh-btn" disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}><ActionIcon name="github" />Clone with GitHub</button>{/if}
     </div>
     {#if creating}
       <form class="bar" onsubmit={(e) => { e.preventDefault(); createFolder(); }}>
@@ -183,6 +183,8 @@
   .crumb { border: none; background: transparent; padding: 0 6px; color: var(--accent); }
   .bar { display: flex; gap: 8px; margin-bottom: 8px; }
   .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  .gh-btn { display: inline-flex; align-items: center; gap: 8px; background: #0969da; border-color: #0969da; color: #fff; }
+  @media (prefers-color-scheme: dark) { .gh-btn { background: #1f6feb; border-color: #1f6feb; } }
   ul { list-style: none; margin: 0 0 8px; padding: 0; flex: 1; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
   li + li { border-top: 1px solid var(--border); }
   .dir { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; border: none; border-radius: 0; background: transparent; }
