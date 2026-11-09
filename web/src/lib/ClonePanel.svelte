@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { ApiError, cloneStart, cloneStatus, githubLoginStart, githubLoginStatus, listRepos, type RepoGroup } from "./api";
   import { filterGroups } from "./repofilter";
+  import { startPolling } from "./poll";
 
   let { host, parent, user, oncloned, onclose }: {
     host: string;
@@ -23,8 +24,9 @@
   let login = $state<{ code: string; url: string } | null>(null);
   let loginError = $state("");
   let destroyed = false;
-  let cloneTimer: ReturnType<typeof setTimeout> | undefined;
-  let loginTimer: ReturnType<typeof setTimeout> | undefined;
+  let signingIn = $state(false);
+  let stopClone: (() => void) | undefined;
+  let stopLogin: (() => void) | undefined;
 
   const shown = $derived(filterGroups(groups, query));
 
@@ -48,8 +50,8 @@
   onMount(load);
   onDestroy(() => {
     destroyed = true;
-    clearTimeout(cloneTimer);
-    clearTimeout(loginTimer);
+    stopClone?.();
+    stopLogin?.();
   });
 
   function pick(name: string) {
@@ -68,55 +70,62 @@
     try {
       const { id } = await cloneStart(host, repo.trim(), parent, user);
       if (destroyed) return;
-      pollClone(id);
+      stopClone?.();
+      stopClone = startPolling({
+        fetch: () => cloneStatus(host, id),
+        interval: 2000,
+        maxFailures: 5,
+        onResult: (s) => {
+          if (s.state === "running") return false;
+          cloning = false;
+          if (s.state === "done") {
+            if (s.path) oncloned(s.path);
+            else cloneError = "The server did not return the folder path.";
+          } else cloneError = s.error || "Clone failed";
+          return true;
+        },
+        onGiveUp: () => {
+          cloning = false;
+          cloneError = "Lost track of the clone. Check the folder before trying again.";
+        },
+      });
     } catch (e) {
       cloning = false;
       cloneError = e instanceof ApiError ? e.message : "Failed to clone";
     }
   }
-  function pollClone(id: string) {
-    cloneTimer = setTimeout(async () => {
-      try {
-        const s = await cloneStatus(host, id);
-        if (destroyed) return;
-        if (s.state === "running") return pollClone(id);
-        cloning = false;
-        if (s.state === "done" && s.path) oncloned(s.path);
-        else cloneError = s.error || "Clone failed";
-      } catch (e) {
-        if (destroyed) return;
-        cloning = false;
-        cloneError = e instanceof ApiError ? e.message : "Failed to read clone status";
-      }
-    }, 2000);
-  }
 
   async function signIn() {
+    if (signingIn) return;
+    signingIn = true;
     loginError = "";
     try {
       const r = await githubLoginStart(host, user);
       if (destroyed) return;
       login = { code: r.code, url: r.url };
-      pollLogin(r.id);
+      stopLogin?.();
+      stopLogin = startPolling({
+        fetch: () => githubLoginStatus(host, r.id),
+        interval: 3000,
+        maxFailures: 5,
+        onResult: (s) => {
+          if (s.state === "pending") return false;
+          login = null;
+          signingIn = false;
+          if (s.state === "done") load();
+          else loginError = s.error || "Sign-in failed";
+          return true;
+        },
+        onGiveUp: () => {
+          login = null;
+          signingIn = false;
+          loginError = "Lost track of the sign-in. Try again.";
+        },
+      });
     } catch (e) {
+      signingIn = false;
       loginError = e instanceof ApiError ? e.message : "Failed to start sign-in";
     }
-  }
-  function pollLogin(id: string) {
-    loginTimer = setTimeout(async () => {
-      try {
-        const s = await githubLoginStatus(host, id);
-        if (destroyed) return;
-        if (s.state === "pending") return pollLogin(id);
-        login = null;
-        if (s.state === "done") load();
-        else loginError = s.error || "Sign-in failed";
-      } catch (e) {
-        if (destroyed) return;
-        login = null;
-        loginError = e instanceof ApiError ? e.message : "Failed to read sign-in status";
-      }
-    }, 3000);
   }
 </script>
 
@@ -126,27 +135,28 @@
     <button disabled={cloning} onclick={onclose}>Back</button>
   </div>
   <form onsubmit={(e) => { e.preventDefault(); clone(); }}>
-    <input placeholder="owner/repo or GitHub link" bind:value={repo} disabled={cloning} aria-label="Repository link" />
+    <label class="lbl" for="clone-repo">Repository</label>
+    <input id="clone-repo" placeholder="owner/repo or GitHub link" bind:value={repo} disabled={cloning} />
     <button class="primary into" type="submit" disabled={!repo.trim() || cloning}>
       {#if cloning}Cloning...{:else}Clone into {parent}{/if}
     </button>
   </form>
-  {#if cloneError}<p class="error">{cloneError}</p>{/if}
+  {#if cloneError}<p class="error" role="status">{cloneError}</p>{/if}
 
   <input class="search" type="search" placeholder="Search your repos" bind:value={query} aria-label="Search repos" />
-  {#if listError}<p class="muted note">{listError}</p>{/if}
+  {#if listError}<p class="muted note" role="status">{listError}</p>{/if}
   {#if needLogin}
     <div class="login">
       {#if login}
         <p>Enter this code on GitHub:</p>
-        <p class="code">{login.code}</p>
+        <p class="code" role="status">{login.code}</p>
         <a href={login.url} target="_blank" rel="noopener noreferrer">Open {login.url}</a>
         <p class="muted">Waiting for you to finish...</p>
       {:else}
         <p class="muted">Sign in to GitHub to list your repos. A pasted link works without it.</p>
-        <button class="primary" onclick={signIn}>Sign in to GitHub</button>
+        <button class="primary" disabled={signingIn} onclick={signIn}>Sign in to GitHub</button>
       {/if}
-      {#if loginError}<p class="error">{loginError}</p>{/if}
+      {#if loginError}<p class="error" role="status">{loginError}</p>{/if}
     </div>
   {/if}
   <div class="list">
@@ -176,6 +186,7 @@
   .panel { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; margin-top: 8px; }
   .top { display: flex; justify-content: space-between; align-items: center; }
   form { display: grid; gap: 8px; }
+  .lbl { font-size: 0.85rem; color: var(--muted); }
   .into { overflow-wrap: anywhere; height: auto; padding: 8px 16px; }
   .error, .note { margin: 0; overflow-wrap: anywhere; }
   .note { font-size: 0.85rem; }

@@ -22,6 +22,8 @@
   const chosenUser = $derived(usersInfo?.selectable ? user : undefined);
 
   const atTop = $derived(!listing || listing.path === "");
+  // The panel only makes sense inside a folder.
+  $effect(() => { if (atTop && cloning) cloning = false; });
   // Breadcrumb segments, each with the cumulative path to navigate to.
   const crumbs = $derived.by(() => {
     if (!listing || !listing.path) return [];
@@ -114,19 +116,19 @@
     </div>
     {#if usersInfo}
       <label class="runas">Run as
-        <select value={user} onchange={changeUser}>
+        <select value={user} disabled={cloning} onchange={changeUser}>
           {#each usersInfo.users as u (u.name)}<option value={u.name}>{u.name}</option>{/each}
         </select>
       </label>
     {/if}
     <nav class="crumbs">
-      <button class="crumb" onclick={() => go()}>Roots</button>
+      <button class="crumb" disabled={cloning} onclick={() => go()}>Roots</button>
       {#each crumbs as c (c.path)}
-        <span class="muted">/</span><button class="crumb" onclick={() => go(c.path)}>{c.label}</button>
+        <span class="muted">/</span><button class="crumb" disabled={cloning} onclick={() => go(c.path)}>{c.label}</button>
       {/each}
     </nav>
     <div class="bar">
-      <button disabled={!listing || listing.parent === null} onclick={() => go(listing!.parent!)}>Up</button>
+      <button disabled={!listing || listing.parent === null || cloning} onclick={() => go(listing!.parent!)}>Up</button>
       <button disabled={atTop} onclick={() => (creating = !creating)}>New folder</button>
       {#if canClone}<button disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}>Clone repo here</button>{/if}
     </div>
