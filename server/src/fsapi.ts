@@ -77,6 +77,18 @@ export async function listDirs(
 // eslint-disable-next-line no-control-regex
 const BAD_NAME = /[\u0000-\u001f\u007f/\\]/;
 
+export function isValidDirName(name: string): boolean {
+  return (
+    typeof name === "string" &&
+    name.length > 0 &&
+    name.length <= 255 &&
+    name !== "." &&
+    name !== ".." &&
+    !name.startsWith(".") &&
+    !BAD_NAME.test(name)
+  );
+}
+
 export type DirOwner = { uid: number; gid: number };
 
 export async function makeDir(
@@ -86,15 +98,7 @@ export async function makeDir(
   owner?: DirOwner,
   chownFn: (path: string, uid: number, gid: number) => Promise<void> = chown,
 ): Promise<{ path: string }> {
-  if (
-    typeof name !== "string" ||
-    name.length === 0 ||
-    name.length > 255 ||
-    name === "." ||
-    name === ".." ||
-    name.startsWith(".") ||
-    BAD_NAME.test(name)
-  ) {
+  if (!isValidDirName(name)) {
     throw new HttpError(400, "invalid directory name");
   }
   const resolved = await resolveChecked(parent, roots);
