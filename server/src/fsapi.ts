@@ -5,7 +5,7 @@ import { PathError, resolveWithinRoots } from "./paths";
 
 export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
 
-async function resolveChecked(input: string, roots: string[]): Promise<string> {
+export async function resolveChecked(input: string, roots: string[]): Promise<string> {
   try {
     return await resolveWithinRoots(input, roots);
   } catch (e) {

@@ -7,6 +7,7 @@ import { fileTrust, type TrustStore } from "./trust";
 import {
   defaultName, defaultRunAs, instanceId, isValidName, parseManaged, parseUnitUser, renderUnit, runAsFor, unitName, type RunAs,
 } from "./unit";
+import type { Identity } from "./asuser";
 import { passwdDirectory, type UserDirectory } from "./users";
 
 export type { RunResult, Runner } from "./runner";
@@ -90,6 +91,15 @@ export class InstanceService implements Instances {
     } catch {
       throw new HttpError(400, "unknown user");
     }
+  }
+
+  /** The home, PATH and uid/gid to run a command as `user` (rejects an unknown user like `start`). */
+  async identityFor(user?: string): Promise<Identity> {
+    const t = await this.target(user);
+    const id: Identity = { home: t.runAs.home, path: t.runAs.path };
+    if (t.uid !== undefined) id.uid = t.uid;
+    if (t.gid !== undefined) id.gid = t.gid;
+    return id;
   }
 
   async users(): Promise<UsersInfo> {
