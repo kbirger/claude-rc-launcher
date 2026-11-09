@@ -299,7 +299,7 @@ describe("clone, repos and gh-login", () => {
     const s = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }), [`POST ${H}/instances`]: err(428, { error: "untrusted", code: "untrusted" }) });
     const r = await s.run("clone", "o/r", "/srv");
     expect(r.code).toBe(1);
-    expect(r.err.join("\n")).toMatch(/Use --force/);
+    expect(r.err.join("\n")).toMatch(/start \/srv\/r --force/);
   });
 
   test("clone POST 404 says the host cannot clone", async () => {
@@ -336,8 +336,9 @@ describe("clone, repos and gh-login", () => {
 
   test("five poll failures in a row, or a poll 404, lose track of the clone", async () => {
     const lost = "lost track of the clone. Check the folder before trying again";
+    const lostA = "lost track of the clone (x). Check the folder before trying again";
     const a = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: err(502, { error: "x" }) });
-    expect((await a.run("clone", "o/r", "/srv")).err).toEqual([lost]);
+    expect((await a.run("clone", "o/r", "/srv")).err).toEqual([lostA]);
     expect(a.seen.filter((x) => x.path.endsWith("/clone/job1")).length).toBe(5);
     const b = setup({ [`POST ${H}/clone`]: accepted });
     expect((await b.run("clone", "o/r", "/srv")).err).toEqual([lost]);
@@ -400,5 +401,67 @@ describe("clone, repos and gh-login", () => {
   test("the help text lists the three commands", async () => {
     const r = await setup().run("--help");
     for (const c of ["clone <repo> <parent>", "repos [--user", "gh-login [--user"]) expect(r.out.join("\n")).toContain(c);
+  });
+
+  const cloneDone = { [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }) };
+
+  test("a 428 after a successful clone says where the clone is and how to start it", async () => {
+    const s = setup({ ...cloneDone, [`POST ${H}/instances`]: err(428, { error: "/srv/r is not trusted" }) });
+    const r = await s.run("clone", "o/r", "/srv");
+    expect(r.code).toBe(1);
+    expect(r.err).toEqual(['/srv/r is not trusted. The repository was cloned to /srv/r. Run "claude-rc start /srv/r --force" to trust it and start']);
+    const t = setup({ [`GET /cli/api/hosts/nas/users`]: () => [], [`POST /cli/api/hosts/nas/clone`]: accepted, [`GET /cli/api/hosts/nas/clone/job1`]: () => ({ state: "done", path: "/srv/r" }), [`POST /cli/api/hosts/nas/instances`]: err(428, { error: "/srv/r is not trusted" }) });
+    const r2 = await t.run("clone", "o/r", "/srv", "--host", "nas", "--user", "alice");
+    expect(r2.err[0]).toContain('"claude-rc start /srv/r --force --host nas --user alice"');
+  });
+
+  test("a 409 or a 500 after a successful clone still names the clone path", async () => {
+    for (const status of [409, 500]) {
+      const s = setup({ ...cloneDone, [`POST ${H}/instances`]: err(status, { error: "boom" }) });
+      const r = await s.run("clone", "o/r", "/srv");
+      expect(r.code).toBe(1);
+      expect(r.err).toEqual(["boom. The repository was cloned to /srv/r"]);
+    }
+  });
+
+  test("a 401 mid-poll surfaces at once, and the give-up text has the last error", async () => {
+    const a = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: err(403, { error: "forbidden" }) });
+    const r = await a.run("clone", "o/r", "/srv");
+    expect(r.err).toEqual(["forbidden"]);
+    expect(a.seen.filter((x) => x.path.endsWith("/clone/job1")).length).toBe(1);
+    const b = setup({ [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: err(502, { error: "bad gateway" }) });
+    expect((await b.run("clone", "o/r", "/srv")).err).toEqual(["lost track of the clone (bad gateway). Check the folder before trying again"]);
+  });
+
+  test("a login poll failing five times includes the last error and a 403 surfaces", async () => {
+    const login = () => new Response(JSON.stringify({ id: "l1", code: "C", url: "u" }), { status: 202 });
+    const a = setup({ [`POST ${H}/github/login`]: login, [`GET ${H}/github/login/l1`]: err(502, { error: "bad gateway" }) });
+    expect((await a.run("gh-login")).err).toEqual(['lost track of the GitHub login (bad gateway). Run "claude-rc gh-login" again']);
+    const b = setup({ [`POST ${H}/github/login`]: login, [`GET ${H}/github/login/l1`]: err(403, { error: "forbidden" }) });
+    expect((await b.run("gh-login")).err).toEqual(["forbidden"]);
+  });
+
+  test("gh-login POST 404, poll 404 and timeout have their own messages", async () => {
+    expect((await setup().run("gh-login")).err).toEqual(["this host cannot clone. Update the node."]);
+    const login = () => new Response(JSON.stringify({ id: "l1", code: "C", url: "u" }), { status: 202 });
+    const a = setup({ [`POST ${H}/github/login`]: login });
+    expect((await a.run("gh-login")).err[0]).toMatch(/^lost track of the GitHub login\./);
+    const b = setup({ [`POST ${H}/github/login`]: login, [`GET ${H}/github/login/l1`]: () => ({ state: "pending" }) });
+    expect((await b.run("gh-login")).err).toEqual(["GitHub login timed out"]);
+  });
+
+  test("ids are URL-encoded in the poll paths", async () => {
+    const enc = encodeURIComponent("a/b c");
+    const a = setup({ [`POST ${H}/clone`]: () => new Response(JSON.stringify({ id: "a/b c", path: "/srv/r" }), { status: 202 }), [`GET ${H}/clone/${enc}`]: () => ({ state: "failed", error: "x" }) });
+    expect((await a.run("clone", "o/r", "/srv")).err).toEqual(["x"]);
+    const b = setup({ [`POST ${H}/github/login`]: () => new Response(JSON.stringify({ id: "a/b c", code: "C", url: "u" }), { status: 202 }), [`GET ${H}/github/login/${enc}`]: () => ({ state: "done" }) });
+    expect((await b.run("gh-login")).code).toBe(0);
+  });
+
+  test("repos --user checks /users and passes user in the query; no groups prints no blank line", async () => {
+    const s = setup({ [`GET ${H}/users`]: () => [], [`GET ${H}/github/repos`]: () => ({ groups: [] }) });
+    expect((await s.run("repos", "--user", "a b")).code).toBe(0);
+    expect(s.seen.map((x) => x.path)).toEqual([`${H}/users`, `${H}/github/repos?user=a%20b`]);
+    expect(s.out).toEqual(["no repos"]);
   });
 });
