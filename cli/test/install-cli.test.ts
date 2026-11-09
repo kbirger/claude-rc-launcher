@@ -38,8 +38,8 @@ function world(o: { os?: string; arch?: string; sums?: (asset: string, body: str
   sh("id", `[ "$1" = -u ] && [ -n "\${FAKE_UID:-}" ] && { echo "$FAKE_UID"; exit 0; }\nexec /usr/bin/id "$@"`);
   sh("sudo", `echo "sudo $*" >> ${log}\nexec "$@"`);
   const registry = path.join(dir, "registry"); // stands in for /etc/claude-rc-launcher; no test touches the real one
-  const run = (args: string[] = [], env: Record<string, string> = {}) =>
-    Bun.spawnSync(["sh", SCRIPT, ...args], { env: { PATH: `${shims}:/usr/bin:/bin`, HOME: dir, CLAUDE_RC_PREFIX: prefix, CLAUDE_RC_REGISTRY_DIR: registry, ...env }, stdin: null });
+  const run = (args: string[] = [], env: Record<string, string> = {}, cwd?: string) =>
+    Bun.spawnSync(["sh", SCRIPT, ...args], { env: { PATH: `${shims}:/usr/bin:/bin`, HOME: dir, CLAUDE_RC_PREFIX: prefix, CLAUDE_RC_REGISTRY_DIR: registry, ...env }, stdin: null, cwd });
   return { dir, prefix, registry, run, urls: () => readFileSync(log, "utf8"), installed: () => path.join(prefix, "claude-rc") };
 }
 const text = (b: Uint8Array | undefined) => new TextDecoder().decode(b ?? new Uint8Array());
@@ -165,14 +165,9 @@ describe("install-cli.sh: the client registry", () => {
 
   test("a relative CLAUDE_RC_PREFIX is written as an absolute path", () => {
     const w = world();
-    const rel = `rel-bin-${process.pid}`;
-    try {
-      const r = w.run([], { FAKE_UID: "0", CLAUDE_RC_PREFIX: rel });
-      expect(r.exitCode).toBe(0);
-      expect(lines(path.join(w.registry, "installs"))).toEqual([`client ${path.resolve(rel)}/claude-rc`]);
-    } finally {
-      require("node:fs").rmSync(path.resolve(rel), { recursive: true, force: true });
-    }
+    const r = w.run([], { FAKE_UID: "0", CLAUDE_RC_PREFIX: "rel-bin" }, w.dir); // runs in the test's own directory
+    expect(r.exitCode).toBe(0);
+    expect(lines(path.join(w.registry, "installs"))).toEqual([`client ${path.join(w.dir, "rel-bin")}/claude-rc`]);
   });
 
   test("an existing root-only registry directory and its file are not changed: mode and content stay", () => {
@@ -205,31 +200,22 @@ describe("install-cli.sh: the client registry", () => {
     expect(text(r.stderr)).toContain("installs");
   });
 
-  // `[ -w dir ]` is always true for root, so a real sudo install can only be made by a normal user: skipped when root.
-  test.skipIf(process.getuid?.() === 0)("an install that needs sudo writes the registry through sudo, with the right modes", () => {
+  test("an install that uses sudo writes the registry through sudo: file 0644, one line, directory 0755", () => {
     const w = world();
-    mkdirSync(w.prefix, { mode: 0o555 });
-    chmodSync(w.prefix, 0o555);
-    try {
-      // The fake sudo runs the command as the same user, so the unwritable prefix fails the install itself; the logged
-      // calls of the registry step are still checked on a second, writable prefix with FAKE_UID=0 below.
-      expect(w.run([], { FAKE_UID: "1000" }).exitCode).toBe(0);
-    } finally { chmodSync(w.prefix, 0o755); }
-    expect(w.urls()).toContain("sudo install -m 755");
+    // CLAUDE_RC_FORCE_SUDO is a test hook: it takes the SUDO=sudo branch although the prefix is writable (as it is for
+    // root, and for the test user), so this works for any user. The fake sudo logs each command and then runs it.
+    const r = w.run([], { FAKE_UID: "1000", CLAUDE_RC_FORCE_SUDO: "1" });
+    expect(r.exitCode).toBe(0);
+    const file = path.join(w.registry, "installs");
+    const log = w.urls();
+    for (const cmd of [`sudo mkdir -p ${w.registry}`, `sudo chmod 755 ${w.registry}`, `sudo test -d ${w.registry}`, `sudo test -e ${file}`, `sudo install -m 644 /dev/null ${file}`, `sudo grep -Fxq client ${w.installed()} ${file}`, `sudo tee -a ${file}`]) {
+      expect(log).toContain(cmd);
+    }
+    expect(lines(file)).toEqual([`client ${w.installed()}`]);
+    expect(mode(file)).toBe(0o644);
+    expect(mode(w.registry)).toBe(0o755);
   });
 
-  test("the registry commands are the ones that need root, and the files end with the right modes", () => {
-    const w = world();
-    // As root the script needs no sudo; a stand-in `sudo` is put in front by SUDO-less runs only for the log, so here
-    // the modes are the evidence, and the commands are checked in the script text.
-    expect(w.run([], { FAKE_UID: "0" }).exitCode).toBe(0);
-    expect(mode(path.join(w.registry, "installs"))).toBe(0o644);
-    expect(mode(w.registry)).toBe(0o755);
-    const src = readFileSync(SCRIPT, "utf8");
-    for (const cmd of ['$SUDO mkdir -p "$REGISTRY_DIR"', '$SUDO chmod 755 "$REGISTRY_DIR"', '$SUDO install -m 644 /dev/null "$rfile"', '$SUDO tee -a "$rfile"', '$SUDO test -d "$REGISTRY_DIR"', '$SUDO test -e "$rfile"', '$SUDO grep -Fxq']) {
-      expect(src).toContain(cmd);
-    }
-  });
 });
 
 function readdirNoTemp(dir: string): string[] {

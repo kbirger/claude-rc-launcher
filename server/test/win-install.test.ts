@@ -107,6 +107,13 @@ describe("install.ps1: the client registry (text checks)", () => {
     expect(script).toContain("icacls failed on $file");
   });
 
+  test("a registry folder that equals the data, install or client folder is refused with a warning", () => {
+    expect(script).toContain("foreach ($own in @($DataDir, $InstallDir, $ClientDir))");
+    expect(script).toContain("[IO.Path]::GetFullPath($RegistryDir).TrimEnd('\\')");
+    expect(script).toContain("-ieq [IO.Path]::GetFullPath($own).TrimEnd('\\')");
+    expect(script).toContain("must be a folder of its own");
+  });
+
   test("it adds `client <path>` once: a case-insensitive exact-line check, UTF-8 without BOM", () => {
     expect(script).toContain('$line = "client $ClientPath"');
     expect(script).toContain("$_.TrimEnd(\"`r\") -ieq $line");

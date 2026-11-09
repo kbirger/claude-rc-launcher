@@ -195,6 +195,14 @@ function Register-Client([string]$ClientPath) {
   $file = Join-Path $RegistryDir 'installs'
   $line = "client $ClientPath"
   $createdFile = $false
+  # The folder is locked to administrators, so it must not be a folder the service account has to write.
+  $regFull = [IO.Path]::GetFullPath($RegistryDir).TrimEnd('\')
+  foreach ($own in @($DataDir, $InstallDir, $ClientDir)) {
+    if ($regFull -ieq [IO.Path]::GetFullPath($own).TrimEnd('\')) {
+      Write-Warning "the client registry was not written: -RegistryDir ($RegistryDir) must be a folder of its own, not $own"
+      return
+    }
+  }
   try {
     New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
     & icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)R' | Out-Null

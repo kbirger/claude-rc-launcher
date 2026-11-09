@@ -74,6 +74,8 @@ if ! writable "$DIR"; then
     die "$DIR is not writable and sudo is not available"
   fi
 fi
+# Test hook: CLAUDE_RC_FORCE_SUDO=1 makes every privileged step go through sudo even when the directory is writable.
+if [ -z "$SUDO" ] && [ -n "${CLAUDE_RC_FORCE_SUDO:-}" ]; then SUDO=sudo; fi
 DEST="$DIR/claude-rc"
 
 # Written under a temporary name and moved into place, so that a running copy is never overwritten in place.
