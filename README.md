@@ -565,6 +565,40 @@ certificate mismatch | rejected our credentials | bad response`. State-changing 
 The clone routes in [API](#api-all-under-api-session-required) exist under `/api/hosts/<host>/...` on the hub and
 under `/api/...` on a node. A node that is too old, and a Windows node, answers 404.
 
+### Version check and updates in the web UI
+
+The web UI shows the service and client versions of the hub above the New button. The host drop-down shows the versions
+of each node. A stale machine carries a mark. A banner at the top of the page offers updates. The page checks when it
+loads and when you return to the tab after more than five minutes.
+
+A machine is stale in these cases:
+
+- The hub is older than the latest GitHub release. This applies to the service and to the client.
+- A node is older than the hub. This applies to the service and to the client.
+- A version of `dev` or a local build such as `0.8.3+branch.sha` is unknown. It is never stale.
+- If a machine has two client copies, the older copy decides.
+
+The banner has two separate buttons. `Update hub` updates the hub to the latest release. `Update all nodes` updates the
+nodes to the version of the hub. The host picker also has an `Update` button for the selected node. The UI never
+updates anything by itself.
+
+The hub restarts while it updates, and the page reconnects by itself.
+
+The hub asks GitHub for the latest release and keeps the answer for one hour. The browser never calls GitHub. If GitHub
+does not answer, the page shows `latest unknown` and offers no hub update.
+
+The hub keeps the last update of each machine in `<state_dir>/updates.json`. The status is `running`, `updated`,
+`up-to-date`, `failed`, `rolled back` or `unknown`. Every browser sees the same record.
+
+Keep these limits in mind:
+
+- Only a Linux system-scope service that the installer made can update from the UI. A Windows node and a user-scope
+  service answer 409, and the banner shows the message.
+- A node that is too old to have the update route needs `claude-rc node update` once.
+- Some releases change how the hub talks to the nodes. After such a release, the hub can lose the nodes. Roll such a
+  release out by hand.
+- Any logged-in user can start an update until admin status exists.
+
 ## Command-line client
 
 `claude-rc` is a separate program that does what the UI does, and it can add and remove hosts. It runs on any
@@ -1044,13 +1078,20 @@ UI then hides the selector and the locks.
 Clone routes (see [Cloning a repo](#cloning-a-repo)). Each one exists under `/api/hosts/<id>/...` on the hub and
 under `/api/...` on a node. A node that is too old answers 404.
 
-- `GET /node` returns `{ok, name, version, clone}`. `clone` is a boolean. It is false when the node has no clone support.
+- `GET /node` returns `{ok, name, version, clone, clients}`. `clone` is a boolean. It is false when the node has no clone support. `clients` lists the client copies on the node with their versions.
 - `POST /clone {repo, parent, user?}` returns 202 `{id, path}`. `path` is the new folder.
 - `GET /clone/:id` returns `{state, path?, error?}`. `state` is `running`, `done` or `failed`.
 - `GET /github/repos?user=` returns `{groups: [{owner, repos: [{name, private, pushedAt}]}]}`. If no login exists, it
   returns 409 `{error, code: "github-login-required"}`.
 - `POST /github/login {user?}` returns 202 `{id, code, url}`. Always send a body, for example `{}`.
 - `GET /github/login/:id` returns `{state, error?}`. `state` is `pending`, `done` or `failed`.
+
+Version routes (see [Version check and updates in the web UI](#version-check-and-updates-in-the-web-ui)). They exist on the hub only.
+
+- `GET /latest` returns `{version, checkedAt}`, the latest GitHub release. If GitHub never answered, it returns 503.
+- `GET /updates` returns the update record of each machine.
+- `GET /events` is a server-sent event stream. The first event is `snapshot` with the whole record. Each change then sends an `update` event. The hub also sends keepalive comments.
+- Each entry of `GET /hosts` also carries `clientVersion`, `stale` and `target`.
 
 ## First-run verification checklist
 
