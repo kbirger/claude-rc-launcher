@@ -1,14 +1,18 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunRunner } from "../src/runner";
 
 test("cwd sets the working folder", async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "runner-")));
-  const r = await bunRunner("sh", ["-c", "pwd"], { cwd: dir });
-  expect(r.code).toBe(0);
-  expect(r.stdout.trim()).toBe(dir);
+  try {
+    const r = await bunRunner("sh", ["-c", "pwd"], { cwd: dir });
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("env replaces the whole environment", async () => {
@@ -22,9 +26,19 @@ test("stdin is passed to the command", async () => {
 });
 
 test("timeout kills the command and sets timedOut", async () => {
+  const t0 = Date.now();
   const r = await bunRunner("sleep", ["5"], { timeoutMs: 100 });
   expect(r.timedOut).toBe(true);
   expect(r.code).not.toBe(0);
+  expect(Date.now() - t0).toBeLessThan(1500);
+});
+
+test("timeout returns promptly even when a descendant holds the pipes", async () => {
+  const t0 = Date.now();
+  const r = await bunRunner("sh", ["-c", "echo partial; sleep 4 & wait"], { timeoutMs: 100 });
+  expect(r.timedOut).toBe(true);
+  expect(r.stdout).toContain("partial");
+  expect(Date.now() - t0).toBeLessThan(1500);
 });
 
 test("a missing command gives code 127", async () => {
