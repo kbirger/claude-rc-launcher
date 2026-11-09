@@ -77,6 +77,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
   const latest = createLatestRelease({ fetch: globalThis.fetch });
+  // Fill the cache now, so the first host list after a start already knows whether the hub is stale. Startup does not wait for it.
+  void latest.get().catch(() => {});
   const record = await UpdateRecord.load({ stateDir: cfg.stateDir });
   // A hub update that restarted this process is settled before the first request.
   await record.reconcileHub(VERSION);
