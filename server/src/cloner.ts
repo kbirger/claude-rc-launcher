@@ -38,6 +38,7 @@ export function createCloner(deps: {
         await mkdir(target);
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new HttpError(409, "already exists");
+        console.error("cannot create clone folder:", e);
         throw new HttpError(400, "cannot create directory");
       }
       const cleanup = () => rm(target, { recursive: true, force: true }).catch(() => {});
@@ -50,12 +51,17 @@ export function createCloner(deps: {
             throw new HttpError(500, "cannot set directory owner");
           }
         }
-        const w = asUser(id, "git", ["-c", "credential.helper=!gh auth git-credential", "clone", "--", ref.url, target]);
+        const w = asUser(id, "git", ["-c", "credential.helper=!gh auth git-credential", "clone", "-q", "--", ref.url, target]);
         const r = await deps.run(w.cmd, w.args, { env: w.env, timeoutMs: CLONE_TIMEOUT_MS });
         if (r.timedOut) throw new HttpError(504, "clone timed out");
-        if (r.code === 127) throw new HttpError(400, `${w.cmd} is not installed`);
+        if (r.code === 127) {
+          // setpriv exits 127 too when it cannot exec its target; a spawn failure of setpriv itself has other text.
+          const missing = w.cmd === "setpriv" && /failed to execute/i.test(r.stderr) ? "git" : w.cmd;
+          throw new HttpError(400, `${missing} is not installed`);
+        }
         if (r.code !== 0) {
-          const first = r.stderr.split("\n").map((l) => l.trim()).find(Boolean) ?? `exit ${r.code}`;
+          const lines = r.stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+          const first = lines.find((l) => /^(fatal|error):/i.test(l)) ?? lines[lines.length - 1] ?? `exit ${r.code}`;
           throw new HttpError(400, `clone failed: ${first}`);
         }
         const real = await realpath(target);

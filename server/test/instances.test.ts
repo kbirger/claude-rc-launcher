@@ -473,3 +473,26 @@ describe("dirOwnerFor", () => {
     expect(e.message).toBe("this host cannot run instances as another user");
   });
 });
+
+describe("identityFor", () => {
+  test("no user gives the default identity without uid or gid", async () => {
+    expect(await svc().identityFor()).toEqual({ home: "/root", path: "/usr/bin" });
+  });
+  test("a host that cannot switch users rejects another user with 400", async () => {
+    const e = await caught(svc({}, { canSwitchUser: false }).identityFor("alice"));
+    expect(e.status).toBe(400);
+  });
+  test("an unknown user gives 400", async () => {
+    const e = await caught(svc().identityFor("mallory"));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("unknown user");
+  });
+  test("a known user passes uid, gid, home and path through", async () => {
+    const id = await svc().identityFor("alice");
+    expect(id.uid).toBe(1000);
+    expect(id.gid).toBe(1001);
+    expect(id.home).toBe("/home/alice");
+    expect(id.path).toBe("/home/alice/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  });
+});
+

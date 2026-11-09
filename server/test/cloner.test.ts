@@ -12,7 +12,7 @@ let root: string;
 const id = { home: "/home/u", path: "/usr/bin" };
 
 type Call = { cmd: string; args: string[]; opts?: RunOptions };
-function setup(res: RunResult | ((target: string) => Promise<RunResult>), identity: typeof id & { uid?: number; gid?: number } = id) {
+function setup(res: RunResult | ((target: string) => Promise<RunResult>), identity: typeof id & { uid?: number; gid?: number } = id, chownOverride?: () => Promise<void>) {
   const calls: Call[] = [];
   const chowns: [string, number, number][] = [];
   const cloner = createCloner({
@@ -22,7 +22,7 @@ function setup(res: RunResult | ((target: string) => Promise<RunResult>), identi
       return typeof res === "function" ? res(args[args.length - 1]) : res;
     },
     identityFor: async () => identity,
-    chownFn: async (p, u, g) => { chowns.push([p, u, g]); },
+    chownFn: async (p, u, g) => { chowns.push([p, u, g]); await chownOverride?.(); },
   });
   return { cloner, calls, chowns };
 }
@@ -49,7 +49,7 @@ describe("clone", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].cmd).toBe("git");
     expect(calls[0].args).toEqual([
-      "-c", "credential.helper=!gh auth git-credential", "clone", "--", "https://github.com/octo/hello.git", target,
+      "-c", "credential.helper=!gh auth git-credential", "clone", "-q", "--", "https://github.com/octo/hello.git", target,
     ]);
     expect(calls[0].opts?.timeoutMs).toBe(10 * 60 * 1000);
     expect(calls[0].opts?.env?.HOME).toBe("/home/u");
@@ -103,6 +103,40 @@ describe("clone", () => {
     expect(s).toBe(400);
     expect(m).toBe("git is not installed");
     expect(await exists(join(root, "nogit"))).toBe(false);
+  });
+
+  test("real git stderr: the message shows the fatal line, not the Cloning line", async () => {
+    const stderr = `Cloning into '${join(root, "real")}'...\nfatal: repository 'https://github.com/a/b.git/' not found\n`;
+    const { cloner } = setup({ code: 128, stdout: "", stderr });
+    const [s, m] = await status(cloner.clone({ repo: "a/real", parent: root }));
+    expect(s).toBe(400);
+    expect(m).toContain("repository");
+    expect(m).not.toContain("Cloning into");
+  });
+
+  test("git is passed -q", async () => {
+    const { cloner, calls } = setup({ code: 0, stdout: "", stderr: "" });
+    await cloner.clone({ repo: "octo/quiet", parent: root });
+    expect(calls[0].args.slice(0, 5)).toEqual(["-c", "credential.helper=!gh auth git-credential", "clone", "-q", "--"]);
+  });
+
+  test("exit 127 under setpriv: missing git is blamed on git", async () => {
+    const { cloner } = setup({ code: 127, stdout: "", stderr: "setpriv: failed to execute git: No such file or directory\n" }, { ...id, uid: 1001, gid: 1002 });
+    expect((await status(cloner.clone({ repo: "octo/sp1", parent: root })))[1]).toBe("git is not installed");
+    expect(await exists(join(root, "sp1"))).toBe(false);
+  });
+
+  test("exit 127 under setpriv: spawn failure of setpriv itself is blamed on setpriv", async () => {
+    const { cloner } = setup({ code: 127, stdout: "", stderr: 'Executable not found in $PATH: "setpriv"' }, { ...id, uid: 1001, gid: 1002 });
+    expect((await status(cloner.clone({ repo: "octo/sp2", parent: root })))[1]).toBe("setpriv is not installed");
+    expect(await exists(join(root, "sp2"))).toBe(false);
+  });
+
+  test("chown failure gives 500, removes the folder, never runs git", async () => {
+    const { cloner, calls } = setup({ code: 0, stdout: "", stderr: "" }, { ...id, uid: 1001, gid: 1002 }, async () => { throw new Error("EPERM"); });
+    expect((await status(cloner.clone({ repo: "octo/chownfail", parent: root })))[0]).toBe(500);
+    expect(calls).toHaveLength(0);
+    expect(await exists(join(root, "chownfail"))).toBe(false);
   });
 
   test("the other methods are stubs", async () => {
