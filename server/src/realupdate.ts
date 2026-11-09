@@ -28,16 +28,62 @@ function run(args: string[], opts?: { timeoutMs?: number }): RunResult {
   }
 }
 
+type Lstat = (p: string) => { uid: number; mode: number };
+
+/** The machine parts the client registry needs. Tests replace them. */
+export type RegistryFs = {
+  lstat?: Lstat;
+  readFile?: (p: string) => string;
+  platform?: string;
+  env?: Record<string, string | undefined>;
+  warn?: (line: string) => void;
+};
+
 /** `lstat` for the registry reader: it does not follow symlinks, and a missing path is `undefined`. */
-function registryStat(p: string): { uid: number; mode: number } | undefined {
-  try {
-    const s = lstatSync(p);
-    return process.platform === "win32" ? { uid: 0, mode: 0o100644 } : { uid: s.uid, mode: s.mode };
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
-    throw e;
-  }
+export function registryStat(lstat: Lstat, platform: string): (p: string) => { uid: number; mode: number } | undefined {
+  return (p) => {
+    try {
+      const s = lstat(p);
+      return platform === "win32" ? { uid: 0, mode: 0o100644 } : { uid: s.uid, mode: s.mode };
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+      throw e;
+    }
+  };
+}
+
+/**
+ * Whether the updater may run and rewrite a registered client as root: on POSIX the real file is a regular file owned
+ * by root that no one else can write, in a directory that is owned by root and that no one else can write. Any
+ * error means no. Each refused path is logged once.
+ */
+export function trustedClientCheck(lstat: Lstat, platform: string, warn: (line: string) => void): (realPath: string) => boolean {
+  const warned = new Set<string>();
+  const reject = (p: string, why: string) => {
+    if (!warned.has(p)) {
+      warned.add(p);
+      warn(`client registry: ignoring ${p}: ${why}`);
+    }
+    return false;
+  };
+  return (p) => {
+    if (platform === "win32") return true;
+    try {
+      const f = lstat(p);
+      if ((f.mode & 0o170000) !== 0o100000) return reject(p, "not a regular file");
+      if (f.uid !== 0) return reject(p, "not owned by root");
+      if ((f.mode & 0o022) !== 0) return reject(p, "writable by group or others");
+      const dir = path.dirname(p);
+      const d = lstat(dir);
+      if ((d.mode & 0o170000) !== 0o040000) return reject(p, `${dir} is not a directory`);
+      if (d.uid !== 0) return reject(p, `${dir} is not owned by root`);
+      if ((d.mode & 0o022) !== 0) return reject(p, `${dir} is writable by group or others`);
+      return true;
+    } catch (e) {
+      return reject(p, e instanceof Error ? e.message : String(e));
+    }
+  };
 }
 
 /** After a timeout kill, how long the output pipes get to close. A grandchild can hold them open. */
@@ -70,7 +116,10 @@ async function runAsync(args: string[], opts?: { timeoutMs?: number }): Promise<
  * The real machine for the service updater. The service runs as root, so commands run without sudo. The watchdog
  * runs in a transient systemd unit, which is not part of the service and so survives its restart.
  */
-export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">): UpdateEnv {
+export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">, fs: RegistryFs = {}): UpdateEnv {
+  const platform = fs.platform ?? process.platform;
+  const lstat: Lstat = fs.lstat ?? ((p) => lstatSync(p));
+  const warn = fs.warn ?? console.warn;
   return {
     fetch: globalThis.fetch,
     run,
@@ -95,7 +144,8 @@ export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">): Updat
     realpath: (p) => realpathSync(p),
     pathEnv: process.env.PATH ?? process.env.Path ?? "",
     programFiles: process.env.ProgramFiles,
-    registeredClients: () => readRegisteredClients({ platform: process.platform, env: process.env, readFile: (p) => readFileSync(p, "utf8"), stat: registryStat }, console.warn),
+    registeredClients: () => readRegisteredClients({ platform, env: fs.env ?? process.env, readFile: fs.readFile ?? ((p) => readFileSync(p, "utf8")), stat: registryStat(lstat, platform) }, warn),
+    trustedClient: trustedClientCheck(lstat, platform, warn),
     homes: [cfg.serviceHome, "/root"],
     startWatchdog(script) {
       const unit = `claude-rc-update-${Date.now()}`;

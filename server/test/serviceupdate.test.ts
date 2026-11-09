@@ -24,8 +24,30 @@ describe("findClients", () => {
     realpath: (p: string) => links[p] ?? p,
   });
 
+  test("a registered symlink gives the real path, once", () => {
+    const o = fs(["/usr/bin/claude-rc"], { "/opt/link/claude-rc": "/usr/bin/claude-rc" });
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: [], registered: ["/opt/link/claude-rc"] })).toEqual(["/usr/bin/claude-rc"]);
+  });
+  test("an entry that trustedClient refuses is dropped, but the scan still finds the same file", () => {
+    const o = fs(["/opt/a/claude-rc", "/usr/bin/claude-rc"]);
+    const seen: string[] = [];
+    const trustedClient = (p: string) => {
+      seen.push(p);
+      return false;
+    };
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: [], registered: ["/opt/a/claude-rc", "/usr/bin/claude-rc"], trustedClient })).toEqual(["/usr/bin/claude-rc"]);
+    expect(seen).toEqual(["/opt/a/claude-rc", "/usr/bin/claude-rc"]);
+  });
+  test("an empty registry falls back to the scan", () => {
+    const o = fs(["/usr/bin/claude-rc"]);
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: [], registered: [] })).toEqual(["/usr/bin/claude-rc"]);
+  });
+  test("Windows: a quoted PATH segment is unquoted", () => {
+    const f = "C:\\Program Files\\x\\claude-rc.exe";
+    expect(findClients({ ...fs([f]), platform: "win32", pathEnv: 'C:\\Windows; "C:\\Program Files\\x" ', homes: [] })).toEqual([f]);
+  });
   test("registered paths come first, then scanned ones, each real file once", () => {
-    const o = fs(["/opt/a/claude-rc", "/usr/bin/claude-rc", "/root/.local/bin/claude-rc"], { "/opt/link/claude-rc": "/usr/bin/claude-rc" });
+    const o = fs(["/opt/a/claude-rc", "/usr/bin/claude-rc", "/root/.local/bin/claude-rc"]);
     expect(findClients({ ...o, pathEnv: "/usr/bin", homes: ["/root"], registered: ["/opt/a/claude-rc", "/usr/bin/claude-rc", "/gone/claude-rc"] })).toEqual([
       "/opt/a/claude-rc",
       "/usr/bin/claude-rc",
@@ -40,7 +62,7 @@ describe("findClients", () => {
     const f = "C:\\Program Files\\claude-rc\\claude-rc.exe";
     expect(findClients({ ...fs([f]), platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files" })).toEqual([f]);
   });
-  test("Windows: registered paths are kept as given and deduplicated without regard to case", () => {
+  test("Windows: registered paths are deduplicated without regard to case", () => {
     const f = "C:\\Program Files\\claude-rc\\claude-rc.exe";
     const o = { exists: (p: string) => p.toLowerCase() === f.toLowerCase(), realpath: (p: string) => p };
     expect(findClients({ ...o, platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files", registered: ["c:\\program files\\claude-rc\\CLAUDE-RC.exe"] })).toEqual(["c:\\program files\\claude-rc\\CLAUDE-RC.exe"]);

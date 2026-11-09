@@ -61,21 +61,24 @@ export type FindClientsInput = {
   programFiles?: string;
   /** Paths from the client registry. They come first, in the order given. */
   registered?: string[];
+  /** Whether a registered client (by its real path) may be updated as root. A missing check allows it. Scanned entries are not checked. */
+  trustedClient?(realPath: string): boolean;
 };
 
 /**
  * The client copies on this machine: the registered ones first, then the first `claude-rc` on `pathEnv` (as `which`
  * finds it) and `~/.local/bin/claude-rc` of each home. On Windows the scan looks for `claude-rc.exe` on `pathEnv`
- * (split on `;`) and in Program Files, and skips the homes. A registered path is listed as given. A scanned one is its
- * real path. Each real file is listed once.
+ * (split on `;`) and in Program Files, and skips the homes. Each entry is a real path, and each real file is listed
+ * once. A registered entry that `trustedClient` refuses is dropped, and the scan may still find the same file.
  */
 export function findClients(o: FindClientsInput): string[] {
   const win = o.platform === "win32";
-  const candidates: { path: string; real: boolean }[] = (o.registered ?? []).filter((p) => o.exists(p)).map((path) => ({ path, real: false }));
+  const candidates: { path: string; registered: boolean }[] = (o.registered ?? []).filter((p) => o.exists(p)).map((path) => ({ path, registered: true }));
   const scanned: string[] = [];
   if (win) {
     const onPath = o.pathEnv
       .split(";")
+      .map((d) => d.trim().replace(/^"(.*)"$/, "$1").trim())
       .filter((d) => d !== "")
       .map((d) => path.win32.join(d, `${CLIENT}.exe`))
       .find((p) => o.exists(p));
@@ -96,7 +99,7 @@ export function findClients(o: FindClientsInput): string[] {
       if (o.exists(p)) scanned.push(p);
     }
   }
-  for (const p of scanned) candidates.push({ path: p, real: true });
+  for (const p of scanned) candidates.push({ path: p, registered: false });
   const found: string[] = [];
   const seen = new Set<string>();
   for (const c of candidates) {
@@ -106,10 +109,11 @@ export function findClients(o: FindClientsInput): string[] {
     } catch {
       continue;
     }
+    if (c.registered && o.trustedClient && !o.trustedClient(real)) continue;
     const key = win ? real.toLowerCase() : real;
     if (seen.has(key)) continue;
     seen.add(key);
-    found.push(c.real ? real : c.path);
+    found.push(real);
   }
   return found;
 }
@@ -174,6 +178,7 @@ export type ClientVersion = { path: string; version?: string };
 /** A lookup of the client versions. `reset` drops the cached list and any lookup in flight, so the next call asks again. */
 export type ClientVersionsLookup = (() => Promise<ClientVersion[]>) & { reset?: () => void };
 
+// A change in the registry shows within the cache time (60 s), unless `reset()` is called.
 /**
  * The client copies on this machine with the version each one reports. The copies are asked in parallel without
  * blocking the event loop, and concurrent callers share one lookup. The list is cached for `ttlMs`, so a host poll
