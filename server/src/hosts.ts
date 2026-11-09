@@ -9,6 +9,9 @@ import type { LatestRelease } from "./latest";
 import { isKnownVersion, isStale, normalizeVersion, stalestVersion } from "./versions";
 import { VERSION } from "./version";
 import type { User } from "./userauth";
+import type { UpdateRecord } from "./updaterecord";
+import type { UpdateTracker } from "./updatetracker";
+import type { UpdateReport } from "./serviceupdate";
 
 /** The oldest known version among the `clients` of a node's `/node` body, or undefined. */
 function clientVersionOf(body: unknown): string | undefined {
@@ -55,6 +58,8 @@ export function hostsApi(o: {
   latest?: { peek(): LatestRelease | undefined; get(): Promise<LatestRelease> };
   /** The hub's own version; only tests set it. */
   version?: string;
+  /** Records each update: the record, its tracker and the call that reads the version of a node. */
+  updates?: { record: UpdateRecord; tracker: UpdateTracker; probe(host: string): Promise<string | undefined> };
 }): Hono {
   const { cfg, local } = o;
   const probeTimeoutMs = o.probeTimeoutMs ?? 3_000;
@@ -105,6 +110,49 @@ export function hostsApi(o: {
       console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} ${c.req.method} ${pathname} ${c.res.status}`);
     }
   });
+
+  // Record each update of a machine. The answer to the browser is read from a clone and is never changed.
+  const tracking = o.updates;
+  if (tracking) {
+    app.post("/:host/update", async (c, next) => {
+      const host = c.req.param("host") ?? "";
+      if (host !== "local" && !(HOST_ID_RE.test(host) && o.registry.get(host))) return next();
+      const u = c.get("user" as never) as User | undefined;
+      const startedBy = u?.username ?? u?.sub ?? "unknown";
+      const previous = tracking.record.list().find((e) => e.host === host);
+      try {
+        const from = host === "local" ? hubVersion : ((await tracking.probe(host).catch(() => undefined)) ?? "unknown");
+        await tracking.tracker.begin(host, startedBy, from);
+      } catch (e) {
+        console.error(`update record failed: ${e instanceof Error ? e.message : String(e)}`);
+        return next();
+      }
+      await next();
+      try {
+        const res = c.res.clone();
+        let body: unknown;
+        try {
+          body = await res.json();
+        } catch {
+          body = undefined;
+        }
+        const errorText = isObject(body) && typeof body.error === "string" ? body.error : undefined;
+        if (res.status >= 400) {
+          if (res.status === 409 && errorText !== undefined && /another update is running/.test(errorText)) {
+            if (previous) await tracking.record.set(previous);
+            return;
+          }
+          await tracking.tracker.finish(host, { status: "failed", error: errorText ?? (res.statusText || `update answered ${res.status}`) });
+        } else if (isObject(body) && typeof body.status === "string") {
+          await tracking.tracker.finish(host, body as UpdateReport);
+        } else {
+          await tracking.tracker.finish(host, { status: "failed", error: res.statusText || `update answered ${res.status}` });
+        }
+      } catch (e) {
+        console.error(`update record failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+  }
 
   app.route("/local", local);
 

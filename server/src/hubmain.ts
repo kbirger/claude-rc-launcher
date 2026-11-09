@@ -15,7 +15,9 @@ import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates, type ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { staticHandler } from "./static";
+import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
+import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
 
 export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits };
@@ -75,7 +77,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
   const latest = createLatestRelease({ fetch: globalThis.fetch });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  const record = await UpdateRecord.load({ stateDir: cfg.stateDir });
+  // A hub update that restarted this process is settled before the first request.
+  await record.reconcileHub(VERSION);
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, updates: record, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);

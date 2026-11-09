@@ -8,6 +8,8 @@ import { enrollmentApi } from "./enrollment";
 import type { AdoptDir } from "./ownedir";
 import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
+import type { UpdateRecord } from "./updaterecord";
+import { createUpdateTracker } from "./updatetracker";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
@@ -23,7 +25,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: () => Promise<ClientVersion[]>; latest?: ReturnType<typeof createLatestRelease> };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: () => Promise<ClientVersion[]>; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -207,6 +209,18 @@ export function createApp(deps: Deps): Hono {
   });
 
   const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
+  const probeVersion = async (host: string): Promise<string | undefined> => {
+    try {
+      const r = await registry.get(host)?.client.call("GET", "/api/node", { timeoutMs: deps.probeTimeoutMs ?? 3_000 });
+      const v = r && isObject(r.body) ? r.body.version : undefined;
+      return typeof v === "string" ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const updates = deps.updates
+    ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion }), probe: probeVersion }
+    : undefined;
   const forwarding = () =>
     hostsApi({
       cfg,
@@ -215,6 +229,7 @@ export function createApp(deps: Deps): Hono {
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
       ...(deps.latest ? { latest: deps.latest } : {}),
+      ...(updates ? { updates } : {}),
     });
   api.route("/hosts", forwarding());
   api.all("*", (c) => c.json({ error: "not found" }, 404));
