@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { trustStartArgs, type TrustPrompt } from "./trustprompt";
-  import { ApiError, browse, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "./api";
+  import ClonePanel from "./ClonePanel.svelte";
+  import { ApiError, browse, getNode, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "./api";
 
   let { host, onclose, onstarted }: { host: string; onclose: () => void; onstarted: () => void } = $props();
 
@@ -14,6 +15,8 @@
   let usersInfo = $state<UsersInfo | null>(null);
   let user = $state("");
   let trustPrompt = $state<TrustPrompt | null>(null);
+  let canClone = $state(false);
+  let cloning = $state(false);
   let reqId = 0;
   // Only pass a user when the selector is shown.
   const chosenUser = $derived(usersInfo?.selectable ? user : undefined);
@@ -54,6 +57,8 @@
       // older node without /users: no selector
     }
     go();
+    // Old node or an error: no clone button, no message.
+    getNode(host).then((n) => (canClone = n.clone === true)).catch(() => {});
   });
 
   function changeUser(e: Event) {
@@ -72,6 +77,13 @@
     } catch (e) {
       error = e instanceof ApiError ? e.message : "Failed to create folder";
     }
+  }
+
+  async function cloned(path: string) {
+    cloning = false;
+    await go(path);
+    // Start only when the listing is now the new folder; the trust question then shows for it.
+    if (listing?.path === path) await start();
   }
 
   async function start(addTrust = false) {
@@ -116,6 +128,7 @@
     <div class="bar">
       <button disabled={!listing || listing.parent === null} onclick={() => go(listing!.parent!)}>Up</button>
       <button disabled={atTop} onclick={() => (creating = !creating)}>New folder</button>
+      {#if canClone}<button disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}>Clone repo here</button>{/if}
     </div>
     {#if creating}
       <form class="bar" onsubmit={(e) => { e.preventDefault(); createFolder(); }}>
@@ -123,6 +136,9 @@
         <button class="primary" type="submit">Create</button>
       </form>
     {/if}
+    {#if cloning && listing}
+      <ClonePanel {host} parent={listing.path} user={chosenUser} oncloned={cloned} onclose={() => (cloning = false)} />
+    {:else}
     <ul>
       {#each listing?.dirs ?? [] as d (d.path)}
         <li><button class="dir" class:untrusted={d.trusted === false} onclick={() => go(d.path)}>{d.name}{#if d.trusted === false}<span class="lock" role="img" aria-label="not trusted">🔒</span>{/if}</button></li>
@@ -143,6 +159,7 @@
       {/if}
       <button class="primary" disabled={atTop || busy} onclick={() => start()}>Start here</button>
     </div>
+    {/if}
   </div>
 </div>
 

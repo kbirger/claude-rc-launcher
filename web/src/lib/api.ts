@@ -4,6 +4,8 @@ export type UsersInfo = { selectable: boolean; default: string; users: { name: s
 export type Me = { sub: string; name: string; email?: string; username?: string; logoutUrl?: string };
 export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string };
 
+export type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] };
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body: any = {}) {
     super(message);
@@ -58,3 +60,15 @@ export const browse = (host: string, path?: string, user?: string) => {
 export const mkdir = (host: string, parent: string, name: string, user?: string) =>
   request<{ path: string }>("POST", `${h(host)}/fs/mkdir`, { parent, name, ...(user ? { user } : {}) });
 export const getMe = () => request<Me>("GET", "/api/me");
+export const getNode = (host: string) => request<{ clone?: boolean }>("GET", `${h(host)}/node`);
+export const cloneStart = (host: string, repo: string, parent: string, user?: string) =>
+  request<{ id: string; path: string }>("POST", `${h(host)}/clone`, { repo, parent, ...(user ? { user } : {}) });
+export const cloneStatus = (host: string, id: string) =>
+  request<{ state: "running" | "done" | "failed"; path?: string; error?: string }>("GET", `${h(host)}/clone/${encodeURIComponent(id)}`);
+export const listRepos = (host: string, user?: string) =>
+  request<{ groups: RepoGroup[] }>("GET", `${h(host)}/github/repos${user ? `?user=${encodeURIComponent(user)}` : ""}`);
+// The body is always sent: the server rejects an empty body.
+export const githubLoginStart = (host: string, user?: string) =>
+  request<{ id: string; code: string; url: string }>("POST", `${h(host)}/github/login`, user ? { user } : {});
+export const githubLoginStatus = (host: string, id: string) =>
+  request<{ state: string; error?: string }>("GET", `${h(host)}/github/login/${encodeURIComponent(id)}`);
