@@ -1,4 +1,4 @@
-import { chown, mkdir, readdir, realpath, rmdir } from "node:fs/promises";
+import { lchown, mkdir, readdir, realpath, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
 import { PathError, resolveWithinRoots } from "./paths";
@@ -96,7 +96,8 @@ export async function makeDir(
   name: string,
   roots: string[],
   owner?: DirOwner,
-  chownFn: (path: string, uid: number, gid: number) => Promise<void> = chown,
+  // lchown never follows a symlink, so a folder swapped for a link cannot pass the owner to its target.
+  chownFn: (path: string, uid: number, gid: number) => Promise<void> = lchown,
 ): Promise<{ path: string }> {
   if (!isValidDirName(name)) {
     throw new HttpError(400, "invalid directory name");

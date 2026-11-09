@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCloner } from "../src/cloner";
@@ -12,19 +12,40 @@ let root: string;
 const id = { home: "/home/u", path: "/usr/bin" };
 
 type Call = { cmd: string; args: string[]; opts?: RunOptions };
-function setup(res: RunResult | ((target: string) => Promise<RunResult>), identity: typeof id & { uid?: number; gid?: number } = id, chownOverride?: () => Promise<void>) {
+type Ident = typeof id & { uid?: number; gid?: number };
+/** The command behind a setpriv wrapper. */
+const inner = (cmd: string, args: string[]) => (cmd === "setpriv" ? { cmd: args[args.indexOf("--") + 1]!, args: args.slice(args.indexOf("--") + 2) } : { cmd, args });
+function setup(
+  res: RunResult | ((target: string) => Promise<RunResult>),
+  identity: Ident = id,
+  chownOverride?: () => Promise<void>,
+  lstatOverride?: (p: string) => Promise<Awaited<ReturnType<typeof lstat>>>,
+) {
   const calls: Call[] = [];
   const chowns: [string, number, number][] = [];
+  const owners = new Map<string, [number, number]>();
   const cloner = createCloner({
     cfg: { roots: [root] } as unknown as Config,
     run: async (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
+      const w = inner(cmd, args);
+      // The as-user cleanup: do it for real, so the folder checks below hold.
+      if (w.cmd === "rm") { await rm(w.args[w.args.length - 1]!, { recursive: true, force: true }); return { code: 0, stdout: "", stderr: "" }; }
       return typeof res === "function" ? res(args[args.length - 1]) : res;
     },
     identityFor: async () => identity,
-    chownFn: async (p, u, g) => { chowns.push([p, u, g]); await chownOverride?.(); },
+    lchownFn: async (p, u, g) => { chowns.push([p, u, g]); await chownOverride?.(); owners.set(p, [u, g]); },
+    // A fake lchown changes nothing on disk, so report the owner it was asked to set.
+    lstatFn: lstatOverride ?? (async (p) => {
+      const st = await lstat(p);
+      const o = owners.get(p);
+      if (o) Object.assign(st, { uid: o[0], gid: o[1] });
+      return st;
+    }),
   });
-  return { cloner, calls, chowns };
+  const gitCalls = () => calls.filter((c) => inner(c.cmd, c.args).cmd === "git");
+  const rmCalls = () => calls.filter((c) => inner(c.cmd, c.args).cmd === "rm");
+  return { cloner, calls, chowns, gitCalls, rmCalls };
 }
 /** Starts a clone and waits until the job leaves "running". */
 async function runClone(cloner: ReturnType<typeof setup>["cloner"], input: { repo: string; parent: string; user?: string }) {
@@ -107,6 +128,7 @@ describe("clone", () => {
   test("chowns the folder when uid and gid are set, and wraps in setpriv", async () => {
     const { cloner, calls, chowns } = setup(ok, { ...id, uid: 1001, gid: 1002 });
     await runClone(cloner, { repo: "octo/owned", parent: root, user: "bob" });
+    expect(calls).toHaveLength(1);
     const target = join(root, "owned");
     expect(chowns).toEqual([[target, 1001, 1002]]);
     expect(calls[0].cmd).toBe("setpriv");
@@ -195,5 +217,79 @@ describe("clone", () => {
     expect((await status(cloner.cloneStart({ repo: "octo/chownfail", parent: root })))[0]).toBe(500);
     expect(calls).toHaveLength(0);
     expect(await exists(join(root, "chownfail"))).toBe(false);
+  });
+
+  test("the folder is owned with lchown, which never follows a symlink", async () => {
+    // The real default must be lchown: a swapped-in symlink must not pass ownership of its target.
+    const src = await Bun.file(join(import.meta.dir, "../src/cloner.ts")).text();
+    expect(src).toMatch(/\blchown\b/);
+    expect(src).not.toMatch(/\bchown\b(?!Fn)/);
+  });
+
+  test("a folder swapped for a symlink before git runs gives 500, runs no git and deletes nothing", async () => {
+    const victim = join(base, "victim");
+    await mkdir(victim, { recursive: true });
+    await writeFile(join(victim, "keep"), "x");
+    const target = join(root, "swapped");
+    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, async () => {
+      // The instance user renames the new folder and puts a symlink in its place.
+      await rm(target, { recursive: true });
+      await symlink(victim, target);
+    });
+    expect(await status(cloner.cloneStart({ repo: "octo/swapped", parent: root }))).toEqual([500, "clone folder changed"]);
+    expect(calls).toHaveLength(0);
+    expect(await exists(join(victim, "keep"))).toBe(true);
+    await rm(target, { force: true });
+  });
+
+  test("a folder with the wrong owner before git runs gives 500 and runs no git", async () => {
+    const { cloner, calls } = setup(ok, { ...id, uid: 1001, gid: 1002 }, undefined, async (p) => Object.assign(await lstat(p), { uid: 4242, gid: 4242 }));
+    expect(await status(cloner.cloneStart({ repo: "octo/wrongowner", parent: root }))).toEqual([500, "clone folder changed"]);
+    expect(calls).toHaveLength(0);
+    expect(await exists(join(root, "wrongowner"))).toBe(false);
+  });
+
+  test("with a uid, a failed clone is removed by rm -rf run as the user, then a non-recursive rmdir", async () => {
+    const { cloner, rmCalls } = setup(async (t) => {
+      await writeFile(join(t, "partial"), "x");
+      return { code: 128, stdout: "", stderr: "fatal: boom\n" };
+    }, { ...id, uid: 1001, gid: 1002 });
+    const r = await runClone(cloner, { repo: "octo/asuser", parent: root });
+    const target = join(root, "asuser");
+    expect(r.state).toBe("failed");
+    const rms = rmCalls();
+    expect(rms).toHaveLength(1);
+    expect(rms[0].cmd).toBe("setpriv");
+    expect(rms[0].args).toEqual(["--reuid", "1001", "--regid", "1002", "--init-groups", "--", "rm", "-rf", "--", target]);
+    expect(await exists(target)).toBe(false);
+  });
+
+  test("with a uid, root never deletes recursively: a folder the user rm leaves behind stays", async () => {
+    const calls: Call[] = [];
+    const cloner = createCloner({
+      cfg: { roots: [root] } as unknown as Config,
+      run: async (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        if (inner(cmd, args).cmd === "rm") return { code: 1, stdout: "", stderr: "rm: cannot remove: Permission denied\n" };
+        await writeFile(join(args[args.length - 1]!, "partial"), "x");
+        return { code: 128, stdout: "", stderr: "fatal: boom\n" };
+      },
+      identityFor: async () => ({ ...id, uid: 1001, gid: 1002 }),
+      lchownFn: async () => {},
+      lstatFn: async (p) => Object.assign(await lstat(p), { uid: 1001, gid: 1002 }),
+    });
+    const r = await runClone(cloner, { repo: "octo/stays", parent: root });
+    expect(r.state).toBe("failed");
+    expect(await exists(join(root, "stays", "partial"))).toBe(true);
+  });
+
+  test("without a uid, a failed clone is removed by the launcher itself and runs no rm", async () => {
+    const { cloner, rmCalls } = setup(async (t) => {
+      await writeFile(join(t, "partial"), "x");
+      return { code: 128, stdout: "", stderr: "fatal: boom\n" };
+    });
+    await runClone(cloner, { repo: "octo/plainrm", parent: root });
+    expect(rmCalls()).toHaveLength(0);
+    expect(await exists(join(root, "plainrm"))).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { chown, mkdir, realpath, rm } from "node:fs/promises";
+import { lchown, lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { asUser, type IdentityFor } from "./asuser";
 import type { Config } from "./config";
@@ -17,10 +17,13 @@ export interface Cloner {
   repos(user?: string): Promise<{ groups: RepoGroup[] }>;
   loginStart(user?: string): Promise<{ id: string; code: string; url: string }>;
   loginStatus(id: string): Promise<{ state: "pending" | "done" | "failed"; error?: string }>;
+  /** The real paths of the folders that a clone is still writing to. */
+  activeClones(): string[];
 }
 
 const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
 const CLONE_FORGET_MS = 10 * 60 * 1000;
+const CLEANUP_TIMEOUT_MS = 5 * 60 * 1000;
 type CloneJob = { state: "running" | "done" | "failed"; path?: string; error?: string };
 const GH_TIMEOUT_MS = 60 * 1000;
 const REPO_LIST_PARALLEL = 4;
@@ -71,12 +74,41 @@ export function createCloner(deps: {
   identityFor: IdentityFor;
   spawnLogin?: LoginSpawner;
   loginClock?: LoginClock;
-  chownFn?: (path: string, uid: number, gid: number) => Promise<void>;
+  /** Sets the owner of the new folder. It must not follow a symlink (the default is `lchown`). */
+  lchownFn?: (path: string, uid: number, gid: number) => Promise<void>;
+  lstatFn?: (path: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; uid: number; gid: number }>;
 }): Cloner {
-  const chownFn = deps.chownFn ?? chown;
+  const lchownFn = deps.lchownFn ?? lchown;
+  const lstatFn = deps.lstatFn ?? lstat;
   const logins = createLoginManager({ run: deps.run, identityFor: deps.identityFor, spawn: deps.spawnLogin, clock: deps.loginClock, missingTool });
   const clock: LoginClock = deps.loginClock ?? { setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t as ReturnType<typeof setTimeout>) };
   const jobs = new Map<string, CloneJob>();
+  const active = new Set<string>();
+  /** Removes the folder, and never as root: the instance user controls it, so a recursive walk as root is not safe. */
+  const removeTarget = async (id: Awaited<ReturnType<IdentityFor>>, target: string) => {
+    if (id.uid === undefined || id.gid === undefined) {
+      await rm(target, { recursive: true, force: true }).catch(() => {});
+      return;
+    }
+    let rmError = "";
+    try {
+      // GNU rm works relative to open folders, so a folder swapped for a symlink during the walk is not followed.
+      const w = asUser(id, "rm", ["-rf", "--", target]);
+      const r = await deps.run(w.cmd, w.args, { env: w.env, timeoutMs: CLEANUP_TIMEOUT_MS });
+      if (r.code !== 0) rmError = r.timedOut ? "timed out" : firstLine(r.stderr) || `exit ${r.code}`;
+    } catch (e) {
+      rmError = firstLine(String(e));
+    }
+    // The user cannot remove the folder itself from a parent that root owns. This removes it only if it is empty.
+    await rmdir(target).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === "ENOENT") return;
+      if (e.code === "ENOTEMPTY" || e.code === "EEXIST") {
+        console.error(`cleanup of failed clone ${target} left files: ${rmError || "folder not empty"}`);
+        return;
+      }
+      console.error(`cleanup of failed clone ${target}: ${e.code ?? e.message}`);
+    });
+  };
   return {
     async cloneStart({ repo, parent, user }) {
       const ref = parseRepoLink(repo);
@@ -90,16 +122,31 @@ export function createCloner(deps: {
         console.error("cannot create clone folder:", e);
         throw new HttpError(400, "cannot create directory");
       }
-      const cleanup = () => rm(target, { recursive: true, force: true }).catch(() => {});
-      if (id.uid !== undefined && id.gid !== undefined) {
+      active.add(target);
+      // Only an empty folder is removed here: git has not run yet.
+      const refuse = async (msg: string, e?: unknown) => {
+        if (e !== undefined) console.error(`${msg}:`, e);
+        await rmdir(target).catch(() => {});
+        active.delete(target);
+        throw new HttpError(500, msg);
+      };
+      const hasUid = id.uid !== undefined && id.gid !== undefined;
+      if (hasUid) {
         try {
-          await chownFn(target, id.uid, id.gid);
+          await lchownFn(target, id.uid!, id.gid!);
         } catch (e) {
-          console.error("chown of clone folder failed:", e);
-          await cleanup();
-          throw new HttpError(500, "cannot set directory owner");
+          await refuse("cannot set directory owner", e);
         }
       }
+      // The instance user can write to the parent, so it can swap the folder. Check it before git runs.
+      let ok = false;
+      try {
+        const st = await lstatFn(target);
+        const uid = hasUid ? id.uid : process.getuid?.();
+        const gid = hasUid ? id.gid : undefined;
+        ok = st.isDirectory() && !st.isSymbolicLink() && (uid === undefined || st.uid === uid) && (gid === undefined || st.gid === gid);
+      } catch {}
+      if (!ok) await refuse("clone folder changed");
       const jobId = crypto.randomUUID().replaceAll("-", "");
       const job: CloneJob = { state: "running" };
       jobs.set(jobId, job);
@@ -122,13 +169,16 @@ export function createCloner(deps: {
       void work().then(
         (real) => { job.path = real; job.state = "done"; },
         async (e) => {
-          await cleanup();
+          await removeTarget(id, target);
           job.error = e instanceof HttpError ? e.message : "clone failed";
           if (!(e instanceof HttpError)) console.error("clone failed:", e);
           job.state = "failed";
         },
       ).catch((e) => { console.error("clone job error:", e); job.state = "failed"; job.error ??= "clone failed"; })
-        .finally(() => { clock.setTimeout(() => { jobs.delete(jobId); }, CLONE_FORGET_MS); });
+        .finally(() => {
+          active.delete(target);
+          clock.setTimeout(() => { jobs.delete(jobId); }, CLONE_FORGET_MS);
+        });
       return { id: jobId, path: target };
     },
     async cloneStatus(id) {
@@ -170,6 +220,7 @@ export function createCloner(deps: {
       for (const g of orgGroups) if (g) groups.push(g);
       return { groups };
     },
+    activeClones: () => [...active],
     loginStart: (user) => logins.start(user),
     loginStatus: (id) => logins.status(id),
   };
