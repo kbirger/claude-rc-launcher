@@ -208,13 +208,13 @@
 
 **Interfaces:**
 - Consumes: the Task 6 and 7 routes. `getNode(host)` reads `GET /api/hosts/<host>/node`.
-- Produces in `api.ts`: `type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] }` (the web code does not import server types), `getNode(host): Promise<{ clone?: boolean }>`, `cloneRepo(host, repo, parent, user?): Promise<{ path: string }>`, `listRepos(host, user?): Promise<{ groups: RepoGroup[] }>`, `githubLoginStart(host, user?): Promise<{ id: string; code: string; url: string }>`, `githubLoginStatus(host, id): Promise<{ state: string; error?: string }>`. In `repofilter.ts`: `filterGroups(groups: RepoGroup[], query: string): RepoGroup[]` (case-insensitive substring on `owner/repo`, drops empty groups).
+- Produces in `api.ts`: `type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] }` (the web code does not import server types), `getNode(host): Promise<{ clone?: boolean }>`, `cloneStart(host, repo, parent, user?): Promise<{ id: string; path: string }>`, `cloneStatus(host, id): Promise<{ state: "running" | "done" | "failed"; path?: string; error?: string }>`, `listRepos(host, user?): Promise<{ groups: RepoGroup[] }>`, `githubLoginStart(host, user?): Promise<{ id: string; code: string; url: string }>`, `githubLoginStatus(host, id): Promise<{ state: string; error?: string }>`. In `repofilter.ts`: `filterGroups(groups: RepoGroup[], query: string): RepoGroup[]` (case-insensitive substring on `owner/repo`, drops empty groups).
 - `ClonePanel` props: `{ host: string; parent: string; user?: string; oncloned: (path: string) => void; onclose: () => void }`.
 
 - [ ] **Step 1: Write the failing tests.** `api.test.ts`: each function calls the right method, URL, and body. `repofilter.test.ts`: filtering, empty query returns all, no match returns `[]`.
 - [ ] **Step 2: Run** `bun test web/src`. Expected: FAIL.
 - [ ] **Step 3: Implement** `api.ts` and `repofilter.ts`.
-- [ ] **Step 4: Implement `ClonePanel.svelte`.** A link field, a search box, and the grouped list (loaded with `listRepos`). Picking a repo fills the link field. A "Clone into <parent>" button calls `cloneRepo` and then `oncloned(path)`. On a 409 with `code: "github-login-required"`, show "Sign in to GitHub": call `githubLoginStart`, show the code and a link to the URL, poll `githubLoginStatus` every 3 seconds, then reload the list. A public link needs no login: the list is optional, so a list error never blocks a pasted link.
+- [ ] **Step 4: Implement `ClonePanel.svelte`.** A link field, a search box, and the grouped list (loaded with `listRepos`). Picking a repo fills the link field. A "Clone into <parent>" button calls `cloneStart`, shows "Cloning..." while it polls `cloneStatus` every 2 seconds, and then calls `oncloned(path)` when the state is `done`. A `failed` state shows the error. A repo with `pushedAt` equal to an empty string shows no date. On a 409 with `code: "github-login-required"`, show "Sign in to GitHub": call `githubLoginStart`, show the code and a link to the URL, poll `githubLoginStatus` every 3 seconds, then reload the list. A public link needs no login: the list is optional, so a list error never blocks a pasted link.
 - [ ] **Step 5: Modify `NewDialog.svelte`.** On mount call `getNode(host)`. When `clone` is true, show a "Clone repo here" button (disabled at the roots level, like "New folder") that opens `ClonePanel`. In `oncloned`, `await go(path)` then `start()`, so the existing trust question appears for the new folder.
 - [ ] **Step 6: Run** `bun test web/src && bun run build:web && bun run typecheck`. Expected: PASS. Then start the app (`bun run dev` with a test config) and check both flows by hand in the browser: pasted link, and list plus search.
 - [ ] **Step 7: Commit** `feat(web): clone a repo from the folder picker`.
@@ -230,7 +230,7 @@
 - Produces: `CommandName` gains `"clone" | "repos" | "gh-login"`, and `INSTANCE_COMMANDS` and `USAGE` list them. `clone <repo> <parent> [--user <u>] [--name <n>] [--force]` clones, then runs the same start logic as `start` on the new path (extract the start body into a shared function in `commands.ts`). `repos [--user <u>]` prints `owner/repo` lines grouped by owner. `gh-login [--user <u>]` prints the code and the URL, polls until `done` or `failed`, and exits 0 or 1.
 
 - [ ] **Step 1: Write the failing tests** with the existing `setup(routes)` server.
-  - `clone` posts `{ repo, parent }`. Then it posts `{ path: <new path> }` to `/instances` and prints the instance id.
+  - `clone` posts `{ repo, parent }`, polls `GET /clone/<id>` until `done`, then posts `{ path: <new path> }` to `/instances` and prints the instance id.
   - A 428 `untrusted` on start tells the user to use `--force`. The flag `--force` sends `addTrust: true`.
   - A 404 from the clone route prints `this host cannot clone. Update the node.` and exits 1.
   - `repos --json` prints the raw body.
