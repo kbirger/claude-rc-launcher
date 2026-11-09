@@ -8,9 +8,10 @@ import { createUpdateTracker, UNKNOWN_REASON } from "../src/updatetracker";
 const setup = async (probe: (h: string) => Promise<string | undefined>) => {
   const record = await UpdateRecord.load({ stateDir: mkdtempSync(path.join(os.tmpdir(), "rc-trk-")) });
   const sleeps: number[] = [];
-  const tracker = createUpdateTracker({ record, hubVersion: "1.0.0", probe, sleep: async (ms) => void sleeps.push(ms) });
+  const clock = { t: Date.parse("2026-11-09T10:00:00.000Z") };
+  const tracker = createUpdateTracker({ record, hubVersion: "1.0.0", probe, now: () => new Date(clock.t), sleep: async (ms) => void (sleeps.push(ms), (clock.t += ms)) });
   const entry = (h: string) => record.list().find((e) => e.host === h)!;
-  return { record, tracker, sleeps, entry };
+  return { record, tracker, sleeps, entry, clock };
 };
 const rep = (status: any, extra = {}) => ({ status, from: "1.0.0", to: "1.1.0", clients: [], ...extra });
 const settled = () => new Promise((r) => setTimeout(r, 20));
@@ -63,5 +64,45 @@ describe("update tracker", () => {
     await settled();
     expect(t.entry("local").status).toBe("running");
     expect(t.sleeps).toEqual([]);
+  });
+  test("a v-prefixed version matches the same version without it", async () => {
+    const t = await setup(async () => "v1.1.0");
+    await t.tracker.begin("nas", "kir", "1.0.0");
+    await t.tracker.finish("nas", rep("restarting") as any);
+    await settled();
+    expect(t.entry("nas").status).toBe("updated");
+    const r = await setup(async () => "v1.0.0");
+    await r.tracker.begin("nas", "kir", "1.0.0");
+    await r.tracker.finish("nas", rep("restarting", { to: "v1.1.0" }) as any);
+    await settled();
+    expect(r.entry("nas").status).toBe("rolled back");
+  });
+  test("the limit is a deadline on the clock, so a slow probe does not stretch it", async () => {
+    let clockRef: { t: number };
+    const t = await setup(async () => ((clockRef.t += 30_000), undefined));
+    clockRef = t.clock;
+    await t.tracker.begin("nas", "kir", "1.0.0");
+    await t.tracker.finish("nas", rep("restarting") as any);
+    await settled();
+    expect(t.entry("nas").status).toBe("unknown");
+    expect(t.sleeps.length).toBe(3);
+  });
+  test("begin does not replace a recent running entry, but replaces one older than 10 minutes", async () => {
+    const t = await setup(async () => undefined);
+    expect(await t.tracker.begin("nas", "ann", "1.0.0")).toBe(true);
+    expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(false);
+    expect(t.entry("nas").startedBy).toBe("ann");
+    t.clock.t += 601_000;
+    expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(true);
+    expect(t.entry("nas").startedBy).toBe("bob");
+  });
+  test("a second update during a wait is not overwritten by the first wait", async () => {
+    const t = await setup(async () => "1.1.0");
+    await t.tracker.begin("nas", "ann", "1.0.0");
+    await t.tracker.finish("nas", rep("restarting") as any);
+    t.clock.t += 601_000;
+    expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(true);
+    await settled();
+    expect(t.entry("nas")).toMatchObject({ startedBy: "bob", status: "running" });
   });
 });

@@ -847,7 +847,7 @@ describe("update record", () => {
   });
   test("a 409 that another update runs leaves the first entry as it is", async () => {
     const record = await newRecord();
-    const first = { host: "nas", startedAt: "2026-01-01T00:00:00.000Z", startedBy: "ann", from: "0.9.0", status: "running" as const };
+    const first = { host: "nas", startedAt: new Date().toISOString(), startedBy: "ann", from: "0.9.0", status: "running" as const };
     await record.set(first);
     const client = nodeClient([{ status: 409, body: { error: "another update is running on this machine" } }]);
     const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
@@ -891,5 +891,48 @@ describe("update record", () => {
     expect(record.list()).toEqual([]);
     const plain = hub([], new Map(), { update: fakeUpdater().update });
     expect((await upPost(plain, "/api/hosts/local/update")).status).toBe(202);
+  });
+  test("a busy 409 while the probe is slow does not touch the entry, and the first update still settles", async () => {
+    const record = await newRecord();
+    const first = { host: "nas", startedAt: new Date().toISOString(), startedBy: "ann", from: "0.9.0", status: "running" as const };
+    await record.set(first);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const client = { call: async (_m: string, p: string) => {
+      if (p === "/api/node") return (await gate, { status: 200, body: { version: "1.0.0" } });
+      return { status: 409, body: { error: "another update is running on this machine" } };
+    } } as unknown as HostClient;
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    const pending = upPost(app, "/api/hosts/nas/update");
+    await record.set({ ...first, status: "updated", to: "1.0.0", finishedAt: new Date().toISOString() });
+    await record.set({ ...first });
+    release();
+    expect((await pending).status).toBe(409);
+    expect(entryOf(record, "nas")).toEqual(first);
+  });
+  test("a successful answer to a request that did not write leaves the other entry alone", async () => {
+    const record = await newRecord();
+    const first = { host: "nas", startedAt: new Date().toISOString(), startedBy: "ann", from: "0.9.0", status: "running" as const };
+    await record.set(first);
+    const client = nodeClient([{ status: 200, body: { status: "up-to-date", from: "1.0.0", clients: [] } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(200);
+    expect(entryOf(record, "nas")).toEqual(first);
+  });
+  test("a record that fails to write still lets the update run and answer", async () => {
+    const record = await newRecord();
+    (record as any).setIf = async () => { throw new Error("disk full"); };
+    const client = nodeClient([{ status: 200, body: { status: "up-to-date", from: "1.0.0", clients: [] } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    const r = await upPost(app, "/api/hosts/nas/update");
+    expect(r.status).toBe(200);
+    expect((await r.json()).status).toBe("up-to-date");
+  });
+  test("an answer with an unknown status is recorded as failed", async () => {
+    const record = await newRecord();
+    const client = nodeClient([{ status: 200, body: { status: "dancing" } }]);
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]), { updates: record });
+    expect((await upPost(app, "/api/hosts/nas/update")).status).toBe(200);
+    expect(entryOf(record, "nas")).toMatchObject({ status: "failed", error: "unexpected answer from the host" });
   });
 });

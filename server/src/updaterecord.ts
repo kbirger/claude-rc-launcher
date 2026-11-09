@@ -59,6 +59,25 @@ export class UpdateRecord {
     return this.locked(() => this.apply(e));
   }
 
+  /** Writes `e` only when `allow(current entry of that host)` says so; the check and the write cannot be split by another `set`. */
+  setIf(e: UpdateEntry, allow: (current: UpdateEntry | undefined) => boolean): Promise<boolean> {
+    return this.locked(async () => {
+      const cur = this.entries.find((x) => x.host === e.host);
+      if (!allow(cur ? { ...cur } : undefined)) return false;
+      await this.apply(e);
+      return true;
+    });
+  }
+
+  /** After a hub restart: a `running` entry of a node can no longer be followed. Writes only what changes. */
+  markStaleRunning(reason = "the hub restarted while the update ran"): Promise<void> {
+    return this.locked(async () => {
+      for (const e of this.entries.filter((x) => x.host !== "local" && x.status === "running")) {
+        await this.apply({ ...e, status: "unknown", error: reason, finishedAt: this.now().toISOString() });
+      }
+    });
+  }
+
   onChange(fn: (e: UpdateEntry) => void): () => void {
     this.listeners.add(fn);
     return () => {

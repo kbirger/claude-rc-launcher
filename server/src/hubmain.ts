@@ -80,6 +80,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const record = await UpdateRecord.load({ stateDir: cfg.stateDir });
   // A hub update that restarted this process is settled before the first request.
   await record.reconcileHub(VERSION);
+  await record.markStaleRunning();
   const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, updates: record, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);

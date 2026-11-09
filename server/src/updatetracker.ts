@@ -1,10 +1,15 @@
 import type { UpdateEntry, UpdateRecord } from "./updaterecord";
+import { normalizeVersion } from "./versions";
 import type { UpdateReport } from "./serviceupdate";
 
 export type UpdateTracker = {
-  begin(host: string, startedBy: string, from: string): Promise<void>;
+  /** Writes a `running` entry unless a recent one of that host still runs; true when it wrote. */
+  begin(host: string, startedBy: string, from: string): Promise<boolean>;
   finish(host: string, report: UpdateReport | { status: "failed"; error: string }): Promise<void>;
 };
+
+/** A `running` entry older than this no longer blocks a new update. */
+const STALE_MS = 600_000;
 
 export const UNKNOWN_REASON = "the node did not answer with the new version within 90 seconds";
 
@@ -26,31 +31,46 @@ export function createUpdateTracker(o: {
   const intervalMs = o.intervalMs ?? 2_000;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const current = (host: string) => o.record.list().find((e) => e.host === host);
-  const settle = (host: string, patch: Partial<UpdateEntry> & { status: UpdateEntry["status"] }) => {
+  /** The run that owns the entry of each host; a wait of an older run stops without writing. */
+  const tokens = new Map<string, number>();
+  let counter = 0;
+  const settle = (host: string, patch: Partial<UpdateEntry> & { status: UpdateEntry["status"] }, token?: number) => {
     const base: UpdateEntry = current(host) ?? { host, startedAt: now().toISOString(), startedBy: "unknown", from: o.hubVersion, status: "running" };
-    return o.record.set({ ...base, ...patch, finishedAt: now().toISOString() });
+    const next = { ...base, ...patch, finishedAt: now().toISOString() };
+    if (token === undefined) return o.record.set(next).then(() => {});
+    return o.record.setIf(next, (cur) => tokens.get(host) === token && cur?.status === "running").then(() => {});
   };
+  const same = (a: string | undefined, b: string | undefined) => a !== undefined && b !== undefined && normalizeVersion(a) === normalizeVersion(b);
 
-  const waitForNode = async (host: string, report: UpdateReport) => {
+  const waitForNode = async (host: string, report: UpdateReport, token: number) => {
+    const started = now().getTime();
     let last: string | undefined;
-    for (let waited = 0; waited < waitMs; waited += intervalMs) {
+    while (true) {
       await sleep(intervalMs);
+      if (tokens.get(host) !== token) return;
       last = await o.probe(host).catch(() => undefined);
-      if (last !== undefined && last === report.to) return settle(host, { status: "updated", to: report.to });
+      if (tokens.get(host) !== token) return;
+      if (same(last, report.to)) return settle(host, { status: "updated", to: report.to }, token);
+      if (now().getTime() - started >= waitMs) break;
     }
     const old = current(host)?.from;
-    if (last !== undefined && (last === old || last === report.from)) return settle(host, { status: "rolled back" });
-    return settle(host, { status: "unknown", error: UNKNOWN_REASON });
+    if (same(last, old) || same(last, report.from)) return settle(host, { status: "rolled back" }, token);
+    return settle(host, { status: "unknown", error: UNKNOWN_REASON }, token);
   };
 
   return {
-    begin: (host, startedBy, from) => o.record.set({ host, startedAt: now().toISOString(), startedBy, from, status: "running" }),
+    async begin(host, startedBy, from) {
+      const t = now();
+      const wrote = await o.record.setIf({ host, startedAt: t.toISOString(), startedBy, from, status: "running" }, (cur) => !(cur?.status === "running" && t.getTime() - Date.parse(cur.startedAt) < STALE_MS));
+      if (wrote) tokens.set(host, ++counter);
+      return wrote;
+    },
     async finish(host, report) {
       if (report.status === "failed") return settle(host, { status: "failed", error: report.error ?? "update failed" });
       if (report.status === "up-to-date") return settle(host, { status: "up-to-date", ...(report.to !== undefined ? { to: report.to } : {}) });
       if (report.status === "clients-only") return settle(host, { status: "updated", ...(report.to !== undefined ? { to: report.to } : {}) });
       if (host === "local") return;
-      void waitForNode(host, report).catch((e) => console.error(`update wait for ${host} failed: ${e instanceof Error ? e.message : String(e)}`));
+      void waitForNode(host, report, tokens.get(host) ?? 0).catch((e) => console.error(`update wait for ${host} failed: ${e instanceof Error ? e.message : String(e)}`));
     },
   };
 }

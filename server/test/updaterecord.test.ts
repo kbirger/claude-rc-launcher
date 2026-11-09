@@ -143,3 +143,27 @@ describe("UpdateRecord", () => {
     expect(JSON.parse(await readFile(path.join(dir, "updates.json"), "utf8")).updates).toHaveLength(2);
   });
 });
+
+describe("UpdateRecord setIf and markStaleRunning", () => {
+  test("setIf writes only when the check allows it", async () => {
+    const r = await UpdateRecord.load({ stateDir: dir });
+    expect(await r.setIf(entry({ host: "a" }), (c) => c === undefined)).toBe(true);
+    expect(await r.setIf(entry({ host: "a", from: "9" }), (c) => c === undefined)).toBe(false);
+    expect(r.list()[0]!.from).toBe("0.8.2");
+  });
+  test("markStaleRunning settles running nodes, not local, and writes only on change", async () => {
+    const r = await UpdateRecord.load({ stateDir: dir, now: () => new Date("2026-11-09T11:00:00.000Z") });
+    await r.set(entry({ host: "local" }));
+    await r.set(entry({ host: "nas" }));
+    await r.set(entry({ host: "pi", status: "updated" }));
+    await r.markStaleRunning();
+    const by = (h: string) => r.list().find((e) => e.host === h)!;
+    expect(by("local").status).toBe("running");
+    expect(by("pi").status).toBe("updated");
+    expect(by("nas")).toMatchObject({ status: "unknown", error: "the hub restarted while the update ran", finishedAt: "2026-11-09T11:00:00.000Z" });
+    let n = 0;
+    r.onChange(() => n++);
+    await r.markStaleRunning();
+    expect(n).toBe(0);
+  });
+});

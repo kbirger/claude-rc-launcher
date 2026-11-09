@@ -42,6 +42,7 @@ const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
+const REPORT_STATUSES: readonly string[] = ["restarting", "up-to-date", "clients-only", "failed"];
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /**
@@ -119,15 +120,16 @@ export function hostsApi(o: {
       if (host !== "local" && !(HOST_ID_RE.test(host) && o.registry.get(host))) return next();
       const u = c.get("user" as never) as User | undefined;
       const startedBy = u?.username ?? u?.sub ?? "unknown";
-      const previous = tracking.record.list().find((e) => e.host === host);
+      let wrote = false;
       try {
         const from = host === "local" ? hubVersion : ((await tracking.probe(host).catch(() => undefined)) ?? "unknown");
-        await tracking.tracker.begin(host, startedBy, from);
+        wrote = await tracking.tracker.begin(host, startedBy, from);
       } catch (e) {
         console.error(`update record failed: ${e instanceof Error ? e.message : String(e)}`);
-        return next();
       }
       await next();
+      // Another update owns the entry (or nothing was written): this request records nothing.
+      if (!wrote) return;
       try {
         const res = c.res.clone();
         let body: unknown;
@@ -138,15 +140,11 @@ export function hostsApi(o: {
         }
         const errorText = isObject(body) && typeof body.error === "string" ? body.error : undefined;
         if (res.status >= 400) {
-          if (res.status === 409 && errorText !== undefined && /another update is running/.test(errorText)) {
-            if (previous) await tracking.record.set(previous);
-            return;
-          }
           await tracking.tracker.finish(host, { status: "failed", error: errorText ?? (res.statusText || `update answered ${res.status}`) });
-        } else if (isObject(body) && typeof body.status === "string") {
+        } else if (isObject(body) && typeof body.status === "string" && REPORT_STATUSES.includes(body.status)) {
           await tracking.tracker.finish(host, body as UpdateReport);
         } else {
-          await tracking.tracker.finish(host, { status: "failed", error: res.statusText || `update answered ${res.status}` });
+          await tracking.tracker.finish(host, { status: "failed", error: "unexpected answer from the host" });
         }
       } catch (e) {
         console.error(`update record failed: ${e instanceof Error ? e.message : String(e)}`);
