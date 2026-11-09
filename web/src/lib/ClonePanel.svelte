@@ -4,12 +4,14 @@
   import { filterGroups } from "./repofilter";
   import { startPolling } from "./poll";
 
-  let { host, parent, user, oncloned, onclose }: {
+  let { host, parent, user, oncloned, onclose, onbusy }: {
     host: string;
     parent: string;
     user?: string;
     oncloned: (path: string) => void;
     onclose: () => void;
+    /** Called at once when a clone starts and when it ends in any way, so the dialog can lock Close. */
+    onbusy?: (busy: boolean) => void;
   } = $props();
 
   let repo = $state("");
@@ -19,6 +21,11 @@
   let listError = $state("");
   let needLogin = $state(false);
   let cloning = $state(false);
+  // Every change of `cloning` goes through here, so the parent hears it at once (an $effect would run later).
+  function setCloning(v: boolean) {
+    cloning = v;
+    onbusy?.(v);
+  }
   let cloneError = $state("");
   // The login code is short-lived and shown once. It is kept in memory only.
   let login = $state<{ code: string; url: string } | null>(null);
@@ -52,6 +59,7 @@
     destroyed = true;
     stopClone?.();
     stopLogin?.();
+    if (cloning) onbusy?.(false);
   });
 
   function pick(name: string) {
@@ -65,7 +73,7 @@
 
   async function clone() {
     if (!repo.trim() || cloning) return;
-    cloning = true;
+    setCloning(true);
     cloneError = "";
     try {
       const { id } = await cloneStart(host, repo.trim(), parent, user);
@@ -77,7 +85,7 @@
         maxFailures: 5,
         onResult: (s) => {
           if (s.state === "running") return false;
-          cloning = false;
+          setCloning(false);
           if (s.state === "done") {
             if (s.path) oncloned(s.path);
             else cloneError = "The server did not return the folder path.";
@@ -85,12 +93,12 @@
           return true;
         },
         onGiveUp: () => {
-          cloning = false;
+          setCloning(false);
           cloneError = "Lost track of the clone. Check the folder before trying again.";
         },
       });
     } catch (e) {
-      cloning = false;
+      setCloning(false);
       cloneError = e instanceof ApiError ? e.message : "Failed to clone";
     }
   }

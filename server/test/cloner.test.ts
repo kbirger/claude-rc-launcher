@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { Stats } from "node:fs";
 import { lstat, mkdtemp, mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ function setup(
   res: RunResult | ((target: string) => Promise<RunResult>),
   identity: Ident = id,
   chownOverride?: () => Promise<void>,
-  lstatOverride?: (p: string) => Promise<Awaited<ReturnType<typeof lstat>>>,
+  lstatOverride?: (p: string) => Promise<Stats>,
 ) {
   const calls: Call[] = [];
   const chowns: [string, number, number][] = [];

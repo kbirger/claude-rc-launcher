@@ -17,6 +17,8 @@
   let trustPrompt = $state<TrustPrompt | null>(null);
   let canClone = $state(false);
   let cloning = $state(false);
+  // True while a clone runs (the panel can be open with no clone running). Close is locked then.
+  let cloneBusy = $state(false);
   let reqId = 0;
   // Only pass a user when the selector is shown.
   const chosenUser = $derived(usersInfo?.selectable ? user : undefined);
@@ -112,7 +114,7 @@
   <div class="dialog">
     <div class="top">
       <h2>New instance</h2>
-      <button onclick={onclose} aria-label="Close">Close</button>
+      <button onclick={onclose} disabled={cloneBusy} aria-label="Close">Close</button>
     </div>
     {#if usersInfo}
       <label class="runas">Run as
@@ -139,7 +141,7 @@
       </form>
     {/if}
     {#if cloning && listing}
-      <ClonePanel {host} parent={listing.path} user={chosenUser} oncloned={cloned} onclose={() => (cloning = false)} />
+      <ClonePanel {host} parent={listing.path} user={chosenUser} oncloned={cloned} onclose={() => (cloning = false)} onbusy={(b) => (cloneBusy = b)} />
     {:else}
     <ul>
       {#each listing?.dirs ?? [] as d (d.path)}
