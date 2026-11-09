@@ -534,6 +534,39 @@ describe("createClientVersions", () => {
     expect(await p2).toEqual([{ path: A, version: "1.0.0" }]);
     expect(seen).toEqual([{ args: [A, "--version"], timeoutMs: 2_000 }]);
   });
+  test("reset makes the next call ask again", async () => {
+    const { env, calls } = make({ [A]: "claude-rc 0.8.2\n" });
+    const get = createClientVersions(env, { now: () => 1_000 });
+    await get();
+    get.reset();
+    await get();
+    expect(calls.length).toBe(2);
+  });
+  test("a lookup in flight during reset does not store its old answer", async () => {
+    let answer = "claude-rc 0.8.2\n";
+    let release!: (r: { code: number; stdout: string; stderr: string }) => void;
+    let calls = 0;
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: [],
+      exists: (p: string) => p === A,
+      realpath: (p: string) => p,
+      run: () => ({ code: 0, stdout: answer, stderr: "" }),
+      runAsync: () => {
+        calls++;
+        return calls === 1 ? new Promise((res) => (release = res)) : Promise.resolve({ code: 0, stdout: answer, stderr: "" });
+      },
+    } as unknown as UpdateEnv;
+    const get = createClientVersions(env, { now: () => 1_000 });
+    const old = get();
+    await Bun.sleep(0);
+    get.reset();
+    answer = "claude-rc 0.8.3\n";
+    release({ code: 0, stdout: "claude-rc 0.8.2\n", stderr: "" });
+    expect(await old).toEqual([{ path: A, version: "0.8.2" }]);
+    expect(await get()).toEqual([{ path: A, version: "0.8.3" }]);
+    expect(calls).toBe(2);
+  });
   test("a lookup that throws rejects once and does not stick", async () => {
     let n = 0;
     const env = {

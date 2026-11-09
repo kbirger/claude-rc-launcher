@@ -43,6 +43,20 @@ describe("node app", () => {
     const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => clients });
     expect((await (await a.request("/api/node", { headers: ok })).json()).clients).toEqual(clients);
   });
+  test("/api/update resets the client versions after a client update and not after up-to-date", async () => {
+    const run = (report: unknown) => async () => report as any;
+    const call = async (report: unknown) => {
+      let resets = 0;
+      const clientVersions = Object.assign(async () => [], { reset: () => void resets++ });
+      const a = createNodeApp({ cfg, instances, auth, clientVersions, update: { run: run(report) } });
+      await a.request("/api/update", { method: "POST", headers: json, body: "{}" });
+      return resets;
+    };
+    expect(await call({ status: "clients-only", from: "1", clients: [] })).toBe(1);
+    expect(await call({ status: "restarting", from: "1", clients: [] })).toBe(1);
+    expect(await call({ status: "failed", from: "1", clients: [{ path: "/p", status: "updated" }] })).toBe(1);
+    expect(await call({ status: "up-to-date", from: "1", clients: [{ path: "/p", status: "up-to-date" }] })).toBe(0);
+  });
   test("a pending client lookup does not block other requests", async () => {
     let starts = 0;
     let release!: () => void;

@@ -136,17 +136,21 @@ function parseVersion(r: RunResult, prefix: string): string | undefined {
 }
 
 export type ClientVersion = { path: string; version?: string };
+/** A lookup of the client versions. `reset` drops the cached list and any lookup in flight, so the next call asks again. */
+export type ClientVersionsLookup = (() => Promise<ClientVersion[]>) & { reset?: () => void };
 
 /**
  * The client copies on this machine with the version each one reports. The copies are asked in parallel without
  * blocking the event loop, and concurrent callers share one lookup. The list is cached for `ttlMs`, so a host poll
  * does not start a process each time. A copy that does not answer has no `version`.
  */
-export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: () => number } = {}): () => Promise<ClientVersion[]> {
+export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: () => number } = {}): ClientVersionsLookup & { reset: () => void } {
   const ttlMs = o.ttlMs ?? 60_000;
   const now = o.now ?? Date.now;
   let cached: { at: number; list: ClientVersion[] } | undefined;
   let inflight: Promise<ClientVersion[]> | undefined;
+  // Counts the resets. A lookup that started before a reset does not store its answer.
+  let generation = 0;
 
   const ask = async (path: string): Promise<ClientVersion> => {
     try {
@@ -159,13 +163,14 @@ export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: 
     }
   };
 
-  return () => {
+  const get = () => {
     if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.list);
     if (!inflight) {
       // Run the body from a microtask, so that a synchronous throw is a rejection of `p` and `inflight` is set first.
+      const gen = generation;
       const p: Promise<ClientVersion[]> = Promise.resolve().then(async () => {
         const list = await Promise.all(findClients(env).map(ask));
-        cached = { at: now(), list };
+        if (gen === generation) cached = { at: now(), list };
         return list;
       });
       inflight = p;
@@ -176,6 +181,12 @@ export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: 
     }
     return inflight;
   };
+  const reset = () => {
+    generation++;
+    cached = undefined;
+    inflight = undefined;
+  };
+  return Object.assign(get, { reset });
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
