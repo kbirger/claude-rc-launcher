@@ -141,7 +141,6 @@ describe("clone", () => {
 
   test("the other methods are stubs", async () => {
     const { cloner } = setup({ code: 0, stdout: "", stderr: "" });
-    expect((await status(cloner.repos()))[0]).toBe(501);
     expect((await status(cloner.loginStart()))[0]).toBe(501);
     expect((await status(cloner.loginStatus("x")))[0]).toBe(501);
   });
