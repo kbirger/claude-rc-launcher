@@ -9,3 +9,7 @@ test("each query is fresh for five minutes and refetches on focus", () => {
     expect(q.refetchOnWindowFocus).toBe(true);
   }
 });
+
+test("latest is not retried (a 503 must not cost four requests)", () => {
+  expect(latestQuery().retry).toBe(false);
+});

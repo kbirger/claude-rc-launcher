@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getMe, listHosts, type HostInfo, type Me } from "./lib/api";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { getMe, type HostInfo, type Me } from "./lib/api";
+  import { connectEvents } from "./lib/events";
+  import { hostsQuery, latestQuery, updatesQuery } from "./lib/queries";
+  import HubVersionLine from "./lib/HubVersionLine.svelte";
+  import UpdateBanner from "./lib/UpdateBanner.svelte";
   import HostPicker from "./lib/HostPicker.svelte";
   import InstanceList from "./lib/InstanceList.svelte";
   import NewDialog from "./lib/NewDialog.svelte";
 
   const HOST_KEY = "claude-rc-host";
-  const POLL_MS = 15_000;
 
   // sessionStorage can be missing or throw (private windows, blocked storage); the UI must work without it.
   function remembered(): string {
@@ -23,20 +27,21 @@
   }
 
   let me = $state<Me | null>(null);
-  let hosts = $state<HostInfo[]>([{ id: "local", name: "local", status: "ok" }]);
+  const client = useQueryClient();
+  const hostsQ = createQuery(hostsQuery);
+  const latestQ = createQuery(latestQuery);
+  const updatesQ = createQuery(updatesQuery);
+  const hosts = $derived<HostInfo[]>(hostsQ.data ?? [{ id: "local", name: "local", status: "ok" }]);
   let selected = $state(remembered());
   let showNew = $state(false);
   let refreshKey = $state(0);
 
-  async function loadHosts() {
-    try {
-      const list = await listHosts();
-      hosts = list;
-      // A remembered or previously selected host that is gone or unavailable falls back to local.
-      const cur = list.find((h) => h.id === selected);
-      if (!cur || cur.status !== "ok") selected = "local";
-    } catch {}
-  }
+  // A remembered or previously selected host that is gone or unavailable falls back to local.
+  $effect(() => {
+    if (!hostsQ.data) return;
+    const cur = hostsQ.data.find((h) => h.id === selected);
+    if (!cur || cur.status !== "ok") selected = "local";
+  });
 
   function select(id: string) {
     selected = id;
@@ -46,9 +51,7 @@
 
   onMount(() => {
     getMe().then((m) => (me = m)).catch(() => {});
-    loadHosts();
-    const t = setInterval(loadHosts, POLL_MS);
-    return () => clearInterval(t);
+    return connectEvents({ client });
   });
 </script>
 
@@ -60,7 +63,9 @@
   <span class="user">{me?.name ?? ""}</span>
   <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>
 </header>
+<UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
 <main>
+  <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
   <button class="primary new" onclick={() => (showNew = true)}>+ New</button>
   {#key selected}
     <InstanceList host={selected} {refreshKey} />
