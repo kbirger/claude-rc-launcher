@@ -161,15 +161,19 @@ export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: 
 
   return () => {
     if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.list);
-    inflight ??= (async () => {
-      try {
+    if (!inflight) {
+      // Run the body from a microtask, so that a synchronous throw is a rejection of `p` and `inflight` is set first.
+      const p: Promise<ClientVersion[]> = Promise.resolve().then(async () => {
         const list = await Promise.all(findClients(env).map(ask));
         cached = { at: now(), list };
         return list;
-      } finally {
-        inflight = undefined;
-      }
-    })();
+      });
+      inflight = p;
+      const clear = () => {
+        if (inflight === p) inflight = undefined;
+      };
+      p.then(clear, clear);
+    }
     return inflight;
   };
 }

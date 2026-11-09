@@ -528,9 +528,26 @@ describe("createClientVersions", () => {
     const get = createClientVersions(env);
     const p1 = get();
     const p2 = get();
+    await Bun.sleep(0);
     release({ code: 0, stdout: "claude-rc 1.0.0\n", stderr: "" });
     expect(await p1).toEqual([{ path: A, version: "1.0.0" }]);
     expect(await p2).toEqual([{ path: A, version: "1.0.0" }]);
     expect(seen).toEqual([{ args: [A, "--version"], timeoutMs: 2_000 }]);
+  });
+  test("a lookup that throws rejects once and does not stick", async () => {
+    let n = 0;
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: [],
+      exists: (p: string) => {
+        if (n++ === 0) throw new Error("fs broke");
+        return p === A;
+      },
+      realpath: (p: string) => p,
+      run: () => ({ code: 0, stdout: "claude-rc 1.0.0\n", stderr: "" }),
+    } as unknown as UpdateEnv;
+    const get = createClientVersions(env);
+    await expect(get()).rejects.toThrow("fs broke");
+    expect(await get()).toEqual([{ path: A, version: "1.0.0" }]);
   });
 });

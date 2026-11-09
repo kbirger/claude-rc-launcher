@@ -27,18 +27,29 @@ function run(args: string[], opts?: { timeoutMs?: number }): RunResult {
   }
 }
 
+/** After a timeout kill, how long the output pipes get to close. A grandchild can hold them open. */
+const KILL_GRACE_MS = 500;
+
 async function runAsync(args: string[], opts?: { timeoutMs?: number }): Promise<RunResult> {
+  const timers: ReturnType<typeof setTimeout>[] = [];
   try {
     const proc = Bun.spawn(args, { env: { ...process.env, PATH: commandPath() }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const timer = opts?.timeoutMs ? setTimeout(() => proc.kill("SIGKILL"), opts.timeoutMs) : undefined;
-    try {
-      const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-      return { code, stdout, stderr };
-    } finally {
-      clearTimeout(timer);
-    }
+    const done = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]).then(([stdout, stderr, code]): RunResult => ({ code, stdout, stderr }));
+    done.catch(() => {});
+    if (!opts?.timeoutMs) return await done;
+    const deadline = new Promise<RunResult>((resolve) => {
+      timers.push(
+        setTimeout(() => {
+          proc.kill("SIGKILL");
+          timers.push(setTimeout(() => resolve({ code: 124, stdout: "", stderr: `timed out after ${opts.timeoutMs} ms` }), KILL_GRACE_MS));
+        }, opts.timeoutMs),
+      );
+    });
+    return await Promise.race([done, deadline]);
   } catch (e) {
     return { code: 127, stdout: "", stderr: e instanceof Error ? e.message : String(e) };
+  } finally {
+    timers.forEach(clearTimeout);
   }
 }
 

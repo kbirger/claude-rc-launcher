@@ -34,4 +34,12 @@ describe("realUpdateEnv", () => {
     expect(r.code).not.toBe(0);
     expect(Date.now() - t0).toBeLessThan(3_000);
   });
+
+  test("runAsync returns after the timeout even when a grandchild keeps the pipes open", async () => {
+    const env = realUpdateEnv({ serviceHome: "/home/svc", scope: "system" } as Config);
+    const t0 = Date.now();
+    const r = await env.runAsync!(["sh", "-c", "sleep 3 & echo hi; sleep 3"], { timeoutMs: 200 });
+    expect(r.code).not.toBe(0);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
 });
