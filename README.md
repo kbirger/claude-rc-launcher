@@ -30,9 +30,10 @@ see [Multiple hosts](#multiple-hosts).
 - **Cloning:** the hub never stores, sees or forwards a GitHub token. A `gh` login stores a long-lived token
   (the `repo` scope by default) for that OS user on that machine. Anyone with root-equivalent access to that machine
   can use it. The launcher login is already root-equivalent, so it can use it too. The launcher shows the one-time
-  login code once and does not log or store it.
-- A clone runs `git` as the run-as user. A cloned repo can contain hooks and configuration. Trust a folder only if you
-  trust the repo. The trust question is the existing safeguard.
+  login code once. It does not log it or write it to disk.
+- A clone runs `git` as the run-as user. `git clone` does not copy git hooks or `.git/config` from the repo. The risk is
+  in the project files. Claude Code reads files such as `.claude/settings.json` (which can define hooks) and `CLAUDE.md`
+  in a trusted folder. Trust a folder only if you trust the repo. The trust question is the existing safeguard.
 - The clone passes the credential helper for that one command (`-c credential.helper=!gh auth git-credential`).
   It does not write the helper into the repo.
 - **Multi-host:** a hub login is root-equivalent execution on the hub **and on every node** (as each
@@ -406,10 +407,12 @@ Windows nodes do not support clone in this version.
 
 ### In the web UI
 
-1. Choose New instance and open the folder where the repo must go.
-2. Choose "Clone repo here". The button is hidden for a host that cannot clone.
+1. Choose "+ New". The "New instance" dialog opens. Open the folder where the repo must go.
+2. Choose "Clone repo here". The button is hidden for a host that cannot clone. At the roots level the button is
+   disabled, because the clone needs a parent folder.
 3. Paste a link or `owner/repo`, or pick a repo from the searchable list. The list is grouped by owner.
-4. The UI clones the repo, opens the new folder and starts the instance there.
+4. The UI clones the repo, opens the new folder and starts the instance there. While the clone runs, the dialog
+   locks its Close button.
 
 If the folder is not trusted yet, the usual trust question appears before the start.
 
@@ -436,7 +439,8 @@ The repo argument can be any of these:
 - A `github.com` link, with or without `.git`, with a trailing slash, with extra path parts or with a query.
 - `owner/repo`.
 
-The node rejects other hosts, SSH addresses and links with embedded credentials.
+The node rejects other hosts, SSH addresses and links with embedded credentials. It also rejects `http://` links and
+`www.github.com` links. Use `https://github.com/...` or `owner/repo`.
 
 ### How it works
 
@@ -455,13 +459,18 @@ The node rejects other hosts, SSH addresses and links with embedded credentials.
   For the configured `service_user`, the `PATH` is `instance.service_path`. Its default is
   `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
   For another user, the `PATH` is `<home of that user>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`.
-- If the clone runs as another user, `setpriv` (from util-linux) must be installed.
+- `setpriv` (from util-linux) must be installed if the clone runs as a different user from the launcher. This is also the
+  case when the launcher runs as root with a non-root `service_user`. The clone then runs as that user.
 - Private repos and the repo list need a GitHub login for that user. A public repo needs no login.
 
 You can log in in one of two ways. Run `gh auth login` on the machine as that user. Or use the launcher: the web
 "Sign in to GitHub" button or `claude-rc gh-login`. The launcher runs `gh auth login --web`, a device login where you
 enter a short code on github.com. It then runs `gh auth setup-git`, so that a later `git push` works.
 `gh auth setup-git` edits the global git configuration of that user.
+
+If `gh` keeps its token in a desktop keyring, the node cannot read the token. The reason is that `setpriv` starts
+`gh` with no D-Bus session. The repo list then asks for a login. The login from the launcher writes the token to
+`hosts.yml` in the `gh` configuration folder of that user, so it works.
 
 ### Limits
 
@@ -470,6 +479,10 @@ enter a short code on github.com. It then runs `gh auth setup-git`, so that a la
 - A host in user scope runs the clone as the service user only.
 - The repo list does not show repos where you are only an outside collaborator. You can still clone them by link.
 - Windows nodes do not support clone. They answer 404 on the clone routes, so the web UI hides the button.
+- While a clone runs, the node refuses to start an instance in that folder or below it. The answer is 409
+  `a clone is still running in that folder`.
+- If the node restarts during a clone, the client reports that it lost track of the clone. The partial folder stays on
+  disk. Remove that folder before you clone the repo again.
 
 ## Multiple hosts
 
