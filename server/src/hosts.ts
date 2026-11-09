@@ -4,7 +4,7 @@ import { HostError, type HostClient, type HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
-import { isObject, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { VERSION } from "./version";
 import type { User } from "./userauth";
 
@@ -13,7 +13,15 @@ export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "e
 /** A node's update downloads two release assets and checks them before it answers. */
 export const UPDATE_TIMEOUT_MS = 180_000;
 
+/** A clone runs up to 10 minutes on the node (its own limit), so the hub waits a minute longer. */
+export const CLONE_TIMEOUT_MS = 11 * 60_000;
+/** `gh repo list` over many organizations can be slow. */
+export const REPOS_TIMEOUT_MS = 120_000;
+/** The node waits up to 15 seconds for the device code. */
+export const LOGIN_START_TIMEOUT_MS = 20_000;
+
 const ID_RE = /^[0-9a-f]{12}$/;
+const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
@@ -133,6 +141,36 @@ export function hostsApi(o: {
     forward(async (c, k) => {
       const json = parseUpdateRequest(await readJson(c));
       return k.call("POST", "/api/update", { json, timeoutMs: UPDATE_TIMEOUT_MS });
+    }),
+  );
+  remote.post(
+    "/clone",
+    forward(async (c, k) => {
+      const json = parseCloneRequest(await readJson(c));
+      return k.call("POST", "/api/clone", { json, timeoutMs: CLONE_TIMEOUT_MS });
+    }),
+  );
+  remote.get(
+    "/github/repos",
+    forward((c, k) => {
+      const u = c.req.query("user");
+      if (u === "") throw new HttpError(400, "user must not be empty");
+      return k.call("GET", "/api/github/repos", { ...(u !== undefined ? { query: { user: u } } : {}), timeoutMs: REPOS_TIMEOUT_MS });
+    }),
+  );
+  remote.post(
+    "/github/login",
+    forward(async (c, k) => {
+      const json = parseLoginRequest(await readJson(c));
+      return k.call("POST", "/api/github/login", { json, timeoutMs: LOGIN_START_TIMEOUT_MS });
+    }),
+  );
+  remote.get(
+    "/github/login/:id",
+    forward((c, k) => {
+      const id = c.req.param("id") ?? "";
+      if (!LOGIN_ID_RE.test(id)) throw new HttpError(400, "invalid login id");
+      return k.call("GET", `/api/github/login/${id}`, { timeoutMs: requestTimeoutMs });
     }),
   );
   remote.all("*", (c) => c.json({ error: "not found" }, 404));

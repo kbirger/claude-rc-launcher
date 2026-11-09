@@ -10,6 +10,7 @@ import { HostError, createHostClient, secretAuthorizer, type HostClient, type Ho
 import { generateSecret, nodeAuth } from "../src/nodeauth";
 import { ensureNodeCert } from "../src/tls";
 import { HostRegistry } from "../src/hostregistry";
+import type { Cloner } from "../src/cloner";
 import type { UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
 
@@ -47,7 +48,7 @@ const fakeUpdater = (report: UpdateReport = restarting) => {
 const stops: (() => void)[] = [];
 afterAll(() => stops.forEach((s) => s()));
 
-async function startNode(id: string, over: { secret?: string } = {}): Promise<NodeFixture> {
+async function startNode(id: string, over: { secret?: string; cloner?: Cloner } = {}): Promise<NodeFixture> {
   const root = realpathSync(tmp());
   const sec = generateSecret();
   const cert = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
@@ -64,7 +65,7 @@ async function startNode(id: string, over: { secret?: string } = {}): Promise<No
     logs: async (_id: string, n: number) => `${id} log ${n}`,
   };
   const up = fakeUpdater();
-  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }), update: up.update });
+  const app = createNodeApp({ cfg: { name: id, roots: [root] } as unknown as Config, instances: svc, auth: nodeAuth({ hubKeys: [], selfFingerprint: "sha256:test", secretHashes: [sec.sha256] }), update: up.update, ...(over.cloner ? { cloner: over.cloner } : {}) });
   const seen: Headers[] = [];
   const delayNodeMs = { value: 0 };
   const server = Bun.serve({
@@ -552,5 +553,147 @@ describe("node and update routes", () => {
     const audit = logged.filter((l) => l.startsWith("audit user="));
     expect(audit).toEqual(["audit user=kir host=nas POST /api/hosts/nas/update 202", "audit user=kir host=local POST /api/hosts/local/update 202"]);
     expect(logged.some((l) => /^audit caller=\S+ POST \/api\/update 202$/.test(l))).toBe(true);
+  });
+});
+
+describe("clone, repo list and login forwarding", () => {
+  const LOGIN_ID = "0123456789abcdef0123456789abcdef";
+  const hostCfg = (id: string): HostConfig => ({ id, name: id, url: "https://x", ca: "pem", auth: { type: "secret", secret: "s" } });
+  const send = (app: any, m: string, p: string, body?: unknown) =>
+    app.request(p, { method: m, headers: m === "GET" ? {} : JSON_H, ...(body !== undefined ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}) });
+  function recorder(status = 200, body: unknown = { ok: true }) {
+    const calls: any[] = [];
+    const client: HostClient = {
+      async call(method, p, o) {
+        calls.push([method, p, o?.query, o?.json, o?.timeoutMs]);
+        return { status, body };
+      },
+    };
+    return { calls, client };
+  }
+  function fakeCloner() {
+    const seen: any[] = [];
+    const cloner: Cloner = {
+      clone: async (i) => (seen.push(["clone", i]), { path: `${i.parent}/r` }),
+      repos: async (u) => (seen.push(["repos", u]), { groups: [{ owner: "me", repos: [{ name: "r", private: false, pushedAt: "2026-01-01T00:00:00Z" }] }] }),
+      loginStart: async (u) => (seen.push(["login", u]), { id: LOGIN_ID, code: "ABCD-1234", url: "https://github.com/login/device" }),
+      loginStatus: async (id) => (seen.push(["status", id]), { state: "failed", error: "denied" }),
+    };
+    return { seen, cloner };
+  }
+
+  for (const prefix of ["/api/hosts", "/cli/api/hosts"]) {
+    test(`${prefix}: the four routes reach a real node with the hub credential`, async () => {
+      const f = fakeCloner();
+      const n = await startNode("nas", { cloner: f.cloner });
+      const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [n.host], clients: new Map([["nas", n.client]]), makeClient: () => n.client });
+      const cli = { issuer: "i", clientId: "c", auth: (async (c: any, next: any) => (c.set("user", { sub: "u1", username: "kir" }), next())) as MiddlewareHandler, makeClient: () => n.client, enrollment: { hubKeys: [] } };
+      const app = createApp({ cfg: { name: "box", hosts: [n.host], roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config, instances: localSvc, userAuth, hosts: registry, cli: cli as any });
+      const base = `${prefix}/nas`;
+      const clone = await send(app, "POST", `${base}/clone`, { repo: "o/r", parent: "/p", user: "alice", evil: 1 });
+      expect(clone.status).toBe(201);
+      expect(await clone.json()).toEqual({ path: "/p/r" });
+      const repos = await get(app, `${base}/github/repos?user=alice&evil=1`);
+      expect(repos.status).toBe(200);
+      expect((await repos.json()).groups[0].owner).toBe("me");
+      const login = await send(app, "POST", `${base}/github/login`, { user: "alice", evil: 1 });
+      expect(login.status).toBe(202);
+      expect(await login.json()).toEqual({ id: LOGIN_ID, code: "ABCD-1234", url: "https://github.com/login/device" });
+      const st = await get(app, `${base}/github/login/${LOGIN_ID}`);
+      expect(st.status).toBe(200);
+      expect(await st.json()).toEqual({ state: "failed", error: "denied" });
+      expect(f.seen).toEqual([["clone", { repo: "o/r", parent: "/p", user: "alice" }], ["repos", "alice"], ["login", "alice"], ["status", LOGIN_ID]]);
+      for (const h of n.seen) expect(h.get("authorization")).toBe(`Bearer ${n.secret}`);
+    });
+  }
+
+  test("each route calls the node with the right path, query, body and timeout", async () => {
+    const r = recorder();
+    const app = hub([hostCfg("nas")], new Map([["nas", r.client]]), { requestTimeoutMs: 1_234 });
+    await send(app, "POST", "/api/hosts/nas/clone", { repo: "o/r", parent: "/p", evil: 1 });
+    await get(app, "/api/hosts/nas/github/repos?user=alice&evil=1");
+    await get(app, "/api/hosts/nas/github/repos");
+    await send(app, "POST", "/api/hosts/nas/github/login", { user: "alice", evil: 1 });
+    await send(app, "POST", "/api/hosts/nas/github/login", {});
+    await get(app, `/api/hosts/nas/github/login/${LOGIN_ID}?evil=1`);
+    expect(r.calls).toEqual([
+      ["POST", "/api/clone", undefined, { repo: "o/r", parent: "/p" }, 660_000],
+      ["GET", "/api/github/repos", { user: "alice" }, undefined, 120_000],
+      ["GET", "/api/github/repos", undefined, undefined, 120_000],
+      ["POST", "/api/github/login", undefined, { user: "alice" }, 20_000],
+      ["POST", "/api/github/login", undefined, {}, 20_000],
+      ["GET", `/api/github/login/${LOGIN_ID}`, undefined, undefined, 1_234],
+    ]);
+  });
+
+  test("an invalid request gets 400 before any node call", async () => {
+    const r = recorder();
+    const app = hub([hostCfg("nas")], new Map([["nas", r.client]]));
+    for (const b of ["{bad", "[]", "{}", JSON.stringify({ repo: "o/r" }), JSON.stringify({ repo: "o/r", parent: "/p", user: "" }), JSON.stringify({ repo: 1, parent: "/p" })]) {
+      expect([b, (await send(app, "POST", "/api/hosts/nas/clone", b)).status]).toEqual([b, 400]);
+    }
+    for (const b of ["{bad", "[]", JSON.stringify({ user: "" }), JSON.stringify({ user: 5 })]) {
+      expect([b, (await send(app, "POST", "/api/hosts/nas/github/login", b)).status]).toEqual([b, 400]);
+    }
+    const empty = await get(app, "/api/hosts/nas/github/repos?user=");
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toEqual({ error: "user must not be empty" });
+    for (const id of ["abc", LOGIN_ID.toUpperCase(), `${LOGIN_ID}0`, "..%2Fnode", "0123456789abcdef0123456789abcdeg"]) {
+      const x = await get(app, `/api/hosts/nas/github/login/${id}`);
+      expect([id, x.status]).toEqual([id, 400]);
+    }
+    expect(await (await get(app, "/api/hosts/nas/github/login/abc")).json()).toEqual({ error: "invalid login id" });
+    expect(r.calls).toEqual([]);
+  });
+
+  test("local rejects a bad clone body the same way", async () => {
+    const f = fakeCloner();
+    const app = createApp({ cfg: { name: "box", hosts: [], roots: ["/srv"] } as unknown as Config, instances: localSvc, userAuth, cloner: f.cloner });
+    const bad = JSON.stringify({ repo: "o/r" });
+    const local = await send(app, "POST", "/api/hosts/local/clone", bad);
+    const remote = await send(hub([hostCfg("nas")], new Map([["nas", recorder().client]])), "POST", "/api/hosts/nas/clone", bad);
+    expect(remote.status).toBe(local.status);
+    expect(await remote.json()).toEqual(await local.json());
+  });
+
+  test("a node 404 and a node 409 with a code pass through", async () => {
+    const paths = [["POST", "/clone", { repo: "o/r", parent: "/p" }], ["GET", "/github/repos"], ["POST", "/github/login", {}], ["GET", `/github/login/${LOGIN_ID}`]] as const;
+    const a1 = hub([hostCfg("nas")], new Map([["nas", recorder(404, { error: "not found" }).client]]));
+    for (const [m, p, b] of paths) {
+      const x = await send(a1, m, `/api/hosts/nas${p}`, b);
+      expect([m, p, x.status, await x.json()]).toEqual([m, p, 404, { error: "not found" }]);
+    }
+    const body = { error: "already exists", code: "exists", path: "/p/r" };
+    const a2 = hub([hostCfg("nas")], new Map([["nas", recorder(409, body).client]]));
+    const x = await send(a2, "POST", "/api/hosts/nas/clone", { repo: "o/r", parent: "/p" });
+    expect(x.status).toBe(409);
+    expect(await x.json()).toEqual(body);
+  });
+
+  test("a host failure gives 502 and an unknown host 404", async () => {
+    const client: HostClient = { call: async () => { throw new HostError("nas", "timeout"); } };
+    const app = hub([hostCfg("nas")], new Map([["nas", client]]));
+    const r = await send(app, "POST", "/api/hosts/nas/clone", { repo: "o/r", parent: "/p" });
+    expect(r.status).toBe(502);
+    expect(await r.json()).toEqual({ error: "host nas: timeout", host: "nas" });
+    expect((await send(app, "POST", "/api/hosts/zzz/clone", { repo: "o/r", parent: "/p" })).status).toBe(404);
+  });
+
+  test("the audit line holds no repo, user or login code", async () => {
+    const app = hub([hostCfg("nas")], new Map([["nas", recorder(202, { id: LOGIN_ID, code: "ABCD-1234", url: "u" }).client]]));
+    await send(app, "POST", "/api/hosts/nas/clone", { repo: "secret-org/secret-repo", parent: "/p" });
+    await send(app, "POST", "/api/hosts/nas/github/login", { user: "alice" });
+    await get(app, "/api/hosts/nas/github/repos?user=alice");
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=nas POST /api/hosts/nas/clone 202", "audit user=kir host=nas POST /api/hosts/nas/github/login 202"]);
+    expect(logged.join("\n")).not.toMatch(/secret-repo|ABCD-1234|alice/);
+  });
+
+  test("a response over 1 MiB is still refused with the longer timeouts", async () => {
+    const a = await startNode("nas");
+    const big = createHostClient(a.host, secretAuthorizer(a.secret), { fetch: (async () => new Response(JSON.stringify({ x: "a".repeat(1024 * 1024 + 1) }), { status: 200 })) as any });
+    const app = hub([a.host], new Map([["nas", big]]));
+    const r = await get(app, "/api/hosts/nas/github/repos");
+    expect(r.status).toBe(502);
+    expect(await r.json()).toEqual({ error: "host nas: bad response", host: "nas" });
   });
 });
