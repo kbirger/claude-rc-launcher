@@ -159,7 +159,7 @@
 - Consumes: `Cloner`, `createCloner`, `InstanceService.identityFor`, `DirOwner`.
 - Produces: `parseCloneRequest(body: unknown): { repo: string; parent: string; user?: string }`.
 - Produces routes in `instanceApi`. Both the hub's `local` host and a node serve them. If a `cloner` dep is present, the app mounts them. Otherwise it does not.
-  - `POST /clone`: 201 `{ path }`.
+  - `POST /clone`: 202 `{ id, path }`. `GET /clone/:id`: 200 `{ state, path?, error? }`. Clone is an async job.
   - `GET /github/repos?user=`: 200 `{ groups }`.
   - `POST /github/login` with body `{ user? }`: 202 `{ id, code, url }`.
   - `GET /github/login/:id`: 200 `{ state, error? }`.
