@@ -1,6 +1,6 @@
 import { asUser, type Identity, type IdentityFor } from "./asuser";
 import { HttpError } from "./instances";
-import type { Runner } from "./runner";
+import type { Runner, RunResult } from "./runner";
 
 export type LoginProc = { onOutput(cb: (chunk: string) => void): void; exited: Promise<number>; kill(): void };
 export type LoginSpawner = (cmd: string, args: string[], opts: { env: Record<string, string>; stdin: string }) => LoginProc;
@@ -93,8 +93,7 @@ export function createLoginManager(deps: {
   const pendingByKey = new Map<string, Entry>();
   const startingByKey = new Map<string, Promise<LoginInfo>>();
 
-  const begin = async (key: string, user: string | undefined): Promise<LoginInfo> => {
-    const identity: Identity = await deps.identityFor(user);
+  const begin = async (key: string, identity: Identity): Promise<LoginInfo> => {
     const w = asUser(identity, "gh", ["auth", "login", "--web", "--hostname", "github.com", "--git-protocol", "https"]);
     // gh prints the code and waits for Enter only when prompts are allowed; a no-op BROWSER stops it from opening one.
     const env = { ...w.env, BROWSER: "true" };
@@ -104,8 +103,8 @@ export function createLoginManager(deps: {
     let proc: LoginProc;
     try {
       proc = spawn(w.cmd, w.args, { env, stdin: "\n" });
-    } catch {
-      throw new HttpError(500, "gh is not installed");
+    } catch (e) {
+      throw new HttpError(500, `${deps.missingTool(w.cmd, e instanceof Error ? e.message : String(e), "gh")} is not installed`);
     }
 
     let finished = false;
@@ -128,6 +127,8 @@ export function createLoginManager(deps: {
       finished = true;
       entry.state = state;
       entry.ready = undefined;
+      code = "";
+      url = "";
       if (error !== undefined) entry.error = error;
       if (pendingByKey.get(key) === entry) pendingByKey.delete(key);
       for (const t of timers) clock.clearTimeout(t);
@@ -169,8 +170,11 @@ export function createLoginManager(deps: {
       settle("failed", "login timed out");
     }, LOGIN_TTL_MS));
 
-    void proc.exited.then(async (exitCode) => {
+    const onExit = async (exitCode: number) => {
       if (finished) return;
+      // The process ended, so neither the code wait nor the lifetime timer matters now.
+      for (const t of timers) clock.clearTimeout(t);
+      timers.length = 0;
       if (buf) { line(buf); buf = ""; }
       if (!code || !url) {
         const msg = exitCode === 127
@@ -183,28 +187,37 @@ export function createLoginManager(deps: {
         settle("failed", `gh login failed: ${scrub(firstLine) || `exit ${exitCode}`}`);
         return;
       }
+      const s = asUser(identity, "gh", ["auth", "setup-git"]);
+      let r: RunResult;
       try {
-        const s = asUser(identity, "gh", ["auth", "setup-git"]);
-        const r = await deps.run(s.cmd, s.args, { env: s.env, timeoutMs: SETUP_TIMEOUT_MS });
-        if (finished) return;
-        if (r.code === 0 && !r.timedOut) settle("done");
-        else settle("failed", `gh auth setup-git failed: ${scrub(r.stderr.split("\n").map((l) => l.trim()).find(Boolean) ?? "") || `exit ${r.code}`}`);
+        r = await deps.run(s.cmd, s.args, { env: s.env, timeoutMs: SETUP_TIMEOUT_MS });
       } catch {
         settle("failed", "gh auth setup-git failed");
+        return;
       }
-    }, () => { settle("failed", "gh login failed"); });
+      if (r.code === 0 && !r.timedOut) settle("done");
+      else settle("failed", `gh auth setup-git failed: ${scrub(r.stderr.split("\n").map((l) => l.trim()).find(Boolean) ?? "") || `exit ${r.code}`}`);
+    };
+    const onFail = () => {
+      if (finished) return;
+      if (!code || !url) abort(new HttpError(502, "gh login failed"));
+      else settle("failed", "gh login failed");
+    };
+    void proc.exited.then(onExit).catch(onFail);
 
     return ready;
   };
 
   return {
     async start(user) {
-      const key = user ?? "";
+      const identity = await deps.identityFor(user);
+      // One key per OS account: "no user" and the service user's name resolve to the same identity.
+      const key = `${identity.uid ?? "service"}|${identity.home}`;
       const existing = pendingByKey.get(key);
       if (existing?.ready) return existing.ready;
       const starting = startingByKey.get(key);
       if (starting) return starting;
-      const p = begin(key, user).finally(() => { startingByKey.delete(key); });
+      const p = begin(key, identity).finally(() => { startingByKey.delete(key); });
       startingByKey.set(key, p);
       return p;
     },

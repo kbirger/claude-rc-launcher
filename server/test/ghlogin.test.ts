@@ -41,15 +41,15 @@ function fakeClock() {
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-function setup(runResult: RunResult = { code: 0, stdout: "", stderr: "" }) {
+function setup(runResult: RunResult | (() => Promise<RunResult>) = { code: 0, stdout: "", stderr: "" }, identityFor: (u?: string) => Promise<typeof id & { uid?: number; gid?: number }> = async () => id, spawner?: LoginSpawner) {
   const f = fakeSpawner();
   const c = fakeClock();
   const calls: { cmd: string; args: string[]; opts?: RunOptions }[] = [];
   const cloner = createCloner({
     cfg: { roots: [] } as unknown as Config,
-    run: async (cmd, args, opts) => { calls.push({ cmd, args, opts }); return runResult; },
-    identityFor: async () => id,
-    spawnLogin: f.spawn,
+    run: async (cmd, args, opts) => { calls.push({ cmd, args, opts }); return typeof runResult === "function" ? runResult() : runResult; },
+    identityFor,
+    spawnLogin: spawner ?? f.spawn,
     loginClock: c.clock,
   });
   return { cloner, calls, ...f, ...c };
@@ -129,7 +129,7 @@ describe("login", () => {
   });
 
   test("a second start for the same user returns the pending login, another user gets its own", async () => {
-    const t = setup();
+    const t = setup(undefined, async (u) => (u === "amy" ? { home: "/home/amy", path: "/usr/bin" } : id));
     const p1 = t.cloner.loginStart("bob");
     const p2 = t.cloner.loginStart("bob");
     await tick();
@@ -241,6 +241,125 @@ describe("login", () => {
     } finally {
       for (const s of spies) s.mockRestore();
     }
+  });
+});
+
+describe("login fixes", () => {
+  const svc = { home: "/home/svc", path: "/usr/bin" };
+  const bobId = { home: "/home/bob", path: "/usr/bin", uid: 1001, gid: 1001 };
+  const amyId = { home: "/home/amy", path: "/usr/bin", uid: 1002, gid: 1002 };
+
+  test("no user and the service user's name share one login per OS account", async () => {
+    const t = setup(undefined, async () => svc);
+    const p1 = t.cloner.loginStart();
+    const p2 = t.cloner.loginStart("svcname");
+    await tick();
+    t.made[0].emit(CODE + URL_LINE);
+    const [a, b] = await Promise.all([p1, p2]);
+    expect(b).toEqual(a);
+    expect(await t.cloner.loginStart("svcname")).toEqual(a);
+    expect(t.made.length).toBe(1);
+  });
+
+  test("different identities each get their own login", async () => {
+    const t = setup(undefined, async (u) => (u === "bob" ? bobId : u === "amy" ? amyId : svc));
+    const pb = t.cloner.loginStart("bob");
+    const pa = t.cloner.loginStart("amy");
+    await tick();
+    t.made[0].emit(CODE + URL_LINE);
+    t.made[1].emit(CODE + URL_LINE);
+    const [b, a] = await Promise.all([pb, pa]);
+    expect(b.id).not.toBe(a.id);
+    expect(t.made.length).toBe(2);
+  });
+
+  test("exited rejecting before the code settles loginStart and frees the key", async () => {
+    const made: number[] = [];
+    const spawn: LoginSpawner = () => {
+      made.push(1);
+      return { onOutput: () => {}, exited: Promise.reject(new Error("pipe broke")), kill: () => {} };
+    };
+    const t = setup(undefined, undefined, spawn);
+    const e = await fail(t.cloner.loginStart());
+    expect(e.status).toBe(502);
+    const e2 = await fail(t.cloner.loginStart());
+    expect(e2.status).toBe(502);
+    expect(made.length).toBe(2);
+  });
+
+  test("the lifetime timer cannot fail a login while setup-git runs", async () => {
+    let release!: (r: RunResult) => void;
+    const t = setup(() => new Promise<RunResult>((r) => { release = r; }));
+    const p = t.cloner.loginStart();
+    await tick();
+    t.made[0].emit(CODE + URL_LINE);
+    const { id: lid } = await p;
+    t.made[0].exit(0);
+    await tick();
+    t.advance(11 * 60 * 1000 - 1);
+    t.advance(1);
+    expect(t.made[0].killed()).toBe(false);
+    release({ code: 0, stdout: "", stderr: "" });
+    await tick();
+    expect(await t.cloner.loginStatus(lid)).toEqual({ state: "done" });
+  });
+
+  test("a spawn that throws a setpriv error names the tool behind it", async () => {
+    const spawn: LoginSpawner = () => { throw new Error("setpriv: failed to execute gh: No such file or directory"); };
+    const t = setup(undefined, async () => bobId, spawn);
+    const e = await fail(t.cloner.loginStart("bob"));
+    expect(e.status).toBe(500);
+    expect(e.message).toBe("gh is not installed");
+    const spawn2: LoginSpawner = () => { throw new Error("spawn setpriv ENOENT"); };
+    const t2 = setup(undefined, async () => bobId, spawn2);
+    expect((await fail(t2.cloner.loginStart("bob"))).message).toBe("setpriv is not installed");
+  });
+
+  test("setup-git throwing gives failed, not an unhandled rejection", async () => {
+    const t = setup(() => { throw new Error("runner exploded ABCD-1234"); });
+    const p = t.cloner.loginStart();
+    await tick();
+    t.made[0].emit(CODE + URL_LINE);
+    const { id: lid } = await p;
+    t.made[0].exit(0);
+    await tick(); await tick();
+    const s = await t.cloner.loginStatus(lid);
+    expect(s.state).toBe("failed");
+    expect(s.error).toContain("setup-git");
+    expect(s.error).not.toContain("ABCD-1234");
+  });
+
+  test("exit before the code with a non-127 code gives 502", async () => {
+    const t = setup();
+    const p = fail(t.cloner.loginStart());
+    await tick();
+    t.made[0].emit("error connecting to github.com\n");
+    t.made[0].exit(1);
+    const e = await p;
+    expect(e.status).toBe(502);
+    expect(e.message).toContain("error connecting");
+  });
+
+  test("after a 504 the login id is unknown (404)", async () => {
+    const t = setup();
+    const p = fail(t.cloner.loginStart());
+    await tick();
+    t.advance(15_000);
+    await p;
+    // The id was never returned to the caller, so nothing can look it up.
+    expect(t.made.length).toBe(1);
+    const e = await fail(t.cloner.loginStatus("f".repeat(32)));
+    expect(e.status).toBe(404);
+  });
+
+  test("CRLF-terminated output still parses", async () => {
+    const t = setup();
+    const p = t.cloner.loginStart();
+    await tick();
+    t.made[0].emit(CODE.replace("\n", "\r\n") + URL_LINE.replace("\n", "\r\n"));
+    const out = await p;
+    expect(out.code).toBe("ABCD-1234");
+    expect(out.url).toBe("https://github.com/login/device");
   });
 });
 
