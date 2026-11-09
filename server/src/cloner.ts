@@ -230,11 +230,11 @@ export function createCloner(deps: {
  * The cloner of a real service host, or `undefined` for any other `Instances` (the Windows backend has none).
  * When the launcher runs as root for a non-root service user, the default identity is that user, not root.
  */
-export function serviceCloner(cfg: Config, instances: Instances, dirOwner: DirOwner | undefined): Cloner | undefined {
+export function serviceCloner(cfg: Config, instances: Instances, dirOwner: DirOwner | undefined, run: Runner = bunRunner): Cloner | undefined {
   if (!(instances instanceof InstanceService)) return undefined;
   const identityFor: IdentityFor = async (u) => {
     const id = await instances.identityFor(u);
     return id.uid !== undefined ? id : { ...id, ...(dirOwner ?? {}) };
   };
-  return createCloner({ cfg, run: bunRunner, identityFor });
+  return createCloner({ cfg, run, identityFor });
 }
