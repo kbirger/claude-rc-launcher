@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { serviceCloner } from "../src/cloner";
 import type { Config } from "../src/config";
 import { HttpError, InstanceService, type Instances } from "../src/instances";
 import type { RunOptions, Runner } from "../src/runner";
 import type { SystemUser, UserDirectory } from "../src/users";
+import type { TrustStore } from "../src/trust";
 import { allTrusted } from "./helpers";
 
 const USERS: SystemUser[] = [
@@ -37,6 +41,40 @@ async function firstCall(c: Config, dirOwner: { uid: number; gid: number } | und
   await cloner.repos(user).catch((e) => { if (!(e instanceof HttpError) || e.status !== 502) throw e; });
   return r.calls[0]!;
 }
+
+describe("serviceCloner trust", () => {
+  const ok = { code: 0, stdout: "", stderr: "" };
+  async function cloneAs(c: Config, dirOwner: { uid: number; gid: number } | undefined, user: string | undefined, name: string) {
+    const adds: { home: string; uid?: number; gid?: number; path: string }[] = [];
+    const trust: TrustStore = { checker: async () => () => false, add: async (u, p) => { adds.push({ ...u, path: p }); } };
+    const base = await realpath(await mkdtemp(join(tmpdir(), "svcclone-")));
+    try {
+      // A stub adoptDir changes no owner, so the test needs no root. It names the inode at the path, as the real one does.
+      const adoptDir = async (p: string) => { const st = await lstat(p); return { dev: st.dev, ino: st.ino }; };
+      const cc = { ...c, roots: [base] };
+      const instances = new InstanceService(cc, async () => ok, undefined, { users, trust, canSwitchUser: true });
+      const cloner = serviceCloner(cc, instances, dirOwner, async () => ok, { adoptDir })!;
+      const started = await cloner.cloneStart({ repo: `octo/${name}`, parent: base, user });
+      let st = await cloner.cloneStatus(started.id);
+      for (let i = 0; i < 200 && st.state === "running"; i++) { await Bun.sleep(5); st = await cloner.cloneStatus(started.id); }
+      return { adds, st, path: join(base, name) };
+    } finally {
+      await Bun.sleep(20);
+      await rm(base, { recursive: true, force: true });
+    }
+  }
+  test("root launcher with a non-root service user: trusts the clone for the service account", async () => {
+    const c = cfg({ serviceUser: "svc", serviceHome: "/var/lib/svc" });
+    const r = await cloneAs(c, { uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 }, undefined, "proj");
+    expect(r.st.state).toBe("done");
+    expect(r.adds).toEqual([{ home: "/var/lib/svc", uid: 999, gid: 998, path: r.path }]);
+  });
+  test("a named user: trusts the clone for that user's home, uid and gid", async () => {
+    const r = await cloneAs(cfg({ serviceUser: "svc" }), undefined, "alice", "proj2");
+    expect(r.st.state).toBe("done");
+    expect(r.adds).toEqual([{ home: "/home/alice", uid: 1000, gid: 1001, path: r.path }]);
+  });
+});
 
 describe("serviceCloner", () => {
   test("root launcher with a non-root service user: no user and the service user's name run as dirOwner", async () => {

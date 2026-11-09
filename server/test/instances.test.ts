@@ -336,6 +336,34 @@ describe("start as a user, with trust", () => {
     expect(trustLog).toEqual(["check /var/lib/ghost", "add /var/lib/ghost undefined undefined /srv/proj"]);
   });
 
+  test("trustFolder adds trust for the default user with the passwd ids", async () => {
+    await tsvc({ serviceUser: "svc", serviceHome: "/var/lib/svc" }).trustFolder(undefined, "/srv/new");
+    expect(trustLog).toEqual(["check /var/lib/svc", "add /var/lib/svc 999 998 /srv/new"]);
+    expect(trusted.has("/srv/new")).toBe(true);
+  });
+
+  test("trustFolder for a named user uses the user directory ids", async () => {
+    await tsvc().trustFolder("alice", "/srv/new");
+    expect(trustLog).toEqual(["check /home/alice", "add /home/alice 1000 1001 /srv/new"]);
+  });
+
+  test("trustFolder is a no-op for a trusted folder or a trusted parent", async () => {
+    trusted.add("/srv/new");
+    await tsvc().trustFolder("alice", "/srv/new");
+    expect(trustLog).toEqual(["check /home/alice"]);
+    trustLog = [];
+    const parentTrusted: TrustStore = { checker: async () => (p) => p.startsWith("/srv/parent"), add: async (u, p) => { trustLog.push(`add ${p}`); } };
+    await tsvc({}, { trust: parentTrusted }).trustFolder("alice", "/srv/parent/child");
+    expect(trustLog).toEqual([]);
+  });
+
+  test("trustFolder rejects an unknown user with 400 and adds nothing", async () => {
+    const e = await caught(tsvc().trustFolder("mallory", "/srv/new"));
+    expect(e.status).toBe(400);
+    expect(e.message).toBe("unknown user");
+    expect(trustLog).toEqual([]);
+  });
+
   test("a concurrent start for the same folder is 409 and names the first user", async () => {
     trusted.add("/srv/proj");
     let release!: () => void;

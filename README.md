@@ -33,7 +33,8 @@ see [Multiple hosts](#multiple-hosts).
   login code once. It does not log it or write it to disk.
 - A clone runs `git` as the run-as user. `git clone` does not copy git hooks or `.git/config` from the repo. The risk is
   in the project files. Claude Code reads files such as `.claude/settings.json` (which can define hooks) and `CLAUDE.md`
-  in a trusted folder. Trust a folder only if you trust the repo. The trust question is the existing safeguard.
+  in a trusted folder. The node trusts the new folder after a successful clone, so Claude Code reads those files
+  without asking. Clone only repos that you trust.
 - The clone passes the credential helper for that one command (`-c credential.helper=!gh auth git-credential`).
   It does not write the helper into the repo.
 - **Multi-host:** a hub login is root-equivalent execution on the hub **and on every node** (as each
@@ -414,7 +415,9 @@ Windows nodes do not support clone in this version.
 4. The UI clones the repo, opens the new folder and starts the instance there. While the clone runs, the dialog
    locks its Close button.
 
-If the folder is not trusted yet, the usual trust question appears before the start.
+After a successful clone, the node adds the new folder to the trust list of the run-as user. The instance then starts
+without the trust question. Because of this, Claude Code reads project files such as `.claude/settings.json` hooks and
+`CLAUDE.md` in the cloned repo without asking, so clone only repos that you trust.
 
 If the list needs a GitHub login, the panel shows "Sign in to GitHub". The panel then shows a short code and a link.
 Open the link on github.com and enter the code. A pasted link works without a login for a public repo.
@@ -450,6 +453,11 @@ The node rejects other hosts, SSH addresses and links with embedded credentials.
 - The clone is a background job. The request returns at once, and the client polls for the result.
 - A clone that runs longer than 10 minutes fails.
 - If a clone fails, the node removes the folder that it created.
+- If a clone succeeds, the node adds the new folder to the trust list of the run-as user before the job reports `done`.
+  If that step fails, the clone still succeeds. The start then asks the usual trust question.
+- The trust entry stays in the `~/.claude.json` of the user after you delete the folder. A later folder with the same
+  path inherits it.
+- A node older than this release still shows the trust question after a clone.
 - The `origin` remote is the plain address `https://github.com/<owner>/<repo>.git`.
 
 ### Requirements on each machine

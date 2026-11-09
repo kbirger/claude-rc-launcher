@@ -21,6 +21,8 @@ function setup(
   identity: Ident = id,
   chownOverride?: () => Promise<void>,
   adoptOverride?: AdoptDir,
+  trustFolder?: (user: string | undefined, path: string) => Promise<void>,
+  loginClock?: { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (t: unknown) => void },
 ) {
   const calls: Call[] = [];
   const chowns: [string, number, number][] = [];
@@ -34,6 +36,8 @@ function setup(
       return typeof res === "function" ? res(args[args.length - 1]) : res;
     },
     identityFor: async () => identity,
+    trustFolder,
+    loginClock,
     // A fake adoptDir changes no owner on disk; it records the call and names the inode at the path.
     adoptDir: adoptOverride ?? (async (p, o) => {
       chowns.push([p, o.uid, o.gid]);
@@ -349,5 +353,111 @@ describe("clone", () => {
     await runClone(cloner, { repo: "octo/plainrm", parent: root });
     expect(rmCalls()).toHaveLength(0);
     expect(await exists(join(root, "plainrm"))).toBe(false);
+  });
+});
+
+describe("trust after a clone", () => {
+  const ok = { code: 0, stdout: "", stderr: "" };
+  test("success trusts the real path once for the input user, before the job is done", async () => {
+    const seen: [string | undefined, string][] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const { cloner } = setup(ok, id, undefined, undefined, async (u, p) => { seen.push([u, p]); await gate; });
+    const started = await cloner.cloneStart({ repo: "octo/trusty", parent: root, user: "alice" });
+    while (seen.length === 0) await Bun.sleep(2);
+    expect((await cloner.cloneStatus(started.id)).state).toBe("running");
+    release();
+    let st = await cloner.cloneStatus(started.id);
+    while (st.state === "running") { await Bun.sleep(2); st = await cloner.cloneStatus(started.id); }
+    expect(st.state).toBe("done");
+    expect(seen).toEqual([["alice", join(root, "trusty")]]);
+  });
+
+  test("an omitted user is passed as undefined", async () => {
+    const seen: (string | undefined)[] = [];
+    const { cloner } = setup(ok, id, undefined, undefined, async (u) => { seen.push(u); });
+    await runClone(cloner, { repo: "octo/nouser", parent: root });
+    expect(seen).toEqual([undefined]);
+  });
+
+  test("not called when git fails, on timeout, or when the folder exists", async () => {
+    let n = 0;
+    const t = async () => { n++; };
+    const a = setup({ code: 128, stdout: "", stderr: "fatal: nope\n" }, id, undefined, undefined, t);
+    expect((await runClone(a.cloner, { repo: "octo/tfail", parent: root })).state).toBe("failed");
+    const b = setup({ code: 143, stdout: "", stderr: "", timedOut: true }, id, undefined, undefined, t);
+    expect((await runClone(b.cloner, { repo: "octo/ttime", parent: root })).state).toBe("failed");
+    await mkdir(join(root, "texists"));
+    const c = setup(ok, id, undefined, undefined, t);
+    expect((await status(c.cloner.cloneStart({ repo: "octo/texists", parent: root })))[0]).toBe(409);
+    expect(n).toBe(0);
+  });
+
+  test("a throwing trustFolder does not fail the clone and logs one line", async () => {
+    const orig = console.error;
+    const lines: unknown[][] = [];
+    console.error = (...a: unknown[]) => { lines.push(a); };
+    try {
+      const { cloner } = setup(ok, id, undefined, undefined, async () => { throw new Error("trust boom"); });
+      const r = await runClone(cloner, { repo: "octo/tthrow", parent: root });
+      expect(r.state).toBe("done");
+      expect(r.path).toBe(join(root, "tthrow"));
+      expect(await exists(join(root, "tthrow"))).toBe(true);
+    } finally {
+      console.error = orig;
+    }
+    expect(lines).toHaveLength(1);
+    const text = lines[0]!.join(" ");
+    expect(text).toContain(join(root, "tthrow"));
+    expect(text).toContain("trust boom");
+  });
+
+  test("a folder swapped for a symlink after git is not trusted, and the job is still done", async () => {
+    const orig = console.error;
+    const lines: unknown[][] = [];
+    console.error = (...a: unknown[]) => { lines.push(a); };
+    let n = 0;
+    try {
+      const other = join(root, "swap-other");
+      await mkdir(other, { recursive: true });
+      const { cloner } = setup(async (t) => {
+        await rm(t, { recursive: true, force: true });
+        await symlink(other, t);
+        return ok;
+      }, id, undefined, undefined, async () => { n++; });
+      const r = await runClone(cloner, { repo: "octo/swapped", parent: root });
+      expect(r.state).toBe("done");
+    } finally {
+      console.error = orig;
+      await rm(join(root, "swapped"), { force: true });
+    }
+    expect(n).toBe(0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.join(" ")).toContain("folder changed");
+  });
+
+  test("a trustFolder that never answers times out after 30 seconds and the job is done", async () => {
+    const orig = console.error;
+    const lines: unknown[][] = [];
+    console.error = (...a: unknown[]) => { lines.push(a); };
+    const timers: [() => void, number][] = [];
+    let cleared = 0;
+    try {
+      const { cloner } = setup(ok, id, undefined, undefined, () => new Promise<void>(() => {}),
+        { setTimeout: (fn, ms) => (timers.push([fn, ms]), timers.length), clearTimeout: () => { cleared++; } });
+      const started = await cloner.cloneStart({ repo: "octo/hung", parent: root });
+      while (!timers.some(([, ms]) => ms === 30000)) await Bun.sleep(2);
+      expect((await cloner.cloneStatus(started.id)).state).toBe("running");
+      timers.find(([, ms]) => ms === 30000)![0]();
+      let st = await cloner.cloneStatus(started.id);
+      while (st.state === "running") { await Bun.sleep(2); st = await cloner.cloneStatus(started.id); }
+      expect(st.state).toBe("done");
+      expect(cleared).toBe(1);
+    } finally {
+      console.error = orig;
+    }
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.join(" ")).toContain("timed out");
+    expect(lines[0]!.join(" ")).toContain(join(root, "hung"));
   });
 });

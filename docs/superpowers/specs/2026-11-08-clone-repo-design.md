@@ -39,14 +39,14 @@ The user often works from a phone. A common moment: the user wants Claude to upd
 - Accepted link forms: `https://github.com/<owner>/<repo>`, with or without `.git` or a trailing slash, and `<owner>/<repo>`. Other hosts and SSH-style addresses are rejected with a clear message.
 - The subfolder name is the repo name. The existing folder-name rules apply (no leading dot, no slashes, length limit).
 - The clone is a full clone, not shallow.
-- Starting Claude after the clone uses the existing trusted-folders flow. A new folder is untrusted, so the web UI shows the existing trust question and the CLI needs `--force`. A clone does not trust the folder by itself.
+- Starting Claude after the clone uses the existing trusted-folders flow. A clone trusts the new folder by itself. The user decided this after the first release. The node adds the folder to the trust list of the run-as user when the clone succeeds, so the start normally needs no trust question and no `--force`. If the trust step fails, the clone still succeeds. The client then shows the usual trust question, and the CLI prints its `--force` hint.
 - If the clone fails part way, the node removes the half-cloned subfolder, but only if the clone command created it.
 - Route and field names follow the existing code (for example a `/clone` route under the host prefix).
 - A node that is too old to know the clone routes returns 404. The web UI then hides the clone button. The CLI says that the node needs an update. The user selector works the same way today.
 - To run `git` and `gh` as another user, the node uses a user-switch tool such as `runuser` or `setpriv`. It sets `HOME` to that user's home folder, because `gh` reads its login from there. The process runner needs new options for the user, the working folder, and the environment. A node in user scope cannot switch users, so the clone runs as the service user there.
 - If the user picks no user, the clone runs as the service user, as instances do today. On a default install that user is root, so the clone uses root's GitHub login.
 - After a launcher device login, the node runs `gh auth setup-git` for that user. This edits that user's global `~/.gitconfig` and makes a later `git push` work.
-- The client does clone and start as two steps. It clones first. Then it calls the existing start, with the existing trust question. If the user declines to trust the folder, the clone stays and no instance starts. The rule that nothing starts after a failure applies to a failed clone.
+- The client does clone and start as two steps. It clones first. Then it calls the existing start. The folder is already trusted. If the trust step failed, the usual trust question appears, and if the user declines it, the clone stays and no instance starts. The rule that nothing starts after a failure applies to a failed clone.
 - The list leaves out repos where the user is only an outside collaborator. Such a repo can still be cloned with a pasted link.
 - Git and `gh` are expected on the node's PATH for the instance user. If either is missing, the clone fails with a message that names the missing tool.
 - If the same commands work on Windows, Windows nodes are in scope. The builder can leave Windows out of the first version and say so in the README.

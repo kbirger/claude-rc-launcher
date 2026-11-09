@@ -126,6 +126,22 @@ export class InstanceService implements Instances {
     return this.trust.checker(t.runAs.home);
   }
 
+  /** The ids that own the run-as user's `.claude.json`. The default user is looked up raw: a service account fails the list rules. */
+  private async trustIds(t: { isDefault: boolean; uid?: number; gid?: number }): Promise<{ uid?: number; gid?: number }> {
+    if (!t.isDefault) return { uid: t.uid, gid: t.gid };
+    const u = await this.userDir.lookup(this.cfg.serviceUser);
+    return { uid: u?.uid, gid: u?.gid };
+  }
+
+  /** Adds `absPath` to the trust list of the run-as user for `user`. A no-op if the folder is already trusted. */
+  async trustFolder(user: string | undefined, absPath: string): Promise<void> {
+    const t = await this.target(user);
+    const isTrusted = await this.trust.checker(t.runAs.home);
+    if (isTrusted(absPath)) return;
+    const { uid, gid } = await this.trustIds(t);
+    await this.trust.add({ home: t.runAs.home, uid, gid }, absPath);
+  }
+
   private sysctl(args: string[]) {
     return this.run("systemctl", [...(this.cfg.scope === "user" ? ["--user"] : []), ...args]);
   }
@@ -225,13 +241,7 @@ export class InstanceService implements Instances {
         if (!input.addTrust) {
           throw new HttpError(428, `folder is not trusted for ${t.runAs.user}`, { code: "untrusted", user: t.runAs.user, path: real });
         }
-        let { uid, gid } = t;
-        if (t.isDefault) {
-          // Raw lookup: a service account (uid < 1000, nologin) fails the list rules but still owns its file.
-          const u = await this.userDir.lookup(this.cfg.serviceUser);
-          uid = u?.uid;
-          gid = u?.gid;
-        }
+        const { uid, gid } = await this.trustIds(t);
         // The trust is kept on purpose if a later step fails: the person asked to trust this folder.
         await this.trust.add({ home: t.runAs.home, uid, gid }, real);
       }

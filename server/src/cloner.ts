@@ -26,6 +26,8 @@ const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
 const CLONE_FORGET_MS = 10 * 60 * 1000;
 const CLEANUP_TIMEOUT_MS = 5 * 60 * 1000;
 type CloneJob = { state: "running" | "done" | "failed"; path?: string; error?: string };
+/** The trust step must not keep a clone job running. */
+const TRUST_TIMEOUT_MS = 30 * 1000;
 const GH_TIMEOUT_MS = 60 * 1000;
 /** The whole repo list must answer before the hub gives up on the request (120 s). */
 const REPO_LIST_DEADLINE_MS = 100 * 1000;
@@ -80,6 +82,8 @@ export function createCloner(deps: {
   loginClock?: LoginClock;
   /** Gives the new folder to the user through an open handle, after checking it (the default is `adoptNewDir`). */
   adoptDir?: AdoptDir;
+  /** Adds the new folder to the trust list of the clone's user. A failure does not fail the clone. */
+  trustFolder?: (user: string | undefined, path: string) => Promise<void>;
   /** Milliseconds, for the repo list deadline. */
   now?: () => number;
 }): Cloner {
@@ -175,6 +179,27 @@ export function createCloner(deps: {
         }
         const real = await realpath(target);
         await resolveChecked(real, deps.cfg.roots);
+        // Before the job is done, so the client never starts an instance ahead of the trust. A failure leaves the normal trust question.
+        // Trust only the folder this job created: the user can swap it for a symlink while git runs.
+        const same = async () => {
+          if (real !== target) return false;
+          const st = await lstat(target);
+          return st.isDirectory() && !st.isSymbolicLink() && (!adopted || (st.dev === adopted.dev && st.ino === adopted.ino));
+        };
+        let timer: unknown;
+        try {
+          if (deps.trustFolder) {
+            if (!(await same().catch(() => false))) throw new Error("folder changed");
+            const limit = new Promise<never>((_, rej) => {
+              timer = clock.setTimeout(() => rej(new Error("timed out")), TRUST_TIMEOUT_MS);
+            });
+            await Promise.race([deps.trustFolder(user, real), limit]);
+          }
+        } catch (e) {
+          console.error(`cannot trust cloned folder ${real}: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          if (timer !== undefined) clock.clearTimeout(timer);
+        }
         return real;
       };
       void work().then(
@@ -254,11 +279,15 @@ export function createCloner(deps: {
  * The cloner of a real service host, or `undefined` for any other `Instances` (the Windows backend has none).
  * When the launcher runs as root for a non-root service user, the default identity is that user, not root.
  */
-export function serviceCloner(cfg: Config, instances: Instances, dirOwner: DirOwner | undefined, run: Runner = bunRunner): Cloner | undefined {
+export function serviceCloner(
+  cfg: Config, instances: Instances, dirOwner: DirOwner | undefined, run: Runner = bunRunner,
+  /** Extra `createCloner` deps, for tests. Production call sites pass none. */
+  extra: { adoptDir?: AdoptDir } = {},
+): Cloner | undefined {
   if (!(instances instanceof InstanceService)) return undefined;
   const identityFor: IdentityFor = async (u) => {
     const id = await instances.identityFor(u);
     return id.uid !== undefined ? id : { ...id, ...(dirOwner ?? {}) };
   };
-  return createCloner({ cfg, run, identityFor });
+  return createCloner({ cfg, run, identityFor, ...extra, trustFolder: (u, p) => instances.trustFolder(u, p) });
 }
