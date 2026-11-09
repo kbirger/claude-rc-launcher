@@ -27,6 +27,21 @@ function run(args: string[], opts?: { timeoutMs?: number }): RunResult {
   }
 }
 
+async function runAsync(args: string[], opts?: { timeoutMs?: number }): Promise<RunResult> {
+  try {
+    const proc = Bun.spawn(args, { env: { ...process.env, PATH: commandPath() }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const timer = opts?.timeoutMs ? setTimeout(() => proc.kill("SIGKILL"), opts.timeoutMs) : undefined;
+    try {
+      const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      return { code, stdout, stderr };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    return { code: 127, stdout: "", stderr: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * The real machine for the service updater. The service runs as root, so commands run without sudo. The watchdog
  * runs in a transient systemd unit, which is not part of the service and so survives its restart.
@@ -35,6 +50,7 @@ export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">): Updat
   return {
     fetch: globalThis.fetch,
     run,
+    runAsync,
     writeTemp(name, data) {
       const dir = mkdtempSync(path.join(os.tmpdir(), TEMP_PREFIX));
       const file = path.join(dir, name);

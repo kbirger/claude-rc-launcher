@@ -40,8 +40,26 @@ describe("node app", () => {
   });
   test("/api/node carries the client versions of the machine", async () => {
     const clients = [{ path: "/usr/local/bin/claude-rc", version: "0.8.2" }, { path: "/root/.local/bin/claude-rc" }];
-    const a = createNodeApp({ cfg, instances, auth, clientVersions: () => clients });
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => clients });
     expect((await (await a.request("/api/node", { headers: ok })).json()).clients).toEqual(clients);
+  });
+  test("a pending client lookup does not block other requests", async () => {
+    let starts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => (starts++, await gate, [{ path: "/p", version: "1.0.0" }]) });
+    const n1 = a.request("/api/node", { headers: ok });
+    const n2 = a.request("/api/node", { headers: ok });
+    expect((await a.request("/api/instances", { headers: ok })).status).toBe(200);
+    release();
+    expect((await (await n1).json()).clients).toEqual([{ path: "/p", version: "1.0.0" }]);
+    expect((await (await n2).json()).clients).toEqual([{ path: "/p", version: "1.0.0" }]);
+    expect(starts).toBe(2); // sharing one lookup is createClientVersions' job (see serviceupdate.test.ts)
+  });
+  test("a throwing client lookup gives 200 with no clients", async () => {
+    const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => { throw new Error("boom"); } });
+    const r = await a.request("/api/node", { headers: ok });
+    expect([r.status, (await r.json()).clients]).toEqual([200, []]);
   });
   test("/api routes need auth", async () => {
     for (const p of ["/api/node", "/api/instances", "/api/fs"]) expect((await app().request(p)).status).toBe(401);

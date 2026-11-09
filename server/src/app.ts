@@ -23,7 +23,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: () => ClientVersion[]; latest?: ReturnType<typeof createLatestRelease> };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: () => Promise<ClientVersion[]>; latest?: ReturnType<typeof createLatestRelease> };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -46,14 +46,22 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 /** `adoptDir` replaces the owner change of a new folder (tests). */
-export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: () => ClientVersion[]; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: () => Promise<ClientVersion[]>; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
   const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
   const r = new Hono();
 
-  r.get("/node", (c) => c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined, clients: clientVersions?.() ?? [] }));
+  r.get("/node", async (c) => {
+    let clients: ClientVersion[] = [];
+    try {
+      clients = (await clientVersions?.()) ?? [];
+    } catch (e) {
+      console.error(`client versions failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined, clients });
+  });
   r.post("/update", async (c) => {
     const { release } = parseUpdateRequest(await readJson(c));
     if (!update) throw new HttpError(501, "update is not available on this host");
@@ -150,7 +158,7 @@ export function onError(err: Error, c: Context) {
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: () => ClientVersion[] }): Hono {
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: () => Promise<ClientVersion[]> }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));

@@ -481,32 +481,56 @@ describe("createClientVersions", () => {
   const A = "/usr/local/bin/claude-rc";
   const B = "/root/.local/bin/claude-rc";
 
-  test("one copy gives its version", () => {
-    expect(createClientVersions(make({ [A]: "claude-rc 0.8.2\n" }).env)()).toEqual([{ path: A, version: "0.8.2" }]);
+  test("one copy gives its version", async () => {
+    expect(await createClientVersions(make({ [A]: "claude-rc 0.8.2\n" }).env)()).toEqual([{ path: A, version: "0.8.2" }]);
   });
-  test("a copy that exits 1 has no version", () => {
-    expect(createClientVersions(make({ [A]: null }).env)()).toEqual([{ path: A }]);
+  test("a copy that exits 1 has no version", async () => {
+    expect(await createClientVersions(make({ [A]: null }).env)()).toEqual([{ path: A }]);
   });
-  test("two copies give two entries", () => {
-    expect(createClientVersions(make({ [A]: "claude-rc 0.8.2\n", [B]: "claude-rc 0.8.0\n" }).env)()).toEqual([
+  test("two copies give two entries", async () => {
+    expect(await createClientVersions(make({ [A]: "claude-rc 0.8.2\n", [B]: "claude-rc 0.8.0\n" }).env)()).toEqual([
       { path: A, version: "0.8.2" },
       { path: B, version: "0.8.0" },
     ]);
   });
-  test("no copy gives an empty list", () => {
-    expect(createClientVersions(make({}).env)()).toEqual([]);
+  test("no copy gives an empty list", async () => {
+    expect(await createClientVersions(make({}).env)()).toEqual([]);
   });
-  test("a second call within the ttl runs no command, and one after it does", () => {
+  test("a second call within the ttl runs no command, and one after it does", async () => {
     const { env, calls } = make({ [A]: "claude-rc 0.8.2\n" });
     let t = 1_000;
     const get = createClientVersions(env, { now: () => t });
-    get();
+    await get();
     expect(calls.length).toBe(1);
     t += 59_000;
-    get();
+    await get();
     expect(calls.length).toBe(1);
     t += 2_000;
-    get();
+    await get();
     expect(calls.length).toBe(2);
+  });
+  test("runAsync is used when present, with a short timeout, and concurrent callers share one lookup", async () => {
+    const seen: { args: string[]; timeoutMs?: number }[] = [];
+    let release!: (r: { code: number; stdout: string; stderr: string }) => void;
+    const env = {
+      pathEnv: "/usr/local/bin",
+      homes: [],
+      exists: (p: string) => p === A,
+      realpath: (p: string) => p,
+      run: () => {
+        throw new Error("sync run must not be used");
+      },
+      runAsync: (args: string[], opts?: { timeoutMs?: number }) => {
+        seen.push({ args, ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+        return new Promise((res) => (release = res));
+      },
+    } as unknown as UpdateEnv;
+    const get = createClientVersions(env);
+    const p1 = get();
+    const p2 = get();
+    release({ code: 0, stdout: "claude-rc 1.0.0\n", stderr: "" });
+    expect(await p1).toEqual([{ path: A, version: "1.0.0" }]);
+    expect(await p2).toEqual([{ path: A, version: "1.0.0" }]);
+    expect(seen).toEqual([{ args: [A, "--version"], timeoutMs: 2_000 }]);
   });
 });

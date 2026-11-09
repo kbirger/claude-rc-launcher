@@ -68,8 +68,9 @@ export function hostsApi(o: {
     let localClient: string | undefined;
     try {
       localClient = clientVersionOf(await (await local.request("/node")).json());
-    } catch {
-      // The local node answer is optional: the host list does not fail without it.
+    } catch (e) {
+      // The host list does not fail without the local client version.
+      console.error(`local client version failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     return c.json([{ id: "local", name: cfg.name, status: "ok", version: VERSION, ...(localClient !== undefined ? { clientVersion: localClient } : {}) } satisfies HostInfo, ...rest]);
   });
