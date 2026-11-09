@@ -11,7 +11,7 @@ import { HttpError, type Instance } from "../src/instances";
 import { PathError } from "../src/paths";
 import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
-import { LatestError } from "../src/latest";
+import { LatestError, type createLatestRelease } from "../src/latest";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const ID = "0123456789ab";
@@ -580,7 +580,7 @@ describe("clone routes", () => {
 });
 
 describe("GET /api/latest", () => {
-  const withLatest = (latest?: { get(): Promise<any>; peek(): any }) =>
+  const withLatest = (latest?: ReturnType<typeof createLatestRelease>) =>
     createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), ...(latest ? { latest } : {}) });
   const get = (app: any) => app.request("/api/latest", { headers: H() });
 
@@ -595,6 +595,12 @@ describe("GET /api/latest", () => {
     const r = await get(withLatest({ get: async () => { throw new LatestError("offline"); }, peek: () => undefined }));
     expect(r.status).toBe(503);
     expect(await r.json()).toEqual({ error: "offline" });
+  });
+
+  test("without a session it is rejected", async () => {
+    const latest = { get: async () => ({ version: "1", checkedAt: "x" }), peek: () => undefined };
+    const r = await withLatest(latest).request("/api/latest");
+    expect(r.status).toBe(401);
   });
 
   test("501 without a latest cache", async () => {

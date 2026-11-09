@@ -14,13 +14,17 @@ export class LatestError extends Error {
 const DEFAULT_TTL_MS = 3_600_000;
 
 /**
- * Remembers the latest release tag for `ttlMs`. When GitHub fails it serves the last good value,
- * and throws `LatestError` only when there is none.
+ * Remembers the latest release tag for `ttlMs`. Concurrent calls share one GitHub call. When GitHub fails it
+ * serves the last good value and does not call again for `failBackoffMs`; it throws `LatestError` only when
+ * there is no value.
  */
-export function createLatestRelease(o: { fetch: typeof fetch; now?: () => number; ttlMs?: number }) {
+export function createLatestRelease(o: { fetch: typeof fetch; now?: () => number; ttlMs?: number; failBackoffMs?: number }) {
   const now = o.now ?? Date.now;
   const ttlMs = o.ttlMs ?? DEFAULT_TTL_MS;
+  const failBackoffMs = o.failBackoffMs ?? 60_000;
   let cached: { value: LatestRelease; at: number } | undefined;
+  let failure: { error: LatestError; at: number } | undefined;
+  let inflight: Promise<LatestRelease> | undefined;
 
   async function load(): Promise<LatestRelease> {
     let res: Response;
@@ -40,20 +44,37 @@ export function createLatestRelease(o: { fetch: typeof fetch; now?: () => number
       throw new LatestError("GitHub sent an unreadable answer");
     }
     if (typeof tag !== "string" || !tag) throw new LatestError("GitHub sent no release tag");
-    return { version: normalizeVersion(tag), checkedAt: new Date(now()).toISOString() };
+    const at = now();
+    const value = { version: normalizeVersion(tag), checkedAt: new Date(at).toISOString() };
+    cached = { value, at };
+    failure = undefined;
+    return value;
+  }
+
+  function stale(): LatestRelease {
+    if (cached) return cached.value;
+    throw failure!.error;
+  }
+
+  async function refresh(): Promise<LatestRelease> {
+    try {
+      return await load();
+    } catch (e) {
+      failure = { error: e instanceof LatestError ? e : new LatestError(String(e)), at: now() };
+      return stale();
+    } finally {
+      inflight = undefined;
+    }
   }
 
   return {
-    async get(): Promise<LatestRelease> {
-      if (cached && now() - cached.at < ttlMs) return cached.value;
-      try {
-        const value = await load();
-        cached = { value, at: now() };
-        return value;
-      } catch (e) {
-        if (cached) return cached.value;
-        throw e;
+    get(): Promise<LatestRelease> {
+      if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.value);
+      if (inflight) return inflight;
+      if (failure && now() - failure.at < failBackoffMs) {
+        try { return Promise.resolve(stale()); } catch (e) { return Promise.reject(e); }
       }
+      return (inflight = refresh());
     },
     peek(): LatestRelease | undefined {
       return cached?.value;
