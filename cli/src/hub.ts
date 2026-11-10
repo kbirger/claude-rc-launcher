@@ -1,4 +1,5 @@
 import { ExitError, LOGIN_MESSAGE, type Credentials } from "./creds";
+import { readSse, type SseEvent } from "../../server/src/ssereader";
 
 /** A non-2xx answer from the hub, keeping the status and parsed body so callers can react to it. */
 export class HubError extends ExitError {
@@ -17,7 +18,10 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
   const now = o.now ?? (() => Date.now() / 1000);
   let creds = o.creds;
 
-  const refresh = async () => {
+  // Two calls near expiry share one renewal: the second one waits for the first.
+  let renewing: Promise<void> | undefined;
+  const refresh = (): Promise<void> => (renewing ??= renewOnce().finally(() => (renewing = undefined)));
+  const renewOnce = async () => {
     try {
       creds = await o.renew(creds);
     } catch (e) {
@@ -44,7 +48,46 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
     }
   };
 
+  /** Opens a GET that stays open. The signal cancels the connect and the reading. */
+  const sendStream = async (path: string, signal: AbortSignal | undefined): Promise<Response> => {
+    try {
+      return await doFetch(new URL(path, creds.hub), {
+        method: "GET",
+        headers: { authorization: `Bearer ${creds.idToken}`, accept: "text/event-stream" },
+        redirect: "manual",
+        ...(signal ? { signal } : {}),
+      });
+    } catch (e) {
+      throw new ExitError(`cannot reach ${creds.hub}: ${(e as Error).message}`, 1);
+    }
+  };
+
   return {
+    /**
+     * Server-Sent Events from the hub. The login renews as in `request`, and one 401 renews once and retries. A
+     * non-2xx answer throws. The stream ends when the hub closes it or when `opts.signal` aborts.
+     */
+    async *stream(path: string, opts?: { signal?: AbortSignal }): AsyncGenerator<SseEvent> {
+      if (creds.expiresAt - now() < RENEW_WINDOW_S) await refresh();
+      let res = await sendStream(path, opts?.signal);
+      if (res.status === 401) {
+        await res.body?.cancel().catch(() => {});
+        await refresh();
+        res = await sendStream(path, opts?.signal);
+        if (res.status === 401) throw new ExitError(LOGIN_MESSAGE, 2);
+      }
+      if (!res.ok || !res.body) {
+        await res.body?.cancel().catch(() => {});
+        throw new HubError(`HTTP ${res.status}`, res.status, undefined);
+      }
+      try {
+        yield* readSse(res.body);
+      } catch (e) {
+        if (opts?.signal?.aborted) return;
+        throw e;
+      }
+    },
+
     /** `opts.timeoutMs` limits each attempt. Without it, a call has no time limit of its own. */
     async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, opts?: { timeoutMs?: number }): Promise<T> {
       if (creds.expiresAt - now() < RENEW_WINDOW_S) await refresh();

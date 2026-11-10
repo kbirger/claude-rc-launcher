@@ -20,7 +20,7 @@ export const GITHUB_IDLE_TIMEOUT_SECONDS = 125;
 const GITHUB_PATH_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?github\/(?:repos|login)$/;
 
 /** The update event stream sends nothing between events, so it must not hit the idle limit. */
-const EVENTS_PATH_RE = /^\/api\/events$/;
+const EVENTS_PATH_RE = /^\/(?:cli\/)?api\/events$/;
 
 type Fetch = (req: Request, server: Server<undefined>) => Response | Promise<Response>;
 

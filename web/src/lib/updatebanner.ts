@@ -1,4 +1,5 @@
 import type { HostInfo, UpdateEntry } from "./api";
+import { stepText } from "./updateoutput";
 
 export type BannerItem =
   | { kind: "hub-update"; target: string }
@@ -6,8 +7,8 @@ export type BannerItem =
   | { kind: "hub-local-build" }
   | { kind: "by-hand"; host: string; message: string }
   | { kind: "offline-after-hub-update"; hosts: string[] }
-  | { kind: "failed"; host: string; error: string }
-  | { kind: "updating"; host: string; name: string }
+  | { kind: "failed"; host: string; error: string; id?: string }
+  | { kind: "updating"; host: string; name: string; step?: string }
   | { kind: "latest-unknown" };
 
 const OFFLINE_WINDOW_MS = 10 * 60_000;
@@ -30,7 +31,11 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
   const hubEntry = last("local");
 
   for (const id of new Set(o.updates.map((u) => u.host))) {
-    if (isRunning(last(id), o.now)) items.push({ kind: "updating", host: id, name: nameOf(id) });
+    const e = last(id);
+    if (e && isRunning(e, o.now)) {
+      const step = stepText(e);
+      items.push({ kind: "updating", host: id, name: nameOf(id), ...(step ? { step } : {}) });
+    }
   }
 
   if (hub?.stale && hub.target && !isRunning(hubEntry, o.now)) items.push({ kind: "hub-update", target: hub.target });
@@ -71,9 +76,9 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
     const e = last(id);
     if (!e || byHand.has(id)) continue;
     if (e.status === "failed" || e.status === "unknown") {
-      if (e.error) items.push({ kind: "failed", host: nameOf(id), error: e.error });
+      if (e.error) items.push({ kind: "failed", host: nameOf(id), error: e.error, id });
     } else if (e.status === "rolled back") {
-      items.push({ kind: "failed", host: nameOf(id), error: e.error || ROLLED_BACK });
+      items.push({ kind: "failed", host: nameOf(id), error: e.error || ROLLED_BACK, id });
     }
   }
 
@@ -88,7 +93,7 @@ export function bannerKey(item: BannerItem): string {
     case "updating": return `updating:${item.host}`;
     case "by-hand": return `by-hand:${item.host}`;
     case "offline-after-hub-update": return `offline:${[...item.hosts].sort().join(",")}`;
-    case "failed": return `failed:${item.host}:${item.error}`;
+    case "failed": return `failed:${item.id ?? ""}:${item.host}:${item.error}`;
     default: return item.kind;
   }
 }

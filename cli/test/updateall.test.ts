@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { ExitError, LOGIN_MESSAGE } from "../src/creds";
 import { HubError, type HubClient } from "../src/hub";
+import { sanitizeLine } from "../src/format";
 import { main } from "../src/index";
 import type { Sys } from "../src/nodesetup";
-import { updateAll } from "../src/updateall";
+import { updateAll, watchLogs } from "../src/updateall";
 import { VERSION } from "../../server/src/version";
 
 const EXE = "/usr/local/bin/claude-rc";
@@ -309,5 +310,211 @@ describe("index: update --all-nodes", () => {
     expect(err).toEqual([]);
     expect(code).toBe(0);
     expect(out.at(-1)).toBe(`claude-rc is already up to date (${VERSION})`);
+  });
+});
+
+/** A fake event stream. Each open takes the next script: events to send, or an Error to fail the open. */
+type Script = ({ event: string; data: string } | "end")[] | Error;
+type Ev = { host: string; line: string };
+const logEv = (host: string, line: string) => ({ event: "log", data: JSON.stringify({ host, line, at: 1 }) });
+
+async function runLive(opts: { scripts: Script[]; onPost?: Record<string, Ev[]>; json?: boolean; nodes?: Record<string, Node>; streamDelayMs?: number }) {
+  const h = fakeHub(ALL, opts.nodes ?? GOOD);
+  const s = fakeSys();
+  const events: string[] = [];
+  // The 3 s wait for the stream is real here (short), so a stream that answers late wins the race. Other sleeps are instant.
+  const baseSleep = s.sys.sleep;
+  s.sys.sleep = async (ms) => (ms === 3000 ? void (await new Promise((r) => setTimeout(r, 300))) : baseSleep(ms));
+  const out: string[] = [];
+  const err: string[] = [];
+  const opens: { aborted: () => boolean }[] = [];
+  const queues: ((ev: { event: string; data: string } | "end") => void)[] = [];
+  const hubAny = h.hub as any;
+  const baseRequest = hubAny.request.bind(hubAny);
+  hubAny.request = async (method: string, p: string, ...rest: unknown[]) => {
+    if (method === "POST") events.push(`post ${p}`);
+    const r = await baseRequest(method, p, ...rest);
+    const m = /^\/cli\/api\/hosts\/([^/]+)\/update$/.exec(p);
+    if (m && method === "POST") {
+      for (const e of opts.onPost?.[m[1]!] ?? []) queues.at(-1)?.(logEv(e.host, e.line));
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return r;
+  };
+  let n = 0;
+  hubAny.stream = (path: string, o?: { signal?: AbortSignal }) => {
+    const script = opts.scripts[Math.min(n++, opts.scripts.length - 1)]!;
+    opens.push({ aborted: () => !!o?.signal?.aborted });
+    const pending: ({ event: string; data: string } | "end")[] = [];
+    let wake: (() => void) | undefined;
+    if (!(script instanceof Error)) queues.push((ev) => (pending.push(ev), wake?.()));
+    return (async function* () {
+      if (script instanceof Error) throw script;
+      if (n === 1 && opts.streamDelayMs) await new Promise((r) => setTimeout(r, opts.streamDelayMs));
+      for (const e of script) {
+        if (e === "end") return;
+        events.push("stream event");
+        yield e;
+      }
+      if (script.length === 0) events.push("stream event");
+      // Stay open and deliver what onPost pushes, until the signal aborts.
+      const aborted = new Promise<void>((res) => o?.signal?.addEventListener("abort", () => res()));
+      for (;;) {
+        if (o?.signal?.aborted) return;
+        const ev = pending.shift();
+        if (ev === "end") return;
+        if (ev) {
+          yield ev;
+          continue;
+        }
+        await Promise.race([new Promise<void>((res) => (wake = res)), aborted]);
+      }
+    })();
+  };
+  let error: ExitError | undefined;
+  try {
+    await updateAll({ flags: { "all-nodes": true, ...(opts.json ? { json: true } : {}) } as any, hub: h.hub, out: (x) => out.push(x), err: (x) => err.push(x), sys: s.sys });
+  } catch (e) {
+    if (!(e instanceof ExitError)) throw e;
+    error = e;
+  }
+  return { ...h, out, err, error, opens, events, count: () => n };
+}
+
+describe("updateAll live output", () => {
+  const lines = { a: [{ host: "a", line: "downloading" }, { host: "a", line: "installing" }], b: [{ host: "b", line: "verifying" }], local: [{ host: "local", line: "restarting" }] };
+
+  test("prints each log line as [host] line, in order; the snapshot and other hosts are ignored", async () => {
+    const snap = { event: "snapshot", data: JSON.stringify({ updates: [], logs: { a: [{ line: "OLD", at: 0 }] }, presence: [] }) };
+    const r = await runLive({ scripts: [[snap, logEv("zzz", "not updated")]], onPost: lines });
+    expect(r.error).toBeUndefined();
+    const live = r.out.filter((l) => /^\[(a|b|local)\] /.test(l));
+    expect(live).toEqual(["[a] downloading", "[a] installing", "[b] verifying", "[local] restarting"]);
+    expect(r.out.join("\n")).not.toContain("OLD");
+    expect(r.out.join("\n")).toContain("MACHINE");
+    expect(r.err).toEqual([]);
+    expect(r.opens[0]!.aborted()).toBe(true);
+  });
+
+  test("the first stream event is delivered before the first update starts", async () => {
+    const snap = { event: "snapshot", data: JSON.stringify({ updates: [], logs: {}, presence: [] }) };
+    const r = await runLive({ scripts: [[snap]], onPost: lines, streamDelayMs: 40 });
+    expect(r.events[0]).toBe("stream event");
+    expect(r.events.indexOf("stream event")).toBeLessThan(r.events.findIndex((e) => e.startsWith("post ")));
+    expect(r.calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/cli/api/hosts/a/update", "/cli/api/hosts/b/update", "/cli/api/hosts/local/update"]);
+  });
+
+  test("with --json the lines go to standard error and the result stays on standard output", async () => {
+    const r = await runLive({ scripts: [[]], onPost: lines, json: true });
+    expect(r.err).toEqual(["[a] downloading", "[a] installing", "[b] verifying", "[local] restarting"]);
+    expect(r.out.some((l) => /^\[(a|b|local)\] /.test(l))).toBe(false);
+    expect(JSON.parse(r.out.join("\n")).map((x: { machine: string }) => x.machine)).toEqual(["a", "b", "local", "client"]);
+  });
+
+  test("a stream that cannot be opened changes nothing", async () => {
+    const r = await runLive({ scripts: [new HubError("HTTP 404", 404, undefined)], onPost: lines });
+    expect(r.error).toBeUndefined();
+    expect(r.out.some((l) => /^\[(a|b|local)\] /.test(l))).toBe(false);
+    expect(r.out.join("\n")).toContain("MACHINE");
+    expect(r.calls.filter((c) => c.method === "POST")).toHaveLength(3);
+    expect(r.count()).toBe(1);
+    expect(r.err).toEqual([]);
+    expect(r.out.join("\n")).not.toMatch(/stream|HTTP 404|events/i);
+    expect(r.out.filter((l) => !/^updating /.test(l) && !/^(MACHINE|a |b |local |client )/.test(l) && l.split("\n").every((x) => !/^(MACHINE|a |b |local |client )/.test(x)))).toEqual([]);
+  });
+
+  test("a failing machine gives the same exit code and table with a failing stream as with a working one", async () => {
+    const nodes = { ...GOOD, a: { update: new HubError("boom", 500, {}) } };
+    const good = await runLive({ scripts: [[]], nodes });
+    const bad = await runLive({ scripts: [new HubError("HTTP 500", 500, undefined)], nodes });
+    expect(bad.error?.code).toBe(good.error?.code);
+    expect(bad.error?.message).toBe(good.error?.message);
+    const table = (o: string[]) => o.filter((l) => !/^updating /.test(l) && !/^\[/.test(l));
+    expect(table(bad.out)).toEqual(table(good.out));
+    expect(bad.err).toEqual([]);
+  });
+
+  test("a stream that ends is reopened, and lines after the reopen appear", async () => {
+    const r = await runLive({ scripts: [[logEv("a", "first"), "end"], []], onPost: { local: [{ host: "local", line: "after restart" }] } });
+    expect(r.count()).toBe(2);
+    // "first" came before any update started, so it is not printed.
+    expect(r.out.filter((l) => /^\[(a|b|local)\] /.test(l))).toEqual(["[local] after restart"]);
+    expect(r.error).toBeUndefined();
+  });
+
+  test("a stream that keeps failing after it opened gives up silently", async () => {
+    const r = await runLive({ scripts: [[logEv("a", "first"), "end"], new Error("down")], onPost: lines });
+    expect(r.error).toBeUndefined();
+    expect(r.count()).toBeLessThanOrEqual(50);
+    expect(r.out.join("\n")).toContain("MACHINE");
+  });
+});
+
+describe("updateAll live output: safety and scope", () => {
+  const live = (r: { out: string[] }) => r.out.filter((l) => /^\[(a|b|local)\] /.test(l));
+
+  test("sanitizeLine replaces control characters except tab and caps the length", () => {
+    expect(sanitizeLine("a\tb")).toBe("a\tb");
+    expect(sanitizeLine("x\u001b[2Jy\u001b]0;title\u0007z\rq\bw\u007f\u0085\u009f\n")).toBe("x?[2Jy?]0;title?z?q?w???" + "?");
+    expect(sanitizeLine("é ü 日本")).toBe("é ü 日本");
+    expect(sanitizeLine("x".repeat(5000))).toHaveLength(500);
+  });
+
+  test("sanitizeLine replaces bidi overrides and isolates, direction marks and zero-width characters", () => {
+    for (const c of ["\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"]) {
+      expect([c, sanitizeLine(`a${c}b`)]).toEqual([c, "a?b"]);
+    }
+    expect(sanitizeLine("\u202etxt.exe")).toBe("?txt.exe");
+  });
+
+  test("the log watcher stops at once when the run ends during its wait, without waiting for the sleep", async () => {
+    const stream = async function* () {
+      yield { event: "log", data: "{}" };
+    };
+    const hub = { stream: () => stream() } as unknown as HubClient;
+    const sys = { now: () => 0, sleep: () => new Promise<void>(() => {}) } as unknown as Sys; // a sleep that never ends
+    const ac = new AbortController();
+    const done = watchLogs(hub, sys, () => undefined, () => {}, ac.signal, () => {});
+    await new Promise((r) => setTimeout(r, 20)); // now it is in the wait
+    ac.abort();
+    expect(await Promise.race([done.then(() => "done"), new Promise((r) => setTimeout(() => r("hung"), 500))])).toBe("done");
+  });
+
+  test("escape sequences, carriage returns, backspaces and bells from a node are not printed", async () => {
+    const evil = "ok\u001b[2J\u001b]0;pwned\u0007\u001b]52;c;QQ==\u001b\\\rfake [a] updated\b\bX";
+    const r = await runLive({ scripts: [[]], onPost: { a: [{ host: "a", line: evil }] } });
+    const printed = live(r).join("\n");
+    expect(printed).toContain("[a] ok");
+    for (const bad of ["\u001b", "\r", "\b", "\u0007"]) expect(r.out.join("\n")).not.toContain(bad);
+  });
+
+  test("a line of 5000 characters is capped", async () => {
+    const r = await runLive({ scripts: [[]], onPost: { a: [{ host: "a", line: "y".repeat(5000) }] } });
+    expect(live(r)[0]!.length).toBeLessThanOrEqual("[a] ".length + 500);
+    expect(live(r)[0]!.length).toBeGreaterThan(400);
+  });
+
+  test("only the machine being updated now prints: later hosts and finished hosts are ignored", async () => {
+    const r = await runLive({
+      scripts: [[]],
+      onPost: {
+        a: [{ host: "b", line: "web update of b" }, { host: "local", line: "later" }, { host: "a", line: "mine a" }],
+        b: [{ host: "a", line: "finished a" }, { host: "b", line: "mine b" }],
+        local: [{ host: "a", line: "replayed a" }, { host: "b", line: "replayed b" }, { host: "local", line: "mine local" }],
+      },
+    });
+    expect(live(r)).toEqual(["[a] mine a", "[b] mine b", "[local] mine local"]);
+  });
+
+  test("nothing prints while a machine is not being updated (before the first update, for the client)", async () => {
+    const r = await runLive({ scripts: [[logEv("a", "early"), "end"], []], onPost: {} });
+    expect(live(r)).toEqual([]);
+  });
+
+  test("a hub that is down for 60 seconds still gets its stream reopened", async () => {
+    const down = Array.from({ length: 30 }, () => new Error("down"));
+    const r = await runLive({ scripts: [[logEv("a", "x"), "end"], ...down, []], onPost: { local: [{ host: "local", line: "after restart" }] } });
+    expect(r.count()).toBe(32);
+    expect(live(r)).toEqual(["[local] after restart"]);
   });
 });

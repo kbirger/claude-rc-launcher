@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { UpdateHooks } from "./updateevents";
 import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256, type ReleaseIo, type RunResult } from "./release";
 
 /** The installed service. The updater works on this layout only. */
@@ -237,8 +238,23 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * service binary is started by the watchdog, which restarts the service and rolls it back if it does not stay
  * active. Throws UpdateRefused for a request it does not take. Every other failure is a report with status `failed`.
  */
-export function createServiceUpdater(env: UpdateEnv): { run(release?: string): Promise<UpdateReport> } {
+export function createServiceUpdater(env: UpdateEnv, hooks: UpdateHooks = {}): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
+
+  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => {
+    try {
+      hooks.onStep?.(s);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
+  const log = (l: string) => {
+    try {
+      hooks.onLog?.(l.length > 500 ? `${l.slice(0, 497)}...` : l);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
 
   const versionOf = (p: string, prefix: string) => binaryVersion(env, p, prefix);
 
@@ -253,11 +269,18 @@ export function createServiceUpdater(env: UpdateEnv): { run(release?: string): P
 
   const updateClient = (p: string, binary: Uint8Array): ClientResult => {
     try {
-      if (sha256(env.readFile(p)) === sha256(binary)) return { path: p, status: "up-to-date" };
+      if (sha256(env.readFile(p)) === sha256(binary)) {
+        log(`${p} is up to date`);
+        return { path: p, status: "up-to-date" };
+      }
       const from = versionOf(p, CLIENT);
       installWithBackup(env, p, binary);
+      log(`renamed the old client ${p} to ${path.basename(p)}.prev`);
       const to = versionOf(p, CLIENT);
-      if (to !== undefined) return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
+      if (to !== undefined) {
+        log(`new client ${p} answers ${to}`);
+        return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
+      }
       const restored = restorePrevious(env, p);
       return {
         path: p,
@@ -274,11 +297,17 @@ export function createServiceUpdater(env: UpdateEnv): { run(release?: string): P
   const update = async (release: string | undefined): Promise<UpdateReport> => {
     const from = env.version;
     const clients: ClientResult[] = [];
-    const failed = (error: string): UpdateReport => ({ status: "failed", from, clients, error });
+    const failed = (error: string): UpdateReport => {
+      step({ step: "failed", detail: error });
+      log(error);
+      return { status: "failed", from, clients, error };
+    };
     const cpu = env.arch === "x64" || env.arch === "arm64" ? env.arch : undefined;
     if (!cpu) throw new UpdateRefused(409, `unsupported CPU architecture: ${env.arch}`);
 
     // The service binary and its checksum
+    step({ step: "downloading" });
+    log(`downloading claude-rc-launcher-linux-${cpu}`);
     let service: Uint8Array;
     try {
       service = await downloadAsset(env, `claude-rc-launcher-linux-${cpu}`, release);
@@ -286,37 +315,54 @@ export function createServiceUpdater(env: UpdateEnv): { run(release?: string): P
       if (e instanceof ReleaseError) return failed(e.message);
       throw e;
     }
+    step({ step: "verifying" });
+    log("sha256 matches SHA256SUMS");
 
     // The client copies, before the service
     const paths = clientsOf(env);
     if (paths.length > 0) {
       let client: Uint8Array | undefined;
       let error = "";
+      log(`downloading ${CLIENT}-linux-${cpu}`);
       try {
         client = await downloadAsset(env, `${CLIENT}-linux-${cpu}`, release);
+        log("sha256 matches SHA256SUMS");
       } catch (e) {
         if (!(e instanceof ReleaseError)) throw e;
         error = e.message;
+        log(error);
       }
-      for (const p of paths) clients.push(client ? updateClient(p, client) : { path: p, status: "failed", error });
+      for (const p of paths) {
+        step({ step: "installing-client", client: p });
+        const r = client ? updateClient(p, client) : { path: p, status: "failed" as const, error };
+        if (client && r.status === "failed") log(`${p}: ${r.error}`);
+        clients.push(r);
+      }
     }
     const clientErrors = clients.filter((c) => c.status === "failed").map((c) => `${c.path}: ${c.error}`);
 
     // The service
     if (sha256(env.readFile(SERVICE_BIN)) === sha256(service)) {
       if (clientErrors.length > 0) return failed(`the client update failed: ${clientErrors.join("; ")}`);
+      step({ step: "up-to-date" });
+      log("the service binary is up to date");
       return { status: clients.some((c) => c.status === "updated") ? "clients-only" : "up-to-date", from, clients };
     }
+    step({ step: "installing" });
     try {
       installWithBackup(env, SERVICE_BIN, service);
     } catch (e) {
       if (e instanceof ReleaseError) return failed(e.message);
       throw e;
     }
+    log(`renamed the old binary to ${path.basename(SERVICE_BIN)}.prev`);
     const to = versionOf(SERVICE_BIN, "claude-rc-launcher");
     const rollBack = (why: string) =>
       failed(restorePrevious(env, SERVICE_BIN) ? `${why}. The previous service binary was restored` : `${why}, and ${SERVICE_BIN}.prev could not be restored`);
     if (to === undefined) return rollBack("the new service binary did not answer --version");
+    log(`new binary answers ${to}`);
+    step({ step: "restarting", to });
+    log("starting the watchdog");
     try {
       env.startWatchdog(watchdogScript({ bin: SERVICE_BIN, unit: SERVICE_UNIT, waitSeconds: STAY_ACTIVE_SECONDS }));
     } catch (e) {
@@ -333,7 +379,16 @@ export function createServiceUpdater(env: UpdateEnv): { run(release?: string): P
       let keepLock = false;
       try {
         refuseUnlessInstalled();
-        const report = await update(release);
+        let report: UpdateReport;
+        try {
+          report = await update(release);
+        } catch (e) {
+          if (!(e instanceof UpdateRefused)) {
+            step({ step: "failed", detail: message(e) });
+            log(message(e));
+          }
+          throw e;
+        }
         // The service restarts soon. A second run before that would overwrite the .prev backup with the new binary.
         keepLock = report.status === "restarting";
         return report;

@@ -253,3 +253,120 @@ describe("hub-signed requests", () => {
     expect(await reason(wrong.call("GET", "/api/fs"))).toBe("rejected our credentials");
   });
 });
+
+// ---------------------------------------------------------------- stream
+describe("HostClient.stream", () => {
+  const sseNode = (chunks: string[], hold = false) =>
+    node(undefined, () => {
+      const enc = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          for (const s of chunks) c.enqueue(enc.encode(s));
+          if (!hold) c.close();
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    });
+
+  test("events arrive over the pinned connection, signed for GET <path>", async () => {
+    const n = await sseNode(["event: update\ndata: 1\n\n", ": keepalive\n\n", "data: 2\n\n"]);
+    const out = [];
+    for await (const e of await createHostClient(hostFor(n), tok).stream("/api/events")) out.push(e);
+    expect(out).toEqual([{ event: "update", data: "1" }, { event: "message", data: "2" }]);
+    expect(n.log[0]!.method).toBe("GET");
+    expect(n.log[0]!.path).toBe("/api/events");
+    expect(n.log[0]!.headers.get("authorization")).toBe("Bearer TOKEN");
+  });
+  test("the Hub-Proof is signed for method, path and empty body", async () => {
+    const key = await loadOrCreateHubKey(tmp());
+    const host = hostFor(await node(), { auth: { type: "hub_key" } });
+    let seen: { url: URL; init: RequestInit } | undefined;
+    const fake = (async (url: URL, init: RequestInit) => {
+      seen = { url, init };
+      return new Response("data: x\n\n", { headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof fetch;
+    const it = await createHostClient(host, hubAuthorizer(key, host), { fetch: fake }).stream("/api/events");
+    for await (const _ of it) break;
+    const auth = (seen!.init.headers as Record<string, string>).authorization!;
+    const req = { method: "GET", pathAndQuery: "/api/events", body: "" };
+    await createProofVerifier({ keys: [key.publicKey], selfFingerprint: certFingerprint(host.ca) })(auth.slice("Hub-Proof ".length), req);
+    expect(seen!.init.redirect).toBe("manual");
+    expect((seen!.init as { tls?: unknown }).tls).toEqual({ ca: host.ca });
+    expect(seen!.init.signal).toBeUndefined();
+  });
+  test("a certificate error is certificate mismatch", async () => {
+    const n = await node();
+    const other = (await ensureNodeCert({ dir: tmp(), names: ["x"] })).certPem;
+    expect(await reason(createHostClient(hostFor(n, { ca: other }), tok).stream("/api/events"))).toBe("certificate mismatch");
+  });
+  test("401 is rejected our credentials; 404, other statuses and wrong content type are bad response", async () => {
+    const run = (r: () => Response) => node(undefined, r).then((n) => reason(createHostClient(hostFor(n), tok).stream("/api/events")));
+    expect(await run(() => new Response("no", { status: 401 }))).toBe("rejected our credentials");
+    expect(await run(() => new Response("no", { status: 404 }))).toBe("bad response");
+    expect(await run(() => new Response("no", { status: 500 }))).toBe("bad response");
+    expect(await run(() => Response.json({ ok: true }))).toBe("bad response");
+  });
+  test("a reset in the middle of the stream is unreachable; a size cap is bad response", async () => {
+    const host = hostFor(await node());
+    const enc = new TextEncoder();
+    const viaFake = (body: () => ReadableStream<Uint8Array>) => {
+      const f = (async () => new Response(body(), { headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch;
+      return reason((async () => {
+        for await (const _ of await createHostClient(host, tok, { fetch: f }).stream("/api/events")) void _;
+      })());
+    };
+    const reset = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode("data: 1\n\n")); }, pull(c) { c.error(Object.assign(new Error("The socket connection was closed unexpectedly"), { code: "ECONNRESET" })); } });
+    const big = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode("data: " + "x".repeat(2 * 1024 * 1024))); c.close(); } });
+    expect(await viaFake(reset)).toBe("unreachable");
+    expect(await viaFake(big)).toBe("bad response");
+  });
+  test("the stream never logs, for a failed connect or a mid-stream error", async () => {
+    const host = hostFor(await node());
+    const seen: unknown[][] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => void seen.push(a);
+    try {
+      const refuse = (async () => { throw Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" }); }) as unknown as typeof fetch;
+      for (let i = 0; i < 5; i++) expect(await reason(createHostClient(host, tok, { fetch: refuse }).stream("/api/events"))).toBe("unreachable");
+      const bad = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
+      expect(await reason(createHostClient(host, tok, { fetch: bad }).stream("/api/events"))).toBe("bad response");
+    } finally {
+      console.error = orig;
+    }
+    expect(seen).toEqual([]);
+  });
+  test("abort ends the iteration without an error", async () => {
+    const n = await sseNode(["data: 1\n\n"], true);
+    const ac = new AbortController();
+    const out: string[] = [];
+    for await (const e of await createHostClient(hostFor(n), tok).stream("/api/events", { signal: ac.signal })) {
+      out.push(e.data);
+      ac.abort();
+    }
+    expect(out).toEqual(["1"]);
+  });
+  test("breaking out closes the connection", async () => {
+    let cancelled: () => void = () => {};
+    const closed = new Promise<void>((r) => (cancelled = r));
+    const n = await node(undefined, (req) => {
+      const enc = new TextEncoder();
+      req.signal.addEventListener("abort", () => cancelled());
+      return new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode("data: 1\n\n")); }, cancel() { cancelled(); } }), { headers: { "content-type": "text/event-stream" } });
+    });
+    for await (const _ of await createHostClient(hostFor(n), tok).stream("/api/events")) break;
+    await closed;
+  });
+  test("an abort before connect, or an already aborted signal, ends quietly", async () => {
+    const host = hostFor(await node());
+    const pre = new AbortController();
+    pre.abort();
+    const c = createHostClient(host, tok);
+    for await (const _ of await c.stream("/api/events", { signal: pre.signal })) throw new Error("no events");
+    const ac = new AbortController();
+    const failing = (async () => { ac.abort(); throw Object.assign(new Error("aborted"), { name: "AbortError" }); }) as unknown as typeof fetch;
+    for await (const _ of await createHostClient(host, tok, { fetch: failing }).stream("/api/events", { signal: ac.signal })) throw new Error("no events");
+    const ac2 = new AbortController();
+    const slowAuth = async () => { ac2.abort(); throw new Error("x"); };
+    for await (const _ of await createHostClient(host, slowAuth, {}).stream("/api/events", { signal: ac2.signal })) throw new Error("no events");
+  });
+});

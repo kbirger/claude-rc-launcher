@@ -107,6 +107,8 @@ afterEach(() => {
   console.error = realErr;
 });
 
+const noStream = { stream: async () => { throw new Error("stream not used in this test"); } };
+
 describe("host list client versions", () => {
   test("a node's clientVersion is the oldest of its copies, and none without copies", async () => {
     const a = await startNode("nas", { clientVersions: async () => [{ path: "/a", version: "0.8.2" }, { path: "/b", version: "0.8.0" }] });
@@ -278,6 +280,7 @@ describe("what is and is not forwarded", () => {
   function fake() {
     const calls: any[] = [];
     const client: HostClient = {
+      ...noStream,
       async call(method, p, o) {
         calls.push([method, p, o?.query, o?.json]);
         return { status: 200, body: { ok: true } };
@@ -410,7 +413,7 @@ describe("what is and is not forwarded", () => {
 
   test("passes a node 428 body and status through", async () => {
     const body = { error: "untrusted", code: "untrusted", user: "alice", path: "/p" };
-    const client: HostClient = { call: async () => ({ status: 428, body }) };
+    const client: HostClient = { ...noStream, call: async () => ({ status: 428, body }) };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]));
     const r = await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p", user: "alice" }) });
     expect(r.status).toBe(428);
@@ -418,7 +421,7 @@ describe("what is and is not forwarded", () => {
   });
 
   test("a node 404 on /users reaches the client as 404", async () => {
-    const client: HostClient = { call: async () => ({ status: 404, body: { error: "not found" } }) };
+    const client: HostClient = { ...noStream, call: async () => ({ status: 404, body: { error: "not found" } }) };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]));
     const r = await get(app, "/api/hosts/nas/users");
     expect(r.status).toBe(404);
@@ -434,7 +437,7 @@ describe("what is and is not forwarded", () => {
   });
 
   test("a HostError from a client is a 502 naming only the reason", async () => {
-    const client: HostClient = { call: async () => { throw new HostError("nas", "rejected our credentials"); } };
+    const client: HostClient = { ...noStream, call: async () => { throw new HostError("nas", "rejected our credentials"); } };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]));
     const r = await get(app, "/api/hosts/nas/instances");
     expect(r.status).toBe(502);
@@ -444,7 +447,7 @@ describe("what is and is not forwarded", () => {
 
 describe("audit", () => {
   test("state-changing requests log user, host, method, path and status; GETs do not", async () => {
-    const f = { call: async () => ({ status: 201, body: { ok: true } }) } as HostClient;
+    const f = { ...noStream, call: async () => ({ status: 201, body: { ok: true } }) } as HostClient;
     const app = hub([{ id: "nas", name: "nas", url: "https://x", ca: "p", auth: { type: "secret", secret: "s" } }], new Map([["nas", f]]));
     await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p" }) });
     await get(app, "/api/hosts/nas/instances");
@@ -512,8 +515,8 @@ describe("node and update routes", () => {
   });
 
   test("the host list takes a node's version from its probe answer", async () => {
-    const client: HostClient = { call: async () => ({ status: 200, body: { ok: true, name: "nas", version: "1.4.0" } }) };
-    const old: HostClient = { call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };
+    const client: HostClient = { ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "nas", version: "1.4.0" } }) };
+    const old: HostClient = { ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };
     const app = hub([hostCfg("nas"), hostCfg("old")], new Map([["nas", client], ["old", old]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
       { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
@@ -560,6 +563,7 @@ describe("node and update routes", () => {
   test("the remote update call waits up to 180 seconds; GET node uses the normal timeout", async () => {
     const calls: any[] = [];
     const client: HostClient = {
+      ...noStream,
       async call(method, p, o) {
         calls.push([method, p, o?.json, o?.timeoutMs]);
         return { status: 202, body: restarting };
@@ -575,7 +579,7 @@ describe("node and update routes", () => {
   });
 
   test("an older node that answers 404 gives a 404 through the hub", async () => {
-    const client: HostClient = { call: async () => ({ status: 404, body: { error: "not found" } }) };
+    const client: HostClient = { ...noStream, call: async () => ({ status: 404, body: { error: "not found" } }) };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]));
     const r = await upPost(app, "/api/hosts/nas/update", {});
     expect(r.status).toBe(404);
@@ -583,7 +587,7 @@ describe("node and update routes", () => {
   });
 
   test("a node refusal passes through with its status", async () => {
-    const client: HostClient = { call: async () => ({ status: 409, body: { error: "another update is running on this machine" } }) };
+    const client: HostClient = { ...noStream, call: async () => ({ status: 409, body: { error: "another update is running on this machine" } }) };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]));
     const r = await upPost(app, "/api/hosts/nas/update", {});
     expect(r.status).toBe(409);
@@ -610,6 +614,7 @@ describe("clone, repo list and login forwarding", () => {
   function recorder(status = 200, body: unknown = { ok: true }) {
     const calls: any[] = [];
     const client: HostClient = {
+      ...noStream,
       async call(method, p, o) {
         calls.push([method, p, o?.query, o?.json, o?.timeoutMs]);
         return { status, body };
@@ -726,7 +731,7 @@ describe("clone, repo list and login forwarding", () => {
   });
 
   test("a host failure gives 502 and an unknown host 404", async () => {
-    const client: HostClient = { call: async () => { throw new HostError("nas", "timeout"); } };
+    const client: HostClient = { ...noStream, call: async () => { throw new HostError("nas", "timeout"); } };
     const app = hub([hostCfg("nas")], new Map([["nas", client]]));
     const r = await send(app, "POST", "/api/hosts/nas/clone", { repo: "o/r", parent: "/p" });
     expect(r.status).toBe(502);

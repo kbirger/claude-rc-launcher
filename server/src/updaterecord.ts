@@ -12,6 +12,9 @@ export type UpdateEntry = {
   to?: string;
   status: UpdateStatus;
   error?: string;
+  /** Only while `status` is `running`. */
+  step?: string;
+  stepDetail?: string;
 };
 
 const FILE = "updates.json";
@@ -98,7 +101,8 @@ export class UpdateRecord {
   }
 
   private async apply(e: UpdateEntry): Promise<void> {
-    const next = [...this.entries.filter((x) => x.host !== e.host), { ...e }];
+    e = clean(e);
+    const next = [...this.entries.filter((x) => x.host !== e.host), e];
     const created = await mkdir(this.dir, { recursive: true, mode: 0o700 });
     if (created && process.platform !== "win32") await chmod(this.dir, 0o700);
     await writeAtomic(path.join(this.dir, FILE), JSON.stringify({ updates: next }, null, 2) + "\n", 0o600);
@@ -132,13 +136,16 @@ function valid(e: any): e is UpdateEntry {
     STATUSES.includes(e.status) &&
     opt(e.finishedAt) &&
     opt(e.to) &&
-    opt(e.error)
+    opt(e.error) &&
+    opt(e.step) &&
+    opt(e.stepDetail)
   );
 }
 
-/** Keep only the known fields. */
+/** Keep only the known fields. A final status drops `step` and `stepDetail`. */
 function clean(e: UpdateEntry): UpdateEntry {
-  const { host, startedAt, finishedAt, startedBy, from, to, status, error } = e;
+  const { host, startedAt, finishedAt, startedBy, from, to, status, error, step, stepDetail } = e;
+  const running = status === "running";
   return {
     host,
     startedAt,
@@ -148,5 +155,7 @@ function clean(e: UpdateEntry): UpdateEntry {
     ...(to !== undefined ? { to } : {}),
     status,
     ...(error !== undefined ? { error } : {}),
+    ...(running && step !== undefined ? { step } : {}),
+    ...(running && stepDetail !== undefined ? { stepDetail } : {}),
   };
 }

@@ -614,6 +614,20 @@ The banner has two separate buttons. `Update hub` updates the hub to the latest 
 nodes to the version of the hub. The host picker also has an `Update` button for the selected node. The UI never
 updates anything by itself.
 
+While an update runs, the host picker and the banner show its step as text. The steps are `downloading`, `verifying`,
+`installing-client`, `installing`, `restarting`, `failed` and `up-to-date`. A client step adds the path of the client,
+for example `installing-client: /usr/local/bin/claude-rc`. The step `failed` shows in the error color. Below the step
+is an output panel with the lines of output of the update, newest at the bottom. The panel follows new lines while you
+are at the bottom. It is open while the update runs. A finished update shows its panel closed. A page that opens late
+gets the lines that the hub already holds. The hub keeps the last 200 lines of each machine in memory only, so a hub
+restart clears them.
+
+A node that stops during its update has the status `restarting`. The host picker shows `restarting`, and the entry
+stays selected but is greyed out. After 90 seconds without an answer, the status becomes `offline`. When the node
+answers again, the status returns to `ok`. A node that drops its connection without a `restarting` step is `offline`
+at once. The hub learns about these changes from an event stream that it holds open to each node, so the page does not
+wait for the next poll. The hub logs one line when the status or the reason of a node changes, and none for a repeat.
+
 A machine shows its client in one of four ways:
 
 - The version, for example `0.8.4`, when the node found a client.
@@ -658,6 +672,8 @@ Keep these limits in mind:
 - The watchdog can roll back a new hub binary that starts and then fails within its first 30 seconds. The record may
   still say `updated` until the next update.
 - A node that is too old to have the update route needs `claude-rc node update` once.
+- Update the nodes first, then the hub. A node without the event route shows as `error (bad response)` until you
+  update it. `claude-rc update --all-nodes` already uses this order.
 - An older node does not report clients, so it shows `client not reported` until you update it.
 - Before this release, a Windows node looked for its client with Linux rules and reported none. After you update it, its
   client version shows.
@@ -858,14 +874,26 @@ its own build from the release.
 
 The command updates the machines in this order. First come the nodes, one after the other. Then comes the hub, which
 is the machine named `local`. The hub restarts, and the command waits for it to answer again. The last step is the
-client copy that runs the command. One failed machine does not stop the others.
+client copy that runs the command. One failed machine does not stop the others. The nodes come first because the hub
+watches each node through its event route. A node without that route shows as `error (bad response)` until you update
+it.
+
+While the command runs, it shows the live output of each update. Each line starts with the machine name, as in
+`[a] downloading`. The lines come from the hub, in the order it receives them. The command prints only the lines of
+the machine it is updating at that moment. Lines of an earlier update, of a machine that is not next, or of an
+update that someone started from the web page do not appear. A node can send any text, so the command replaces
+control characters, direction marks and zero-width characters with `?` and cuts each line at 500 characters. With
+`--json`, these lines go to standard error and the rows stay on standard output. If the stream cannot be opened, the
+command shows no lines and still updates every machine. When the hub restarts for its own update, the command opens
+the stream again for up to 90 seconds, so the last lines still appear. A problem with the stream never changes the
+result or the exit code.
 
 On each machine, the service checks the download against `SHA256SUMS`, keeps the old binary as `.prev` and restarts. A
 watchdog (a small script outside the service) puts the old binary back if the new one does not stay active.
 
 The command prints one table row for each machine. The columns are `MACHINE`, `BEFORE`, `AFTER`, `CLIENTS` and
-`STATUS`. The last row is the client that ran the command. With `--json`, the command prints the rows as JSON and
-no progress lines. The `STATUS` column has one of these values:
+`STATUS`. The last row is the client that ran the command. With `--json`, the command prints the rows as JSON on
+standard output. The live lines go to standard error. The `STATUS` column has one of these values:
 
 - `updated`: the machine now runs a new version. The row appears when the new version first answers. The watchdog can still roll back during the next 30 seconds, so run `claude-rc hosts` or check again if in doubt.
 - `up-to-date`: the machine already ran the release.
@@ -1156,8 +1184,19 @@ Version routes (see [Version check and updates in the web UI](#version-check-and
 
 - `GET /latest` returns `{version, checkedAt}`, the latest GitHub release. If GitHub never answered, it returns 503.
 - `GET /updates` returns the update record of each machine.
-- `GET /events` is a server-sent event stream. The first event is `snapshot` with the whole record. Each change then sends an `update` event. The hub also sends keepalive comments.
+- `GET /events` is a server-sent event stream. The CLI reads it at `GET /cli/api/events`. The first event is
+  `snapshot`. Its data is `{ updates, logs, presence }`. `updates` is the record of each machine. `logs` maps a host id
+  to its last lines, each `{ line, at }`. `presence` lists `{ host, status, version?, reason?, at }` for each node.
+  Then three events follow. `update` carries a changed record entry. `log` carries a new line, `{ host, line, at }`.
+  `presence` carries a changed status of a node. The hub also sends keepalive comments.
 - Each entry of `GET /hosts` also carries `clientVersion`, `noClient`, `stale` and `target`.
+
+Event route of a node. The hub opens it for each node, with the same authentication as the other node routes.
+
+- `GET /api/events` is a server-sent event stream. The first event is `snapshot` with `{ version, update }`. The kept
+  lines of the current update follow as `log` events, each `{ line, at }`. Then each step of an update sends a `step`
+  event, and each line sends a `log` event. The node sends keepalive comments. A node accepts 8 open connections.
+  The ninth gets 429.
 
 ## First-run verification checklist
 

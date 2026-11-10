@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { streamSSE } from "hono/streaming";
+import { sseResponse } from "./sse";
+import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
@@ -10,6 +11,8 @@ import type { AdoptDir } from "./ownedir";
 import { hostAdminApi } from "./hostadmin";
 import { hostsApi } from "./hosts";
 import type { UpdateRecord } from "./updaterecord";
+import type { UpdateLog } from "./updatelog";
+import type { Presence } from "./nodewatcher";
 import { createUpdateTracker } from "./updatetracker";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
@@ -26,7 +29,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; keepaliveMs?: number };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -163,9 +166,12 @@ export function onError(err: Error, c: Context) {
 
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
+/** A node accepts at most this many open event connections. */
+const MAX_EVENT_CONNECTIONS = 8;
+
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup }): Hono {
-  const { cfg, instances, auth, dirOwner, update, cloner, clientVersions } = deps;
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number }): Hono {
+  const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));
 
@@ -183,6 +189,34 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
+  if (events) {
+    let open = 0;
+    api.get("/events", (c) => {
+      if (open >= MAX_EVENT_CONNECTIONS) return c.json({ error: "too many event connections" }, 429);
+      open++;
+      const keepaliveMs = deps.keepaliveMs ?? 15_000;
+      return sseResponse(c, async (stream) => {
+        let unsubscribe = () => {};
+        const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
+        const done = new Promise<void>((resolve) => stream.onAbort(resolve));
+        try {
+          // Queue the snapshot and the kept lines, then listen, all without a gap. The stream keeps the order of the writes.
+          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }) })];
+          for (const l of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(l) }));
+          unsubscribe = events.subscribe((e) => {
+            const { type, ...data } = e;
+            void stream.writeSSE({ event: type, data: JSON.stringify(data) }).catch(() => {});
+          });
+          await Promise.all(first);
+          await done;
+        } finally {
+          clearInterval(timer);
+          unsubscribe();
+          open--;
+        }
+      });
+    });
+  }
   api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
@@ -223,7 +257,7 @@ export function createApp(deps: Deps): Hono {
     }
   };
   const updates = deps.updates
-    ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion }), probe: probeVersion }
+    ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion, ...(deps.presence ? { presence: deps.presence } : {}) }), probe: probeVersion }
     : undefined;
   const forwarding = () =>
     hostsApi({
@@ -237,35 +271,42 @@ export function createApp(deps: Deps): Hono {
     });
   api.route("/hosts", forwarding());
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
-  api.get("/events", (c) => {
+  /** The hub stream: a snapshot, then `update`, `log` and `presence` events. Used by the browser route and the CLI route. */
+  const hubEvents = (c: Context): Response => {
     const record = deps.updates;
     if (!record) return c.json({ error: "update record not available" }, 501);
     const keepaliveMs = deps.keepaliveMs ?? 15_000;
-    const res = streamSSE(c, async (stream) => {
-      // Listen before reading the list so a change in between is not lost (a duplicate is fine: the client replaces by host).
-      const unsubscribe = record.onChange((e) => void stream.writeSSE({ event: "update", data: JSON.stringify(e) }).catch(() => {}));
+    return sseResponse(c, async (stream) => {
+      const send = (event: string, data: unknown) => void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
+      // Listen before reading the state so a change in between is not lost (a duplicate is fine: the client replaces by host).
+      const offs = [
+        record.onChange((e) => send("update", e)),
+        deps.updateLog ? deps.updateLog.onLine((l) => send("log", l)) : () => {},
+        deps.presence ? deps.presence.onChange((p) => send("presence", p)) : () => {},
+      ];
       const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(timer);
+        for (const off of offs) off();
+      };
       const done = new Promise<void>((resolve) =>
         stream.onAbort(() => {
-          clearInterval(timer);
-          unsubscribe();
+          close();
           resolve();
         }),
       );
       try {
-        await stream.writeSSE({ event: "snapshot", data: JSON.stringify(record.list()) });
+        await stream.writeSSE({ event: "snapshot", data: JSON.stringify({ updates: record.list(), logs: deps.updateLog?.all() ?? {}, presence: deps.presence?.list() ?? [] }) });
         await done;
       } finally {
-        clearInterval(timer);
-        unsubscribe();
+        close();
       }
     });
-    // Hono adds these two headers. HTTP/2 forbids them, and a proxy that forwards them to a browser causes ERR_HTTP2_PROTOCOL_ERROR.
-    // Bun frames the body itself, so the response needs neither.
-    res.headers.delete("Transfer-Encoding");
-    res.headers.delete("Connection");
-    return res;
-  });
+  };
+  api.get("/events", hubEvents);
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
 
@@ -276,6 +317,7 @@ export function createApp(deps: Deps): Hono {
     cliApi.use("*", cli.auth);
     cliApi.use("*", csrf(cfg));
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
+    cliApi.get("/events", hubEvents);
     cliApi.route("/node-enrollment", enrollmentApi(cli.enrollment));
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));

@@ -54,23 +54,120 @@ afterEach(() => {
   globalThis.removeEventListener = realRemove;
 });
 
-test("snapshot fills updates and invalidates hosts", () => {
+const snap = (o: any = {}) => ({ data: JSON.stringify({ updates: [], logs: {}, presence: [], ...o }) });
+const host = (id: string, o: any = {}) => ({ id, name: id, status: "ok", version: "1.0.0", ...o });
+const hostsOf = () => client.getQueryData(["hosts"]) as any[];
+
+test("snapshot fills updates, logs and hosts", () => {
   connectEvents({ client, open });
   expect(FakeES.all[0]!.url).toBe("/api/events");
-  FakeES.all[0]!.emit("snapshot", { data: JSON.stringify([entry("a"), entry("b")]) });
+  client.setQueryData(["hosts"], [host("a"), host("b")]);
+  FakeES.all[0]!.emit(
+    "snapshot",
+    snap({ updates: [entry("a"), entry("b")], logs: { a: [{ line: "x", at: "t" }] }, presence: [{ host: "a", status: "restarting", version: "1.0.0", at: "t" }] }),
+  );
   expect(client.getQueryData(["updates"])).toEqual([entry("a"), entry("b")]);
-  expect(invalidated).toContainEqual(["hosts"]);
+  expect(client.getQueryData(["logs"])).toEqual({ a: [{ line: "x", at: "t" }] });
+  expect(hostsOf()[0].status).toBe("restarting");
+  expect(hostsOf()[1].status).toBe("ok");
+  expect(invalidated).toEqual([]);
 });
 
 test("update replaces the entry of the same host or appends", () => {
   connectEvents({ client, open });
   const es = FakeES.all[0]!;
-  es.emit("snapshot", { data: JSON.stringify([entry("a"), entry("b")]) });
+  es.emit("snapshot", snap({ updates: [entry("a"), entry("b")] }));
   es.emit("update", { data: JSON.stringify(entry("a", "updated")) });
   expect(client.getQueryData(["updates"])).toEqual([entry("a", "updated"), entry("b")]);
   es.emit("update", { data: JSON.stringify(entry("c")) });
   expect((client.getQueryData(["updates"]) as UpdateEntry[]).map((e) => e.host)).toEqual(["a", "b", "c"]);
-  expect(invalidated.length).toBe(3);
+  expect(invalidated.length).toBe(2);
+});
+
+test("an update that changes only the step does not refetch hosts; a status change does", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  es.emit("snapshot", snap({ updates: [entry("a")] }));
+  es.emit("update", { data: JSON.stringify({ ...entry("a"), step: "installing" }) });
+  expect(invalidated).toEqual([]);
+  expect((client.getQueryData(["updates"]) as UpdateEntry[])[0]!.step).toBe("installing");
+  es.emit("update", { data: JSON.stringify(entry("a", "failed")) });
+  expect(invalidated).toEqual([["hosts"]]);
+});
+
+test("a presence event patches the host and does not refetch", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  client.setQueryData(["hosts"], [host("a", { error: "old" })]);
+  es.emit("presence", { data: JSON.stringify({ host: "a", status: "offline", reason: "unreachable", at: "t" }) });
+  expect(hostsOf()[0]).toMatchObject({ status: "offline", version: "1.0.0", error: "unreachable" });
+  es.emit("presence", { data: JSON.stringify({ host: "a", status: "online", version: "1.0.0", at: "t" }) });
+  expect(hostsOf()[0].status).toBe("ok");
+  expect(hostsOf()[0].error).toBeUndefined();
+  expect(invalidated).toEqual([]);
+});
+
+test("a presence event with a new version refetches hosts", () => {
+  connectEvents({ client, open });
+  client.setQueryData(["hosts"], [host("a")]);
+  FakeES.all[0]!.emit("presence", { data: JSON.stringify({ host: "a", status: "online", version: "1.1.0", at: "t" }) });
+  expect(hostsOf()[0].version).toBe("1.1.0");
+  expect(invalidated).toEqual([["hosts"]]);
+});
+
+test("a presence item for an unknown host refetches a loaded host list; a cold cache does nothing", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  es.emit("presence", { data: JSON.stringify({ host: "new", status: "online", version: "1.0.0", at: "t" }) });
+  es.emit("snapshot", snap({ presence: [{ host: "new", status: "online", at: "t" }] }));
+  expect(invalidated).toEqual([]);
+  client.setQueryData(["hosts"], [host("a")]);
+  es.emit("presence", { data: JSON.stringify({ host: "new", status: "online", version: "1.0.0", at: "t" }) });
+  expect(invalidated).toEqual([["hosts"]]);
+  es.emit("snapshot", snap({ presence: [{ host: "n1", status: "online", at: "t" }, { host: "n2", status: "online", at: "t" }] }));
+  expect(invalidated).toEqual([["hosts"], ["hosts"]]);
+});
+
+test("an unknown presence status becomes error", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  client.setQueryData(["hosts"], [host("a")]);
+  es.emit("presence", { data: JSON.stringify({ host: "a", status: "bogus", at: "t" }) });
+  expect(hostsOf()[0].status).toBe("error");
+  es.emit("presence", { data: JSON.stringify({ host: "a", status: "constructor", at: "t" }) });
+  expect(hostsOf()[0].status).toBe("error");
+});
+
+test("a snapshot with logs null or an array still applies the rest", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  client.setQueryData(["hosts"], [host("a")]);
+  for (const logs of [null, [], "x"]) {
+    es.emit("snapshot", snap({ updates: [entry("a")], logs, presence: [{ host: "a", status: "restarting", at: "t" }] }));
+    expect(client.getQueryData(["updates"])).toEqual([entry("a")]);
+    expect(hostsOf()[0].status).toBe("restarting");
+    expect(client.getQueryData(["logs"])).toBeUndefined();
+    client.setQueryData(["updates"], undefined);
+  }
+});
+
+test("a log event appends and keeps the last 200 lines of each host", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  for (let i = 0; i < 205; i++) es.emit("log", { data: JSON.stringify({ host: "a", line: `l${i}`, at: "t" }) });
+  es.emit("log", { data: JSON.stringify({ host: "b", line: "x", at: "t" }) });
+  const logs = client.getQueryData(["logs"]) as Record<string, { line: string }[]>;
+  expect(logs.a!.length).toBe(200);
+  expect(logs.a![0]!.line).toBe("l5");
+  expect(logs.a![199]!.line).toBe("l204");
+  expect(logs.b!.length).toBe(1);
+  expect(invalidated).toEqual([]);
+});
+
+test("a bad snapshot shape is ignored", () => {
+  connectEvents({ client, open });
+  FakeES.all[0]!.emit("snapshot", { data: JSON.stringify([entry("a")]) });
+  expect(client.getQueryData(["updates"])).toBeUndefined();
 });
 
 test("a closed stream reopens once on the next focus", () => {
@@ -155,7 +252,7 @@ describe("retries", () => {
     connectEvents(o());
     close();
     timers.pop()!.f();
-    FakeES.all[1]!.emit("snapshot", { data: "[]" });
+    FakeES.all[1]!.emit("snapshot", snap());
     close();
     expect(timers.pop()!.ms).toBe(5000);
   });

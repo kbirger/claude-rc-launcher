@@ -6,6 +6,7 @@ import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner } from "./instances";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
+import { NodeEvents } from "./updateevents";
 import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
 import { taskkillTree, WinInstances } from "./win/instances";
@@ -68,6 +69,7 @@ const shutdown = async (code = 0) => {
 
 // After an update the agent ends itself with a non-zero code, so that WinSW starts the new binary (see win/update.ts).
 const dataDir = cfg.node!.tls.stateDir;
+const events = new NodeEvents();
 const update = createWindowsUpdater(
   realWinUpdateEnv({
     dataDir,
@@ -75,10 +77,11 @@ const update = createWindowsUpdater(
     // Wait a moment so that the answer to the update request is sent first.
     scheduleExit: () => void setTimeout(() => void shutdown(UPDATE_EXIT_CODE), 2000),
   }),
+  events.hooks(),
 );
 
 try {
-  running = await startNode(cfg, { instances, update });
+  running = await startNode(cfg, { instances, update, events });
   const n = await instances.restore();
   if (n > 0) console.log(`started ${n} instance${n === 1 ? "" : "s"} from the saved list`);
   confirmPendingUpdate({

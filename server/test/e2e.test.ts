@@ -9,6 +9,8 @@ import { certFingerprint } from "../src/hubproof";
 import { generateSecret, hashSecret } from "../src/nodeauth";
 import { startNode } from "../src/nodemain";
 import type { UpdateReport } from "../src/serviceupdate";
+import { NodeEvents } from "../src/updateevents";
+import { readSse } from "../src/ssereader";
 import { VERSION } from "../src/version";
 
 const tmp = () => realpathSync(mkdtempSync(path.join(os.tmpdir(), "rc-e2e-")));
@@ -315,4 +317,182 @@ describe("entry points", () => {
     expect(secret).toBeDefined();
     expect(hashSecret(secret!)).toBe(sha!);
   });
+});
+
+describe("node events end to end", () => {
+  type Ev = { event: string; data: any };
+  const within = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
+    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`timed out waiting for ${what}`)), ms).unref())]);
+
+  /** Reads the hub event stream with a session cookie. Every event is kept; `until` waits (with a timeout) for one that matches. */
+  async function subscribe(url: string, cookie: string) {
+    const ac = new AbortController();
+    const res = await within(fetch(url, { headers: { cookie }, signal: ac.signal }), 5_000, "the event stream to open");
+    expect(res.status).toBe(200);
+    const seen: Ev[] = [];
+    const waiters = new Set<() => void>();
+    void (async () => {
+      try {
+        for await (const e of readSse(res.body!)) {
+          seen.push({ event: e.event, data: JSON.parse(e.data) });
+          for (const w of [...waiters]) w();
+        }
+      } catch {
+        // the stream ended or was aborted
+      }
+    })();
+    const until = (pred: (e: Ev) => boolean, what: string, ms = 8_000): Promise<Ev> =>
+      within(
+        new Promise<Ev>((resolve) => {
+          const check = () => {
+            const hit = seen.find(pred);
+            if (hit) {
+              waiters.delete(check);
+              resolve(hit);
+            }
+          };
+          waiters.add(check);
+          check();
+        }),
+        ms,
+        `${what}; saw ${JSON.stringify(seen.map((e) => [e.event, e.data?.host ?? e.data?.status ?? e.data?.line]))}`,
+      );
+    const close = () => ac.abort();
+    stoppers.push(close);
+    return { seen, until, close };
+  }
+  type Sub = Awaited<ReturnType<typeof subscribe>>;
+
+  async function world() {
+    const events = new NodeEvents();
+    const hooks = events.hooks();
+    const gates = { mid: Promise.withResolvers<void>(), finish: Promise.withResolvers<void>(), midReached: Promise.withResolvers<void>() };
+    const update = {
+      run: async (): Promise<UpdateReport> => {
+        hooks.onStep({ step: "downloading", to: "9.9.9" });
+        hooks.onLog("fetching release");
+        hooks.onStep({ step: "verifying" });
+        hooks.onLog("checksum ok");
+        hooks.onStep({ step: "installing" });
+        gates.midReached.resolve();
+        await gates.mid.promise;
+        hooks.onLog("unit replaced");
+        await gates.finish.promise;
+        hooks.onStep({ step: "up-to-date" });
+        return { status: "up-to-date", from: VERSION, clients: [] };
+      },
+    };
+    const sec = generateSecret();
+    const stateDir = tmp();
+    const nodeCfg = (port: number) =>
+      ({
+        ...common, mode: "node", name: "pi", port, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
+        node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [], secretHashes: [sec.sha256] } },
+      }) as unknown as Config;
+    let node = await quiet(() => startNode(nodeCfg(0), { instances: fakeInstances("pi").svc, update, events }));
+    stoppers.push(() => node.stop());
+    const port = node.port;
+    const certPem = readFileSync(path.join(stateDir, "node-cert.pem"), "utf8");
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      hosts: [{ id: "nas", name: "NAS", url: `https://localhost:${port}`, ca: certPem, auth: { type: "secret", secret: sec.secret } }],
+    } as unknown as Config;
+    // Short reconnect waits stand in for the real 1 to 30 seconds.
+    const watcher = { sleep: (ms: number) => Bun.sleep(Math.min(ms, 20)), random: () => 0 };
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watcher }));
+    stoppers.push(hub.stop);
+    const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
+    const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
+    const sub = async () => {
+      const s = await subscribe(hubUrl("/api/events"), cookie);
+      await s.until((e) => e.event === "snapshot", "the snapshot");
+      return s;
+    };
+    const startUpdate = () =>
+      fetch(hubUrl("/api/hosts/nas/update"), { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" });
+    const restartNode = async () => {
+      node = await quiet(() => startNode(nodeCfg(port), { instances: fakeInstances("pi").svc, update, events }));
+    };
+    return { events, gates, node: () => node, hubUrl, sub, startUpdate, restartNode, cookie };
+  }
+
+  const online = (e: Ev) => e.event === "presence" && e.data.host === "nas" && e.data.status === "online";
+  const stepOf = (step: string) => (e: Ev) => e.event === "update" && e.data.host === "nas" && e.data.step === step;
+  const logOf = (line: string) => (e: Ev) => e.event === "log" && e.data.host === "nas" && e.data.line === line;
+
+  test("both subscribers see the steps, the lines and the final status of a node update", async () => {
+    const w = await world();
+    const a = await w.sub();
+    const b = await w.sub();
+    // The watcher may still be connecting: wait until the hub reports the node online before the update starts.
+    const ready = (s: Sub) => s.seen.some(online) || (s.seen[0]!.data.presence as any[]).some((p) => p.host === "nas" && p.status === "online");
+    for (const s of [a, b]) if (!ready(s)) await s.until(online, "nas online");
+
+    // The updater pauses after "installing", like a real one that takes seconds: the steps are seen while the update runs.
+    const response = w.startUpdate();
+    await within(w.gates.midReached.promise, 10_000, "the fake updater to reach its pause");
+    for (const s of [a, b]) {
+      await s.until(stepOf("downloading"), "the downloading step");
+      await s.until(stepOf("verifying"), "the verifying step");
+      await s.until(stepOf("installing"), "the installing step");
+      await s.until(logOf("fetching release"), "the first line");
+      await s.until(logOf("checksum ok"), "the second line");
+    }
+    w.gates.mid.resolve();
+    w.gates.finish.resolve();
+    expect((await within(response, 10_000, "the update response")).status).toBe(200);
+
+    for (const s of [a, b]) {
+      const last = await s.until((e) => e.event === "update" && e.data.host === "nas" && e.data.status === "up-to-date", "the final status");
+      expect(last.data.status).toBe("up-to-date");
+      const steps = s.seen.filter((e) => e.event === "update" && e.data.host === "nas" && e.data.step).map((e) => e.data.step);
+      expect(steps.indexOf("downloading")).toBeLessThan(steps.indexOf("verifying"));
+      expect(steps.indexOf("verifying")).toBeLessThan(steps.indexOf("installing"));
+    }
+  }, 30_000);
+
+  test("both subscribers see the node go offline and come back online", async () => {
+    const w = await world();
+    const a = await w.sub();
+    const b = await w.sub();
+    const isOnline = (s: Sub) => (s.seen[0]!.data.presence as any[]).some((p) => p.host === "nas" && p.status === "online") || s.seen.some(online);
+    for (const s of [a, b]) if (!isOnline(s)) await s.until(online, "nas online");
+
+    const mark = [a.seen.length, b.seen.length];
+    w.node().stop();
+    const offline = (e: Ev) => e.event === "presence" && e.data.host === "nas" && e.data.status === "offline";
+    await a.until((e) => offline(e), "nas offline (first subscriber)");
+    await b.until((e) => offline(e), "nas offline (second subscriber)");
+    expect(mark[0]).toBeGreaterThan(0);
+
+    await w.restartNode();
+    const back = (s: Sub, from: number) => s.until((e) => online(e) && s.seen.indexOf(e) > s.seen.findIndex(offline), `nas online again after ${from}`, 15_000);
+    await back(a, mark[0]!);
+    await back(b, mark[1]!);
+  }, 40_000);
+
+  test("a subscriber that joins in the middle of an update gets the step and the lines so far", async () => {
+    const w = await world();
+    const early = await w.sub();
+    if (!(early.seen[0]!.data.presence as any[]).some((p) => p.host === "nas" && p.status === "online")) await early.until(online, "nas online");
+
+    const response = w.startUpdate();
+    await within(w.gates.midReached.promise, 10_000, "the fake updater to reach its pause");
+    // The hub copies node events with a small delay: wait until it holds the last line before the late subscriber joins.
+    await early.until(logOf("checksum ok"), "the hub to hold the lines");
+    await early.until(stepOf("installing"), "the hub to hold the installing step");
+
+    const late = await w.sub();
+    const snap = late.seen[0]!.data;
+    const entry = (snap.updates as any[]).find((u) => u.host === "nas");
+    expect(entry).toMatchObject({ host: "nas", status: "running", step: "installing" });
+    expect((snap.logs.nas as any[]).map((l) => l.line)).toEqual(["fetching release", "checksum ok"]);
+
+    w.gates.mid.resolve();
+    w.gates.finish.resolve();
+    expect((await within(response, 10_000, "the update response")).status).toBe(200);
+    await late.until(logOf("unit replaced"), "a line after the join");
+    await late.until((e) => e.event === "update" && e.data.host === "nas" && e.data.status === "up-to-date", "the final status");
+  }, 30_000);
 });

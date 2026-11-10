@@ -13,6 +13,8 @@ import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
 import { LatestError, type createLatestRelease } from "../src/latest";
 import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
+import { UpdateLog } from "../src/updatelog";
+import type { Presence } from "../src/nodewatcher";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const ID = "0123456789ab";
@@ -621,8 +623,18 @@ describe("GET /api/updates and /api/events", () => {
     };
     return rec;
   };
-  const mk = (rec?: ReturnType<typeof fakeRecord>, keepaliveMs?: number) =>
-    createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), ...(rec ? { updates: rec as unknown as UpdateRecord } : {}), ...(keepaliveMs ? { keepaliveMs } : {}) });
+  const pres = (host: string, status: Presence["status"] = "online"): Presence => ({ host, status, version: "1.0.0", at: "2026-11-09T00:00:00.000Z" });
+  const fakePresence = (initial: Presence[] = []) => {
+    const listeners = new Set<(p: Presence) => void>();
+    return {
+      list: () => initial.map((p) => ({ ...p })),
+      onChange: (fn: (p: Presence) => void) => (listeners.add(fn), () => void listeners.delete(fn)),
+      emit: (p: Presence) => listeners.forEach((l) => l(p)),
+      count: () => listeners.size,
+    };
+  };
+  const mk = (rec?: ReturnType<typeof fakeRecord>, keepaliveMs?: number, extra: Record<string, unknown> = {}) =>
+    createApp({ cfg, instances: fake().svc, userAuth: oidcUserAuth(cfg, oidc), ...(rec ? { updates: rec as unknown as UpdateRecord } : {}), ...(keepaliveMs ? { keepaliveMs } : {}), ...extra });
   const readUntil = async (reader: ReadableStreamDefaultReader<Uint8Array>, re: RegExp) => {
     const dec = new TextDecoder();
     let text = "";
@@ -633,6 +645,16 @@ describe("GET /api/updates and /api/events", () => {
     }
     return text;
   };
+  const gone = async (...counts: (() => number)[]) => {
+    for (let i = 0; i < 50 && counts.some((c) => c() > 0); i++) await Bun.sleep(10);
+  };
+  const CLI_TOKEN = "cli-token";
+  const cliAuth = (async (c, next) => (c.req.header("authorization") === `Bearer ${CLI_TOKEN}` ? (c.set("user" as never, user as never), next()) : c.json({ error: "unauthorized" }, 401))) as import("hono").MiddlewareHandler;
+  const withCli = { cli: { issuer: "https://i", clientId: "c", auth: cliAuth, makeClient: (() => undefined) as any, enrollment: { hubKeys: [] } } };
+  const routes: [string, () => Record<string, string>][] = [
+    ["/api/events", () => H()],
+    ["/cli/api/events", () => ({ authorization: `Bearer ${CLI_TOKEN}` })],
+  ];
 
   test("GET /api/updates returns the list", async () => {
     const r = await mk(fakeRecord([entry("nas")])).request("/api/updates", { headers: H() });
@@ -640,43 +662,74 @@ describe("GET /api/updates and /api/events", () => {
     expect(await r.json()).toEqual([entry("nas")]);
   });
 
-  test("events: snapshot first (even when empty), then an update per change; cancel removes the listener", async () => {
-    const rec = fakeRecord();
-    const r = await mk(rec).request("/api/events", { headers: H() });
-    expect(r.status).toBe(200);
-    expect(r.headers.get("content-type")).toContain("text/event-stream");
-    expect(r.headers.get("cache-control")).toBe("no-cache");
-    expect(r.headers.get("content-encoding")).toBeNull();
-    // HTTP/2 forbids connection-specific headers. A proxy that forwards them makes a browser fail with ERR_HTTP2_PROTOCOL_ERROR.
-    expect(r.headers.get("transfer-encoding")).toBeNull();
-    expect(r.headers.get("connection")).toBeNull();
-    const reader = r.body!.getReader();
-    expect(await readUntil(reader, /\n\n/)).toBe("event: snapshot\ndata: []\n\n");
-    expect(rec.count()).toBe(1);
-    rec.emit(entry("nas"));
-    expect(await readUntil(reader, /\n\n/)).toBe(`event: update\ndata: ${JSON.stringify(entry("nas"))}\n\n`);
-    await reader.cancel();
-    for (let i = 0; i < 50 && rec.count() > 0; i++) await Bun.sleep(10);
-    expect(rec.count()).toBe(0);
+  for (const [url, hdr] of routes) {
+    test(`${url}: snapshot first with updates, logs and presence, then update, log and presence events; cancel removes every listener`, async () => {
+      const rec = fakeRecord([entry("nas")]);
+      const log = new UpdateLog();
+      log.add("nas", "hello", "2026-11-09T00:00:01.000Z");
+      const presence = fakePresence([pres("nas")]);
+      const app = mk(rec, undefined, { updateLog: log, presence, ...withCli });
+      const r = await app.request(url, { headers: hdr() });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-type")).toContain("text/event-stream");
+      expect(r.headers.get("cache-control")).toBe("no-cache");
+      // HTTP/2 forbids connection-specific headers. A proxy that forwards them makes a browser fail with ERR_HTTP2_PROTOCOL_ERROR.
+      expect(r.headers.get("transfer-encoding")).toBeNull();
+      expect(r.headers.get("connection")).toBeNull();
+      const r2 = await app.request(url, { headers: hdr() });
+      const reader = r.body!.getReader();
+      const reader2 = r2.body!.getReader();
+      const snap = `event: snapshot\ndata: ${JSON.stringify({ updates: [entry("nas")], logs: { nas: [{ line: "hello", at: "2026-11-09T00:00:01.000Z" }] }, presence: [pres("nas")] })}\n\n`;
+      expect(await readUntil(reader, /\n\n/)).toBe(snap);
+      expect(await readUntil(reader2, /\n\n/)).toBe(snap);
+      expect([rec.count(), presence.count()]).toEqual([2, 2]);
+      rec.emit(entry("box"));
+      log.add("box", "line 1", "2026-11-09T00:00:02.000Z");
+      presence.emit(pres("box", "offline"));
+      for (const rd of [reader, reader2]) {
+        const text = await readUntil(rd, /event: presence\ndata: .*\n\n/);
+        expect(text).toBe(
+          `event: update\ndata: ${JSON.stringify(entry("box"))}\n\n` +
+            `event: log\ndata: ${JSON.stringify({ host: "box", line: "line 1", at: "2026-11-09T00:00:02.000Z" })}\n\n` +
+            `event: presence\ndata: ${JSON.stringify(pres("box", "offline"))}\n\n`,
+        );
+      }
+      await reader.cancel();
+      await reader2.cancel();
+      const lines = () => (log as any).subs.size as number;
+      await gone(rec.count, presence.count, lines);
+      expect([rec.count(), presence.count(), lines()]).toEqual([0, 0, 0]);
+    });
+
+    test(`${url}: without updateLog and presence the snapshot has empty logs and presence`, async () => {
+      const r = await mk(fakeRecord(), undefined, withCli).request(url, { headers: hdr() });
+      const reader = r.body!.getReader();
+      expect(await readUntil(reader, /\n\n/)).toBe(`event: snapshot\ndata: ${JSON.stringify({ updates: [], logs: {}, presence: [] })}\n\n`);
+      await reader.cancel();
+    });
+
+    test(`${url}: a keepalive comment arrives on the interval`, async () => {
+      const r = await mk(fakeRecord([entry("nas")]), 20, withCli).request(url, { headers: hdr() });
+      const reader = r.body!.getReader();
+      const text = await readUntil(reader, /: keepalive\n\n/);
+      expect(text).toStartWith(`event: snapshot\ndata: ${JSON.stringify({ updates: [entry("nas")], logs: {}, presence: [] })}\n\n`);
+      await reader.cancel();
+    });
+
+    test(`${url}: without a login it is 401`, async () => {
+      expect((await mk(fakeRecord(), undefined, withCli).request(url)).status).toBe(401);
+    });
+
+    test(`${url}: 501 without an update record`, async () => {
+      expect((await mk(undefined, undefined, withCli).request(url, { headers: hdr() })).status).toBe(501);
+    });
+  }
+
+  test("GET /api/updates without a session is rejected", async () => {
+    expect((await mk(fakeRecord()).request("/api/updates")).status).toBe(401);
   });
 
-  test("events: a keepalive comment arrives on the interval", async () => {
-    const rec = fakeRecord([entry("nas")]);
-    const r = await mk(rec, 20).request("/api/events", { headers: H() });
-    const reader = r.body!.getReader();
-    const text = await readUntil(reader, /: keepalive\n\n/);
-    expect(text).toStartWith(`event: snapshot\ndata: ${JSON.stringify([entry("nas")])}\n\n`);
-    await reader.cancel();
-  });
-
-  test("without a session both are rejected", async () => {
-    const app = mk(fakeRecord());
-    expect((await app.request("/api/updates")).status).toBe(401);
-    expect((await app.request("/api/events")).status).toBe(401);
-  });
-
-  test("501 without an update record", async () => {
+  test("501 without an update record for /api/updates", async () => {
     expect((await mk().request("/api/updates", { headers: H() })).status).toBe(501);
-    expect((await mk().request("/api/events", { headers: H() })).status).toBe(501);
   });
 });
