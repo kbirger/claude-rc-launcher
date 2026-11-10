@@ -28,6 +28,9 @@ const FILE_SHARE_READ_WRITE = 0x3;
 const OPEN_ALWAYS = 4;
 const OPEN_EXISTING = 3;
 const STARTF_USESTDHANDLES = 0x100;
+const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x20002;
+const WAIT_TIMEOUT = 0x102;
 const CREATE_UNICODE_ENVIRONMENT = 0x400;
 const CREATE_NO_WINDOW = 0x08000000;
 const WAIT_OBJECT_0 = 0;
@@ -43,6 +46,9 @@ function load() {
     GetExitCodeProcess: { args: ["u64", "ptr"], returns: "i32" },
     GetLastError: { args: [], returns: "u32" },
     LocalFree: { args: ["u64"], returns: "u64" },
+    InitializeProcThreadAttributeList: { args: ["ptr", "u32", "u32", "ptr"], returns: "i32" },
+    UpdateProcThreadAttribute: { args: ["ptr", "u32", "u64", "ptr", "u64", "ptr", "ptr"], returns: "i32" },
+    DeleteProcThreadAttributeList: { args: ["ptr"], returns: "void" },
     CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "u64"], returns: "u64" },
   }).symbols;
   const adv = dlopen("advapi32.dll", {
@@ -88,7 +94,8 @@ export function serviceIsAdmin(): boolean {
   try {
     const { k32, adv } = api();
     const psid = new BigUint64Array(1);
-    if (!adv.ConvertStringSidToSidW(ptr(wide("S-1-5-32-544")), ptr(psid))) return false;
+    const sidStr = wide("S-1-5-32-544");
+    if (!adv.ConvertStringSidToSidW(ptr(sidStr), ptr(psid))) return false;
     try {
       const member = new Uint32Array(1);
       if (!adv.CheckTokenMembership(0n, psid[0]!, ptr(member))) return false;
@@ -111,7 +118,8 @@ function buildToken(): bigint {
   };
   const sid = (s: string): bigint => {
     const p = new BigUint64Array(1);
-    if (!adv.ConvertStringSidToSidW(ptr(wide(s)), ptr(p))) fail(`ConvertStringSidToSidW ${s}`);
+    const sw = wide(s);
+    if (!adv.ConvertStringSidToSidW(ptr(sw), ptr(p))) fail(`ConvertStringSidToSidW ${s}`);
     frees.push(p[0]!);
     return p[0]!;
   };
@@ -201,27 +209,46 @@ export function restrictedSpawn(): WinDeps["spawn"] {
         const sa = Buffer.alloc(24); // SECURITY_ATTRIBUTES: nLength, lpSecurityDescriptor, bInheritHandle
         sa.writeUInt32LE(24, 0);
         sa.writeUInt32LE(1, 16);
-        const hIn = k32.CreateFileW(ptr(wide("NUL")), GENERIC_READ, FILE_SHARE_READ_WRITE, ptr(sa), OPEN_EXISTING, 0, 0n);
+        const nulW = wide("NUL");
+        const hIn = k32.CreateFileW(ptr(nulW), GENERIC_READ, FILE_SHARE_READ_WRITE, ptr(sa), OPEN_EXISTING, 0, 0n);
         if (hIn === INVALID_HANDLE || hIn === 0n) throw new Error(`cannot open NUL (error ${k32.GetLastError()})`);
         opened.push(hIn);
-        const hOut = k32.CreateFileW(ptr(wide(logFile)), FILE_APPEND_DATA, FILE_SHARE_READ_WRITE, ptr(sa), OPEN_ALWAYS, 0, 0n);
+        const logW = wide(logFile);
+        const hOut = k32.CreateFileW(ptr(logW), FILE_APPEND_DATA, FILE_SHARE_READ_WRITE, ptr(sa), OPEN_ALWAYS, 0, 0n);
         if (hOut === INVALID_HANDLE || hOut === 0n) throw new Error(`cannot open log file ${logFile} (error ${k32.GetLastError()})`);
         opened.push(hOut);
 
-        const si = Buffer.alloc(104); // STARTUPINFOW
-        si.writeUInt32LE(104, 0);
-        si.writeUInt32LE(STARTF_USESTDHANDLES, 60);
-        si.writeBigUInt64LE(hIn, 80);
-        si.writeBigUInt64LE(hOut, 88);
-        si.writeBigUInt64LE(hOut, 96);
-        const pi = Buffer.alloc(24); // PROCESS_INFORMATION: hProcess, hThread, dwProcessId, dwThreadId
-        const cmdline = wide([cmd, ...args].map(quoteArg).join(" "));
-        const cwdW = wide(cwd);
-        const ok = adv.CreateProcessAsUserW(
-          token, null, ptr(cmdline), null, null, 1,
-          CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, env, ptr(cwdW), ptr(si), ptr(pi),
-        );
-        if (!ok) throw new Error(`CreateProcessAsUserW failed for ${cmd} (error ${k32.GetLastError()})`);
+        // Only hIn and hOut are inherited: an explicit handle list, not every inheritable handle of the service.
+        const handles = new BigUint64Array([hIn, hOut]);
+        const need = new BigUint64Array(1);
+        k32.InitializeProcThreadAttributeList(null, 1, 0, ptr(need)); // fails by design and reports the size
+        const attrs = Buffer.alloc(Number(need[0]!));
+        if (!need[0] || !k32.InitializeProcThreadAttributeList(ptr(attrs), 1, 0, ptr(need))) {
+          throw new Error(`InitializeProcThreadAttributeList failed (error ${k32.GetLastError()})`);
+        }
+        let pi: Buffer;
+        try {
+          if (!k32.UpdateProcThreadAttribute(ptr(attrs), 0, BigInt(PROC_THREAD_ATTRIBUTE_HANDLE_LIST), ptr(handles), 16n, null, null)) {
+            throw new Error(`UpdateProcThreadAttribute failed (error ${k32.GetLastError()})`);
+          }
+          const si = Buffer.alloc(112); // STARTUPINFOEXW: STARTUPINFOW (104) + lpAttributeList
+          si.writeUInt32LE(112, 0);
+          si.writeUInt32LE(STARTF_USESTDHANDLES, 60);
+          si.writeBigUInt64LE(hIn, 80);
+          si.writeBigUInt64LE(hOut, 88);
+          si.writeBigUInt64LE(hOut, 96);
+          si.writeBigUInt64LE(BigInt(ptr(attrs)), 104);
+          pi = Buffer.alloc(24); // PROCESS_INFORMATION: hProcess, hThread, dwProcessId, dwThreadId
+          const cmdline = wide([cmd, ...args].map(quoteArg).join(" "));
+          const cwdW = wide(cwd);
+          const ok = adv.CreateProcessAsUserW(
+            token, null, ptr(cmdline), null, null, 1,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, env, ptr(cwdW), ptr(si), ptr(pi),
+          );
+          if (!ok) throw new Error(`CreateProcessAsUserW failed for ${cmd} (error ${k32.GetLastError()})`);
+        } finally {
+          k32.DeleteProcThreadAttributeList(ptr(attrs));
+        }
         const hp = pi.readBigUInt64LE(0);
         k32.CloseHandle(pi.readBigUInt64LE(8));
         const pid = pi.readUInt32LE(16);
@@ -229,11 +256,12 @@ export function restrictedSpawn(): WinDeps["spawn"] {
         const exited = new Promise<number>((resolve) => {
           const code = new Uint32Array(1);
           const tick = () => {
-            if (k32.WaitForSingleObject(hp, 0) === WAIT_OBJECT_0) {
-              k32.GetExitCodeProcess(hp, ptr(code));
-              k32.CloseHandle(hp);
-              resolve(code[0]!);
-            } else setTimeout(tick, POLL_MS);
+            const w = k32.WaitForSingleObject(hp, 0);
+            if (w === WAIT_TIMEOUT) return void setTimeout(tick, POLL_MS);
+            // Signaled: read the exit code. Any other result (WAIT_FAILED) ends the polling with -1.
+            const got = w === WAIT_OBJECT_0 && k32.GetExitCodeProcess(hp, ptr(code));
+            k32.CloseHandle(hp);
+            resolve(got ? code[0]! : -1);
           };
           setTimeout(tick, POLL_MS);
         });
