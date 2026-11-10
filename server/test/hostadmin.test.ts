@@ -33,7 +33,7 @@ async function setup(o: { secret?: string; peek?: typeof peekCertificate } = {})
   const node = await startNode();
   const stateDir = tmp();
   const makeClient = (h: HostConfig): HostClient => createHostClient(h, secretAuthorizer(o.secret ?? node.secret));
-  const registry = await HostRegistry.load({ stateDir, hosts: [staticHost], clients: new Map([["nas", { call: async () => ({ status: 200, body: {} }) }]]), makeClient });
+  const registry = await HostRegistry.load({ stateDir, hosts: [staticHost], clients: new Map([["nas", { stream: async () => { throw new Error("unused"); }, call: async () => ({ status: 200, body: {} }) }]]), makeClient });
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.set("user" as never, { sub: "u1", name: "Ann", username: "kir" } as never);

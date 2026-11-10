@@ -8,7 +8,7 @@ import { certFingerprint } from "../src/hubproof";
 import { ensureNodeCert } from "../src/tls";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-reg-"));
-const client = (): HostClient => ({ call: async () => ({ status: 200, body: {} }) });
+const client = (): HostClient => ({ stream: async () => { throw new Error("unused"); }, call: async () => ({ status: 200, body: {} }) });
 const PEM = (await ensureNodeCert({ dir: tmp(), names: ["localhost"] })).certPem;
 const host = (id: string, over: Partial<HostConfig> = {}): HostConfig => ({
   id, name: id.toUpperCase(), url: "https://10.0.0.5:8443", ca: PEM, auth: { type: "hub_key" }, ...over,

@@ -1,3 +1,4 @@
+import { readSse, type SseEvent } from "./ssereader";
 import { certFingerprint, signProof, type HubKey, type ProofRequest } from "./hubproof";
 
 export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
@@ -21,6 +22,11 @@ export interface HostClient {
     path: string,
     o?: { query?: Record<string, string>; json?: unknown; timeoutMs?: number },
   ): Promise<{ status: number; body: unknown }>;
+  /**
+   * Opens `GET <path>` as an event stream. No body timeout. Aborting `signal` ends the iteration without an error.
+   * Breaking out of the loop closes the connection.
+   */
+  stream(path: string, o?: { signal?: AbortSignal }): Promise<AsyncIterable<SseEvent>>;
 }
 
 /** Returns the full `Authorization` header value for one exact request. */
@@ -138,6 +144,46 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
       } catch {
         return fail("bad response", "non-JSON body");
       }
+    },
+    async stream(path, opts = {}) {
+      const url = new URL(path, host.url);
+      const headers: Record<string, string> = { accept: "text/event-stream" };
+      try {
+        headers.authorization = await authorize({ method: "GET", pathAndQuery: url.pathname + url.search, body: "" });
+      } catch (e) {
+        return fail("rejected our credentials", e);
+      }
+      let res: Response;
+      try {
+        res = await doFetch(url, {
+          method: "GET",
+          headers,
+          redirect: "manual",
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          tls: { ca: host.ca, ...(host.serverName ? { serverName: host.serverName } : {}) },
+        } as RequestInit);
+      } catch (e) {
+        return fail(classify(e), e);
+      }
+      const drop = () => void res.body?.cancel().catch(() => {});
+      if (res.status === 401) {
+        drop();
+        return fail("rejected our credentials");
+      }
+      const media = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+      if (res.status !== 200 || media !== "text/event-stream" || !res.body) {
+        drop();
+        return fail("bad response", `status ${res.status}, content-type ${media || "none"}`);
+      }
+      const body = res.body;
+      return (async function* () {
+        try {
+          yield* readSse(body);
+        } catch (e) {
+          if (opts.signal?.aborted) return;
+          return fail("bad response", e);
+        }
+      })();
     },
   };
 }
