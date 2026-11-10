@@ -647,6 +647,9 @@ describe("GET /api/updates and /api/events", () => {
     expect(r.headers.get("content-type")).toContain("text/event-stream");
     expect(r.headers.get("cache-control")).toBe("no-cache");
     expect(r.headers.get("content-encoding")).toBeNull();
+    // HTTP/2 forbids connection-specific headers. A proxy that forwards them makes a browser fail with ERR_HTTP2_PROTOCOL_ERROR.
+    expect(r.headers.get("transfer-encoding")).toBeNull();
+    expect(r.headers.get("connection")).toBeNull();
     const reader = r.body!.getReader();
     expect(await readUntil(reader, /\n\n/)).toBe("event: snapshot\ndata: []\n\n");
     expect(rec.count()).toBe(1);

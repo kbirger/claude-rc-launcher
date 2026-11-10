@@ -241,7 +241,7 @@ export function createApp(deps: Deps): Hono {
     const record = deps.updates;
     if (!record) return c.json({ error: "update record not available" }, 501);
     const keepaliveMs = deps.keepaliveMs ?? 15_000;
-    return streamSSE(c, async (stream) => {
+    const res = streamSSE(c, async (stream) => {
       // Listen before reading the list so a change in between is not lost (a duplicate is fine: the client replaces by host).
       const unsubscribe = record.onChange((e) => void stream.writeSSE({ event: "update", data: JSON.stringify(e) }).catch(() => {}));
       const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
@@ -260,6 +260,11 @@ export function createApp(deps: Deps): Hono {
         unsubscribe();
       }
     });
+    // Hono adds these two headers. HTTP/2 forbids them, and a proxy that forwards them to a browser causes ERR_HTTP2_PROTOCOL_ERROR.
+    // Bun frames the body itself, so the response needs neither.
+    res.headers.delete("Transfer-Encoding");
+    res.headers.delete("Connection");
+    return res;
   });
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
