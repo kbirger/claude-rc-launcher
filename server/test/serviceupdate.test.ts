@@ -687,8 +687,7 @@ describe("createServiceUpdater hooks", () => {
     const m = fakeMachine({ service: "service 2.0.0", overrides: { version: "2.0.0" } });
     const h = rec();
     await createServiceUpdater(m.env, h.hooks).run();
-    expect(h.steps[0]).toEqual({ step: "downloading" });
-    expect(h.steps.at(-1)).toEqual({ step: "up-to-date" });
+    expect(h.steps).toEqual([{ step: "downloading" }, { step: "verifying" }, { step: "up-to-date" }]);
   });
 
   test("a failed download is the step failed and a line with the same text", async () => {
@@ -704,6 +703,7 @@ describe("createServiceUpdater hooks", () => {
     const m = fakeMachine({ release: { service: "broken", client: "client 2.0.0" } });
     const h = rec();
     const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing", "failed"]);
     expect(h.steps.at(-1)).toEqual({ step: "failed", detail: r.error });
     expect(h.lines.at(-1)).toBe(r.error!);
   });
@@ -715,6 +715,7 @@ describe("createServiceUpdater hooks", () => {
     const h = rec();
     const r = await createServiceUpdater(m.env, h.hooks).run();
     expect(r.status).toBe("failed");
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing", "failed"]);
     expect(h.steps.at(-1)).toEqual({ step: "failed", detail: r.error });
     expect(h.lines.at(-1)).toBe(r.error!);
   });
@@ -726,5 +727,113 @@ describe("createServiceUpdater hooks", () => {
     expect(r.status).toBe("restarting");
     expect(h.steps.map((s) => s.step)).toEqual(["downloading", "verifying", "installing-client", "installing", "restarting"]);
     expect(h.lines.some((l) => l.includes(CL) && l.includes("--version"))).toBe(true);
+  });
+});
+
+describe("createServiceUpdater hook safety and edge steps", () => {
+  type Step = { step: string; to?: string; client?: string; detail?: string };
+  const rec = () => {
+    const steps: Step[] = [];
+    const lines: string[] = [];
+    return { steps, lines, hooks: { onStep: (e: Step) => void steps.push(e), onLog: (l: string) => void lines.push(l) } };
+  };
+  const CL = "/usr/local/bin/claude-rc";
+  const bad = {
+    onStep() {
+      throw new Error("step hook");
+    },
+    onLog() {
+      throw new Error("log hook");
+    },
+  };
+
+  test("hooks that throw change nothing: restarting, failed, and the lock is released", async () => {
+    const m = fakeMachine({ clients: { [CL]: "client 1.0.0" } });
+    const r = await createServiceUpdater(m.env, bad).run();
+    expect(r.status).toBe("restarting");
+    expect(m.scripts).toHaveLength(1);
+    expect(r.clients[0]!.status).toBe("updated");
+
+    const f = fakeMachine({ release: { service: "broken", client: "client 2.0.0" } });
+    const u = createServiceUpdater(f.env, bad);
+    expect((await u.run()).status).toBe("failed");
+    expect((await u.run()).status).toBe("failed"); // not refused as busy
+  });
+
+  test("a non-refusal exception emits failed and is rethrown", async () => {
+    const m = fakeMachine();
+    const h = rec();
+    const rf = m.env.readFile;
+    m.env.readFile = (p) => {
+      if (p === BIN) throw new Error("disk gone");
+      return rf(p);
+    };
+    await expect(createServiceUpdater(m.env, h.hooks).run()).rejects.toThrow("disk gone");
+    expect(h.steps.at(-1)).toEqual({ step: "failed", detail: "disk gone" });
+    expect(h.lines.at(-1)).toBe("disk gone");
+  });
+
+  test("a refusal and a busy run emit nothing", async () => {
+    const h = rec();
+    const m = fakeMachine({ overrides: { platform: "darwin" } });
+    await refused(createServiceUpdater(m.env, h.hooks).run());
+    const ok = fakeMachine();
+    const u = createServiceUpdater(ok.env, h.hooks);
+    await u.run();
+    const n = h.steps.length;
+    await refused(u.run()); // busy: the first run restarts and keeps the lock
+    expect(h.steps.length).toBe(n);
+    const h2 = rec();
+    await refused(createServiceUpdater(fakeMachine().env, h2.hooks).run("bad"));
+    expect(h2.steps).toEqual([]);
+    expect(h2.lines).toEqual([]);
+  });
+
+  test("clients-only ends with the step up-to-date", async () => {
+    const m = fakeMachine({ service: "service 2.0.0", clients: { [CL]: "client 1.0.0" }, overrides: { version: "2.0.0" } });
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(r.status).toBe("clients-only");
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing-client", "up-to-date"]);
+    expect(h.lines).toContain(`renamed the old client ${CL} to claude-rc.prev`);
+    expect(h.lines).toContain(`new client ${CL} answers 2.0.0`);
+  });
+
+  test("the service is current and a client fails: the run ends failed", async () => {
+    const m = fakeMachine({
+      service: "service 2.0.0",
+      clients: { [CL]: "client 1.0.0" },
+      release: { service: "service 2.0.0", client: "broken" },
+      overrides: { version: "2.0.0" },
+    });
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing-client", "failed"]);
+    expect(h.steps.at(-1)!.detail).toBe(r.error!);
+  });
+
+  test("a refused client write is logged and the run goes on", async () => {
+    const m = fakeMachine({ clients: { [CL]: "client 1.0.0" } });
+    const run = m.env.run.bind(m.env);
+    m.env.run = (args, o) => (args[0] === "install" && args[4] === `${CL}.new` ? { code: 1, stdout: "", stderr: "EACCES" } : run(args, o));
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(r.status).toBe("restarting");
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing-client", "installing", "restarting"]);
+    expect(h.lines.some((l) => l.includes(CL) && l.includes("EACCES"))).toBe(true);
+  });
+
+  test("a line is cut at 500 characters", async () => {
+    const long = "a".repeat(600);
+    const h = rec();
+    const mm = fakeMachine({ overrides: { arch: "x64" } });
+    mm.env.fetch = (async () => {
+      throw new Error(long);
+    }) as unknown as typeof fetch;
+    await createServiceUpdater(mm.env, h.hooks).run();
+    const last = h.lines.at(-1)!;
+    expect(last.length).toBe(500);
+    expect(last.endsWith("...")).toBe(true);
   });
 });

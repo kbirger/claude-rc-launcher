@@ -65,8 +65,20 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createWindowsUpdater(env: WinUpdateEnv, hooks: UpdateHooks = {}): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
   const exe = env.execPath;
-  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => hooks.onStep?.(s);
-  const log = (l: string) => hooks.onLog?.(l);
+  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => {
+    try {
+      hooks.onStep?.(s);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
+  const log = (l: string) => {
+    try {
+      hooks.onLog?.(l.length > 500 ? `${l.slice(0, 497)}...` : l);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
 
   const refuseUnlessInstalled = () => {
     if (env.platform !== "win32") throw new UpdateRefused(409, `the Windows update works on Windows only (this is ${env.platform})`);
@@ -110,6 +122,7 @@ export function createWindowsUpdater(env: WinUpdateEnv, hooks: UpdateHooks = {})
       env.writeFile(fresh, binary);
       const to = env.versionOf(fresh, CLIENT_PREFIX);
       if (to === undefined) return fail("the new client did not answer --version. Nothing was installed");
+      log(`new client ${p} answers ${to}`);
       env.rename(p, prev);
       try {
         env.rename(fresh, p);
@@ -122,7 +135,7 @@ export function createWindowsUpdater(env: WinUpdateEnv, hooks: UpdateHooks = {})
         }
         return fail(`installing the new client failed: ${message(e)}. ${restored ? "The previous client is in place" : `${prev} could not be put back`}`);
       }
-      log(`renamed the old client to ${win32.basename(p)}.prev`);
+      log(`renamed the old client ${p} to ${win32.basename(p)}.prev`);
       return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
     } catch (e) {
       return fail(message(e));

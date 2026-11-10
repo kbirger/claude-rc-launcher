@@ -241,8 +241,20 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createServiceUpdater(env: UpdateEnv, hooks: UpdateHooks = {}): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
 
-  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => hooks.onStep?.(s);
-  const log = (l: string) => hooks.onLog?.(l);
+  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => {
+    try {
+      hooks.onStep?.(s);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
+  const log = (l: string) => {
+    try {
+      hooks.onLog?.(l.length > 500 ? `${l.slice(0, 497)}...` : l);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
 
   const versionOf = (p: string, prefix: string) => binaryVersion(env, p, prefix);
 
@@ -263,10 +275,10 @@ export function createServiceUpdater(env: UpdateEnv, hooks: UpdateHooks = {}): {
       }
       const from = versionOf(p, CLIENT);
       installWithBackup(env, p, binary);
-      log(`renamed the old binary to ${path.basename(p)}.prev`);
+      log(`renamed the old client ${p} to ${path.basename(p)}.prev`);
       const to = versionOf(p, CLIENT);
       if (to !== undefined) {
-        log(`new client answers ${to}`);
+        log(`new client ${p} answers ${to}`);
         return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
       }
       const restored = restorePrevious(env, p);

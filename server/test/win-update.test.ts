@@ -468,6 +468,7 @@ describe("windows updater hooks", () => {
     publish("NEW", null);
     const h = rec();
     const r = await createWindowsUpdater(env(), h.hooks).run();
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing", "failed"]);
     expect(h.steps.at(-1)).toEqual({ step: "failed", detail: r.error });
     expect(h.lines.at(-1)).toBe(r.error!);
   });
@@ -477,6 +478,7 @@ describe("windows updater hooks", () => {
     const h = rec();
     const r = await createWindowsUpdater(env(), h.hooks).run();
     expect(r.status).toBe("failed");
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing", "failed"]);
     expect(h.steps.at(-1)).toEqual({ step: "failed", detail: r.error });
     expect(h.lines.at(-1)).toBe(r.error!);
   });
@@ -490,5 +492,92 @@ describe("windows updater hooks", () => {
     expect(r.status).toBe("restarting");
     expect(h.steps.map((s) => s.step)).toEqual(["downloading", "verifying", "installing-client", "installing", "restarting"]);
     expect(h.lines.some((l) => l.includes(CL) && l.includes("EACCES"))).toBe(true);
+  });
+});
+
+describe("windows updater hook safety and edge steps", () => {
+  type Step = { step: string; to?: string; client?: string; detail?: string };
+  const rec = () => {
+    const steps: Step[] = [];
+    const lines: string[] = [];
+    return { steps, lines, hooks: { onStep: (e: Step) => void steps.push(e), onLog: (l: string) => void lines.push(l) } };
+  };
+  const CL = "C:\\Tools\\claude-rc.exe";
+  const bad = {
+    onStep() {
+      throw new Error("step hook");
+    },
+    onLog() {
+      throw new Error("log hook");
+    },
+  };
+
+  test("hooks that throw change nothing: restarting, failed, and the lock is released", async () => {
+    files.set(CL, enc("OLDCLIENT"));
+    clientPaths = [CL];
+    const r = await createWindowsUpdater(env(), bad).run();
+    expect(r.status).toBe("restarting");
+    expect(r.clients[0]!.status).toBe("updated");
+    expect(exits).toBe(1);
+
+    files = new Map([[EXE, enc("OLD")], [WRAPPER, enc("WINSW")]]);
+    clientPaths = [];
+    publish("NEW", null);
+    const u = createWindowsUpdater(env(), bad);
+    expect((await u.run()).status).toBe("failed");
+    expect((await u.run()).status).toBe("failed"); // not refused as busy
+  });
+
+  test("a non-refusal exception emits failed and is rethrown", async () => {
+    const h = rec();
+    await expect(createWindowsUpdater(env({ readFile: () => { throw new Error("disk gone"); } }), h.hooks).run()).rejects.toThrow("disk gone");
+    expect(h.steps.at(-1)).toEqual({ step: "failed", detail: "disk gone" });
+    expect(h.lines.at(-1)).toBe("disk gone");
+  });
+
+  test("a refusal and a busy run emit nothing", async () => {
+    const h = rec();
+    await expect(createWindowsUpdater(env({ platform: "linux" }), h.hooks).run()).rejects.toBeInstanceOf(UpdateRefused);
+    await expect(createWindowsUpdater(env(), h.hooks).run("latest")).rejects.toBeInstanceOf(UpdateRefused);
+    expect(h.steps).toEqual([]);
+    expect(h.lines).toEqual([]);
+    const u = createWindowsUpdater(env(), h.hooks);
+    await u.run();
+    const n = h.steps.length;
+    await expect(u.run()).rejects.toBeInstanceOf(UpdateRefused);
+    expect(h.steps.length).toBe(n);
+  });
+
+  test("clients-only ends with the step up-to-date, with the client lines", async () => {
+    publish("OLD");
+    files.set(CL, enc("OLDCLIENT"));
+    clientPaths = [CL];
+    const h = rec();
+    const r = await createWindowsUpdater(env(), h.hooks).run();
+    expect(r.status).toBe("clients-only");
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing-client", "up-to-date"]);
+    expect(h.lines).toContain(`new client ${CL} answers 0.5.1`);
+    expect(h.lines).toContain(`renamed the old client ${CL} to claude-rc.exe.prev`);
+  });
+
+  test("the service is current and a client fails: the run ends failed", async () => {
+    publish("OLD");
+    files.set(CL, enc("OLDCLIENT"));
+    clientPaths = [CL];
+    failWrite = (p) => p === `${CL}.new`;
+    const h = rec();
+    const r = await createWindowsUpdater(env(), h.hooks).run();
+    expect(r.status).toBe("failed");
+    expect(h.steps.map((x) => x.step)).toEqual(["downloading", "verifying", "installing-client", "failed"]);
+    expect(h.steps.at(-1)!.detail).toBe(r.error!);
+  });
+
+  test("a line is cut at 500 characters", async () => {
+    const h = rec();
+    const long = "a".repeat(600);
+    await createWindowsUpdater(env({ fetch: (async () => { throw new Error(long); }) as unknown as typeof fetch }), h.hooks).run();
+    const last = h.lines.at(-1)!;
+    expect(last.length).toBe(500);
+    expect(last.endsWith("...")).toBe(true);
   });
 });
