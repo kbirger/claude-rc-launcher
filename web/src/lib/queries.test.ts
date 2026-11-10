@@ -18,3 +18,9 @@ test("the log history is never garbage-collected (no observer holds it while the
   expect(logsQuery().gcTime).toBe(Infinity);
   expect(logsQuery().enabled).toBe(false);
 });
+
+test("the latest query asks again every 30 seconds after an error, and never otherwise", () => {
+  const f = latestQuery().refetchInterval;
+  expect(f({ state: { status: "error" } })).toBe(30_000);
+  expect(f({ state: { status: "success" } })).toBe(false);
+});

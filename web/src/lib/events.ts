@@ -78,6 +78,7 @@ export function connectEvents(o: {
         void o.client.invalidateQueries({ queryKey: ["updates"] });
         void o.client.invalidateQueries({ queryKey: ["hosts"] });
         void o.client.invalidateQueries({ queryKey: ["history"] });
+        void o.client.invalidateQueries({ queryKey: ["latest"] });
       }
     });
     s.addEventListener("snapshot", (e) => {

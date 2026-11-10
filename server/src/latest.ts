@@ -18,7 +18,7 @@ export const DEFAULT_TTL_MS = 300_000;
  * serves the last good value and does not call again for `failBackoffMs`; it throws `LatestError` only when
  * there is no value.
  */
-export function createLatestRelease(o: { fetch: typeof fetch; now?: () => number; ttlMs?: number; failBackoffMs?: number }) {
+export function createLatestRelease(o: { fetch: typeof fetch; now?: () => number; ttlMs?: number; failBackoffMs?: number; onError?: (message: string) => void }) {
   const now = o.now ?? Date.now;
   const ttlMs = o.ttlMs ?? DEFAULT_TTL_MS;
   const failBackoffMs = o.failBackoffMs ?? 60_000;
@@ -61,6 +61,11 @@ export function createLatestRelease(o: { fetch: typeof fetch; now?: () => number
       return await load();
     } catch (e) {
       failure = { error: e instanceof LatestError ? e : new LatestError(String(e)), at: now() };
+      try {
+        o.onError?.(failure.error.message);
+      } catch {
+        // a broken logger must not change the answer
+      }
       return stale();
     } finally {
       inflight = undefined;

@@ -115,3 +115,19 @@ describe("createLatestRelease", () => {
     await expect(l.get()).rejects.toBeInstanceOf(LatestError);
   });
 });
+
+describe("onError", () => {
+  test("reports each failed read with its message and still answers from the cache", async () => {
+    const seen: string[] = [];
+    let n = 0;
+    const l = createLatestRelease({
+      fetch: (async () => (n++ === 0 ? new Response(JSON.stringify({ tag_name: "v1.0.0" })) : new Response("no", { status: 500 }))) as unknown as typeof fetch,
+      ttlMs: 0,
+      failBackoffMs: 0,
+      onError: (m) => seen.push(m),
+    });
+    expect((await l.get()).version).toBe("1.0.0");
+    expect((await l.get()).version).toBe("1.0.0");
+    expect(seen).toEqual(["GitHub answered 500"]);
+  });
+});

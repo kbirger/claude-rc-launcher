@@ -331,7 +331,7 @@ describe("console lines and re-sync", () => {
     first.readyState = 2;
     first.emit("error");
     FakeES.all[1]!.emit("open");
-    expect(invalidated).toEqual([["updates"], ["hosts"], ["history"]]);
+    expect(invalidated).toEqual([["updates"], ["hosts"], ["history"], ["latest"]]);
   });
 
   test("a finished update re-reads the history, a step does not", () => {
