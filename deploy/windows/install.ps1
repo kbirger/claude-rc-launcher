@@ -187,30 +187,68 @@ function Get-ClientSource([string]$TempDir) {
   $path
 }
 
+# $true when the folder or file is a reparse point (a junction or symbolic link): it is never followed.
+function Test-ReparsePoint([string]$Path) {
+  [bool]((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+# $true when SYSTEM or the Administrators group owns the path. A standard user can create folders in ProgramData and
+# then owns them, which lets that user change the ACL later.
+function Test-TrustedOwner([string]$Path) {
+  $sid = (Get-Acl -LiteralPath $Path).GetOwner([System.Security.Principal.SecurityIdentifier])
+  @('S-1-5-32-544', 'S-1-5-18') -contains $sid.Value
+}
+
+function Set-AdminOwner([string]$Path) {
+  & icacls.exe $Path /setowner '*S-1-5-32-544' | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls /setowner failed on $Path" }
+}
+
 # Adds "client <path>" to the registry file the node reads (once). The registry has a folder of its own, like ClientDir,
 # because the service account can write the data folder: only SYSTEM and Administrators may change this folder and
-# file, and Users may read them (they hold no secret). The node runs the programs the file lists.
+# file, and Users may read them (they hold no secret). The node runs the programs the file lists, and on Windows it
+# does not check the ACL, so this function must make sure that administrators own the folder and the file.
+# A folder or file that someone else owns is taken over and its content is discarded. A reparse point is skipped.
 # A failure here is a warning: the client is installed and the node still finds it by scanning.
 function Register-Client([string]$ClientPath) {
   $file = Join-Path $RegistryDir 'installs'
   $line = "client $ClientPath"
   $createdFile = $false
-  # The folder is locked to administrators, so it must not be a folder the service account has to write.
-  $regFull = [IO.Path]::GetFullPath($RegistryDir).TrimEnd('\')
-  foreach ($own in @($DataDir, $InstallDir, $ClientDir)) {
-    if ($regFull -ieq [IO.Path]::GetFullPath($own).TrimEnd('\')) {
-      Write-Warning "the client registry was not written: -RegistryDir ($RegistryDir) must be a folder of its own, not $own"
-      return
-    }
-  }
   try {
+    # The folder is locked to administrators, so it must not be a folder the service account has to write.
+    $regFull = [IO.Path]::GetFullPath($RegistryDir).TrimEnd('\')
+    foreach ($own in @($DataDir, $InstallDir, $ClientDir)) {
+      if ($regFull -ieq [IO.Path]::GetFullPath($own).TrimEnd('\')) {
+        Write-Warning "the client registry was not written: -RegistryDir ($RegistryDir) must be a folder of its own, not $own"
+        return
+      }
+    }
+    $untrusted = $false
+    $dirExists = Test-Path -LiteralPath $RegistryDir
+    if ($dirExists) {
+      if (Test-ReparsePoint $RegistryDir) { Write-Warning "the client registry was not written: $RegistryDir is a junction or link"; return }
+      if (-not (Test-TrustedOwner $RegistryDir)) { $untrusted = $true }
+    }
+    $fileExists = $dirExists -and (Test-Path -LiteralPath $file)
+    if ($fileExists) {
+      if (Test-ReparsePoint $file) { Write-Warning "the client registry was not written: $file is a junction or link"; return }
+      if (-not (Test-TrustedOwner $file)) { $untrusted = $true }
+    }
+    if ($untrusted) { Write-Warning "the client registry at $RegistryDir belonged to someone else: it was taken over and its old content was discarded" }
     New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
+    Set-AdminOwner $RegistryDir
     & icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)R' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed on $RegistryDir" }
-    if (-not (Test-Path -LiteralPath $file)) {
+    if ($untrusted -and $fileExists) {
+      # Delete it and start a new file: the old file may still be open for writing in the hands of its owner.
+      Remove-Item -LiteralPath $file -Force
+      $fileExists = $false
+    }
+    if (-not $fileExists) {
       [IO.File]::WriteAllText($file, '', (New-Object Text.UTF8Encoding($false)))
       $createdFile = $true
     }
+    Set-AdminOwner $file
     & icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed on $file" }
     $old = [IO.File]::ReadAllText($file)

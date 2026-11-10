@@ -114,6 +114,38 @@ describe("install.ps1: the client registry (text checks)", () => {
     expect(script).toContain("must be a folder of its own");
   });
 
+  test("a reparse point is skipped with a warning, never followed", () => {
+    expect(script).toContain("(Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint");
+    expect(script).toContain("if (Test-ReparsePoint $RegistryDir) { Write-Warning");
+    expect(script).toContain("if (Test-ReparsePoint $file) { Write-Warning");
+  });
+
+  test("the owner of an existing folder and file must be Administrators or SYSTEM", () => {
+    expect(script).toContain("(Get-Acl -LiteralPath $Path).GetOwner([System.Security.Principal.SecurityIdentifier])");
+    expect(script).toContain("@('S-1-5-32-544', 'S-1-5-18') -contains $sid.Value");
+    expect(script).toContain("if (-not (Test-TrustedOwner $RegistryDir)) { $untrusted = $true }");
+    expect(script).toContain("if (-not (Test-TrustedOwner $file)) { $untrusted = $true }");
+  });
+
+  test("the folder and the file are always owned by Administrators, set before the ACL", () => {
+    expect(script).toContain("& icacls.exe $Path /setowner '*S-1-5-32-544'");
+    expect(script).toContain("icacls /setowner failed on $Path");
+    expect(script).toMatch(/Set-AdminOwner \$RegistryDir\r?\n\s+& icacls\.exe \$RegistryDir \/inheritance:r/);
+    expect(script).toMatch(/Set-AdminOwner \$file\r?\n\s+& icacls\.exe \$file \/inheritance:r/);
+  });
+
+  test("a registry that someone else owned is replaced and its old content is discarded", () => {
+    expect(script).toContain("belonged to someone else: it was taken over and its old content was discarded");
+    expect(script).toContain("if ($untrusted -and $fileExists) {");
+    expect(script).toMatch(/Remove-Item -LiteralPath \$file -Force\r?\n\s+\$fileExists = \$false/);
+  });
+
+  test("the path guard runs inside the try, so a bad path only warns", () => {
+    const fn = script.slice(script.indexOf("function Register-Client"));
+    expect(fn.indexOf("try {")).toBeLessThan(fn.indexOf("[IO.Path]::GetFullPath($RegistryDir)"));
+    expect(fn.indexOf("[IO.Path]::GetFullPath($RegistryDir)")).toBeLessThan(fn.indexOf("} catch {"));
+  });
+
   test("it adds `client <path>` once: a case-insensitive exact-line check, UTF-8 without BOM", () => {
     expect(script).toContain('$line = "client $ClientPath"');
     expect(script).toContain("$_.TrimEnd(\"`r\") -ieq $line");
