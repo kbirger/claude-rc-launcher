@@ -10,7 +10,9 @@ const text = (f: string) => readFileSync(resolve(DEPLOY, f), "utf8").replaceAll(
 // The hash of the files that make up the service definition. When it no longer matches, a file of the definition
 // changed. If an installation that exists must get the change, raise REQUIRED_DEFINITION in src/win/definition.ts
 // and the marker in claude-rc-launcher.xml. In both cases, put the new hash here.
-const DEFINITION_FILES_SHA256 = "7ca5738f86afdee6d062dbc0868956c5db69a6e409f9f5ddb0d2cfadb115767c";
+// (The launcher change that replaced Start-Process by System.Diagnostics.Process fixed a rare lost exit code and did not
+// raise the version: an installation that has the old script works, except for an agent that ends within milliseconds.)
+const DEFINITION_FILES_SHA256 = "be640ab5a4118e80f6166f0e9862d93ed99032d1157055ae34826c60eb9385be";
 
 describe("service definition version", () => {
   test("the marker in the XML template is the version that this release requires", () => {

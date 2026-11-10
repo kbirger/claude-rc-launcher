@@ -62,9 +62,15 @@ if (Test-Path -LiteralPath $pending) {
   }
 }
 
-# Start-Process -NoNewWindow lets the agent use this process's output handles directly, so WinSW's log capture sees the
-# agent's bytes unchanged. Reading .Handle first makes ExitCode reliable in Windows PowerShell 5.1.
-$agent = Start-Process -FilePath $Exe -ArgumentList @('--config', ('"{0}"' -f $Config)) -NoNewWindow -PassThru
-$null = $agent.Handle
+# The agent inherits this process's output handles (UseShellExecute is false and nothing is redirected), so WinSW's log
+# capture sees the agent's bytes unchanged. Start-Process -PassThru is not used: when the agent ends within
+# milliseconds, its ExitCode can come back empty and this script would exit 0, which WinSW does not restart.
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $Exe
+$psi.Arguments = '--config "{0}"' -f $Config
+$psi.UseShellExecute = $false
+$agent = [System.Diagnostics.Process]::Start($psi)
 $agent.WaitForExit()
-exit $agent.ExitCode
+$code = $agent.ExitCode
+if ($null -eq $code) { $code = 1 }
+exit $code
