@@ -1,8 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+// Each test starts PowerShell, which can take longer than the default 5 seconds on a busy runner.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // deploy/windows/install.ps1 only runs on Windows. -NoService puts the files in place. Run these tests in an elevated
 // prompt: the installer sets a restricted ACL on the bin folder, and a non-admin owner then cannot write into it.

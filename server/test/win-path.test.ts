@@ -1,8 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+// Each test starts PowerShell, which can take longer than the default 5 seconds on a busy runner.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // The client install and the PATH update of deploy/windows/install.ps1. Windows only.
 // The machine PATH is never touched: every test gives -PathRegistryKey a throwaway key under HKCU.

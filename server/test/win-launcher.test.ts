@@ -1,8 +1,11 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+// Each test starts PowerShell, which can take longer than the default 5 seconds on a busy runner.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 // deploy/windows/claude-rc-launcher-run.ps1 runs only on Windows. The agent is replaced by two stub programs:
 // "OLD" exits with 0 and "NEW" exits with 7, so the exit code tells which one the launcher started.

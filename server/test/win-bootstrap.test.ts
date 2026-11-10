@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -11,6 +11,8 @@ import { join, resolve } from "node:path";
 const DEPLOY = resolve(import.meta.dir, "../../deploy/windows");
 const SCRIPT = join(DEPLOY, "install.ps1");
 const windows = process.platform === "win32";
+// Each test starts PowerShell, which can take longer than the default 5 seconds on a busy runner (the tests then failed at 5.0 to 5.7 s).
+if (windows) setDefaultTimeout(60_000);
 const SIDE_FILES = ["claude-rc-launcher.xml", "claude-rc-launcher-run.ps1", "node.config.example.toml"];
 
 const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
