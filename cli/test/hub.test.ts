@@ -49,6 +49,22 @@ describe("hubClient.request", () => {
     await c.request("GET", "/cli/api/me");
     expect(renews).toBe(0);
   });
+  test("two calls near expiry share one renewal", async () => {
+    const h = fakeHub(() => json({}));
+    let renews = 0;
+    const renew = async (x: Credentials) => {
+      renews++;
+      await new Promise((r) => setTimeout(r, 20));
+      return { ...x, idToken: "tok2", expiresAt: 9999 };
+    };
+    const c = hubClient({ creds: creds(h.url, { expiresAt: 130 }), save: () => {}, renew, now: () => 100 });
+    const ac = new AbortController();
+    const reading = (async () => { for await (const _ of c.stream("/cli/api/events", { signal: ac.signal })) { /* none */ } })().catch(() => {});
+    await Promise.all([c.request("GET", "/cli/api/me"), c.request("GET", "/cli/api/me")]);
+    ac.abort();
+    await reading;
+    expect(renews).toBe(1);
+  });
   test("a 401 renews once and retries once", async () => {
     const h = fakeHub((_r, n) => (n === 1 ? json({ error: "unauthenticated" }, 401) : json({ ok: true })));
     const c = hubClient({ creds: creds(h.url, { expiresAt: 1000 }), save: () => {}, renew: async (x) => ({ ...x, idToken: "tok2" }), now: () => 0 });

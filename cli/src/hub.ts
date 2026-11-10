@@ -18,7 +18,10 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
   const now = o.now ?? (() => Date.now() / 1000);
   let creds = o.creds;
 
-  const refresh = async () => {
+  // Two calls near expiry share one renewal: the second one waits for the first.
+  let renewing: Promise<void> | undefined;
+  const refresh = (): Promise<void> => (renewing ??= renewOnce().finally(() => (renewing = undefined)));
+  const renewOnce = async () => {
     try {
       creds = await o.renew(creds);
     } catch (e) {

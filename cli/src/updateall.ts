@@ -1,6 +1,6 @@
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
-import { table } from "./format";
+import { sanitizeLine, table } from "./format";
 import { HubError, type HubClient } from "./hub";
 import { realSys, type Sys } from "./nodesetup";
 import { selfUpdate } from "./update";
@@ -107,36 +107,47 @@ async function updateClient(flags: Flags, sys: Sys): Promise<UpdateRow> {
   return { ...row, status: "up-to-date" };
 }
 
-const STREAM_RETRIES = 10;
 const STREAM_WAIT_MS = 2_000;
+const STREAM_READY_MS = 3_000;
 
 /**
- * Prints the `log` events of the hub for the hosts in `ids`, from the moment the stream opens (the snapshot holds
- * older lines and is ignored). A stream that never opened (an older hub, no route) ends the watcher silently. A
- * stream that opened and then ended, as when the hub restarts, is reopened a few times. Errors never escape.
+ * Prints the `log` events of the hub for the machine that `current()` names, from the moment the stream opens (the
+ * snapshot holds older lines and is ignored). A line of another machine, or one that arrives between two machines,
+ * is dropped: it may be a replay after a hub restart or an update started from the web page. A stream that never
+ * opened (an older hub, no route) ends the watcher silently. A stream that opened and then ended, as when the hub
+ * restarts, is reopened until it has been down for as long as the hub poll waits. `ready` runs on the first event
+ * and when the open fails. Errors never escape.
  */
-async function watchLogs(hub: HubClient, sys: Sys, ids: Set<string>, print: (s: string) => void, signal: AbortSignal): Promise<void> {
-  let retries = 0;
+async function watchLogs(hub: HubClient, sys: Sys, current: () => string | undefined, print: (s: string) => void, signal: AbortSignal, ready: () => void): Promise<void> {
+  let downSince: number | undefined;
   let everOpened = false;
-  while (!signal.aborted) {
-    try {
-      for await (const ev of hub.stream("/cli/api/events", { signal })) {
-        if (signal.aborted) return;
-        everOpened = true;
-        retries = 0;
-        if (ev.event !== "log") continue;
-        try {
-          const d = JSON.parse(ev.data) as { host?: unknown; line?: unknown };
-          if (typeof d.host === "string" && typeof d.line === "string" && ids.has(d.host)) print(`[${d.host}] ${d.line}`);
-        } catch {
-          /* a bad event is skipped */
+  try {
+    while (!signal.aborted) {
+      try {
+        for await (const ev of hub.stream("/cli/api/events", { signal })) {
+          if (signal.aborted) return;
+          everOpened = true;
+          downSince = undefined;
+          ready();
+          if (ev.event !== "log") continue;
+          try {
+            const d = JSON.parse(ev.data) as { host?: unknown; line?: unknown };
+            if (typeof d.host === "string" && typeof d.line === "string" && d.host === current()) print(`[${d.host}] ${sanitizeLine(d.line)}`);
+          } catch {
+            /* a bad event is skipped */
+          }
         }
+      } catch {
+        /* handled below */
       }
-    } catch {
-      /* handled below */
+      ready();
+      if (signal.aborted || !everOpened) return;
+      downSince ??= sys.now();
+      if (sys.now() - downSince > POLL_FOR_MS) return;
+      await sys.sleep(STREAM_WAIT_MS);
     }
-    if (signal.aborted || !everOpened || ++retries > STREAM_RETRIES) return;
-    await sys.sleep(STREAM_WAIT_MS);
+  } finally {
+    ready();
   }
 }
 
@@ -154,13 +165,26 @@ export async function updateAll(o: { flags: Flags; hub: HubClient; out: (s: stri
   const local = hosts.find((h) => h.id === "local") ?? { id: "local", name: "local", status: "ok" as const, stale: false };
   const rows: UpdateRow[] = [];
   const stop = new AbortController();
-  const ids = new Set([...hosts.filter((h) => h.id !== "local"), local].filter((h) => h.status === "ok").map((h) => h.id));
   const err = o.err ?? ((s: string) => console.error(s));
   // The watcher never rejects and never changes a result. It is not awaited: it may sleep between two attempts.
-  void watchLogs(hub, sys, ids, flags.json ? err : out, stop.signal).catch(() => {});
+  // Only lines of the machine being updated now are printed. `current` is unset between machines and for the client.
+  let current: string | undefined;
+  let ready!: () => void;
+  const opened = new Promise<void>((res) => (ready = res));
+  void watchLogs(hub, sys, () => current, flags.json ? err : out, stop.signal, ready).catch(() => {});
+  const update = async (h: HostInfo) => {
+    current = h.status === "ok" ? h.id : undefined;
+    try {
+      return await updateHost(hub, sys, h, flags.release, progress);
+    } finally {
+      current = undefined;
+    }
+  };
   try {
-    for (const h of hosts.filter((h) => h.id !== "local")) rows.push(await updateHost(hub, sys, h, flags.release, progress));
-    rows.push(await updateHost(hub, sys, local, flags.release, progress));
+    // The GET is sent but not answered at once: wait for the first event so the first lines are not lost.
+    await Promise.race([opened, sys.sleep(STREAM_READY_MS)]);
+    for (const h of hosts.filter((h) => h.id !== "local")) rows.push(await update(h));
+    rows.push(await update(local));
     progress("updating this client ...");
     rows.push(await updateClient(flags, sys));
   } finally {

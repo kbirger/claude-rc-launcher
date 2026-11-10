@@ -244,7 +244,7 @@ describe("commands", () => {
       "POST /cli/api/hosts/local/update": () => ({ status: "up-to-date", from: "1.0.0", clients: [] }),
     });
     // A source run: the client step fails, so the exit code is 1, but the hub was asked.
-    s.env.sys = { execPath: "/usr/bin/bun", platform: "linux", arch: "x64" } as any;
+    s.env.sys = { execPath: "/usr/bin/bun", platform: "linux", arch: "x64", sleep: async () => {}, now: () => 0 } as any;
     const r = await s.run("update", "--all-nodes", "--release", "v1.2.3");
     expect(r.code).toBe(1);
     expect(s.seen.map((x) => `${x.method} ${x.path}`)).toEqual(["GET /cli/api/hosts", "GET /cli/api/events", "POST /cli/api/hosts/local/update"]);

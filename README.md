@@ -861,18 +861,20 @@ is the machine named `local`. The hub restarts, and the command waits for it to 
 client copy that runs the command. One failed machine does not stop the others.
 
 While the command runs, it shows the live output of each update. Each line starts with the machine name, as in
-`[a] downloading`. The lines come from the hub, in the order it receives them, and only for the machines in this run.
-Lines of an earlier update do not appear. With `--json`, these lines go to standard error and the rows stay on
-standard output. If the hub is too old to send them, the command shows no lines and still updates every machine. When
-the hub restarts for its own update, the command opens the stream again, so the last lines still appear. A problem
+`[a] downloading`. The lines come from the hub, in the order it receives them. The command prints only the lines of the machine
+it is updating at that moment. Lines of an earlier update, of a machine that is not next, or of an update that
+someone started from the web page do not appear. A node can send any text, so the command replaces control
+characters with `?` and cuts each line at 500 characters. With `--json`, these lines go to standard error and the
+rows stay on standard output. If the hub is too old to send them, the command shows no lines and still updates every machine. When
+the hub restarts for its own update, the command opens the stream again for up to 90 seconds, so the last lines still appear. A problem
 with the stream never changes the result or the exit code.
 
 On each machine, the service checks the download against `SHA256SUMS`, keeps the old binary as `.prev` and restarts. A
 watchdog (a small script outside the service) puts the old binary back if the new one does not stay active.
 
 The command prints one table row for each machine. The columns are `MACHINE`, `BEFORE`, `AFTER`, `CLIENTS` and
-`STATUS`. The last row is the client that ran the command. With `--json`, the command prints the rows as JSON and
-no progress lines. The `STATUS` column has one of these values:
+`STATUS`. The last row is the client that ran the command. With `--json`, the command prints the rows as JSON on
+standard output. The live lines go to standard error. The `STATUS` column has one of these values:
 
 - `updated`: the machine now runs a new version. The row appears when the new version first answers. The watchdog can still roll back during the next 30 seconds, so run `claude-rc hosts` or check again if in doubt.
 - `up-to-date`: the machine already ran the release.
