@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { UpdateEntry } from "./api";
-import { followsBottom, panelOpenByDefault, stepIsError, stepText } from "./updateoutput";
+import type { HostInfo } from "./api";
+import { followsBottom, hostOptionLabel, outputSummary, panelOpenByDefault, stepIsError, stepText } from "./updateoutput";
 
 const e = (o: Partial<UpdateEntry> = {}): UpdateEntry => ({ host: "n1", startedAt: "t", startedBy: "u", from: "1.0.0", status: "running", ...o });
 
@@ -28,4 +29,21 @@ test("the panel is open by default only for a running update", () => {
 test("the panel follows new lines only near the bottom", () => {
   expect(followsBottom(80, 20, 100)).toBe(true);
   expect(followsBottom(0, 20, 100)).toBe(false);
+});
+
+test("the summary says line or lines", () => {
+  expect(outputSummary(1)).toBe("Output (1 line)");
+  expect(outputSummary(2)).toBe("Output (2 lines)");
+  expect(outputSummary(200)).toBe("Output (200 lines)");
+});
+
+const h = (o: Partial<HostInfo>): HostInfo => ({ id: "n1", name: "n1", status: "offline", ...o }) as HostInfo;
+
+test("a restarting host says restarting, even with a reason; offline and error show the reason", () => {
+  expect(hostOptionLabel(h({ status: "restarting" }))).toBe("n1 (restarting)");
+  expect(hostOptionLabel(h({ status: "restarting", error: "updating" }))).toBe("n1 (restarting)");
+  expect(hostOptionLabel(h({ status: "offline", error: "unreachable" }))).toBe("n1 (unreachable)");
+  expect(hostOptionLabel(h({ status: "error", error: "bad" }))).toBe("n1 (bad)");
+  expect(hostOptionLabel(h({ status: "offline" }))).toBe("n1 (offline)");
+  expect(hostOptionLabel(h({ status: "ok" }))).toBeUndefined();
 });

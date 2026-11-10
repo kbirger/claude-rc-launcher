@@ -1,7 +1,7 @@
 <script lang="ts">
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
-  import { stepIsError, stepText } from "./updateoutput";
+  import { hostOptionLabel, stepIsError, stepText } from "./updateoutput";
   import { isRunning, lastEntry } from "./updatebanner";
   import { clientLabel } from "./clientlabel";
 
@@ -13,7 +13,8 @@
 
   const shown = (v?: string) => (!v ? "unknown" : v === "dev" || v.includes("+") ? "local build" : v);
   const label = (h: HostInfo) => {
-    if (h.status !== "ok") return `${h.name} (${h.error ?? h.status})`;
+    const other = hostOptionLabel(h);
+    if (other) return other;
     const versions = ` (service ${shown(h.version)}, ${h.clientVersion ? `client ${shown(h.clientVersion)}` : clientLabel(h)})`;
     return `${h.name}${versions}${h.stale ? " - out of date" : ""}`;
   };

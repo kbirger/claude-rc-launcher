@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { logsQuery } from "./queries";
-  import { followsBottom } from "./updateoutput";
+  import { followsBottom, outputSummary } from "./updateoutput";
 
   // `open` is only the start state: a running update opens the panel, a finished one leaves it closed.
   let { host, open: startOpen = false }: { host: string; open?: boolean } = $props();
@@ -30,8 +30,9 @@
 
 {#if lines.length}
   <details class="output" bind:open>
-    <summary>Output ({lines.length} lines)</summary>
-    <pre bind:this={box} {onscroll}>{lines.map((l) => l.line).join("\n")}</pre>
+    <summary>{outputSummary(lines.length)}</summary>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
+    <pre bind:this={box} {onscroll} tabindex="0" role="log" aria-label={`Output of ${host}`}>{lines.map((l) => l.line).join("\n")}</pre>
   </details>
 {/if}
 

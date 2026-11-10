@@ -27,18 +27,25 @@ export function connectEvents(o: {
   let retries = 0;
   let timer: Timer | undefined;
 
-  // Patches status, version and error of the cached host. Returns true when the version changed (the host list is then stale).
+  // Patches status, version and error of the cached host. Returns true when the host list is stale: the version changed,
+  // or the host is not in a loaded list (a new node). A cold cache is left alone.
   const patchHost = (p: Presence): boolean => {
-    let versionChanged = false;
-    o.client.setQueryData<HostInfo[]>(["hosts"], (cur) =>
-      cur?.map((h) => {
+    let stale = false;
+    const status = Object.hasOwn(HOST_STATUS, p.status) ? HOST_STATUS[p.status] : "error";
+    o.client.setQueryData<HostInfo[]>(["hosts"], (cur) => {
+      if (!cur) return cur;
+      if (!cur.some((h) => h.id === p.host)) {
+        stale = true;
+        return cur;
+      }
+      return cur.map((h) => {
         if (h.id !== p.host) return h;
-        versionChanged = p.version !== undefined && p.version !== h.version;
+        stale = p.version !== undefined && p.version !== h.version;
         const { error: _drop, ...rest } = h;
-        return { ...rest, status: HOST_STATUS[p.status], ...(p.version !== undefined ? { version: p.version } : {}), ...(p.status !== "online" && p.reason ? { error: p.reason } : {}) };
-      }),
-    );
-    return versionChanged;
+        return { ...rest, status, ...(p.version !== undefined ? { version: p.version } : {}), ...(p.status !== "online" && p.reason ? { error: p.reason } : {}) };
+      });
+    });
+    return stale;
   };
 
   const clearTimer = () => {
@@ -65,9 +72,9 @@ export function connectEvents(o: {
       retries = 0;
       try {
         const snap = JSON.parse(String((e as MessageEvent).data));
-        if (!snap || !Array.isArray(snap.updates) || typeof snap.logs !== "object" || !Array.isArray(snap.presence)) return;
+        if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
         o.client.setQueryData<UpdateEntry[]>(["updates"], snap.updates);
-        o.client.setQueryData<Record<string, LogLine[]>>(["logs"], snap.logs);
+        if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs)) o.client.setQueryData<Record<string, LogLine[]>>(["logs"], snap.logs);
         if ((snap.presence as Presence[]).map((p) => patchHost(p)).some(Boolean)) void o.client.invalidateQueries({ queryKey: ["hosts"] });
       } catch {}
     });

@@ -3,6 +3,7 @@
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
   import UpdateOutput from "./UpdateOutput.svelte";
+  import { panelOpenByDefault } from "./updateoutput";
   import { bannerKey, bannerModel, isRunning, lastEntry, mergeCallErrors, pruneCallErrors, type BannerItem, type CallError } from "./updatebanner";
 
   let { hosts, updates, latestError }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean } = $props();
@@ -72,7 +73,7 @@
             <button class="primary" disabled={busy} onclick={updateHub}>Update hub</button>
           {:else if item.kind === "updating"}
             <span>Updating {item.name}{item.step ? `: ${item.step}` : "..."}</span>
-            <UpdateOutput host={item.host} open />
+            <UpdateOutput host={item.host} open={panelOpenByDefault(lastEntry(updates, item.host))} />
           {:else if item.kind === "node-update"}
             <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.</span>
             <button class="primary" disabled={busy} onclick={() => updateNodes(item.hosts)}>Update all nodes</button>
@@ -85,7 +86,7 @@
           {:else if item.kind === "failed"}
             <span>Update of {item.host} failed: {item.error}</span>
             {@const id = hosts.find((h) => h.name === item.host)?.id}
-            {#if id}<UpdateOutput host={id} />{/if}
+            {#if id}<UpdateOutput host={id} open={panelOpenByDefault(lastEntry(updates, id))} />{/if}
           {:else}
             <span class="muted">Could not check for the latest release.</span>
           {/if}

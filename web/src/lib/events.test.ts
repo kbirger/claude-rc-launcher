@@ -115,6 +115,42 @@ test("a presence event with a new version refetches hosts", () => {
   expect(invalidated).toEqual([["hosts"]]);
 });
 
+test("a presence item for an unknown host refetches a loaded host list; a cold cache does nothing", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  es.emit("presence", { data: JSON.stringify({ host: "new", status: "online", version: "1.0.0", at: "t" }) });
+  es.emit("snapshot", snap({ presence: [{ host: "new", status: "online", at: "t" }] }));
+  expect(invalidated).toEqual([]);
+  client.setQueryData(["hosts"], [host("a")]);
+  es.emit("presence", { data: JSON.stringify({ host: "new", status: "online", version: "1.0.0", at: "t" }) });
+  expect(invalidated).toEqual([["hosts"]]);
+  es.emit("snapshot", snap({ presence: [{ host: "n1", status: "online", at: "t" }, { host: "n2", status: "online", at: "t" }] }));
+  expect(invalidated).toEqual([["hosts"], ["hosts"]]);
+});
+
+test("an unknown presence status becomes error", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  client.setQueryData(["hosts"], [host("a")]);
+  es.emit("presence", { data: JSON.stringify({ host: "a", status: "bogus", at: "t" }) });
+  expect(hostsOf()[0].status).toBe("error");
+  es.emit("presence", { data: JSON.stringify({ host: "a", status: "constructor", at: "t" }) });
+  expect(hostsOf()[0].status).toBe("error");
+});
+
+test("a snapshot with logs null or an array still applies the rest", () => {
+  connectEvents({ client, open });
+  const es = FakeES.all[0]!;
+  client.setQueryData(["hosts"], [host("a")]);
+  for (const logs of [null, [], "x"]) {
+    es.emit("snapshot", snap({ updates: [entry("a")], logs, presence: [{ host: "a", status: "restarting", at: "t" }] }));
+    expect(client.getQueryData(["updates"])).toEqual([entry("a")]);
+    expect(hostsOf()[0].status).toBe("restarting");
+    expect(client.getQueryData(["logs"])).toBeUndefined();
+    client.setQueryData(["updates"], undefined);
+  }
+});
+
 test("a log event appends and keeps the last 200 lines of each host", () => {
   connectEvents({ client, open });
   const es = FakeES.all[0]!;
