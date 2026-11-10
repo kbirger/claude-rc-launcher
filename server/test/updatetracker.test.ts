@@ -18,7 +18,16 @@ const setup = async (probe: (h: string) => Promise<string | undefined>, presence
   return { record, tracker, sleeps, entry, clock };
 };
 const rep = (status: any, extra = {}) => ({ status, from: "1.0.0", to: "1.1.0", clients: [], ...extra });
-const settled = () => new Promise((r) => setTimeout(r, 20));
+// Waits for a result with a time limit, not for a fixed time: a loaded machine can be slower than any fixed wait.
+const until = async (done: () => boolean, ms = 5000) => {
+  const end = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() > end) throw new Error("timed out waiting for the update tracker");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
+// For a test that expects nothing to happen. Slowness can only make such a test pass too early, never fail.
+const quiet = () => new Promise((r) => setTimeout(r, 80));
 
 describe("update tracker", () => {
   test("begin writes a running entry", async () => {
@@ -42,7 +51,7 @@ describe("update tracker", () => {
     const t = await setup(async () => (++n < 3 ? "1.0.0" : "1.1.0"));
     await t.tracker.begin("nas", "kir", "1.0.0");
     await t.tracker.finish("nas", rep("restarting") as any);
-    await settled();
+    await until(() => t.entry("nas").status !== "running");
     expect(t.entry("nas")).toMatchObject({ status: "updated", to: "1.1.0" });
     expect(t.sleeps).toEqual([2000, 2000, 2000]);
   });
@@ -50,7 +59,7 @@ describe("update tracker", () => {
     const t = await setup(async () => "1.0.0");
     await t.tracker.begin("nas", "kir", "1.0.0");
     await t.tracker.finish("nas", rep("restarting") as any);
-    await settled();
+    await until(() => t.entry("nas").status !== "running");
     expect(t.entry("nas").status).toBe("rolled back");
     expect(t.sleeps.length).toBe(45);
   });
@@ -58,14 +67,14 @@ describe("update tracker", () => {
     const t = await setup(async () => undefined);
     await t.tracker.begin("nas", "kir", "1.0.0");
     await t.tracker.finish("nas", rep("restarting") as any);
-    await settled();
+    await until(() => t.entry("nas").status !== "running");
     expect(t.entry("nas")).toMatchObject({ status: "unknown", error: UNKNOWN_REASON });
   });
   test("restarting on local leaves running", async () => {
     const t = await setup(async () => "1.1.0");
     await t.tracker.begin("local", "kir", "1.0.0");
     await t.tracker.finish("local", rep("restarting") as any);
-    await settled();
+    await quiet();
     expect(t.entry("local").status).toBe("running");
     expect(t.sleeps).toEqual([]);
   });
@@ -73,12 +82,12 @@ describe("update tracker", () => {
     const t = await setup(async () => "v1.1.0");
     await t.tracker.begin("nas", "kir", "1.0.0");
     await t.tracker.finish("nas", rep("restarting") as any);
-    await settled();
+    await until(() => t.entry("nas").status !== "running");
     expect(t.entry("nas").status).toBe("updated");
     const r = await setup(async () => "v1.0.0");
     await r.tracker.begin("nas", "kir", "1.0.0");
     await r.tracker.finish("nas", rep("restarting", { to: "v1.1.0" }) as any);
-    await settled();
+    await until(() => r.entry("nas").status !== "running");
     expect(r.entry("nas").status).toBe("rolled back");
   });
   test("the limit is a deadline on the clock, so a slow probe does not stretch it", async () => {
@@ -87,7 +96,7 @@ describe("update tracker", () => {
     clockRef = t.clock;
     await t.tracker.begin("nas", "kir", "1.0.0");
     await t.tracker.finish("nas", rep("restarting") as any);
-    await settled();
+    await until(() => t.entry("nas").status !== "running");
     expect(t.entry("nas").status).toBe("unknown");
     expect(t.sleeps.length).toBe(3);
   });
@@ -106,7 +115,7 @@ describe("update tracker", () => {
     await t.tracker.finish("nas", rep("restarting") as any);
     t.clock.t += 601_000;
     expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(true);
-    await settled();
+    await quiet();
     expect(t.entry("nas")).toMatchObject({ startedBy: "bob", status: "running" });
   });
   describe("presence shortcut", () => {
@@ -117,7 +126,7 @@ describe("update tracker", () => {
       await t.tracker.begin("nas", "kir", "1.0.0");
       await t.tracker.finish("nas", rep("restarting") as any);
       presence.emit({ host: "nas", status: "online", version: "v1.1.0", at: "x" });
-      await settled();
+      await until(() => t.entry("nas").status !== "running" && presence.count() === 0);
       expect(t.entry("nas")).toMatchObject({ status: "updated", to: "1.1.0" });
       expect(t.entry("nas").finishedAt).toBeDefined();
       expect(probes).toBe(0);
@@ -132,7 +141,7 @@ describe("update tracker", () => {
       presence.emit({ host: "nas", status: "online", version: "1.0.0", at: "x" });
       presence.emit({ host: "nas", status: "restarting", version: "1.1.0", at: "x" });
       presence.emit({ host: "box", status: "online", version: "1.1.0", at: "x" });
-      await settled();
+      await quiet();
       expect(t.entry("nas").status).toBe("running");
       expect(t.entry("box").status).toBe("running");
     });
@@ -144,7 +153,7 @@ describe("update tracker", () => {
       t.clock.t += 601_000;
       expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(true);
       presence.emit({ host: "nas", status: "online", version: "1.1.0", at: "x" });
-      await settled();
+      await quiet();
       expect(t.entry("nas")).toMatchObject({ startedBy: "bob", status: "running" });
     });
     test("without presence events the poll still settles, and a presence object changes nothing for it", async () => {
@@ -152,7 +161,7 @@ describe("update tracker", () => {
       const t = await setup(async () => "1.1.0", presence);
       await t.tracker.begin("nas", "kir", "1.0.0");
       await t.tracker.finish("nas", rep("restarting") as any);
-      await settled();
+      await until(() => t.entry("nas").status !== "running" && presence.count() === 0);
       expect(t.entry("nas")).toMatchObject({ status: "updated", to: "1.1.0" });
       expect(presence.count()).toBe(0);
     });
