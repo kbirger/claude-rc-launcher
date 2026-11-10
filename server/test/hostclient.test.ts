@@ -327,4 +327,17 @@ describe("HostClient.stream", () => {
     for await (const _ of await createHostClient(hostFor(n), tok).stream("/api/events")) break;
     await closed;
   });
+  test("an abort before connect, or an already aborted signal, ends quietly", async () => {
+    const host = hostFor(await node());
+    const pre = new AbortController();
+    pre.abort();
+    const c = createHostClient(host, tok);
+    for await (const _ of await c.stream("/api/events", { signal: pre.signal })) throw new Error("no events");
+    const ac = new AbortController();
+    const failing = (async () => { ac.abort(); throw Object.assign(new Error("aborted"), { name: "AbortError" }); }) as unknown as typeof fetch;
+    for await (const _ of await createHostClient(host, tok, { fetch: failing }).stream("/api/events", { signal: ac.signal })) throw new Error("no events");
+    const ac2 = new AbortController();
+    const slowAuth = async () => { ac2.abort(); throw new Error("x"); };
+    for await (const _ of await createHostClient(host, slowAuth, {}).stream("/api/events", { signal: ac2.signal })) throw new Error("no events");
+  });
 });

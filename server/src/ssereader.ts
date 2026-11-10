@@ -1,3 +1,6 @@
+/** Most bytes one unfinished line or one unfinished event may hold. More is a protocol error. */
+export const MAX_SSE_BYTES = 1024 * 1024;
+
 export type SseEvent = { event: string; data: string };
 
 /**
@@ -12,11 +15,14 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
   let event = "";
   let data: string[] = [];
   let sawData = false;
+  let dataLen = 0;
+  let scan = 0;
   const take = (): SseEvent | null => {
     const out = sawData ? { event: event || "message", data: data.join("\n") } : null;
     event = "";
     data = [];
     sawData = false;
+    dataLen = 0;
     return out;
   };
   const field = (line: string): SseEvent | null => {
@@ -28,6 +34,8 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
     if (value.startsWith(" ")) value = value.slice(1);
     if (name === "event") event = value;
     else if (name === "data") {
+      dataLen += value.length + 1;
+      if (dataLen > MAX_SSE_BYTES) throw new Error("SSE event too large");
       data.push(value);
       sawData = true;
     }
@@ -38,15 +46,25 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      for (;;) {
-        // A lone trailing \r may be the first half of \r\n, so wait for the next chunk.
-        const m = /\r\n|\n|\r(?=.)/s.exec(buf);
-        if (!m) break;
-        const line = buf.slice(0, m.index);
-        buf = buf.slice(m.index + m[0].length);
-        const ev = field(line);
+      let start = 0;
+      let i = scan;
+      for (; i < buf.length; i++) {
+        const ch = buf[i];
+        if (ch !== "\n" && ch !== "\r") continue;
+        let end = i + 1;
+        if (ch === "\r") {
+          // A lone trailing \r may be the first half of \r\n, so wait for the next chunk.
+          if (i + 1 >= buf.length) break;
+          if (buf[i + 1] === "\n") end++;
+        }
+        const ev = field(buf.slice(start, i));
+        start = end;
+        i = end - 1;
         if (ev) yield ev;
       }
+      buf = buf.slice(start);
+      scan = i - start;
+      if (buf.length > MAX_SSE_BYTES) throw new Error("SSE line too large");
     }
   } finally {
     await reader.cancel().catch(() => {});

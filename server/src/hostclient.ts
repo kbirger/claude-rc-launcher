@@ -24,7 +24,8 @@ export interface HostClient {
   ): Promise<{ status: number; body: unknown }>;
   /**
    * Opens `GET <path>` as an event stream. No body timeout. Aborting `signal` ends the iteration without an error.
-   * Breaking out of the loop closes the connection.
+   * Breaking out of the loop closes the connection. A clean server close ends the iteration silently, so the caller
+   * must treat "the loop ended and the signal is not aborted" as a disconnect. Any mid-stream error is a `bad response`.
    */
   stream(path: string, o?: { signal?: AbortSignal }): Promise<AsyncIterable<SseEvent>>;
 }
@@ -148,9 +149,12 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
     async stream(path, opts = {}) {
       const url = new URL(path, host.url);
       const headers: Record<string, string> = { accept: "text/event-stream" };
+      const quiet = async function* (): AsyncGenerator<SseEvent> {};
+      if (opts.signal?.aborted) return quiet();
       try {
         headers.authorization = await authorize({ method: "GET", pathAndQuery: url.pathname + url.search, body: "" });
       } catch (e) {
+        if (opts.signal?.aborted) return quiet();
         return fail("rejected our credentials", e);
       }
       let res: Response;
@@ -163,6 +167,7 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
           tls: { ca: host.ca, ...(host.serverName ? { serverName: host.serverName } : {}) },
         } as RequestInit);
       } catch (e) {
+        if (opts.signal?.aborted) return quiet();
         return fail(classify(e), e);
       }
       const drop = () => void res.body?.cancel().catch(() => {});

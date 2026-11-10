@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readSse, type SseEvent } from "../src/ssereader";
+import { MAX_SSE_BYTES, readSse, type SseEvent } from "../src/ssereader";
 
 const enc = new TextEncoder();
 const bodyOf = (chunks: string[]) =>
@@ -46,5 +46,31 @@ describe("readSse", () => {
     });
     for await (const _ of readSse(s)) break;
     expect(cancelled).toBe(true);
+  });
+  test("a lone CR ends a line; data without a space; a field line with no colon", async () => {
+    expect(await all(["data:a\rdata\r\revent: e\rdata:b\r\rdata: z\n\n"])).toEqual([
+      { event: "message", data: "a\n" },
+      { event: "e", data: "b" },
+      { event: "message", data: "z" },
+    ]);
+  });
+  test("a newline-free stream over the limit throws and cancels", async () => {
+    let cancelled = false;
+    const chunk = enc.encode("x".repeat(64 * 1024));
+    const s = new ReadableStream<Uint8Array>({ pull(c) { c.enqueue(chunk); }, cancel() { cancelled = true; } });
+    await expect((async () => { for await (const _ of readSse(s)) { /* none */ } })()).rejects.toThrow();
+    expect(cancelled).toBe(true);
+  });
+  test("endless data lines with no blank line throw", async () => {
+    const chunk = enc.encode("data: " + "y".repeat(1000) + "\n");
+    const s = new ReadableStream<Uint8Array>({ pull(c) { c.enqueue(chunk); } });
+    await expect((async () => { for await (const _ of readSse(s)) { /* none */ } })()).rejects.toThrow();
+  });
+  test("a 500 KiB event across several chunks still works", async () => {
+    const part = "z".repeat(100 * 1024);
+    const out = await all(["data: ", part, part, part, part, part, "\n\n"]);
+    expect(out.length).toBe(1);
+    expect(out[0]!.data.length).toBe(500 * 1024);
+    expect(500 * 1024).toBeLessThan(MAX_SSE_BYTES);
   });
 });
