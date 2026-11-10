@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { readRegisteredClients, registryPath, type RegistryIo } from "../src/installs";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { readRegisteredClients, registryPath, resetRegistryLog, type RegistryIo } from "../src/installs";
+
+beforeEach(() => resetRegistryLog());
 
 const FILE = "/etc/claude-rc-launcher/installs";
 const DIR = "/etc/claude-rc-launcher";
@@ -31,6 +33,7 @@ const run = (o: Over) => {
 const ok = "client /usr/bin/claude-rc\n";
 const withFile = (f: St, ...d: [St?]) => ({ stats: { [FILE]: f, [DIR]: d.length ? d[0] : DIRST } });
 const refused = (o: Over) => {
+  resetRegistryLog(); // several cases in one test log the same message
   const { r, logs } = run({ text: ok, ...o });
   expect(r).toEqual([]);
   expect(logs.length).toBe(1);
@@ -105,6 +108,7 @@ describe("readRegisteredClients on linux", () => {
 
   test("content that is not a string gives [] and a log line", () => {
     for (const text of [null, 42, { a: 1 }]) {
+      resetRegistryLog();
       const logs: string[] = [];
       const i = io({});
       i.readFile = () => text as any;
@@ -195,5 +199,20 @@ describe("readRegisteredClients on win32", () => {
 
   test("a missing file gives []", () => {
     expect(win("client C:\\x\\claude-rc.exe\n", { stats: {} })).toEqual([]);
+  });
+});
+
+describe("the registry text and log", () => {
+  test("a leading BOM is ignored", () => {
+    expect(run({ text: "\uFEFFclient /usr/bin/claude-rc\n" }).r).toEqual(["/usr/bin/claude-rc"]);
+  });
+  test("the same ignored message is logged once per process", () => {
+    const logs: string[] = [];
+    const o = { text: ok, ...withFile({ uid: 1, mode: 0o100644 }) };
+    for (let i = 0; i < 3; i++) expect(readRegisteredClients(io(o), (l) => logs.push(l))).toEqual([]);
+    expect(logs.length).toBe(1);
+    resetRegistryLog();
+    readRegisteredClients(io(o), (l) => logs.push(l));
+    expect(logs.length).toBe(2);
   });
 });

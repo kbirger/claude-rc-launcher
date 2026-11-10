@@ -23,13 +23,21 @@ const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 const S_IFDIR = 0o040000;
 
+const logged = new Set<string>();
+/** Forgets which lines were logged (tests). */
+export function resetRegistryLog(): void {
+  logged.clear();
+}
+
 /**
  * The client paths in the registry file, in file order, or `[]`. On Linux the file must be a regular file and its
  * directory a directory, both owned by root and not writable by group or others (setgid and sticky bits are
- * allowed), else nothing is trusted and one line is logged. Never throws.
+ * allowed), else nothing is trusted and one line is logged (once per process for the same message). Never throws.
  */
 export function readRegisteredClients(io: RegistryIo, log: (line: string) => void = () => {}): string[] {
   const say = (line: string) => {
+    if (logged.has(line)) return; // the node reads the file often: log each problem once
+    logged.add(line);
     try {
       log(line);
     } catch {
@@ -59,7 +67,7 @@ export function readRegisteredClients(io: RegistryIo, log: (line: string) => voi
       say(`client registry ${file} ignored: it is longer than ${MAX_BYTES} bytes`);
       return [];
     }
-    return parse(text, win);
+    return parse(text.replace(/^\uFEFF/, ""), win); // an old Notepad adds a BOM
   } catch (e) {
     say(`client registry ${file} ignored: cannot read it (${(e as Error).message})`);
     return [];
