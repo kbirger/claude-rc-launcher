@@ -144,3 +144,9 @@ test("a client asset 404 is a failed item, not the node by-hand advice", () => {
   const error = "the client update failed: C:\\claude-rc.exe: cannot download https://x/claude-rc-windows-x64.exe: HTTP 404";
   expect(model([hub(), node()], [entry({ host: "n1", status: "failed", error })]).some((i) => i.kind === "by-hand")).toBe(false);
 });
+
+test("the updating item carries the step text while running and not after", () => {
+  const running = entry({ host: "n1", status: "running", step: "installing", stepDetail: "x" });
+  expect(model([hub(), node()], [running])).toEqual([{ kind: "updating", host: "n1", name: "node one", step: "installing: x" }]);
+  expect(model([hub(), node()], [{ ...running, status: "updated", step: undefined, stepDetail: undefined }]).some((i) => i.kind === "updating")).toBe(false);
+});

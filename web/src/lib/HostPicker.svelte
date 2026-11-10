@@ -1,6 +1,7 @@
 <script lang="ts">
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
+  import { stepIsError, stepText } from "./updateoutput";
   import { isRunning, lastEntry } from "./updatebanner";
   import { clientLabel } from "./clientlabel";
 
@@ -18,6 +19,10 @@
   };
 
   const current = $derived(hosts.find((h) => h.id === selected));
+  const step = $derived.by(() => {
+    const e = lastEntry(updates, selected);
+    return e && isRunning(e, now) ? e : undefined;
+  });
   const canUpdate = $derived(!!current && current.id !== "local" && current.status === "ok" && current.stale && !!current.target);
 
   async function update() {
@@ -47,9 +52,12 @@
 {#if canUpdate}
   <button class="primary" disabled={busy || isRunning(lastEntry(updates, current?.id ?? ""), now)} onclick={update}>Update</button>
 {/if}
+{#if step && stepText(step)}<span class:error={stepIsError(step)} class="step" role="status">{stepText(step)}</span>{/if}
 {#if error}<span class="error" role="alert">{error}</span>{/if}
 
 <style>
+  .step { font-size: 0.85rem; color: var(--muted); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step.error { color: var(--danger); margin: 0; }
   .picker { display: inline-flex; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   select {

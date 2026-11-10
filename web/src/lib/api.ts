@@ -2,7 +2,7 @@ export type Instance = { id: string; path: string; name: string; state: string; 
 export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean; kind?: "git" | "github" }[] };
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 export type Me = { sub: string; name: string; email?: string; username?: string; logoutUrl?: string };
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: string; version?: string; clientVersion?: string; noClient?: boolean; stale?: boolean; target?: string };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "restarting" | "error"; error?: string; source?: string; version?: string; clientVersion?: string; noClient?: boolean; stale?: boolean; target?: string };
 export type UpdateEntry = {
   host: string;
   startedAt: string;
@@ -12,7 +12,11 @@ export type UpdateEntry = {
   to?: string;
   status: "running" | "updated" | "up-to-date" | "failed" | "rolled back" | "unknown";
   error?: string;
+  step?: string;
+  stepDetail?: string;
 };
+export type LogLine = { line: string; at: string };
+export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
 export type Latest = { version: string; checkedAt: string };
 
 export type RepoGroup = { owner: string; repos: { name: string; private: boolean; pushedAt: string }[] };
