@@ -23,7 +23,7 @@ import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
 
-export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits };
+export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits; watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number } };
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
@@ -126,6 +126,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
       }
     },
     onStep: writeStep,
+    ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
+    ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
   });
   const presence = {
     list: () => watchers.presence(),
