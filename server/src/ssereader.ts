@@ -1,6 +1,14 @@
 /** Most bytes one unfinished line or one unfinished event may hold. More is a protocol error. */
 export const MAX_SSE_BYTES = 1024 * 1024;
 
+/** The stream broke a rule of the format (a size cap). A network error is not one. */
+export class SseProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SseProtocolError";
+  }
+}
+
 export type SseEvent = { event: string; data: string };
 
 /**
@@ -36,7 +44,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity
     if (name === "event") event = value;
     else if (name === "data") {
       dataLen += value.length + 1;
-      if (dataLen > MAX_SSE_BYTES) throw new Error("SSE event too large");
+      if (dataLen > MAX_SSE_BYTES) throw new SseProtocolError("SSE event too large");
       data.push(value);
       sawData = true;
     }
@@ -66,7 +74,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity
       }
       buf = buf.slice(start);
       scan = i - start;
-      if (buf.length > MAX_SSE_BYTES) throw new Error("SSE line too large");
+      if (buf.length > MAX_SSE_BYTES) throw new SseProtocolError("SSE line too large");
     }
   } finally {
     await reader.cancel().catch(() => {});

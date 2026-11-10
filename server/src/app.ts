@@ -166,10 +166,10 @@ export function onError(err: Error, c: Context) {
 
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
-/** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
 /** A node accepts at most this many open event connections. */
 const MAX_EVENT_CONNECTIONS = 8;
 
+/** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
 export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();

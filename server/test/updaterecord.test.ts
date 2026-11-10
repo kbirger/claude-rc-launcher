@@ -233,6 +233,25 @@ describe("stepWriter", () => {
     await Bun.sleep(30);
     expect(r.list()[0]).toEqual(entry({ host: "nas", startedAt: "2026-11-10T11:00:00.000Z", startedBy: "bob" }));
   });
+  test("a step that repeats the current step and detail does not write", async () => {
+    const { stepWriter } = await import("../src/hubmain");
+    const r = await UpdateRecord.load({ stateDir: dir });
+    await r.set(entry({ host: "nas" }));
+    let writes = 0;
+    const realSetIf = r.setIf.bind(r);
+    r.setIf = (next, pred) => (writes++, realSetIf(next, pred));
+    const write = stepWriter(r);
+    write("nas", { step: "installing", detail: "d" });
+    await Bun.sleep(30);
+    write("nas", { step: "installing", detail: "d" });
+    write("nas", { step: "installing", detail: "d" });
+    await Bun.sleep(30);
+    expect(writes).toBe(1);
+    write("nas", { step: "installing", detail: "e" });
+    write("nas", { step: "restarting" });
+    await Bun.sleep(30);
+    expect(writes).toBe(3);
+  });
   test("a client detail is cut to 200 characters", async () => {
     const { stepWriter } = await import("../src/hubmain");
     const r = await UpdateRecord.load({ stateDir: dir });

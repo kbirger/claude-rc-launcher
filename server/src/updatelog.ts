@@ -1,3 +1,16 @@
+const MAX_LINE = 500;
+const MAX_AT = 40;
+
+/** The cut that every stored or compared output line gets. */
+export function cutLine(line: string): string {
+  return line.length > MAX_LINE ? line.slice(0, MAX_LINE - 3) + "..." : line;
+}
+
+/** The time of a line: the node's `at` when it is a short, readable time, else `fallback`. */
+export function cleanAt(at: unknown, fallback: string): string {
+  return typeof at === "string" && at.length <= MAX_AT && !Number.isNaN(Date.parse(at)) ? at : fallback;
+}
+
 export type LogLine = { line: string; at: string };
 
 /** The last lines of output of the node updates, for each host, in memory only. */
@@ -13,8 +26,8 @@ export class UpdateLog {
   }
 
   add(host: string, line: string, at?: string): void {
-    at ??= this.now().toISOString();
-    line = line.length > 500 ? line.slice(0, 497) + "..." : line;
+    at = cleanAt(at, this.now().toISOString());
+    line = cutLine(line);
     const list = this.lines.get(host) ?? [];
     list.push({ line, at });
     if (list.length > this.maxLines) list.splice(0, list.length - this.maxLines);

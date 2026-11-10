@@ -3,6 +3,10 @@
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { getMe, type HostInfo, type Me } from "./lib/api";
   import { connectEvents } from "./lib/events";
+  import { selectionAfter } from "./lib/selection";
+  import UpdateOutput from "./lib/UpdateOutput.svelte";
+  import { lastEntry } from "./lib/updatebanner";
+  import { showsFinishedPanel } from "./lib/updateoutput";
   import { hostsQuery, latestQuery, updatesQuery } from "./lib/queries";
   import HubVersionLine from "./lib/HubVersionLine.svelte";
   import UpdateBanner from "./lib/UpdateBanner.svelte";
@@ -37,11 +41,11 @@
   let showNew = $state(false);
   let refreshKey = $state(0);
 
-  // A remembered or previously selected host that is gone or unavailable falls back to local.
+  // A remembered or previously selected host that is gone falls back to local. One that is restarting or offline stays.
   $effect(() => {
     if (!hostsQ.data) return;
-    const cur = hostsQ.data.find((h) => h.id === selected);
-    if (!cur || cur.status !== "ok") selected = "local";
+    const next = selectionAfter(hostsQ.data, selected);
+    if (next !== selected) selected = next;
   });
 
   function select(id: string) {
@@ -70,6 +74,11 @@
   <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>
 </header>
 <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+{#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], selected))}
+  {#key selected}
+    <div class="finished"><UpdateOutput host={selected} open={false} /></div>
+  {/key}
+{/if}
 <main>
   <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
   <button class="primary new" onclick={() => (showNew = true)}>+ New</button>
@@ -91,6 +100,7 @@
 {/if}
 
 <style>
+  .finished { padding: 4px 16px; }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
   h1 { font-size: 1.1rem; margin: 0; flex: 1; }
   .user { color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

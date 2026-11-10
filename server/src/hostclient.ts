@@ -1,4 +1,4 @@
-import { readSse, type SseEvent } from "./ssereader";
+import { readSse, SseProtocolError, type SseEvent } from "./ssereader";
 import { certFingerprint, signProof, type HubKey, type ProofRequest } from "./hubproof";
 
 export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
@@ -25,7 +25,7 @@ export interface HostClient {
   /**
    * Opens `GET <path>` as an event stream. No body timeout. Aborting `signal` ends the iteration without an error.
    * `onActivity` runs each time bytes arrive, keepalive comments included. Breaking out of the loop closes the connection. A clean server close ends the iteration silently, so the caller
-   * must treat "the loop ended and the signal is not aborted" as a disconnect. Any mid-stream error is a `bad response`.
+   * must treat "the loop ended and the signal is not aborted" as a disconnect. A network error in the middle of the stream gives the class of the error (`unreachable` for a reset); a broken format (a size cap) gives `bad response`. The stream never logs.
    */
   stream(path: string, o?: { signal?: AbortSignal; onActivity?: () => void }): Promise<AsyncIterable<SseEvent>>;
 }
@@ -155,7 +155,7 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
         headers.authorization = await authorize({ method: "GET", pathAndQuery: url.pathname + url.search, body: "" });
       } catch (e) {
         if (opts.signal?.aborted) return quiet();
-        return fail("rejected our credentials", e);
+        return fail("rejected our credentials");
       }
       let res: Response;
       try {
@@ -168,7 +168,7 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
         } as RequestInit);
       } catch (e) {
         if (opts.signal?.aborted) return quiet();
-        return fail(classify(e), e);
+        return fail(classify(e)); // no detail: the hub logs a change of state once, not each failed try
       }
       const drop = () => void res.body?.cancel().catch(() => {});
       if (res.status === 401) {
@@ -178,7 +178,7 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
       const media = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
       if (res.status !== 200 || media !== "text/event-stream" || !res.body) {
         drop();
-        return fail("bad response", `status ${res.status}, content-type ${media || "none"}`);
+        return fail("bad response");
       }
       const body = res.body;
       return (async function* () {
@@ -186,7 +186,8 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
           yield* readSse(body, opts.onActivity ? { onActivity: opts.onActivity } : {});
         } catch (e) {
           if (opts.signal?.aborted) return;
-          return fail("bad response", e);
+          // A read error (reset, network) is a drop of the connection; only a broken format is a bad response.
+          return fail(e instanceof SseProtocolError ? "bad response" : classify(e));
         }
       })();
     },

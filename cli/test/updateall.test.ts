@@ -8,7 +8,7 @@ import { HubError, type HubClient } from "../src/hub";
 import { sanitizeLine } from "../src/format";
 import { main } from "../src/index";
 import type { Sys } from "../src/nodesetup";
-import { updateAll } from "../src/updateall";
+import { updateAll, watchLogs } from "../src/updateall";
 import { VERSION } from "../../server/src/version";
 
 const EXE = "/usr/local/bin/claude-rc";
@@ -458,6 +458,26 @@ describe("updateAll live output: safety and scope", () => {
     expect(sanitizeLine("x\u001b[2Jy\u001b]0;title\u0007z\rq\bw\u007f\u0085\u009f\n")).toBe("x?[2Jy?]0;title?z?q?w???" + "?");
     expect(sanitizeLine("é ü 日本")).toBe("é ü 日本");
     expect(sanitizeLine("x".repeat(5000))).toHaveLength(500);
+  });
+
+  test("sanitizeLine replaces bidi overrides and isolates, direction marks and zero-width characters", () => {
+    for (const c of ["\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "\u200e", "\u200f", "\u061c", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"]) {
+      expect([c, sanitizeLine(`a${c}b`)]).toEqual([c, "a?b"]);
+    }
+    expect(sanitizeLine("\u202etxt.exe")).toBe("?txt.exe");
+  });
+
+  test("the log watcher stops at once when the run ends during its wait, without waiting for the sleep", async () => {
+    const stream = async function* () {
+      yield { event: "log", data: "{}" };
+    };
+    const hub = { stream: () => stream() } as unknown as HubClient;
+    const sys = { now: () => 0, sleep: () => new Promise<void>(() => {}) } as unknown as Sys; // a sleep that never ends
+    const ac = new AbortController();
+    const done = watchLogs(hub, sys, () => undefined, () => {}, ac.signal, () => {});
+    await new Promise((r) => setTimeout(r, 20)); // now it is in the wait
+    ac.abort();
+    expect(await Promise.race([done.then(() => "done"), new Promise((r) => setTimeout(() => r("hung"), 500))])).toBe("done");
   });
 
   test("escape sequences, carriage returns, backspaces and bells from a node are not printed", async () => {

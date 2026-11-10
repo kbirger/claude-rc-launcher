@@ -306,6 +306,35 @@ describe("HostClient.stream", () => {
     expect(await run(() => new Response("no", { status: 500 }))).toBe("bad response");
     expect(await run(() => Response.json({ ok: true }))).toBe("bad response");
   });
+  test("a reset in the middle of the stream is unreachable; a size cap is bad response", async () => {
+    const host = hostFor(await node());
+    const enc = new TextEncoder();
+    const viaFake = (body: () => ReadableStream<Uint8Array>) => {
+      const f = (async () => new Response(body(), { headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch;
+      return reason((async () => {
+        for await (const _ of await createHostClient(host, tok, { fetch: f }).stream("/api/events")) void _;
+      })());
+    };
+    const reset = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode("data: 1\n\n")); }, pull(c) { c.error(Object.assign(new Error("The socket connection was closed unexpectedly"), { code: "ECONNRESET" })); } });
+    const big = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode("data: " + "x".repeat(2 * 1024 * 1024))); c.close(); } });
+    expect(await viaFake(reset)).toBe("unreachable");
+    expect(await viaFake(big)).toBe("bad response");
+  });
+  test("the stream never logs, for a failed connect or a mid-stream error", async () => {
+    const host = hostFor(await node());
+    const seen: unknown[][] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => void seen.push(a);
+    try {
+      const refuse = (async () => { throw Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" }); }) as unknown as typeof fetch;
+      for (let i = 0; i < 5; i++) expect(await reason(createHostClient(host, tok, { fetch: refuse }).stream("/api/events"))).toBe("unreachable");
+      const bad = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
+      expect(await reason(createHostClient(host, tok, { fetch: bad }).stream("/api/events"))).toBe("bad response");
+    } finally {
+      console.error = orig;
+    }
+    expect(seen).toEqual([]);
+  });
   test("abort ends the iteration without an error", async () => {
     const n = await sseNode(["data: 1\n\n"], true);
     const ac = new AbortController();

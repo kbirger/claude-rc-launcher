@@ -1,13 +1,14 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
 import type { StepName } from "./updateevents";
-import type { UpdateLog } from "./updatelog";
+import { cutLine, type UpdateLog } from "./updatelog";
 
 export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
 
 type StepEvent = { step: StepName; to?: string; client?: string; detail?: string };
 type Registry = Pick<HostRegistry, "list" | "get" | "onChange">;
 
+const MAX_VERSION = 64;
 const SILENCE_MS = 45_000;
 const RESTART_WINDOW_MS = 90_000;
 const STABLE_MS = 30_000; // a stream that stayed up this long counts as a good connection
@@ -164,7 +165,7 @@ export function createNodeWatchers(o: {
           if (signal.aborted) break;
           if (ev.event === "snapshot") {
             const snap = parse(ev.data);
-            if (!snap) throw new Error("bad snapshot");
+            if (!snap) throw new HostError(id, "bad response");
             const upd = snap.update && typeof snap.update === "object" ? (snap.update as Record<string, unknown>) : undefined;
             const started = upd && isStr(upd.startedAt) ? upd.startedAt : undefined;
             if (started !== undefined) {
@@ -179,19 +180,19 @@ export function createNodeWatchers(o: {
             lastStep = upd && isStr(upd.step) && Object.hasOwn(STEPS, upd.step) ? (upd.step as StepName) : undefined;
             pending = new Map();
             for (const k of seen) pending.set(k, (pending.get(k) ?? 0) + 1);
-            publish("online", isStr(snap.version) ? { version: snap.version } : {});
+            publish("online", isStr(snap.version) ? { version: snap.version.slice(0, MAX_VERSION) } : {});
           } else if (ev.event === "log") {
             const e = parse(ev.data);
             if (!e || !isStr(e.line)) continue;
-            const at = isStr(e.at) ? e.at : now().toISOString();
-            const key = `${at}\u0000${e.line}`;
+            // The key holds the node's own time (cut) and the cut line, so a replay matches whatever the stored time is.
+            const key = `${isStr(e.at) ? e.at.slice(0, 40) : ""}\u0000${cutLine(e.line)}`;
             const n = pending.get(key) ?? 0;
             if (n > 0) {
               pending.set(key, n - 1); // the node replays a line that the hub already holds
             } else {
               seen.push(key);
               if (seen.length > 200) seen.shift();
-              o.log.add(id, e.line, at);
+              o.log.add(id, e.line, isStr(e.at) ? e.at : undefined);
             }
           } else if (ev.event === "step") {
             const e = parse(ev.data);

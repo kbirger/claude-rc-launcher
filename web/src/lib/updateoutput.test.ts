@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { UpdateEntry } from "./api";
 import type { HostInfo } from "./api";
-import { followsBottom, hostOptionLabel, outputSummary, panelOpenByDefault, stepIsError, stepText } from "./updateoutput";
+import { followsBottom, hostOptionLabel, outputSummary, panelOpenByDefault, showsFinishedPanel, stepIsError, stepText } from "./updateoutput";
 
 const e = (o: Partial<UpdateEntry> = {}): UpdateEntry => ({ host: "n1", startedAt: "t", startedBy: "u", from: "1.0.0", status: "running", ...o });
 
@@ -46,4 +46,12 @@ test("a restarting host says restarting, even with a reason; offline and error s
   expect(hostOptionLabel(h({ status: "error", error: "bad" }))).toBe("n1 (bad)");
   expect(hostOptionLabel(h({ status: "offline" }))).toBe("n1 (offline)");
   expect(hostOptionLabel(h({ status: "ok" }))).toBeUndefined();
+});
+
+test("a finished update that has no banner item gets its own panel, closed by default", () => {
+  expect(showsFinishedPanel(e({ status: "updated" }))).toBe(true);
+  expect(showsFinishedPanel(e({ status: "up-to-date" }))).toBe(true);
+  for (const status of ["running", "failed", "unknown", "rolled back"] as const) expect(showsFinishedPanel(e({ status }))).toBe(false);
+  expect(showsFinishedPanel(undefined)).toBe(false);
+  expect(panelOpenByDefault(e({ status: "updated" }))).toBe(false);
 });

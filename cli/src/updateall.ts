@@ -113,12 +113,12 @@ const STREAM_READY_MS = 3_000;
 /**
  * Prints the `log` events of the hub for the machine that `current()` names, from the moment the stream opens (the
  * snapshot holds older lines and is ignored). A line of another machine, or one that arrives between two machines,
- * is dropped: it may be a replay after a hub restart or an update started from the web page. A stream that never
- * opened (an older hub, no route) ends the watcher silently. A stream that opened and then ended, as when the hub
+ * is dropped: it may be a replay after a hub restart or an update started from the web page. If the stream cannot be
+ * opened (no route, an error), the watcher ends silently. A stream that opened and then ended, as when the hub
  * restarts, is reopened until it has been down for as long as the hub poll waits. `ready` runs on the first event
  * and when the open fails. Errors never escape.
  */
-async function watchLogs(hub: HubClient, sys: Sys, current: () => string | undefined, print: (s: string) => void, signal: AbortSignal, ready: () => void): Promise<void> {
+export async function watchLogs(hub: HubClient, sys: Sys, current: () => string | undefined, print: (s: string) => void, signal: AbortSignal, ready: () => void): Promise<void> {
   let downSince: number | undefined;
   let everOpened = false;
   try {
@@ -144,7 +144,12 @@ async function watchLogs(hub: HubClient, sys: Sys, current: () => string | undef
       if (signal.aborted || !everOpened) return;
       downSince ??= sys.now();
       if (sys.now() - downSince > POLL_FOR_MS) return;
-      await sys.sleep(STREAM_WAIT_MS);
+      // The run may end during this wait: stop at once, so a sleeping watcher cannot keep the process open.
+      await new Promise<void>((resolve) => {
+        const done = () => (signal.removeEventListener("abort", done), resolve());
+        signal.addEventListener("abort", done, { once: true });
+        void sys.sleep(STREAM_WAIT_MS).then(done, done);
+      });
     }
   } finally {
     ready();

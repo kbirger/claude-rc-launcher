@@ -8,6 +8,9 @@ export function stepText(e: UpdateEntry): string {
 
 export const stepIsError = (e: UpdateEntry): boolean => e.step === "failed";
 
+/** A finished update that no banner item shows (the banner shows a panel for running and failed ones) gets its own closed panel. */
+export const showsFinishedPanel = (e: UpdateEntry | undefined): boolean => e?.status === "updated" || e?.status === "up-to-date";
+
 /** The panel is open by default only while the update runs. */
 export const panelOpenByDefault = (e: UpdateEntry | undefined): boolean => e?.status === "running";
 

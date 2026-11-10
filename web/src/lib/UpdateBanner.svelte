@@ -85,8 +85,7 @@
             <span>The hub was just updated. Offline now: {item.hosts.join(", ")}. They may still be restarting.</span>
           {:else if item.kind === "failed"}
             <span>Update of {item.host} failed: {item.error}</span>
-            {@const id = hosts.find((h) => h.name === item.host)?.id}
-            {#if id}<UpdateOutput host={id} open={panelOpenByDefault(lastEntry(updates, id))} />{/if}
+            {#if item.id}<UpdateOutput host={item.id} open={panelOpenByDefault(lastEntry(updates, item.id))} />{/if}
           {:else}
             <span class="muted">Could not check for the latest release.</span>
           {/if}

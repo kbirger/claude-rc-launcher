@@ -236,7 +236,17 @@ describe("createNodeWatchers presence", () => {
     expect(s.presence.map((p) => [p.status, p.version])).toEqual([["online", "1"], ["online", "2"]]);
   });
 
-  test("a mid-stream error gives error", async () => {
+  test("a reset in the middle of the stream is a drop: offline, never error", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot("1");
+    await flush();
+    s.nodes.nas!.last.fail(new HostError("nas", "unreachable"));
+    await flush();
+    expect(s.presence.map((p) => [p.status, p.reason])).toEqual([["online", undefined], ["offline", "unreachable"]]);
+  });
+
+  test("a mid-stream protocol error gives error", async () => {
     const s = setup();
     await flush();
     s.nodes.nas!.last.snapshot("1");
@@ -387,6 +397,29 @@ describe("createNodeWatchers events", () => {
     c.push("log", { line: "c", at: "t3" });
     await flush();
     expect(s.log.get("nas").map((l) => l.line)).toEqual(["a", "b", "c"]);
+  });
+
+  test("a 1 MiB `at` and a 1 MiB line are stored small, and a replay of them is still deduped; a 1 MiB version is cut", async () => {
+    const s = setup();
+    await flush();
+    let c = s.nodes.nas!.last;
+    const big = "z".repeat(1024 * 1024);
+    c.snapshot(big);
+    c.push("log", { line: big, at: big });
+    c.push("log", { line: "b", at: "not a time" });
+    await flush();
+    c.close();
+    await flush();
+    await s.clock.advance(1_000);
+    c = s.nodes.nas!.last;
+    c.snapshot("1.0.0");
+    c.push("log", { line: big, at: big });
+    c.push("log", { line: "b", at: "not a time" });
+    await flush();
+    const lines = s.log.get("nas");
+    expect(lines.map((l) => l.line.length)).toEqual([500, 1]);
+    expect(lines.every((l) => l.at.length <= 40)).toBe(true);
+    expect(s.presence[0]!.version).toHaveLength(64);
   });
 
   test("the lines of the hub survive a node that restarts with an empty buffer", async () => {
@@ -625,9 +658,9 @@ describe("createNodeWatchers fix round 1", () => {
     c.push("step", { step: "exploding" });
     c.push("step", { step: 3 });
     c.push("step", { step: "verifying", to: 7 });
-    c.push("log", { line: "ok", at: "t9" });
+    c.push("log", { line: "ok", at: "2026-11-10T09:59:00.000Z" });
     await flush();
-    expect(s.log.get("nas")).toEqual([{ line: "ok", at: "t9" }]);
+    expect(s.log.get("nas")).toEqual([{ line: "ok", at: "2026-11-10T09:59:00.000Z" }]);
     expect(s.steps).toEqual([["nas", { step: "verifying" }]]);
     expect(s.statuses()).toEqual(["online"]);
   });
@@ -743,5 +776,25 @@ describe("createNodeWatchers fix round 1", () => {
     await s.clock.advance(1_500);
     expect(s.statuses()).toEqual(["online", "restarting", "offline"]);
     expect(s.w.presence()[0]!.reason).toBe("unreachable");
+  });
+});
+
+describe("presenceLogger", () => {
+  test("a stream that fails 5 times in a row logs once; a change of status or reason logs again; a version change does not", async () => {
+    const { presenceLogger } = await import("../src/hubmain");
+    const lines: string[] = [];
+    const s = setup(["nas"], { pre: (n) => { for (let i = 0; i < 5; i++) n.nas!.failures.push(new HostError("nas", "unreachable")); } });
+    const log = presenceLogger((l) => lines.push(l));
+    await flush();
+    await s.clock.advance(47_000);
+    expect(s.nodes.nas!.opens.length).toBe(5);
+    for (const p of s.presence) log(p);
+    // Repeats from the watcher itself, as a hub could see them if the watcher published twice.
+    log({ host: "nas", status: "offline", reason: "unreachable", at: "t" });
+    expect(lines).toEqual(["host nas: offline (unreachable)"]);
+    log({ host: "nas", status: "offline", reason: "timeout", at: "t" });
+    log({ host: "nas", status: "online", version: "1", at: "t" });
+    log({ host: "nas", status: "online", version: "2", at: "t" });
+    expect(lines).toEqual(["host nas: offline (unreachable)", "host nas: offline (timeout)", "host nas: online"]);
   });
 });

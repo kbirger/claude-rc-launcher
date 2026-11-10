@@ -13,6 +13,15 @@ describe("UpdateLog", () => {
     expect(log.get("pi").map((l) => l.line)).toEqual(["x"]);
   });
 
+  test("an `at` that is long or unreadable is replaced by the hub time; a short readable one is kept", () => {
+    const log = new UpdateLog({ now: () => new Date("2026-11-10T10:00:00.000Z") });
+    log.add("nas", "a", "x".repeat(1024 * 1024));
+    log.add("nas", "b", "not a time");
+    log.add("nas", "c", "2026-11-10T09:00:00.000Z");
+    log.add("nas", "d", "2026-11-10T09:00:00.000Z" + " ".repeat(40));
+    expect(log.get("nas").map((l) => l.at)).toEqual(["2026-11-10T10:00:00.000Z", "2026-11-10T10:00:00.000Z", "2026-11-10T09:00:00.000Z", "2026-11-10T10:00:00.000Z"]);
+  });
+
   test("a line is cut to 500 characters, stored and broadcast alike; exactly 500 is unchanged", () => {
     const log = new UpdateLog();
     const seen: string[] = [];

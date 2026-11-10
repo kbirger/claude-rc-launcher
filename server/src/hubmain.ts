@@ -56,6 +56,17 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
   };
 }
 
+/** Returns a function that logs one line when the status or the reason of a host changes (never on a repeat or a version change). */
+export function presenceLogger(log: (line: string) => void): (p: Presence) => void {
+  const last = new Map<string, string>();
+  return (p) => {
+    const key = `${p.status}\u0000${p.reason ?? ""}`;
+    if (last.get(p.host) === key) return;
+    last.set(p.host, key);
+    log(`host ${p.host}: ${p.status}${p.reason ? ` (${p.reason})` : ""}`);
+  };
+}
+
 type StepEvent = Parameters<NonNullable<UpdateHooks["onStep"]>>[0];
 
 /** Writes a step into the entry of a host while that entry runs; a settled or missing entry is left alone. `stepDetail` is `client` or `detail`, cut to 200 characters. */
@@ -64,6 +75,7 @@ export function stepWriter(record: UpdateRecord): (host: string, e: StepEvent) =
     const detail = (e.client ?? e.detail)?.slice(0, 200);
     const base = record.list().find((x) => x.host === host);
     if (base?.status !== "running") return;
+    if (base.step === e.step && base.stepDetail === detail) return; // nothing changed: no write, no broadcast
     const { stepDetail: _drop, ...rest } = base;
     void record
       .setIf({ ...rest, step: e.step, ...(detail !== undefined ? { stepDetail: detail } : {}) }, (cur) => cur?.status === "running" && cur.startedAt === base.startedAt)
@@ -113,10 +125,12 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   await record.markStaleRunning();
   writeStep = stepWriter(record);
   const presenceSubs = new Set<(p: Presence) => void>();
+  const logPresence = presenceLogger((line) => console.error(line));
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,
     onPresence: (p) => {
+      logPresence(p);
       for (const fn of [...presenceSubs]) {
         try {
           fn(p);

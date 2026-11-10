@@ -51,11 +51,11 @@ test("offline-after-hub-update shows within 10 minutes only", () => {
 
 test("failed and rolled back entries give failed with the reason", () => {
   const hosts = [hub(), node()];
-  expect(model(hosts, [entry({ host: "n1", status: "failed", error: "disk full" })])).toEqual([{ kind: "failed", host: "node one", error: "disk full" }]);
+  expect(model(hosts, [entry({ host: "n1", status: "failed", error: "disk full" })])).toEqual([{ kind: "failed", host: "node one", error: "disk full", id: "n1" }]);
   expect(model(hosts, [entry({ host: "n1", status: "rolled back" })])).toEqual([
-    { kind: "failed", host: "node one", error: "the new version did not start, the old version was restored" },
+    { kind: "failed", host: "node one", error: "the new version did not start, the old version was restored", id: "n1" },
   ]);
-  expect(model(hosts, [entry({ host: "n1", status: "unknown", error: "hub restarted" })])).toEqual([{ kind: "failed", host: "node one", error: "hub restarted" }]);
+  expect(model(hosts, [entry({ host: "n1", status: "unknown", error: "hub restarted" })])).toEqual([{ kind: "failed", host: "node one", error: "hub restarted", id: "n1" }]);
 });
 
 test("only the last entry of a host counts", () => {
@@ -87,7 +87,7 @@ test("latestError with a stale hub gives hub-update and latest-unknown", () => {
 });
 
 test("a hub failed with 404 stays a failed item", () => {
-  expect(model([hub()], [entry({ status: "failed", error: "404 not found" })])).toEqual([{ kind: "failed", host: "local", error: "404 not found" }]);
+  expect(model([hub()], [entry({ status: "failed", error: "404 not found" })])).toEqual([{ kind: "failed", host: "local", error: "404 not found", id: "local" }]);
 });
 
 test("a running entry gives updating and hides the matching update item", () => {
@@ -100,7 +100,7 @@ test("a running entry gives updating and hides the matching update item", () => 
 
 test("a call error equal to the entry error shows once", () => {
   const items = model([hub(), node()], [entry({ host: "n1", status: "failed", error: "disk full" })]);
-  expect(mergeCallErrors(items, { "node one": { error: "disk full", at: 0 } })).toEqual([{ kind: "failed", host: "node one", error: "disk full" }]);
+  expect(mergeCallErrors(items, { "node one": { error: "disk full", at: 0 } })).toEqual([{ kind: "failed", host: "node one", error: "disk full", id: "n1" }]);
 });
 
 test("a 404 gives only by-hand", () => {
@@ -149,4 +149,8 @@ test("the updating item carries the step text while running and not after", () =
   const running = entry({ host: "n1", status: "running", step: "installing", stepDetail: "x" });
   expect(model([hub(), node()], [running])).toEqual([{ kind: "updating", host: "n1", name: "node one", step: "installing: x" }]);
   expect(model([hub(), node()], [{ ...running, status: "updated", step: undefined, stepDetail: undefined }]).some((i) => i.kind === "updating")).toBe(false);
+});
+
+test("two failed items with the same host name have different keys when the ids differ", () => {
+  expect(bannerKey({ kind: "failed", host: "nas", error: "e", id: "a" })).not.toBe(bannerKey({ kind: "failed", host: "nas", error: "e", id: "b" }));
 });
