@@ -3,6 +3,7 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { win32 } from "node:path";
 import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256, type ReleaseIo } from "../release";
 import { realUpdateEnv } from "../realupdate";
+import type { UpdateHooks } from "../updateevents";
 import { clientsOf, UpdateRefused, type ClientResult, type UpdateReport } from "../serviceupdate";
 import type { Config } from "../config";
 import { VERSION } from "../version";
@@ -61,9 +62,11 @@ export interface WinUpdateEnv extends Pick<ReleaseIo, "fetch"> {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string): Promise<UpdateReport> } {
+export function createWindowsUpdater(env: WinUpdateEnv, hooks: UpdateHooks = {}): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
   const exe = env.execPath;
+  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => hooks.onStep?.(s);
+  const log = (l: string) => hooks.onLog?.(l);
 
   const refuseUnlessInstalled = () => {
     if (env.platform !== "win32") throw new UpdateRefused(409, `the Windows update works on Windows only (this is ${env.platform})`);
@@ -89,7 +92,10 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
     };
     if (win32.basename(p).toLowerCase() !== `${CLIENT_PREFIX}.exe`) return fail(`${p} is not named ${CLIENT_PREFIX}.exe, so it is not touched`);
     try {
-      if (sha256(env.readFile(p)) === sha256(binary)) return { path: p, status: "up-to-date" };
+      if (sha256(env.readFile(p)) === sha256(binary)) {
+        log(`${p} is up to date`);
+        return { path: p, status: "up-to-date" };
+      }
       const from = env.versionOf(p, CLIENT_PREFIX);
       // An old backup is only removed for tidiness: a rename onto it works too. A running image cannot be deleted.
       try {
@@ -116,6 +122,7 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
         }
         return fail(`installing the new client failed: ${message(e)}. ${restored ? "The previous client is in place" : `${prev} could not be put back`}`);
       }
+      log(`renamed the old client to ${win32.basename(p)}.prev`);
       return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
     } catch (e) {
       return fail(message(e));
@@ -125,8 +132,14 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
   const update = async (release: string | undefined): Promise<UpdateReport> => {
     const from = env.version;
     const clients: ClientResult[] = [];
-    const failed = (error: string): UpdateReport => ({ status: "failed", from, clients, error });
+    const failed = (error: string): UpdateReport => {
+      step({ step: "failed", detail: error });
+      log(error);
+      return { status: "failed", from, clients, error };
+    };
 
+    step({ step: "downloading" });
+    log(`downloading ${WIN_ASSET}`);
     let binary: Uint8Array;
     try {
       binary = await downloadAsset(env, WIN_ASSET, release);
@@ -134,27 +147,40 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
       if (e instanceof ReleaseError) return failed(e.message);
       throw e;
     }
+    step({ step: "verifying" });
+    log("sha256 matches SHA256SUMS");
 
     // The client copies, before the service. A failure here is reported and does not stop the service update.
     const paths = env.clients();
     if (paths.length > 0) {
       let client: Uint8Array | undefined;
       let error = "";
+      log(`downloading ${WIN_CLIENT_ASSET}`);
       try {
         client = await downloadAsset(env, WIN_CLIENT_ASSET, release);
+        log("sha256 matches SHA256SUMS");
       } catch (e) {
         if (!(e instanceof ReleaseError)) throw e;
         error = `client asset: ${e.message}. ${BY_HAND}`;
+        log(error);
       }
-      for (const p of paths) clients.push(client ? updateClient(p, client) : { path: p, status: "failed", error });
+      for (const p of paths) {
+        step({ step: "installing-client", client: p });
+        const r = client ? updateClient(p, client) : { path: p, status: "failed" as const, error };
+        if (client && r.status === "failed") log(`${p}: ${r.error}`);
+        clients.push(r);
+      }
     }
     const clientErrors = clients.filter((c) => c.status === "failed").map((c) => `${c.path}: ${c.error}`);
 
     if (sha256(env.readFile(exe)) === sha256(binary)) {
       if (clientErrors.length > 0) return failed(`the client update failed: ${clientErrors.join("; ")}`);
+      step({ step: "up-to-date" });
+      log("the service binary is up to date");
       return { status: clients.some((c) => c.status === "updated") ? "clients-only" : "up-to-date", from, clients };
     }
 
+    step({ step: "installing" });
     const fresh = `${exe}.new`;
     const prev = `${exe}.prev`;
     try {
@@ -165,6 +191,7 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
         env.remove(fresh);
         return failed("the new binary did not answer --version. Nothing was installed");
       }
+      log(`new binary answers ${to}`);
       env.rename(exe, prev);
       try {
         env.rename(fresh, exe);
@@ -173,12 +200,15 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
         env.remove(fresh);
         return failed(`installing the new binary failed: ${message(e)}. ${restored ? "The previous binary is in place" : `${prev} could not be put back`}`);
       }
+      log(`renamed the old binary to ${win32.basename(prev)}`);
       try {
         env.writeFile(pendingPath(env.dataDir), new TextEncoder().encode(JSON.stringify({ from, to, at: env.now().toISOString(), starts: 0 })));
       } catch (e) {
         const restored = tryRestore(prev);
         return failed(`cannot write ${PENDING_FILE}: ${message(e)}. ${restored ? "The previous binary was restored" : `${prev} could not be put back`}`);
       }
+      step({ step: "restarting", to });
+      log("restarting in 2 seconds");
       env.scheduleExit();
       return { status: "restarting", from, to, clients };
     } catch (e) {
@@ -205,7 +235,16 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
       let keepLock = false;
       try {
         refuseUnlessInstalled();
-        const report = await update(release);
+        let report: UpdateReport;
+        try {
+          report = await update(release);
+        } catch (e) {
+          if (!(e instanceof UpdateRefused)) {
+            step({ step: "failed", detail: message(e) });
+            log(message(e));
+          }
+          throw e;
+        }
         // The agent exits soon. A second run before that would overwrite the .prev backup with the new binary.
         keepLock = report.status === "restarting";
         return report;

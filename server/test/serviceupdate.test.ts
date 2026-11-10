@@ -655,3 +655,76 @@ describe("createClientVersions", () => {
     expect(await get()).toEqual([{ path: A, version: "1.0.0" }]);
   });
 });
+
+describe("createServiceUpdater hooks", () => {
+  type Step = { step: string; to?: string; client?: string; detail?: string };
+  const rec = () => {
+    const steps: Step[] = [];
+    const lines: string[] = [];
+    return { steps, lines, hooks: { onStep: (e: Step) => void steps.push(e), onLog: (l: string) => void lines.push(l) } };
+  };
+  const CL = "/usr/local/bin/claude-rc";
+
+  test("a full update reports its steps in order, with the lines", async () => {
+    const m = fakeMachine({ clients: { [CL]: "client 1.0.0" } });
+    const h = rec();
+    await createServiceUpdater(m.env, h.hooks).run();
+    expect(h.steps).toEqual([
+      { step: "downloading" },
+      { step: "verifying" },
+      { step: "installing-client", client: CL },
+      { step: "installing" },
+      { step: "restarting", to: "2.0.0" },
+    ]);
+    expect(h.lines).toContain("downloading claude-rc-launcher-linux-x64");
+    expect(h.lines).toContain("sha256 matches SHA256SUMS");
+    expect(h.lines).toContain("renamed the old binary to claude-rc-launcher.prev");
+    expect(h.lines).toContain("new binary answers 2.0.0");
+    expect(h.lines.at(-1)).toBe("starting the watchdog");
+  });
+
+  test("up-to-date ends with the step up-to-date, after downloading", async () => {
+    const m = fakeMachine({ service: "service 2.0.0", overrides: { version: "2.0.0" } });
+    const h = rec();
+    await createServiceUpdater(m.env, h.hooks).run();
+    expect(h.steps[0]).toEqual({ step: "downloading" });
+    expect(h.steps.at(-1)).toEqual({ step: "up-to-date" });
+  });
+
+  test("a failed download is the step failed and a line with the same text", async () => {
+    const m = fakeMachine();
+    m.env.fetch = (async () => new Response("no", { status: 404 })) as unknown as typeof fetch;
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(h.steps).toEqual([{ step: "downloading" }, { step: "failed", detail: r.error }]);
+    expect(h.lines.at(-1)).toBe(r.error!);
+  });
+
+  test("a failed --version check is the step failed", async () => {
+    const m = fakeMachine({ release: { service: "broken", client: "client 2.0.0" } });
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(h.steps.at(-1)).toEqual({ step: "failed", detail: r.error });
+    expect(h.lines.at(-1)).toBe(r.error!);
+  });
+
+  test("a failed rename is the step failed", async () => {
+    const m = fakeMachine();
+    const run = m.env.run.bind(m.env);
+    m.env.run = (args, o) => (args[0] === "mv" && args[1] === "-f" && args[2] === `${BIN}.new` ? { code: 1, stdout: "", stderr: "busy" } : run(args, o));
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(r.status).toBe("failed");
+    expect(h.steps.at(-1)).toEqual({ step: "failed", detail: r.error });
+    expect(h.lines.at(-1)).toBe(r.error!);
+  });
+
+  test("a failed client does not stop the later steps", async () => {
+    const m = fakeMachine({ clients: { [CL]: "client 1.0.0" }, release: { service: "service 2.0.0", client: "broken" } });
+    const h = rec();
+    const r = await createServiceUpdater(m.env, h.hooks).run();
+    expect(r.status).toBe("restarting");
+    expect(h.steps.map((s) => s.step)).toEqual(["downloading", "verifying", "installing-client", "installing", "restarting"]);
+    expect(h.lines.some((l) => l.includes(CL) && l.includes("--version"))).toBe(true);
+  });
+});
