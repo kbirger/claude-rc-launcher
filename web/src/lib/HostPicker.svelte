@@ -2,6 +2,7 @@
   import { useQueryClient } from "@tanstack/svelte-query";
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
   import { isRunning, lastEntry } from "./updatebanner";
+  import { clientLabel } from "./clientlabel";
 
   let { hosts, selected, onselect, updates = [], now = new Date() }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date } = $props();
 
@@ -12,7 +13,7 @@
   const shown = (v?: string) => (!v ? "unknown" : v === "dev" || v.includes("+") ? "local build" : v);
   const label = (h: HostInfo) => {
     if (h.status !== "ok") return `${h.name} (${h.error ?? h.status})`;
-    const versions = ` (service ${shown(h.version)}, client ${h.clientVersion ? shown(h.clientVersion) : "no client"})`;
+    const versions = ` (service ${shown(h.version)}, ${h.clientVersion ? `client ${shown(h.clientVersion)}` : clientLabel(h)})`;
     return `${h.name}${versions}${h.stale ? " - out of date" : ""}`;
   };
 

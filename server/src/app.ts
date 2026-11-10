@@ -57,13 +57,14 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   const r = new Hono();
 
   r.get("/node", async (c) => {
-    let clients: ClientVersion[] = [];
+    let clients: ClientVersion[] | undefined = [];
     try {
       clients = (await clientVersions?.()) ?? [];
     } catch (e) {
+      clients = undefined; // no `clients` field: the hub shows "client not reported", not "no client"
       console.error(`client versions failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    return c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined, clients });
+    return c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined, ...(clients ? { clients } : {}) });
   });
   r.post("/update", async (c) => {
     const { release } = parseUpdateRequest(await readJson(c));

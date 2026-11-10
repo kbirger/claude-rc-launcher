@@ -24,6 +24,58 @@ describe("findClients", () => {
     realpath: (p: string) => links[p] ?? p,
   });
 
+  test("a registered symlink gives the real path, once", () => {
+    const o = fs(["/usr/bin/claude-rc"], { "/opt/link/claude-rc": "/usr/bin/claude-rc" });
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: [], registered: ["/opt/link/claude-rc"] })).toEqual(["/usr/bin/claude-rc"]);
+  });
+  test("an entry that trustedClient refuses is dropped, but the scan still finds the same file", () => {
+    const o = fs(["/opt/a/claude-rc", "/usr/bin/claude-rc"]);
+    const seen: string[] = [];
+    const trustedClient = (p: string) => {
+      seen.push(p);
+      return false;
+    };
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: [], registered: ["/opt/a/claude-rc", "/usr/bin/claude-rc"], trustedClient })).toEqual(["/usr/bin/claude-rc"]);
+    expect(seen).toEqual(["/opt/a/claude-rc", "/usr/bin/claude-rc"]);
+  });
+  test("an empty registry falls back to the scan", () => {
+    const o = fs(["/usr/bin/claude-rc"]);
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: [], registered: [] })).toEqual(["/usr/bin/claude-rc"]);
+  });
+  test("Windows: a quoted PATH segment is unquoted", () => {
+    const f = "C:\\Program Files\\x\\claude-rc.exe";
+    expect(findClients({ ...fs([f]), platform: "win32", pathEnv: 'C:\\Windows; "C:\\Program Files\\x" ', homes: [] })).toEqual([f]);
+  });
+  test("registered paths come first, then scanned ones, each real file once", () => {
+    const o = fs(["/opt/a/claude-rc", "/usr/bin/claude-rc", "/root/.local/bin/claude-rc"]);
+    expect(findClients({ ...o, pathEnv: "/usr/bin", homes: ["/root"], registered: ["/opt/a/claude-rc", "/usr/bin/claude-rc", "/gone/claude-rc"] })).toEqual([
+      "/opt/a/claude-rc",
+      "/usr/bin/claude-rc",
+      "/root/.local/bin/claude-rc",
+    ]);
+  });
+  test("Windows: PATH is split on ; and claude-rc.exe is looked up in each directory", () => {
+    const o = fs(["C:\\tools\\claude-rc.exe"]);
+    expect(findClients({ ...o, platform: "win32", pathEnv: "C:\\Windows;C:\\tools", homes: ["/root"] })).toEqual(["C:\\tools\\claude-rc.exe"]);
+  });
+  test("Windows: Program Files is searched without a PATH entry", () => {
+    const f = "C:\\Program Files\\claude-rc\\claude-rc.exe";
+    expect(findClients({ ...fs([f]), platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files" })).toEqual([f]);
+  });
+  test("Windows: both Program Files defaults are found without a PATH entry, each real file once", () => {
+    const a = "C:\\Program Files\\claude-rc\\bin\\claude-rc.exe";
+    const b = "C:\\Program Files\\claude-rc\\claude-rc.exe";
+    const base = { platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files" };
+    expect(findClients({ ...fs([a]), ...base })).toEqual([a]);
+    expect(findClients({ ...fs([b]), ...base })).toEqual([b]);
+    expect(findClients({ ...fs([a, b]), ...base })).toEqual([a, b]);
+    expect(findClients({ ...fs([a, b]), ...base, registered: [a] })).toEqual([a, b]);
+  });
+  test("Windows: registered paths are deduplicated without regard to case", () => {
+    const f = "C:\\Program Files\\claude-rc\\claude-rc.exe";
+    const o = { exists: (p: string) => p.toLowerCase() === f.toLowerCase(), realpath: (p: string) => p };
+    expect(findClients({ ...o, platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files", registered: ["c:\\program files\\claude-rc\\CLAUDE-RC.exe"] })).toEqual(["c:\\program files\\claude-rc\\CLAUDE-RC.exe"]);
+  });
   test("finds the first copy on PATH, like which", () => {
     const o = fs(["/usr/bin/claude-rc", "/bin/claude-rc"]);
     expect(findClients({ ...o, pathEnv: "/usr/local/bin::/usr/bin:/bin", homes: [] })).toEqual(["/usr/bin/claude-rc"]);
@@ -481,6 +533,25 @@ describe("createClientVersions", () => {
   const A = "/usr/local/bin/claude-rc";
   const B = "/root/.local/bin/claude-rc";
 
+  test("a registered path with spaces is passed to the run as one argument", async () => {
+    const W = "C:\\Program Files\\claude-rc\\claude-rc.exe";
+    const calls: string[][] = [];
+    const env = {
+      platform: "win32",
+      pathEnv: "",
+      homes: [],
+      exists: (p: string) => p === W,
+      realpath: (p: string) => p,
+      registeredClients: () => [W],
+      run: () => ({ code: 1, stdout: "", stderr: "" }),
+      runAsync: async (args: string[]) => {
+        calls.push(args);
+        return { code: 0, stdout: "claude-rc 0.9.1\n", stderr: "" };
+      },
+    } as unknown as UpdateEnv;
+    expect(await createClientVersions(env)()).toEqual([{ path: W, version: "0.9.1" }]);
+    expect(calls).toEqual([[W, "--version"]]);
+  });
   test("one copy gives its version", async () => {
     expect(await createClientVersions(make({ [A]: "claude-rc 0.8.2\n" }).env)()).toEqual([{ path: A, version: "0.8.2" }]);
   });

@@ -123,6 +123,26 @@ describe("host list client versions", () => {
     const list = await (await get(app, "/api/hosts")).json();
     expect("clientVersion" in list.find((h: any) => h.id === "old")).toBe(false);
   });
+  test("noClient is set exactly when /node answers an empty clients list", async () => {
+    const body = (extra: object) => ({ call: async () => ({ status: 200, body: { ok: true, name: "x", version: VERSION, ...extra } }) }) as unknown as HostClient;
+    const mk = (id: string) => ({ id, name: id, url: "https://localhost:1", auth: { type: "secret", secret: "s" } }) as HostConfig;
+    const clients = new Map<string, HostClient>([
+      ["empty", body({ clients: [] })],
+      ["missing", body({})],
+      ["notarray", body({ clients: "x" })],
+      ["noversion", body({ clients: [{ path: "/a" }] })],
+    ]);
+    const list = await (await get(hub([...clients.keys()].map(mk), clients), "/api/hosts")).json();
+    const has = (id: string) => "noClient" in list.find((h: any) => h.id === id);
+    expect(list.find((h: any) => h.id === "empty").noClient).toBe(true);
+    expect([has("missing"), has("notarray"), has("noversion")]).toEqual([false, false, false]);
+  });
+  test("local follows the same noClient rule", async () => {
+    const none = await (await get(hub([], new Map()), "/api/hosts")).json();
+    expect(none[0].noClient).toBe(true);
+    const some = await (await get(hub([], new Map(), { clientVersions: async () => [{ path: "/a" }] }), "/api/hosts")).json();
+    expect("noClient" in some[0]).toBe(false);
+  });
   test("local gets its clientVersion from the local /node", async () => {
     const app = hub([], new Map(), { clientVersions: async () => [{ path: "/a", version: "0.9.0" }, { path: "/b" }] });
     expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0", stale: false });
@@ -137,9 +157,9 @@ describe("host list", () => {
     const r = await get(app, "/api/hosts");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, stale: false },
-      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, stale: false },
+      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, noClient: true, stale: false },
     ]);
   });
 
@@ -155,8 +175,8 @@ describe("host list", () => {
     expect(Date.now() - t0).toBeLessThan(2_500);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, stale: false },
       { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config", stale: false },
       { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config", stale: false },
     ]);
@@ -169,7 +189,7 @@ describe("host list", () => {
     const wrongPin = createHostClient({ ...b.host, ca: other.host.ca }, secretAuthorizer(b.secret));
     const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", wrongPin]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
       { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config", stale: false },
       { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config", stale: false },
     ]);
@@ -496,7 +516,7 @@ describe("node and update routes", () => {
     const old: HostClient = { call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };
     const app = hub([hostCfg("nas"), hostCfg("old")], new Map([["nas", client], ["old", old]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
       { id: "nas", name: "nas", status: "ok", source: "config", version: "1.4.0", stale: false },
       { id: "old", name: "old", status: "ok", source: "config", stale: false },
     ]);
