@@ -14,7 +14,7 @@ export type BannerItem =
 
 const OFFLINE_WINDOW_MS = 10 * 60_000;
 export const BY_HAND_NODE = "run claude-rc node update on it once";
-const BY_HAND_HUB = "the hub did not reach the latest version, update it by hand";
+const BY_HAND_HUB = "the update finished, but the hub is still behind the latest release. Run claude-rc node update on the hub machine, then read the hub journal for lines that start with [update]";
 const ROLLED_BACK = "the new version did not start, the old version was restored";
 
 const RUNNING_MAX_MS = 10 * 60_000;

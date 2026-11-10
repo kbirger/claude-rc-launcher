@@ -41,6 +41,7 @@ test("a node that failed with 404 gives by-hand", () => {
 test("a hub that updated a moment ago and is still stale gives by-hand", () => {
   const items = model([hub({ stale: true, target: "1.3.0" })], [entry({ finishedAt: "2026-11-09T11:58:30Z" })]);
   expect(items.map((i) => i.kind)).toEqual(["hub-update", "by-hand"]);
+  expect((items[1] as { message: string }).message).toContain("claude-rc node update");
 });
 
 test("a hub that updated long ago and is stale now (a newer release came out) gives only hub-update", () => {
