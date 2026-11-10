@@ -10,3 +10,8 @@ test("plain start uses the current folder and chosen user", () => {
   expect(trustStartArgs(null, { path: "/new" }, "bob", false)).toEqual({ path: "/new", user: "bob", addTrust: false });
   expect(trustStartArgs({ path: "/old", user: "alice" }, { path: "/new" }, undefined, false).path).toBe("/new");
 });
+
+test("trust start keeps the (admin) entry the prompt named", () => {
+  const r = trustStartArgs({ path: "C:/p", user: "svc (admin)" }, { path: "C:/q" }, "svc", true);
+  expect(r).toEqual({ path: "C:/p", user: "svc (admin)", addTrust: true });
+});

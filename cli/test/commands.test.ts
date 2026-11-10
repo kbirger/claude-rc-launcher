@@ -408,6 +408,12 @@ describe("clone, repos and gh-login", () => {
 
   const cloneDone = { [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }) };
 
+  test("the 428 hint after a clone keeps the (admin) entry, quoted", async () => {
+    const s = setup({ [`GET ${H}/users`]: () => [], ...cloneDone, [`POST ${H}/instances`]: err(428, { error: "/srv/r is not trusted" }) });
+    const r = await s.run("clone", "o/r", "/srv", "--user", "svc (admin)");
+    expect(r.err[0]).toContain(`start /srv/r --force --user 'svc (admin)'"`);
+  });
+
   test("a 428 after a successful clone says where the clone is and how to start it", async () => {
     const s = setup({ ...cloneDone, [`POST ${H}/instances`]: err(428, { error: "/srv/r is not trusted" }) });
     const r = await s.run("clone", "o/r", "/srv");

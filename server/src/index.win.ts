@@ -9,6 +9,7 @@ import { startNode } from "./nodemain";
 import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
 import { taskkillTree, WinInstances } from "./win/instances";
+import { restrictedSpawn, serviceIsAdmin } from "./win/token";
 import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
 
 // The Windows node. Only this file imports ./win, so the Linux binaries never contain this code.
@@ -38,6 +39,9 @@ try {
 
 console.log(`claude-rc-launcher ${VERSION} (Windows node), running as ${userInfo().username}`);
 
+const admin = serviceIsAdmin();
+console.log(admin ? "sessions run restricted by default (service account is an administrator)" : "sessions run as the service account (no administrator rights to drop)");
+
 const instances = new WinInstances(
   {
     roots: cfg.roots,
@@ -47,8 +51,9 @@ const instances = new WinInstances(
     claudeRcArgs: cfg.claudeRcArgs,
     namePrefix: cfg.namePrefix,
     instanceDir: join(cfg.node!.tls.stateDir, "instances"),
+    serviceIsAdmin: admin,
   },
-  { killTree: taskkillTree(bunRunner) },
+  { killTree: taskkillTree(bunRunner), ...(admin ? { spawnRestricted: restrictedSpawn() } : {}) },
 );
 
 let running: { stop(): void };
