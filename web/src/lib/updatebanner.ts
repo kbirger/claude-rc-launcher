@@ -44,6 +44,8 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
 
   if (hub && unknownVersion(hub.version)) items.push({ kind: "hub-local-build" });
 
+  // A client download that fails with 404 is not the service asset problem that BY_HAND_NODE explains.
+  const CLIENT_FAILED = /^the client update failed/i;
   const byHand = new Set<string>();
   for (const id of new Set(o.updates.map((u) => u.host))) {
     const e = last(id);
@@ -53,7 +55,7 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
         byHand.add(id);
         items.push({ kind: "by-hand", host: nameOf(id), message: BY_HAND_HUB });
       }
-    } else if (e.status === "failed" && e.error && /404|not found/i.test(e.error)) {
+    } else if (e.status === "failed" && e.error && !CLIENT_FAILED.test(e.error) && /404|not found/i.test(e.error)) {
       byHand.add(id);
       items.push({ kind: "by-hand", host: nameOf(id), message: BY_HAND_NODE });
     }

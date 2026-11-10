@@ -225,7 +225,7 @@ Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host
 
 **Updating.** `claude-rc update --all-nodes` updates a Windows node like any other. Run it from a Linux or macOS
 client. The node updates its own `claude-rc.exe` first, when its service account can write the client folder. An
-administrator service account can. Then the node downloads
+administrator service account can. The old client stays as `claude-rc.exe.prev`. Then the node downloads
 `claude-rc-launcher-win-x64.exe`, checks it against `SHA256SUMS`, runs the new binary once with `--version`, swaps it in
 by renaming files (a running `.exe` can be renamed but not overwritten) and restarts. The old binary stays as
 `claude-rc-launcher.exe.prev`. If the new binary does not stay up for 30 seconds, the launcher puts the old one back
@@ -235,7 +235,8 @@ gives it Modify rights there. The service already runs as that account, so this 
 
 If the service account cannot write the client folder, the node leaves the client as it was. The update report shows
 that client as failed and says to update it by hand. Run `install.ps1 -ClientOnly` in an elevated PowerShell. This
-failure does not stop the update of the service. The client copy also keeps a `claude-rc.exe.prev` backup. The
+failure does not stop the update of the service. Until you update that client by hand,
+`claude-rc update --all-nodes` exits with code 1 for that Windows host. The
 `claude-rc update` command still does not run on Windows. See [Command-line client](#command-line-client).
 
 **Remove.** `.\install.ps1 -Uninstall` removes the service, the firewall rule and the `PATH` entries. It keeps the

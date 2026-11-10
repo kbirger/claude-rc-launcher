@@ -87,10 +87,20 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
       }
       return { path: p, status: "failed", error: `${why}. ${BY_HAND}` };
     };
+    if (win32.basename(p).toLowerCase() !== `${CLIENT_PREFIX}.exe`) return fail(`${p} is not named ${CLIENT_PREFIX}.exe, so it is not touched`);
     try {
       if (sha256(env.readFile(p)) === sha256(binary)) return { path: p, status: "up-to-date" };
       const from = env.versionOf(p, CLIENT_PREFIX);
-      env.remove(prev); // an old backup must not make the rename fail
+      // An old backup is only removed for tidiness: a rename onto it works too. A running image cannot be deleted.
+      try {
+        env.remove(prev);
+      } catch {
+        try {
+          env.rename(prev, `${prev}.${env.now().getTime()}.old`);
+        } catch {
+          // the rename below replaces it
+        }
+      }
       env.writeFile(fresh, binary);
       const to = env.versionOf(fresh, CLIENT_PREFIX);
       if (to === undefined) return fail("the new client did not answer --version. Nothing was installed");
@@ -134,7 +144,7 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
         client = await downloadAsset(env, WIN_CLIENT_ASSET, release);
       } catch (e) {
         if (!(e instanceof ReleaseError)) throw e;
-        error = `${e.message}. ${BY_HAND}`;
+        error = `client asset: ${e.message}. ${BY_HAND}`;
       }
       for (const p of paths) clients.push(client ? updateClient(p, client) : { path: p, status: "failed", error });
     }

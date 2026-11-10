@@ -393,4 +393,30 @@ describe("client update", () => {
     const r = await createWindowsUpdater(env()).run();
     expect(r).toEqual({ status: "restarting", from: "0.5.0", to: "0.5.1", clients: [] });
   });
+
+  test("an old .prev that cannot be removed (EBUSY) does not fail the client", async () => {
+    files.set(`${CLIENT}.prev`, enc("ANCIENT"));
+    const r = await createWindowsUpdater(env({
+      remove: (p) => {
+        if (p === `${CLIENT}.prev`) throw new Error("EBUSY");
+        files.delete(p);
+      },
+    })).run();
+    expect(r.clients[0]!.status).toBe("updated");
+    expect(dec(files.get(CLIENT))).toBe("NEWCLIENT");
+    expect(dec(files.get(`${CLIENT}.prev`))).toBe("OLDCLIENT");
+  });
+
+  test("a client path that is not named claude-rc.exe is refused and untouched", async () => {
+    const odd = "C:\\Windows\\System32\\cmd.exe";
+    files.set(odd, enc("CMD"));
+    clientPaths = [odd, CLIENT.toUpperCase().replace("CLAUDE-RC.EXE", "Claude-RC.EXE")];
+    files.set(clientPaths[1]!, enc("OLDCLIENT"));
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(r.clients[0]!.error).toContain("is not named claude-rc.exe");
+    expect(dec(files.get(odd))).toBe("CMD");
+    expect(leftovers()).toEqual([]);
+    expect(r.clients[1]!.status).toBe("updated");
+  });
 });
