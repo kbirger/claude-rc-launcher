@@ -582,7 +582,7 @@ The banner has two separate buttons. `Update hub` updates the hub to the latest 
 nodes to the version of the hub. The host picker also has an `Update` button for the selected node. The UI never
 updates anything by itself.
 
-A machine shows its client in one of three ways:
+A machine shows its client in one of four ways:
 
 - The version, for example `0.8.4`, when the node found a client.
 - `client local build`, when the client is a local build. It is never marked stale.
@@ -601,7 +601,9 @@ applies the same check to the folder. A client entry also needs its real file an
 other write access. Otherwise the node skips that entry and logs a line.
 
 `install-cli.sh` writes the line when it runs as root or through `sudo`. `install.ps1`, the elevated installer, writes it
-on Windows. It gives the registry its own folder, which only administrators can change.
+on Windows. It gives the registry its own folder, which only administrators can change. The installer takes ownership of
+that folder and replaces a registry that someone else owned. If a reparse point or junction sits at that path, the
+installer skips the registry.
 
 The node also always scans for clients. On Linux, it scans the `PATH` and the `~/.local/bin` folders of the service user
 and of root. On Windows, it scans the `PATH` (split on `;`) and `%ProgramFiles%\claude-rc`. Registered entries come
