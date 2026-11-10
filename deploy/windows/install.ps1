@@ -26,8 +26,8 @@
       claude-rc-windows-x64.exe), installs it as <InstallDir>\bin\claude-rc.exe, adds <InstallDir>\bin to the machine
       PATH and records the path in the registry value HKLM\SOFTWARE\claude-rc, Client (the node reads it to find the
       client). Open a new terminal afterwards. -NoClient skips all three. Only administrators can write under
-      HKLM\SOFTWARE, so a user cannot make the node run another program. <InstallDir>\bin gets no extra rights: the
-      service account cannot replace a program on the PATH.
+      HKLM\SOFTWARE, so a user cannot make the node run another program. <InstallDir>\bin is locked to SYSTEM and Administrators
+      (Users read only): the service account cannot replace a program on the PATH.
     * Gets WinSW (the Windows service wrapper) v2.12.0 and checks it against a pinned SHA-256.
     * Copies both into <InstallDir>\service, with the launcher script, and writes the WinSW definition next to them.
       The service account gets Modify rights on that folder only: the agent updates its own binary there. The binary is
@@ -47,7 +47,7 @@
   -OpenFirewall adds an inbound rule for the port in config.toml (Private and Domain networks only).
   -NoService only puts the files in place (for tests); it never changes the machine PATH or the registry value Client,
   unless a test key is given with -PathRegistryKey or -ClientRegistryKey. -ClientRegistryKey names another registry key for the client value (tests only).
-  -Uninstall removes the service, the firewall rule and both PATH entries (<InstallDir>\bin and the old <InstallDir>),
+  -Uninstall removes the service, the firewall rule and the PATH entry <InstallDir>\bin (and the old <InstallDir> entry, for the default folder),
   and keeps the files, the registry value, the config and the certificate.
 #>
 [CmdletBinding()]
@@ -429,7 +429,7 @@ try {
   if ($svc -and -not $NoService) {
     $runsFrom = Get-RegisteredServiceDir
     if ($runsFrom -and $runsFrom.TrimEnd('\') -ine $ServiceDir.TrimEnd('\')) {
-      throw "the service runs from $runsFrom, not from $ServiceDir. Run without -InstallDir to keep it there, or run -Uninstall first and delete that folder"
+      throw "the service runs from $runsFrom, not from $ServiceDir. Give that folder as -InstallDir, or run -Uninstall first and delete it"
     }
   }
   $wasRunning = $false

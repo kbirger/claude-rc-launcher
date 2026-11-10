@@ -195,9 +195,8 @@ The service starts when `config.toml` has no placeholders left and has at least 
 (it gets the same Modify grant there), because moving a running service needs an uninstall and an install. The installer
 stops with an error if the service runs from another folder than the one it would use. After `-Uninstall`, a new install
 uses the new layout, even if old files remain. The client goes to the new `bin` folder. The installer deletes the old
-`C:\Program Files\claude-rc\claude-rc.exe`, takes `C:\Program Files\claude-rc` off the `PATH` (a custom `-InstallDir` leaves the `PATH` unless it holds the old
-client) and adds
-`C:\Program Files\claude-rc\bin`. The old registry folder `C:\ProgramData\claude-rc-registry` is no longer used. You can
+`C:\Program Files\claude-rc\claude-rc.exe`, takes `C:\Program Files\claude-rc` off the `PATH` (a custom `-InstallDir` leaves the `PATH` unless it
+holds the old client) and adds `C:\Program Files\claude-rc\bin`. The old registry folder `C:\ProgramData\claude-rc-registry` is no longer used. You can
 delete it.
 
 Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host add win --url https://<this-pc>:8443`.

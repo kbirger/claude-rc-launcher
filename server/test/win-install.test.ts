@@ -4,7 +4,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-// deploy/windows/install.ps1 only runs on Windows. -NoService puts the files in place and needs no admin rights.
+// deploy/windows/install.ps1 only runs on Windows. -NoService puts the files in place. Run these tests in an elevated
+// prompt: the installer sets a restricted ACL on the bin folder, and a non-admin owner then cannot write into it.
+// The old-layout reinstall needs a registered service, so only the text checks cover it.
 const SCRIPT = resolve(import.meta.dir, "../../deploy/windows/install.ps1");
 const windows = process.platform === "win32";
 
@@ -173,7 +175,7 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
 
   test("a service that runs from another folder stops the install", () => {
     expect(script).toContain("$runsFrom.TrimEnd('\\') -ine $ServiceDir.TrimEnd('\\')");
-    expect(script).toContain("the service runs from $runsFrom, not from $ServiceDir. Run without -InstallDir to keep it there, or run -Uninstall first and delete that folder");
+    expect(script).toContain("the service runs from $runsFrom, not from $ServiceDir. Give that folder as -InstallDir, or run -Uninstall first and delete it");
   });
 
   test("only the default parent folder, or one that holds the old client, leaves the PATH", () => {
@@ -246,17 +248,6 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     expect(r.code).toBe(0);
     expect(existsSync(join(dir, "app", "claude-rc.exe"))).toBe(false);
     expect(await pathValue()).toBe(`C:\\Windows;${join(dir, "app", "bin")}`);
-  });
-
-  test("an old service folder is kept when -InstallDir is not given", async () => {
-    const pf = join(dir, "pf");
-    await mkdir(join(pf, "claude-rc-launcher"), { recursive: true });
-    await writeFile(join(pf, "claude-rc-launcher", "claude-rc-launcher-svc.exe"), "MZ old winsw");
-    const r = await run([], { installDir: false, env: { ProgramFiles: pf } });
-    expect(r.code).toBe(0);
-    expect(await readFile(join(pf, "claude-rc-launcher", "claude-rc-launcher.exe"), "utf8")).toBe("MZ fake node binary");
-    expect(existsSync(join(pf, "claude-rc", "service"))).toBe(false);
-    expect(await readFile(join(pf, "claude-rc", "bin", "claude-rc.exe"), "utf8")).toBe("MZ client");
   });
 
   test("-NoClient writes no value", async () => {
