@@ -120,7 +120,7 @@ export function findClients(o: FindClientsInput): string[] {
 }
 
 /** The client copies of the machine `env` describes: the one place that passes the registry to `findClients`. */
-const clientsOf = (env: UpdateEnv): string[] => findClients({ ...env, registered: env.registeredClients?.() ?? [] });
+export const clientsOf = (env: UpdateEnv): string[] => findClients({ ...env, registered: env.registeredClients?.() ?? [] });
 
 const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
