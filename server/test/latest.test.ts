@@ -27,18 +27,18 @@ describe("createLatestRelease", () => {
     expect(setup().latest.peek()).toBeUndefined();
   });
 
-  test("a second call inside one hour makes no request", async () => {
+  test("a second call inside five minutes makes no request", async () => {
     const s = setup();
     await s.latest.get();
-    s.advance(59 * 60_000);
+    s.advance(4 * 60_000);
     await s.latest.get();
     expect(s.urls.length).toBe(1);
   });
 
-  test("a call after one hour and one minute makes a request", async () => {
+  test("a call after five minutes and one minute makes a request", async () => {
     const s = setup();
     await s.latest.get();
-    s.advance(61 * 60_000);
+    s.advance(6 * 60_000);
     s.set("v0.9.0");
     expect((await s.latest.get()).version).toBe("0.9.0");
     expect(s.urls.length).toBe(2);
@@ -47,7 +47,7 @@ describe("createLatestRelease", () => {
   test("a failure with a cached value returns the old value", async () => {
     const s = setup();
     const first = await s.latest.get();
-    s.advance(61 * 60_000);
+    s.advance(6 * 60_000);
     s.set(new Error("offline"));
     expect(await s.latest.get()).toEqual(first);
   });
@@ -74,7 +74,7 @@ describe("createLatestRelease", () => {
   test("after a failure it waits 60 seconds before it calls again, and serves the stale value", async () => {
     const s = setup();
     const first = await s.latest.get();
-    s.advance(61 * 60_000);
+    s.advance(6 * 60_000);
     s.set(new Error("offline"));
     expect(await s.latest.get()).toEqual(first);
     s.advance(30_000);

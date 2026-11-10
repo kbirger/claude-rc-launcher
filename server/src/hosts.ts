@@ -25,7 +25,7 @@ const noClientOf = (body: unknown): boolean => isObject(body) && Array.isArray(b
 export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; noClient?: true; stale: boolean; target?: string };
 
 /** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
-const LATEST_MAX_AGE_MS = 3_600_000;
+const LATEST_MAX_AGE_MS = 300_000;
 
 /** `stale` and `target` of a host: stale only when `target` is known and the host or its clients are older. */
 function staleness(target: string | undefined, version: string | undefined, clientVersion: string | undefined): { stale: boolean; target?: string } {

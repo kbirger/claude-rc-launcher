@@ -11,7 +11,7 @@ export class LatestError extends Error {
   }
 }
 
-const DEFAULT_TTL_MS = 3_600_000;
+export const DEFAULT_TTL_MS = 300_000;
 
 /**
  * Remembers the latest release tag for `ttlMs`. Concurrent calls share one GitHub call. When GitHub fails it

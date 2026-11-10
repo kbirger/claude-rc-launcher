@@ -832,7 +832,7 @@ describe("host list stale flags", () => {
     const get = async () => (calls++, release("0.8.3"));
     await list({ version: "0.8.2", latest: { peek: () => release("0.8.3"), get } });
     expect(calls).toBe(0);
-    const l = await list({ version: "0.8.2", latest: { peek: () => release("0.8.3", new Date(Date.now() - 2 * 3_600_000).toISOString()), get } });
+    const l = await list({ version: "0.8.2", latest: { peek: () => release("0.8.3", new Date(Date.now() - 10 * 60_000).toISOString()), get } });
     expect(calls).toBe(1);
     expect(l[0]).toMatchObject({ stale: true, target: "0.8.3" });
   });

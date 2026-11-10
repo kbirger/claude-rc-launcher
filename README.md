@@ -658,7 +658,7 @@ appears once. Only the scan finds a client installed without administrator right
 
 The hub restarts while it updates, and the page reconnects by itself.
 
-The hub asks GitHub for the latest release and keeps the answer for one hour. The browser never calls GitHub. If GitHub
+The hub asks GitHub for the latest release and keeps the answer for five minutes. The browser never calls GitHub. If GitHub
 does not answer, the page shows `latest unknown` and offers no hub update.
 
 The hub keeps the last update of each machine in `<state_dir>/updates.json`. The status is `running`, `updated`,
