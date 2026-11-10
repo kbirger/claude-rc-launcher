@@ -345,3 +345,21 @@ describe("console lines and re-sync", () => {
     expect(invalidated.filter((k) => k[0] === "history").length).toBe(1);
   });
 });
+
+test("a finished update that arrives by the poll (a cache write, not an event) refetches hosts and history", () => {
+  connectEvents({ client, open });
+  client.setQueryData(["updates"], [entry("local")]);
+  expect(invalidated).toEqual([]);
+  client.setQueryData(["updates"], [entry("local", "updated")]);
+  expect(invalidated).toEqual([["hosts"], ["history"]]);
+  client.setQueryData(["updates"], [{ ...entry("local", "updated") }]);
+  expect(invalidated.length).toBe(2);
+});
+
+test("stop ends the watch of the update list", () => {
+  const stop = connectEvents({ client, open });
+  client.setQueryData(["updates"], [entry("a")]);
+  stop();
+  client.setQueryData(["updates"], [entry("a", "updated")]);
+  expect(invalidated).toEqual([]);
+});

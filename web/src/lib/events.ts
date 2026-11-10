@@ -52,6 +52,29 @@ export function connectEvents(o: {
     return stale;
   };
 
+  // Whatever way the update list changes (a snapshot, an update event or the 3 second poll), a new update or a new status
+  // changes the host list (the version, `stale`) and a finished update adds an item to the history. A new step or a new
+  // output line changes neither. The first list only sets the starting point.
+  let seen: Map<string, string> | undefined;
+  const offCache = o.client.getQueryCache().subscribe((ev) => {
+    if (ev.type !== "updated" || ev.action.type !== "success" || ev.query.queryKey.length !== 1 || ev.query.queryKey[0] !== "updates") return;
+    const data = ev.query.state.data as UpdateEntry[] | undefined;
+    if (!Array.isArray(data)) return;
+    const next = new Map(data.map((e) => [e.host, `${e.startedAt}|${e.status}`]));
+    if (seen) {
+      let hosts = false;
+      let history = false;
+      for (const e of data) {
+        if (seen.get(e.host) === next.get(e.host)) continue;
+        hosts = true;
+        if (e.status !== "running") history = true;
+      }
+      if (hosts) void o.client.invalidateQueries({ queryKey: ["hosts"] });
+      if (history) void o.client.invalidateQueries({ queryKey: ["history"] });
+    }
+    seen = next;
+  });
+
   const clearTimer = () => {
     if (timer !== undefined) clearT(timer);
     timer = undefined;
@@ -96,15 +119,10 @@ export function connectEvents(o: {
       retries = 0;
       try {
         const entry = JSON.parse(String((e as MessageEvent).data)) as UpdateEntry;
-        const before = o.client.getQueryData<UpdateEntry[]>(["updates"])?.find((x) => x.host === entry.host);
         o.client.setQueryData<UpdateEntry[]>(["updates"], (cur = []) => {
           const i = cur.findIndex((x) => x.host === entry.host);
           return i < 0 ? [...cur, entry] : cur.map((x, j) => (j === i ? entry : x));
         });
-        // A new step or a new output line does not change the host list.
-        if (!before || before.status !== entry.status) void o.client.invalidateQueries({ queryKey: ["hosts"] });
-        // A finished update adds an item to the history.
-        if (entry.status !== "running" && before?.status !== entry.status) void o.client.invalidateQueries({ queryKey: ["history"] });
       } catch {}
     });
     s.addEventListener("log", (e) => {
@@ -146,6 +164,7 @@ export function connectEvents(o: {
   connect();
   return () => {
     stopped = true;
+    offCache();
     clearTimer();
     globalThis.removeEventListener("focus", onFocus);
     es?.close();
