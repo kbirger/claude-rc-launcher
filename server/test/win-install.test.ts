@@ -212,7 +212,13 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     const args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", bin, "-WinSW", winsw, "-ClientBinary", client,
       "-DataDir", join(dir, "data"), "-ClientRegistryKey", clientKey, "-PathRegistryKey", pathKey, ...extra];
     if (opts.installDir !== false && !extra.includes("-InstallDir")) args.push("-InstallDir", join(dir, "app"));
-    const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...opts.env } });
+    // Windows names are case-insensitive: drop the inherited name, or the real ProgramFiles can win over the override.
+    const env: Record<string, string | undefined> = { ...process.env };
+    for (const [k, v] of Object.entries(opts.env ?? {})) {
+      for (const have of Object.keys(env)) if (have.toLowerCase() === k.toLowerCase()) delete env[have];
+      env[k] = v;
+    }
+    const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     return { out, err, code };
   };
