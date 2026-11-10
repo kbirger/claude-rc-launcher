@@ -14,6 +14,7 @@ export class UpdateLog {
 
   add(host: string, line: string, at?: string): void {
     at ??= this.now().toISOString();
+    line = line.length > 500 ? line.slice(0, 497) + "..." : line;
     const list = this.lines.get(host) ?? [];
     list.push({ line, at });
     if (list.length > this.maxLines) list.splice(0, list.length - this.maxLines);

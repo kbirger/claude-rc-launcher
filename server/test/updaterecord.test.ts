@@ -204,6 +204,8 @@ describe("stepWriter", () => {
     const r = await UpdateRecord.load({ stateDir: dir });
     const write = stepWriter(r);
     write("nas", { step: "installing" });
+    await Bun.sleep(30);
+    expect(r.list()).toEqual([]);
     await r.set(entry({ host: "nas" }));
     write("nas", { step: "installing-client", client: "x".repeat(300) });
     write("nas", { step: "installing", detail: "d" });
@@ -216,6 +218,20 @@ describe("stepWriter", () => {
     write("nas", { step: "failed" });
     await Bun.sleep(30);
     expect(r.list()[0]).toEqual(entry({ host: "nas", status: "failed" }));
+  });
+  test("a new run with another startedAt is not overwritten by a step of the old run", async () => {
+    const { stepWriter } = await import("../src/hubmain");
+    const r = await UpdateRecord.load({ stateDir: dir });
+    await r.set(entry({ host: "nas", startedAt: "2026-11-10T10:00:00.000Z", startedBy: "ann" }));
+    const realSetIf = r.setIf.bind(r);
+    // A new run begins after the writer has read the old entry but before its write takes the lock.
+    r.setIf = async (next, pred) => {
+      await r.set(entry({ host: "nas", startedAt: "2026-11-10T11:00:00.000Z", startedBy: "bob" }));
+      return realSetIf(next, pred);
+    };
+    stepWriter(r)("nas", { step: "installing" });
+    await Bun.sleep(30);
+    expect(r.list()[0]).toEqual(entry({ host: "nas", startedAt: "2026-11-10T11:00:00.000Z", startedBy: "bob" }));
   });
   test("a client detail is cut to 200 characters", async () => {
     const { stepWriter } = await import("../src/hubmain");

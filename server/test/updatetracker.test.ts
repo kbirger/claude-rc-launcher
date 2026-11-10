@@ -132,9 +132,20 @@ describe("update tracker", () => {
       presence.emit({ host: "nas", status: "online", version: "1.0.0", at: "x" });
       presence.emit({ host: "nas", status: "restarting", version: "1.1.0", at: "x" });
       presence.emit({ host: "box", status: "online", version: "1.1.0", at: "x" });
+      await settled();
       expect(t.entry("nas").status).toBe("running");
       expect(t.entry("box").status).toBe("running");
+    });
+    test("an online event with the target version of an older run does not settle the newer run", async () => {
+      const presence = fakePresence();
+      const t = await setup(async () => undefined, presence, true);
+      await t.tracker.begin("nas", "ann", "1.0.0");
+      await t.tracker.finish("nas", rep("restarting") as any);
+      t.clock.t += 601_000;
+      expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(true);
+      presence.emit({ host: "nas", status: "online", version: "1.1.0", at: "x" });
       await settled();
+      expect(t.entry("nas")).toMatchObject({ startedBy: "bob", status: "running" });
     });
     test("without presence events the poll still settles, and a presence object changes nothing for it", async () => {
       const presence = fakePresence();

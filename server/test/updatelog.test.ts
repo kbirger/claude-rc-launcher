@@ -13,6 +13,21 @@ describe("UpdateLog", () => {
     expect(log.get("pi").map((l) => l.line)).toEqual(["x"]);
   });
 
+  test("a line is cut to 500 characters, stored and broadcast alike; exactly 500 is unchanged", () => {
+    const log = new UpdateLog();
+    const seen: string[] = [];
+    log.onLine((e) => seen.push(e.line));
+    log.add("nas", "x".repeat(1024 * 1024));
+    log.add("nas", "y".repeat(500));
+    const got = log.get("nas");
+    expect(got[0]!.line).toHaveLength(500);
+    expect(got[0]!.line.endsWith("...")).toBe(true);
+    expect(got[0]!.line).toBe("x".repeat(497) + "...");
+    expect(got[1]!.line).toBe("y".repeat(500));
+    expect(seen[0]).toBe("x".repeat(497) + "...");
+    expect(seen[1]).toBe("y".repeat(500));
+  });
+
   test("maxLines is configurable and the time comes from now", () => {
     const log = new UpdateLog({ maxLines: 2, now: () => new Date("2026-11-10T10:00:00.000Z") });
     log.add("nas", "a");

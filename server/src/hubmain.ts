@@ -66,7 +66,7 @@ export function stepWriter(record: UpdateRecord): (host: string, e: StepEvent) =
     if (base?.status !== "running") return;
     const { stepDetail: _drop, ...rest } = base;
     void record
-      .setIf({ ...rest, step: e.step, ...(detail !== undefined ? { stepDetail: detail } : {}) }, (cur) => cur?.status === "running")
+      .setIf({ ...rest, step: e.step, ...(detail !== undefined ? { stepDetail: detail } : {}) }, (cur) => cur?.status === "running" && cur.startedAt === base.startedAt)
       .catch((err) => console.error(`cannot record the update step of ${host}: ${err instanceof Error ? err.message : String(err)}`));
   };
 }
