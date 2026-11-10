@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config";
 import { HttpError } from "../src/instances";
+import { NodeEvents } from "../src/updateevents";
 import { VERSION } from "../src/version";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;
@@ -164,5 +165,103 @@ describe("node app", () => {
       expect((await a.request("/api/github/repos", { headers: ok })).status).toBe(404);
       expect((await a.request("/api/clone", { method: "POST", headers: json, body: "{}" })).status).toBe(404);
     });
+  });
+});
+
+describe("node events route", () => {
+  const mk = (events?: NodeEvents, keepaliveMs?: number) => createNodeApp({ cfg, instances, auth, ...(events ? { events } : {}), ...(keepaliveMs ? { keepaliveMs } : {}) });
+  const readUntil = async (reader: ReadableStreamDefaultReader<Uint8Array>, re: RegExp) => {
+    const dec = new TextDecoder();
+    let text = "";
+    while (!re.test(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += dec.decode(value);
+    }
+    return text;
+  };
+
+  test("needs authorization", async () => {
+    expect((await mk(new NodeEvents()).request("/api/events")).status).toBe(401);
+  });
+
+  test("is absent without events", async () => {
+    expect((await mk().request("/api/events", { headers: ok })).status).toBe(404);
+  });
+
+  test("the first event is a snapshot with the version and no update", async () => {
+    const r = await mk(new NodeEvents()).request("/api/events", { headers: ok });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("text/event-stream");
+    expect(r.headers.get("transfer-encoding")).toBeNull();
+    expect(r.headers.get("connection")).toBeNull();
+    const reader = r.body!.getReader();
+    expect(await readUntil(reader, /\n\n/)).toBe(`event: snapshot\ndata: ${JSON.stringify({ version: VERSION, update: null })}\n\n`);
+    await reader.cancel();
+  });
+
+  test("a connection in the middle of an update gets the step, then the kept lines", async () => {
+    const ev = new NodeEvents();
+    ev.emit({ type: "step", step: "downloading", to: "9.9.9" });
+    ev.emit({ type: "log", line: "one", at: "t1" });
+    ev.emit({ type: "log", line: "two", at: "t2" });
+    const r = await mk(ev).request("/api/events", { headers: ok });
+    const reader = r.body!.getReader();
+    const text = await readUntil(reader, /"two"[^]*\n\n/);
+    const events = text.trim().split("\n\n").map((b) => ({ event: /event: (.*)/.exec(b)![1], data: JSON.parse(/data: (.*)/.exec(b)![1]!) }));
+    expect(events[0]!.event).toBe("snapshot");
+    expect(events[0]!.data.version).toBe(VERSION);
+    expect(events[0]!.data.update).toMatchObject({ step: "downloading", to: "9.9.9" });
+    expect(events.slice(1)).toEqual([
+      { event: "log", data: { line: "one", at: "t1" } },
+      { event: "log", data: { line: "two", at: "t2" } },
+    ]);
+    await reader.cancel();
+  });
+
+  test("a step and a log reach the connection", async () => {
+    const ev = new NodeEvents();
+    const r = await mk(ev).request("/api/events", { headers: ok });
+    const reader = r.body!.getReader();
+    await readUntil(reader, /\n\n/);
+    ev.emit({ type: "step", step: "downloading", to: "1.2.3" });
+    expect(await readUntil(reader, /\n\n/)).toBe(`event: step\ndata: ${JSON.stringify({ step: "downloading", to: "1.2.3" })}\n\n`);
+    ev.emit({ type: "log", line: "hello", at: "t" });
+    expect(await readUntil(reader, /\n\n/)).toBe(`event: log\ndata: ${JSON.stringify({ line: "hello", at: "t" })}\n\n`);
+    await reader.cancel();
+  });
+
+  test("a keepalive comment arrives on the interval", async () => {
+    const r = await mk(new NodeEvents(), 20).request("/api/events", { headers: ok });
+    const reader = r.body!.getReader();
+    expect(await readUntil(reader, /: keepalive\n\n/)).toContain(": keepalive\n\n");
+    await reader.cancel();
+  });
+
+  test("the ninth connection gets 429, the first eight keep working, and a closed one frees its slot", async () => {
+    const ev = new NodeEvents();
+    const a = mk(ev);
+    const open: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    for (let i = 0; i < 8; i++) {
+      const r = await a.request("/api/events", { headers: ok });
+      expect(r.status).toBe(200);
+      const reader = r.body!.getReader();
+      await readUntil(reader, /\n\n/);
+      open.push(reader);
+    }
+    const ninth = await a.request("/api/events", { headers: ok });
+    expect(ninth.status).toBe(429);
+    ev.emit({ type: "log", line: "x", at: "t" });
+    for (const reader of open) expect(await readUntil(reader, /\n\n/)).toContain("event: log");
+    await open[0]!.cancel();
+    let again: Response | undefined;
+    for (let i = 0; i < 50; i++) {
+      again = await a.request("/api/events", { headers: ok });
+      if (again.status === 200) break;
+      await Bun.sleep(10);
+    }
+    expect(again!.status).toBe(200);
+    await again!.body!.cancel();
+    for (const reader of open.slice(1)) await reader.cancel();
   });
 });

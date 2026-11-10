@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { streamSSE } from "hono/streaming";
+import { sseResponse } from "./sse";
+import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
@@ -164,8 +165,11 @@ export function onError(err: Error, c: Context) {
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup }): Hono {
-  const { cfg, instances, auth, dirOwner, update, cloner, clientVersions } = deps;
+/** A node accepts at most this many open event connections. */
+const MAX_EVENT_CONNECTIONS = 8;
+
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number }): Hono {
+  const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   app.get("/healthz", (c) => c.json({ ok: true }));
 
@@ -183,6 +187,34 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
+  if (events) {
+    let open = 0;
+    api.get("/events", (c) => {
+      if (open >= MAX_EVENT_CONNECTIONS) return c.json({ error: "too many event connections" }, 429);
+      open++;
+      const keepaliveMs = deps.keepaliveMs ?? 15_000;
+      return sseResponse(c, async (stream) => {
+        let unsubscribe = () => {};
+        const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
+        const done = new Promise<void>((resolve) => stream.onAbort(resolve));
+        try {
+          // Queue the snapshot and the kept lines, then listen, all without a gap. The stream keeps the order of the writes.
+          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }) })];
+          for (const l of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(l) }));
+          unsubscribe = events.subscribe((e) => {
+            const { type, ...data } = e;
+            void stream.writeSSE({ event: type, data: JSON.stringify(data) }).catch(() => {});
+          });
+          await Promise.all(first);
+          await done;
+        } finally {
+          clearInterval(timer);
+          unsubscribe();
+          open--;
+        }
+      });
+    });
+  }
   api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
@@ -241,7 +273,7 @@ export function createApp(deps: Deps): Hono {
     const record = deps.updates;
     if (!record) return c.json({ error: "update record not available" }, 501);
     const keepaliveMs = deps.keepaliveMs ?? 15_000;
-    const res = streamSSE(c, async (stream) => {
+    return sseResponse(c, async (stream) => {
       // Listen before reading the list so a change in between is not lost (a duplicate is fine: the client replaces by host).
       const unsubscribe = record.onChange((e) => void stream.writeSSE({ event: "update", data: JSON.stringify(e) }).catch(() => {}));
       const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
@@ -260,11 +292,6 @@ export function createApp(deps: Deps): Hono {
         unsubscribe();
       }
     });
-    // Hono adds these two headers. HTTP/2 forbids them, and a proxy that forwards them to a browser causes ERR_HTTP2_PROTOCOL_ERROR.
-    // Bun frames the body itself, so the response needs neither.
-    res.headers.delete("Transfer-Encoding");
-    res.headers.delete("Connection");
-    return res;
   });
   api.all("*", (c) => c.json({ error: "not found" }, 404));
   app.route("/api", api);
