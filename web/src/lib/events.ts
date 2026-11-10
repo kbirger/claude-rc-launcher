@@ -16,7 +16,10 @@ export function connectEvents(o: {
   delays?: number[];
   setTimeout?: (f: () => void, ms: number) => Timer;
   clearTimeout?: (t: Timer) => void;
+  /** Where the `[claude-rc]` lines go. Never gets output lines or error text of a node. */
+  log?: { info(...a: unknown[]): void; warn(...a: unknown[]): void };
 }): () => void {
+  const log = o.log ?? console;
   const open = o.open ?? ((u: string) => new EventSource(u));
   const delays = o.delays ?? [5000, 15000, 45000];
   const setT = o.setTimeout ?? ((f, ms) => setTimeout(f, ms));
@@ -26,6 +29,7 @@ export function connectEvents(o: {
   let waiting = false;
   let retries = 0;
   let timer: Timer | undefined;
+  let opens = 0;
 
   // Patches status, version and error of the cached host. Returns true when the host list is stale: the version changed,
   // or the host is not in a loaded list (a new node). A cold cache is left alone.
@@ -67,12 +71,21 @@ export function connectEvents(o: {
     es = s;
     s.addEventListener("open", () => {
       retries = 0;
+      opens++;
+      log.info(`[claude-rc] event stream open (open ${opens})`);
+      // After a reconnect the page may have missed events: read the state again. The first open needs no read, the snapshot carries it.
+      if (opens > 1) {
+        void o.client.invalidateQueries({ queryKey: ["updates"] });
+        void o.client.invalidateQueries({ queryKey: ["hosts"] });
+        void o.client.invalidateQueries({ queryKey: ["history"] });
+      }
     });
     s.addEventListener("snapshot", (e) => {
       retries = 0;
       try {
         const snap = JSON.parse(String((e as MessageEvent).data));
         if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
+        log.info(`[claude-rc] snapshot: ${snap.updates.length} updates, ${snap.presence.length} hosts`);
         o.client.setQueryData<UpdateEntry[]>(["updates"], snap.updates);
         if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs)) o.client.setQueryData<Record<string, LogLine[]>>(["logs"], snap.logs);
         if ((snap.presence as Presence[]).map((p) => patchHost(p)).some(Boolean)) void o.client.invalidateQueries({ queryKey: ["hosts"] });
@@ -89,6 +102,8 @@ export function connectEvents(o: {
         });
         // A new step or a new output line does not change the host list.
         if (!before || before.status !== entry.status) void o.client.invalidateQueries({ queryKey: ["hosts"] });
+        // A finished update adds an item to the history.
+        if (entry.status !== "running" && before?.status !== entry.status) void o.client.invalidateQueries({ queryKey: ["history"] });
       } catch {}
     });
     s.addEventListener("log", (e) => {
@@ -106,8 +121,14 @@ export function connectEvents(o: {
     });
     s.addEventListener("error", () => {
       // CLOSED (2): the browser gave up (a 502 from a proxy while the hub restarts, a 401, a 501). CONNECTING (0): the browser retries itself.
-      if (s.readyState !== 2 || stopped || waiting || timer !== undefined) return;
+      if (s.readyState !== 2) {
+        log.info(`[claude-rc] event stream error (ready state ${s.readyState}), the browser retries`);
+        return;
+      }
+      if (stopped || waiting || timer !== undefined) return;
+      log.warn("[claude-rc] event stream closed");
       if (retries < delays.length) {
+        log.info(`[claude-rc] reconnect in ${delays[retries]! / 1000}s`);
         timer = setT(() => {
           timer = undefined;
           if (!stopped) connect();
@@ -115,6 +136,7 @@ export function connectEvents(o: {
       } else {
         // The retries are used up (for example a real 401). Try once more on the next focus.
         waiting = true;
+        log.warn("[claude-rc] retries used up, will reconnect on the next focus");
         globalThis.addEventListener("focus", onFocus);
       }
     });

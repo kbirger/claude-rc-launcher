@@ -9,6 +9,7 @@
   import { showsFinishedPanel } from "./lib/updateoutput";
   import { hostsQuery, latestQuery, updatesQuery } from "./lib/queries";
   import HubVersionLine from "./lib/HubVersionLine.svelte";
+  import UpdateHistory from "./lib/UpdateHistory.svelte";
   import UpdateBanner from "./lib/UpdateBanner.svelte";
   import HostPicker from "./lib/HostPicker.svelte";
   import InstanceList from "./lib/InstanceList.svelte";
@@ -79,6 +80,9 @@
     <div class="finished"><UpdateOutput host={selected} open={false} /></div>
   {/key}
 {/if}
+{#key selected}
+  <UpdateHistory host={selected} />
+{/key}
 <main>
   <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
   <button class="primary new" onclick={() => (showNew = true)}>+ New</button>

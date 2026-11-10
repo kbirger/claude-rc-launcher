@@ -729,6 +729,15 @@ describe("GET /api/updates and /api/events", () => {
     expect((await mk(fakeRecord()).request("/api/updates")).status).toBe(401);
   });
 
+  test("GET /api/updates/history returns the history, needs a session and answers 501 without one", async () => {
+    const history = { list: () => ({ nas: [{ entry: { ...entry("nas"), status: "updated" }, lines: [{ line: "hi", at: "t" }] }] }) };
+    const r = await mk(fakeRecord(), undefined, { history }).request("/api/updates/history", { headers: H() });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).nas[0].lines[0].line).toBe("hi");
+    expect((await mk(fakeRecord(), undefined, { history }).request("/api/updates/history")).status).toBe(401);
+    expect((await mk(fakeRecord()).request("/api/updates/history", { headers: H() })).status).toBe(501);
+  });
+
   test("501 without an update record for /api/updates", async () => {
     expect((await mk().request("/api/updates", { headers: H() })).status).toBe(501);
   });

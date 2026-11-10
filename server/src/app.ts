@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { sseResponse } from "./sse";
+import type { UpdateHistory } from "./updatehistory";
 import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
@@ -29,7 +30,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -270,13 +271,18 @@ export function createApp(deps: Deps): Hono {
       ...(updates ? { updates } : {}),
     });
   api.route("/hosts", forwarding());
+  api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
   /** The hub stream: a snapshot, then `update`, `log` and `presence` events. Used by the browser route and the CLI route. */
+  let openStreams = 0;
   const hubEvents = (c: Context): Response => {
     const record = deps.updates;
     if (!record) return c.json({ error: "update record not available" }, 501);
     const keepaliveMs = deps.keepaliveMs ?? 15_000;
     return sseResponse(c, async (stream) => {
+      const openedAt = Date.now();
+      openStreams++;
+      console.log(`[events] stream opened (${openStreams} open)`);
       const send = (event: string, data: unknown) => void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
       // Listen before reading the state so a change in between is not lost (a duplicate is fine: the client replaces by host).
       const offs = [
@@ -291,6 +297,8 @@ export function createApp(deps: Deps): Hono {
         closed = true;
         clearInterval(timer);
         for (const off of offs) off();
+        openStreams--;
+        console.log(`[events] stream closed after ${Math.round((Date.now() - openedAt) / 1000)}s (${openStreams} open)`);
       };
       const done = new Promise<void>((resolve) =>
         stream.onAbort(() => {

@@ -664,6 +664,15 @@ does not answer, the page shows `latest unknown` and offers no hub update.
 The hub keeps the last update of each machine in `<state_dir>/updates.json`. The status is `running`, `updated`,
 `up-to-date`, `failed`, `rolled back` or `unknown`. Every browser sees the same record.
 
+The hub also keeps the last 20 finished updates of each machine, with their output lines, in
+`<state_dir>/update-history.json`. The page shows them in the "History" section. The hub update has no output lines,
+because the old process ends before the new process settles the record. The route is `GET /api/updates/history`.
+
+The hub writes the story of each update to its journal. The lines start with `[update]`. Lines about the event streams
+start with `[events]`. The page writes its own lines to the browser console with the prefix `[claude-rc]`. While an
+update runs, the page reads the update record again every 3 seconds. After the event stream reconnects, the page reads
+the record and the host list again.
+
 Keep these limits in mind:
 
 - A user-scope service answers 409. A Linux machine whose service is not the installed one answers 409 too. The banner

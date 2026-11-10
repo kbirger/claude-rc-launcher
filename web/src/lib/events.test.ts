@@ -81,7 +81,7 @@ test("update replaces the entry of the same host or appends", () => {
   expect(client.getQueryData(["updates"])).toEqual([entry("a", "updated"), entry("b")]);
   es.emit("update", { data: JSON.stringify(entry("c")) });
   expect((client.getQueryData(["updates"]) as UpdateEntry[]).map((e) => e.host)).toEqual(["a", "b", "c"]);
-  expect(invalidated.length).toBe(2);
+  expect(invalidated.length).toBe(3); // hosts for the status change of a, hosts for the new host c, history for the finished a
 });
 
 test("an update that changes only the step does not refetch hosts; a status change does", () => {
@@ -92,7 +92,7 @@ test("an update that changes only the step does not refetch hosts; a status chan
   expect(invalidated).toEqual([]);
   expect((client.getQueryData(["updates"]) as UpdateEntry[])[0]!.step).toBe("installing");
   es.emit("update", { data: JSON.stringify(entry("a", "failed")) });
-  expect(invalidated).toEqual([["hosts"]]);
+  expect(invalidated).toEqual([["hosts"], ["history"]]);
 });
 
 test("a presence event patches the host and does not refetch", () => {
@@ -285,5 +285,63 @@ describe("retries", () => {
     expect(focusHandlers.length).toBe(0);
     close();
     expect(timers.pop()!.ms).toBe(10);
+  });
+});
+
+describe("console lines and re-sync", () => {
+  const mkLog = () => {
+    const lines: string[] = [];
+    return { lines, log: { info: (...a: unknown[]) => void lines.push(a.join(" ")), warn: (...a: unknown[]) => void lines.push(a.join(" ")) } };
+  };
+
+  test("logs open, snapshot, error and the reconnect, all with the prefix", () => {
+    const { lines, log } = mkLog();
+    connectEvents({ client, open, log, delays: [5000], setTimeout: () => 1 as any });
+    const es = FakeES.all[0]!;
+    es.emit("open");
+    es.emit("snapshot", snap({ updates: [entry("a")], presence: [{ host: "a", status: "online", at: "t" }] }));
+    es.readyState = 0;
+    es.emit("error");
+    es.readyState = 2;
+    es.emit("error");
+    expect(lines).toEqual([
+      "[claude-rc] event stream open (open 1)",
+      "[claude-rc] snapshot: 1 updates, 1 hosts",
+      "[claude-rc] event stream error (ready state 0), the browser retries",
+      "[claude-rc] event stream closed",
+      "[claude-rc] reconnect in 5s",
+    ]);
+  });
+
+  test("never logs output lines or error text of a node", () => {
+    const { lines, log } = mkLog();
+    connectEvents({ client, open, log });
+    const es = FakeES.all[0]!;
+    es.emit("log", { data: JSON.stringify({ host: "a", line: "SECRET LINE", at: "t" }) });
+    es.emit("update", { data: JSON.stringify({ ...entry("a", "failed"), error: "SECRET ERROR" }) });
+    expect(lines.join("\n")).not.toContain("SECRET");
+  });
+
+  test("the first open reads nothing again, a later open reads updates, hosts and history again", () => {
+    const { log } = mkLog();
+    connectEvents({ client, open, log, delays: [0], setTimeout: (f) => (f(), 1 as any) });
+    const first = FakeES.all[0]!;
+    first.emit("open");
+    expect(invalidated).toEqual([]);
+    first.readyState = 2;
+    first.emit("error");
+    FakeES.all[1]!.emit("open");
+    expect(invalidated).toEqual([["updates"], ["hosts"], ["history"]]);
+  });
+
+  test("a finished update re-reads the history, a step does not", () => {
+    const { log } = mkLog();
+    connectEvents({ client, open, log });
+    const es = FakeES.all[0]!;
+    es.emit("update", { data: JSON.stringify(entry("a")) });
+    es.emit("update", { data: JSON.stringify({ ...entry("a"), step: "installing" }) });
+    expect(invalidated.filter((k) => k[0] === "history").length).toBe(0);
+    es.emit("update", { data: JSON.stringify(entry("a", "updated")) });
+    expect(invalidated.filter((k) => k[0] === "history").length).toBe(1);
   });
 });

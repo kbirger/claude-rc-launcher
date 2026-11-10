@@ -88,6 +88,8 @@ export const githubLoginStart = (host: string, user?: string) =>
 export const githubLoginStatus = (host: string, id: string) =>
   request<{ state: string; error?: string }>("GET", `${h(host)}/github/login/${encodeURIComponent(id)}`);
 export const getLatest = () => request<Latest>("GET", "/api/latest");
+export type HistoryItem = { entry: UpdateEntry; lines: LogLine[] };
+export const getHistory = () => request<Record<string, HistoryItem[]>>("GET", "/api/updates/history");
 export const getUpdates = () => request<UpdateEntry[]>("GET", "/api/updates");
 // The body carries at most the release; the hub picks the download itself.
 export const updateHost = (host: string, release?: string) =>
