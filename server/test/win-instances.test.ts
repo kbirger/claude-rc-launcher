@@ -6,6 +6,7 @@ import { HttpError } from "../src/instances";
 import { PathError } from "../src/paths";
 import type { TrustStore } from "../src/trust";
 import { instanceId } from "../src/unit";
+import { RestrictedTokenError } from "../src/win/token";
 import { WinInstances, taskkillTree, type Spawned, type WinInstanceOptions } from "../src/win/instances";
 
 const ROOT = "C:\\work";
@@ -357,5 +358,139 @@ describe("taskkillTree", () => {
   test("a process that is already gone (128) is fine; any other failure throws", async () => {
     await taskkillTree(async () => ({ code: 128, stdout: "", stderr: "not found" }))(1);
     await expect(taskkillTree(async () => ({ code: 1, stdout: "", stderr: "Access is denied." }))(1)).rejects.toThrow("Access is denied.");
+  });
+});
+
+describe("restricted sessions", () => {
+  let via: string[];
+  let restrictedError: Error | null;
+  let restrictedCalls = 0;
+  function makeSvc(admin: boolean, withRestricted = true) {
+    const fake = (tag: string): ((cmd: string, args: string[], o: { cwd: string; logFile: string }) => Spawned) => (cmd, args, o) => {
+      if (tag === "restricted") restrictedCalls++;
+      if (tag === "restricted" && restrictedError) throw restrictedError;
+      let exit!: (c: number) => void;
+      const exited = new Promise<number>((r) => { exit = r; });
+      via.push(tag);
+      const p: FakeProc = { pid: nextPid++, exited, cmd, args, cwd: o.cwd, logFile: o.logFile, exit: (c = 1) => exit(c) };
+      procs.push(p);
+      return p;
+    };
+    return new WinInstances(opts({ serviceIsAdmin: admin }), {
+      spawn: fake("full"),
+      ...(withRestricted ? { spawnRestricted: fake("restricted") } : {}),
+      killTree: async (pid) => { killed.push(pid); procs.find((p) => p.pid === pid)?.exit(1); },
+      sleep: () => new Promise<void>((r) => { sleeps.push(r); }),
+      now: () => new Date("2026-11-08T12:00:00Z"),
+      resolvePath: resolve,
+      trust,
+      restartDelayMs: 10,
+    });
+  }
+  beforeEach(() => { via = []; restrictedError = null; restrictedCalls = 0; });
+
+  test("administrator service lists two entries, the restricted one first", async () => {
+    expect(await makeSvc(true).users()).toEqual({ selectable: true, default: "svc", users: [{ name: "svc" }, { name: "svc (admin)" }] });
+  });
+
+  test("administrator service: default and bare user are restricted, (admin) is full", async () => {
+    const s = makeSvc(true);
+    const a = await s.start({ path: P1, user: undefined });
+    const b = await s.start({ path: P2, user: "svc" });
+    expect(via).toEqual(["restricted", "restricted"]);
+    expect(a.user).toBe("svc");
+    expect(b.user).toBe("svc");
+    await s.stop(a.id);
+    const c = await s.start({ path: P1, user: "svc (admin)" });
+    expect(via).toEqual(["restricted", "restricted", "full"]);
+    expect(c.user).toBe("svc (admin)");
+  });
+
+  test("administrator service: every wrong user is 400 from start, dirOwnerFor and trustFilter", async () => {
+    const s = makeSvc(true);
+    for (const u of ["svc(admin)", "SVC (ADMIN)", "svc (admin) ", "other"]) {
+      expect(await status(s.start({ path: P1, user: u }))).toBe(400);
+      expect(await status(s.dirOwnerFor(u))).toBe(400);
+      expect(await status(s.trustFilter(u))).toBe(400);
+    }
+    expect(procs).toHaveLength(0);
+  });
+
+  test("standard service: one entry, no user on the instance, (admin) is 400, no restricted spawn", async () => {
+    const s = makeSvc(false, false);
+    expect(await s.users()).toEqual({ selectable: false, default: "svc", users: [{ name: "svc" }] });
+    expect(await status(s.start({ path: P1, user: "svc (admin)" }))).toBe(400);
+    const inst = await s.start({ path: P1 });
+    expect(inst.user).toBeUndefined();
+    expect(via).toEqual(["full"]);
+  });
+
+  test("an administrator service without spawnRestricted throws", () => {
+    expect(() => makeSvc(true, false)).toThrow();
+  });
+
+  test("admin round-trips through the state file; a file without it restores restricted", async () => {
+    const s = makeSvc(true);
+    await s.start({ path: P1, user: "svc (admin)" });
+    await s.start({ path: P2 });
+    const doc = JSON.parse(await readFile(stateFile(), "utf8"));
+    expect(doc.instances.find((i: { path: string }) => i.path === P1).admin).toBe(true);
+    expect(doc.instances.find((i: { path: string }) => i.path === P2).admin).toBeUndefined();
+    await s.close();
+    via.length = 0;
+    const r = makeSvc(true);
+    expect(await r.restore()).toBe(2);
+    await flush();
+    expect([...via].sort()).toEqual(["full", "restricted"]);
+    expect((await r.list()).map((i) => i.user).sort()).toEqual(["svc", "svc (admin)"]);
+    await r.close();
+
+    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }));
+    via.length = 0;
+    const r2 = makeSvc(true);
+    await r2.restore();
+    await flush();
+    expect(via).toEqual(["restricted"]);
+    await r2.close();
+  });
+
+  test("428 carries the chosen entry", async () => {
+    trustedPaths.clear();
+    const s = makeSvc(true);
+    const err = (await s.start({ path: P1, user: "svc (admin)" }).catch((e) => e)) as HttpError;
+    expect(err.status).toBe(428);
+    expect(JSON.stringify(err.extra)).toContain("svc (admin)");
+    const err2 = (await s.start({ path: P1 }).catch((e) => e)) as HttpError;
+    expect(JSON.stringify(err2.extra)).not.toContain("(admin)");
+  });
+
+  test("a RestrictedTokenError from start is 500 and nothing is listed or saved", async () => {
+    restrictedError = new RestrictedTokenError("no token");
+    const s = makeSvc(true);
+    expect(await status(s.start({ path: P1 }))).toBe(500);
+    expect(await s.list()).toEqual([]);
+    await expect(readFile(stateFile(), "utf8")).rejects.toThrow();
+  });
+
+  test("a RestrictedTokenError on restore goes to failed, is tried once and logged once", async () => {
+    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }));
+    restrictedError = new RestrictedTokenError("no token");
+    const logs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logs.push(a.join(" ")); };
+    let calls = 0;
+    const s = makeSvc(true);
+    try {
+      await s.restore();
+      await flush();
+      for (let i = 0; i < 5; i++) { sleeps.splice(0).forEach((r) => r()); await flush(); }
+      calls = restrictedCalls;
+      expect((await s.list())[0]!.state).toBe("failed");
+      await s.close();
+    } finally { console.error = orig; }
+    expect(calls).toBe(1);
+    expect(sleeps).toHaveLength(0);
+    expect(logs.filter((l) => l.includes("no token"))).toHaveLength(1);
+    expect(JSON.parse(await readFile(stateFile(), "utf8")).instances).toHaveLength(1);
   });
 });

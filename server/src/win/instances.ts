@@ -6,6 +6,7 @@ import { resolveWithinRoots } from "../paths";
 import type { Runner } from "../runner";
 import type { TrustStore } from "../trust";
 import { defaultName, instanceId, isValidName } from "../unit";
+import { RestrictedTokenError } from "./token";
 import { windowsTrust } from "./trust";
 
 /**
@@ -23,6 +24,8 @@ export type WinInstanceOptions = {
   namePrefix: string;
   /** Holds `instances.json` and `logs\<id>.log`. */
   instanceDir: string;
+  /** The service account is an administrator: then it offers a restricted entry (default) and an `(admin)` entry. */
+  serviceIsAdmin?: boolean;
 };
 
 export type Spawned = { pid: number; exited: Promise<number> };
@@ -32,6 +35,8 @@ export type WinDeps = {
   spawn(cmd: string, args: string[], o: { cwd: string; logFile: string }): Spawned;
   /** Ends a process and its children. Resolves if the process is already gone. */
   killTree(pid: number): Promise<void>;
+  /** Like `spawn`, but with a restricted copy of the service token. Required when `serviceIsAdmin` is true. */
+  spawnRestricted?: WinDeps["spawn"];
   sleep(ms: number): Promise<void>;
   now(): Date;
   resolvePath(p: string, roots: string[]): Promise<string>;
@@ -46,6 +51,8 @@ type Entry = {
   id: string;
   path: string;
   name: string;
+  /** Runs with the full service token (only an administrator service has this choice). */
+  admin: boolean;
   state: "active" | "activating" | "failed";
   startedAt: string | null;
   proc?: Spawned;
@@ -92,19 +99,24 @@ export class WinInstances implements Instances {
       restartDelayMs: 10_000,
       ...deps,
     };
+    if (o.serviceIsAdmin && !this.deps.spawnRestricted) throw new Error("serviceIsAdmin needs spawnRestricted");
   }
+
+  private adminName = () => `${this.o.serviceUser} (admin)`;
 
   private stateFile = () => join(this.o.instanceDir, "instances.json");
   private logFile = (id: string) => join(this.o.instanceDir, "logs", `${id}.log`);
 
-  /** The one check for a `user` field: only the account the service runs as. */
-  private checkUser(user?: string): void {
-    if (user === undefined || user === this.o.serviceUser) return;
+  /** The one check for a `user` field: the service account, plus `<user> (admin)` on an administrator service. Returns true for the admin entry. */
+  private checkUser(user?: string): boolean {
+    if (user === undefined || user === this.o.serviceUser) return false;
+    if (this.o.serviceIsAdmin && user === this.adminName()) return true;
     throw new HttpError(400, "this host cannot run instances as another user");
   }
 
   async users(): Promise<UsersInfo> {
     const def = this.o.serviceUser;
+    if (this.o.serviceIsAdmin) return { selectable: true, default: def, users: [{ name: def }, { name: this.adminName() }] };
     return { selectable: false, default: def, users: [{ name: def }] };
   }
 
@@ -119,7 +131,9 @@ export class WinInstances implements Instances {
   }
 
   private describe(e: Entry): Instance {
-    return { id: e.id, path: e.path, name: e.name, state: e.state, startedAt: e.startedAt };
+    const inst: Instance = { id: e.id, path: e.path, name: e.name, state: e.state, startedAt: e.startedAt };
+    if (this.o.serviceIsAdmin) inst.user = e.admin ? this.adminName() : this.o.serviceUser;
+    return inst;
   }
 
   async list(): Promise<Instance[]> {
@@ -127,7 +141,7 @@ export class WinInstances implements Instances {
   }
 
   private async persist(): Promise<void> {
-    const body = { version: 1, instances: [...this.entries.values()].map((e) => ({ id: e.id, path: e.path, name: e.name })) };
+    const body = { version: 1, instances: [...this.entries.values()].map((e) => ({ id: e.id, path: e.path, name: e.name, ...(e.admin ? { admin: true } : {}) })) };
     await mkdir(this.o.instanceDir, { recursive: true });
     const tmp = `${this.stateFile()}.tmp`;
     try {
@@ -139,8 +153,9 @@ export class WinInstances implements Instances {
     }
   }
 
-  private spawnFor(e: Pick<Entry, "id" | "path" | "name">): Spawned {
-    return this.deps.spawn(this.o.claudeBin, ["remote-control", "--name", e.name, ...this.o.claudeRcArgs], { cwd: e.path, logFile: this.logFile(e.id) });
+  private spawnFor(e: Pick<Entry, "id" | "path" | "name" | "admin">): Spawned {
+    const spawn = this.o.serviceIsAdmin && !e.admin ? this.deps.spawnRestricted! : this.deps.spawn;
+    return spawn(this.o.claudeBin, ["remote-control", "--name", e.name, ...this.o.claudeRcArgs], { cwd: e.path, logFile: this.logFile(e.id) });
   }
 
   private wait(e: Entry): Promise<void> {
@@ -155,6 +170,13 @@ export class WinInstances implements Instances {
         try {
           proc = this.spawnFor(e);
         } catch (err) {
+          if (err instanceof RestrictedTokenError) {
+            // Permanent: trying again cannot help, and there is no fallback to the full token.
+            console.error(`instance ${e.id}: cannot start claude with a restricted token: ${err.message}`);
+            e.state = "failed";
+            e.startedAt = null;
+            return;
+          }
           console.error(`instance ${e.id}: cannot start claude: ${err instanceof Error ? err.message : String(err)}`);
           e.state = "failed";
           e.startedAt = null;
@@ -175,7 +197,7 @@ export class WinInstances implements Instances {
     }
   }
 
-  private track(base: Pick<Entry, "id" | "path" | "name">, first?: Spawned): Entry {
+  private track(base: Pick<Entry, "id" | "path" | "name" | "admin">, first?: Spawned): Entry {
     const e: Entry = { ...base, state: "activating", startedAt: null, stopping: false, done: Promise.resolve() };
     this.entries.set(e.id, e);
     e.done = this.supervise(e, first);
@@ -185,13 +207,13 @@ export class WinInstances implements Instances {
   async start(input: { path: string; name?: string; user?: string; addTrust?: boolean }): Promise<Instance> {
     if (input.name !== undefined && !isValidName(input.name)) throw new HttpError(400, "invalid name");
     const real = await this.deps.resolvePath(input.path, this.o.roots);
-    this.checkUser(input.user);
+    const admin = this.checkUser(input.user);
     const id = instanceId(real);
     const name = input.name ?? defaultName(this.o, real);
 
     const conflict = (): HttpError => {
       const existing = this.entries.get(id);
-      const inst: Instance = existing ? this.describe(existing) : { id, path: real, name, state: "activating", startedAt: null };
+      const inst: Instance = existing ? this.describe(existing) : { id, path: real, name, state: "activating", startedAt: null, ...(this.o.serviceIsAdmin ? { user: admin ? this.adminName() : this.o.serviceUser } : {}) };
       return new HttpError(409, "instance already exists", { instance: inst });
     };
 
@@ -202,18 +224,18 @@ export class WinInstances implements Instances {
       const isTrusted = await this.deps.trust.checker(this.o.serviceHome);
       if (!isTrusted(real)) {
         if (!input.addTrust) {
-          throw new HttpError(428, `folder is not trusted for ${this.o.serviceUser}`, { code: "untrusted", user: this.o.serviceUser, path: real });
+          throw new HttpError(428, `folder is not trusted for ${this.o.serviceUser}`, { code: "untrusted", user: admin ? this.adminName() : this.o.serviceUser, path: real });
         }
         // The trust is kept on purpose if a later step fails: the person asked to trust this folder.
         await this.deps.trust.add({ home: this.o.serviceHome }, real);
       }
       let proc: Spawned;
       try {
-        proc = this.spawnFor({ id, path: real, name });
+        proc = this.spawnFor({ id, path: real, name, admin });
       } catch (e) {
         throw new HttpError(500, `failed to start claude: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const e = this.track({ id, path: real, name }, proc);
+      const e = this.track({ id, path: real, name, admin }, proc);
       try {
         await this.persist();
       } catch (err) {
@@ -302,7 +324,7 @@ export class WinInstances implements Instances {
     const list = typeof doc === "object" && doc !== null && Array.isArray((doc as { instances?: unknown }).instances) ? (doc as { instances: unknown[] }).instances : [];
     let n = 0;
     for (const item of list) {
-      const it = item as { id?: unknown; path?: unknown; name?: unknown };
+      const it = item as { id?: unknown; path?: unknown; name?: unknown; admin?: unknown };
       if (typeof it.id !== "string" || !ID_RE.test(it.id) || typeof it.path !== "string" || typeof it.name !== "string" || !isValidName(it.name)) {
         console.error("skipping an invalid entry in the instance list");
         continue;
@@ -315,7 +337,7 @@ export class WinInstances implements Instances {
         continue;
       }
       if (instanceId(real) !== it.id || this.entries.has(it.id)) continue;
-      this.track({ id: it.id, path: real, name: it.name });
+      this.track({ id: it.id, path: real, name: it.name, admin: this.o.serviceIsAdmin === true && it.admin === true });
       n++;
     }
     return n;
