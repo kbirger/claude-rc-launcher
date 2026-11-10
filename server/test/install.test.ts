@@ -14,7 +14,8 @@ function run(args: string[], env: Record<string, string>) {
 function setup() {
   const d = mkdtempSync(path.join(os.tmpdir(), "rc-inst-"));
   const bin = path.join(d, "src-bin");
-  writeFileSync(bin, readFileSync(process.execPath), { mode: 0o755 });
+  // The script only checks for the ELF magic bytes and copies the file. A stub keeps each test fast: the Bun executable is over 100 MB.
+  writeFileSync(bin, Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.from("stub\n")]), { mode: 0o755 });
   const env = { PREFIX: path.join(d, "prefix"), SYSTEMD_DIR: path.join(d, "systemd"), CONFIG_DIR: path.join(d, "etc") };
   return { d, bin, env };
 }
