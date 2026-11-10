@@ -582,6 +582,28 @@ The banner has two separate buttons. `Update hub` updates the hub to the latest 
 nodes to the version of the hub. The host picker also has an `Update` button for the selected node. The UI never
 updates anything by itself.
 
+A machine shows its client in one of three ways:
+
+- The version, for example `0.8.4`, when the node found a client.
+- `no client`, when the node looked and found none.
+- `client not reported`, when the node is too old to report clients or the answer is missing.
+
+A node finds its clients through a client registry file, which lists each installed client on one line:
+
+```
+client <absolute path>
+```
+
+The file lives at `/etc/claude-rc-launcher/installs` on Linux and at `%ProgramData%\claude-rc-registry\installs` on
+Windows. On Linux, the node reads the file only if root owns it and neither the group nor others can write it. The node
+applies the same check to the folder. A client entry also needs its real file and folder owned by root, with no group or
+other write access. Otherwise the node skips that entry and logs a line.
+
+`install-cli.sh` writes the line when it runs as root or through `sudo`. `install.ps1`, the elevated installer, writes it
+on Windows. It gives the registry its own folder, which only administrators can change. A client installed without
+administrator rights is not in the registry. The scan finds it instead. If a Windows node has no registry, it looks in
+`%ProgramFiles%\claude-rc` and on the `PATH`.
+
 The hub restarts while it updates, and the page reconnects by itself.
 
 The hub asks GitHub for the latest release and keeps the answer for one hour. The browser never calls GitHub. If GitHub
@@ -598,6 +620,7 @@ Keep these limits in mind:
 - The watchdog can roll back a new hub binary that starts and then fails within its first 30 seconds. The record may
   still say `updated` until the next update.
 - A node that is too old to have the update route needs `claude-rc node update` once.
+- An older node does not report clients, so it shows `client not reported` until you update it. After you update a Windows node to this release, its client version shows.
 - Some releases change how the hub talks to the nodes. After such a release, the hub can lose the nodes. Roll such a
   release out by hand.
 - Any logged-in user can start an update until admin status exists.
@@ -1094,7 +1117,7 @@ Version routes (see [Version check and updates in the web UI](#version-check-and
 - `GET /latest` returns `{version, checkedAt}`, the latest GitHub release. If GitHub never answered, it returns 503.
 - `GET /updates` returns the update record of each machine.
 - `GET /events` is a server-sent event stream. The first event is `snapshot` with the whole record. Each change then sends an `update` event. The hub also sends keepalive comments.
-- Each entry of `GET /hosts` also carries `clientVersion`, `stale` and `target`.
+- Each entry of `GET /hosts` also carries `clientVersion`, `noClient`, `stale` and `target`.
 
 ## First-run verification checklist
 
