@@ -96,6 +96,7 @@
         <span class="badge {badge(i.state)}">{i.state}</span>
       </div>
       <div class="path muted">{i.path}</div>
+      {#if i.user}<div class="muted">{i.user}</div>{/if}
       <div class="muted">{uptime(i.state, i.startedAt)}</div>
       <div class="actions">
         <button onclick={() => toggleLogs(i)}>{i.id in logs ? "Hide logs" : "Logs"}</button>

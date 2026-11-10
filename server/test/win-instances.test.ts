@@ -459,9 +459,9 @@ describe("restricted sessions", () => {
     const s = makeSvc(true);
     const err = (await s.start({ path: P1, user: "svc (admin)" }).catch((e) => e)) as HttpError;
     expect(err.status).toBe(428);
-    expect(JSON.stringify(err.extra)).toContain("svc (admin)");
+    expect((err.extra as { user?: string }).user).toBe("svc (admin)");
     const err2 = (await s.start({ path: P1 }).catch((e) => e)) as HttpError;
-    expect(JSON.stringify(err2.extra)).not.toContain("(admin)");
+    expect((err2.extra as { user?: string }).user).toBe("svc");
   });
 
   test("a RestrictedTokenError from start is 500 and nothing is listed or saved", async () => {

@@ -1,4 +1,4 @@
-export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null };
+export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string };
 export type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean; kind?: "git" | "github" }[] };
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 export type Me = { sub: string; name: string; email?: string; username?: string; logoutUrl?: string };

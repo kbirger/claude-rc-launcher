@@ -213,6 +213,7 @@ Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host
   before. A service account that is not an administrator has one entry and no change.
 - A restricted session keeps one privilege, the Administrators group is deny-only, and the integrity level is Medium.
   The cost is that access which only the Administrators group gave is gone. Use `(admin)` for work that needs it.
+  A restricted session gets the registry environment of the account, not variables that are set only on the service.
 - Saved sessions of an administrator service restart restricted after this release. Start them again as `(admin)` if
   they need the old behavior.
 - Instances live and die with the node process. The node keeps a list in `<state_dir>\instances\instances.json` and

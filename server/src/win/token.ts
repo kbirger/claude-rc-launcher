@@ -88,24 +88,60 @@ function quoteArg(a: string): string {
   return out + "\\".repeat(slashes * 2) + '"';
 }
 
-/** True when the Administrators group is enabled in this process's token. False on any failure and off Windows. */
-export function serviceIsAdmin(): boolean {
-  if (process.platform !== "win32") return false;
+/** What the service token is. "unknown" means the check itself failed: that is not the same as "standard". */
+export type AdminState = { state: "admin" } | { state: "standard" } | { state: "unknown"; reason: string };
+
+/** Asks whether the Administrators group is enabled in this process's token. Off Windows the answer is "standard". */
+export function serviceAdminState(): AdminState {
+  if (process.platform !== "win32") return { state: "standard" };
   try {
     const { k32, adv } = api();
     const psid = new BigUint64Array(1);
     const sidStr = wide("S-1-5-32-544");
-    if (!adv.ConvertStringSidToSidW(ptr(sidStr), ptr(psid))) return false;
+    if (!adv.ConvertStringSidToSidW(ptr(sidStr), ptr(psid))) {
+      return { state: "unknown", reason: `ConvertStringSidToSidW failed (error ${k32.GetLastError()})` };
+    }
     try {
       const member = new Uint32Array(1);
-      if (!adv.CheckTokenMembership(0n, psid[0]!, ptr(member))) return false;
-      return member[0] !== 0;
+      if (!adv.CheckTokenMembership(0n, psid[0]!, ptr(member))) {
+        return { state: "unknown", reason: `CheckTokenMembership failed (error ${k32.GetLastError()})` };
+      }
+      return { state: member[0] !== 0 ? "admin" : "standard" };
     } finally {
       k32.LocalFree(psid[0]!);
     }
-  } catch {
-    return false;
+  } catch (e) {
+    return { state: "unknown", reason: `token module cannot load: ${e instanceof Error ? e.message : String(e)}` };
   }
+}
+
+/** True when the Administrators group is enabled in this process's token. False when not, on failure and off Windows. */
+export function serviceIsAdmin(): boolean {
+  return serviceAdminState().state === "admin";
+}
+
+/**
+ * Decides how sessions start. Fails closed: when the check could not tell, the node still offers the restricted
+ * default and the (admin) entry, and restricted starts fail with the reason. It never runs sessions with the full token silently.
+ */
+export function planSessions(
+  s: AdminState,
+  makeRestricted: () => WinDeps["spawn"] = restrictedSpawn,
+): { serviceIsAdmin: boolean; spawnRestricted?: WinDeps["spawn"]; log: string } {
+  if (s.state === "admin") {
+    return { serviceIsAdmin: true, spawnRestricted: makeRestricted(), log: "sessions run restricted by default (service account is an administrator)" };
+  }
+  if (s.state === "standard") {
+    return { serviceIsAdmin: false, log: "sessions run as the service account (no administrator rights to drop)" };
+  }
+  const reason = s.reason;
+  return {
+    serviceIsAdmin: true,
+    spawnRestricted: () => {
+      throw new RestrictedTokenError(`cannot tell whether the service is an administrator: ${reason}`);
+    },
+    log: `cannot tell whether the service account is an administrator (${reason}): restricted sessions will fail, use the (admin) entry`,
+  };
 }
 
 /** Builds the restricted token. The caller closes it. Throws RestrictedTokenError. */
@@ -113,6 +149,7 @@ function buildToken(): bigint {
   const { k32, adv } = api();
   const frees: bigint[] = [];
   const closeOnFail: bigint[] = [];
+  const keep: unknown[] = []; // buffers whose addresses are used later: they must stay reachable until the end
   const fail = (what: string): never => {
     throw new RestrictedTokenError(`${what} failed (error ${k32.GetLastError()})`);
   };
@@ -133,6 +170,7 @@ function buildToken(): bigint {
     adv.GetTokenInformation(own, 1 /* TokenUser */, null, 0, ptr(need));
     const tu = Buffer.alloc(need[0]!);
     if (!need[0] || !adv.GetTokenInformation(own, 1, ptr(tu), tu.length, ptr(need))) fail("GetTokenInformation(TokenUser)");
+    keep.push(tu);
     const userSid = tu.readBigUInt64LE(0); // points into tu
 
     const o = new BigUint64Array(1);
@@ -158,6 +196,7 @@ function buildToken(): bigint {
       Buffer.from(toArrayBuffer(Number(s), 0, sizes[i]!)).copy(acl, off + 8);
       off += 8 + sizes[i]!;
     });
+    keep.push(acl); // its address goes into dd
     const dd = Buffer.alloc(8);
     dd.writeBigUInt64LE(BigInt(ptr(acl)), 0);
     if (!adv.SetTokenInformation(tok, TOKEN_DEFAULT_DACL, ptr(dd), 8)) fail("SetTokenInformation(DefaultDacl)");
@@ -179,6 +218,7 @@ function buildToken(): bigint {
     throw new RestrictedTokenError(`token step failed: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     for (const p of frees) k32.LocalFree(p);
+    void keep;
   }
 }
 
@@ -245,6 +285,7 @@ export function restrictedSpawn(): WinDeps["spawn"] {
             token, null, ptr(cmdline), null, null, 1,
             CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, env, ptr(cwdW), ptr(si), ptr(pi),
           );
+          void [handles, cmdline, cwdW, si, sa, nulW, logW]; // keep alive until CreateProcessAsUserW returned
           if (!ok) throw new Error(`CreateProcessAsUserW failed for ${cmd} (error ${k32.GetLastError()})`);
         } finally {
           k32.DeleteProcThreadAttributeList(ptr(attrs));
