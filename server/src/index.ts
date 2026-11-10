@@ -40,7 +40,8 @@ try {
 
 const shutdown = () => {
   running.stop();
-  process.exit(0);
+  // Leave a moment for the open streams to end cleanly.
+  setTimeout(() => process.exit(0), 300);
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

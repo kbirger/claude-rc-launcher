@@ -1,5 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { sseResponse } from "./sse";
+import { sseResponse, trackStreams } from "./sse";
 import type { UpdateHistory } from "./updatehistory";
 import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
@@ -174,6 +174,7 @@ const MAX_EVENT_CONNECTIONS = 8;
 export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
+  trackStreams(app);
   app.get("/healthz", (c) => c.json({ ok: true }));
 
   const api = new Hono();
@@ -227,6 +228,7 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
 export function createApp(deps: Deps): Hono {
   const { cfg, instances, userAuth, staticHandler, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
   const app = new Hono();
+  trackStreams(app);
 
   app.get("/healthz", (c) => c.json({ ok: true }));
   if (userAuth.routes) app.route("/auth", userAuth.routes);

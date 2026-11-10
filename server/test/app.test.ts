@@ -1,3 +1,4 @@
+import { closeStreams } from "../src/sse";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, rm, stat } from "node:fs/promises";
@@ -714,6 +715,17 @@ describe("GET /api/updates and /api/events", () => {
       const text = await readUntil(reader, /: keepalive\n\n/);
       expect(text).toStartWith(`event: snapshot\ndata: ${JSON.stringify({ updates: [entry("nas")], logs: {}, presence: [] })}\n\n`);
       await reader.cancel();
+    });
+
+    test(`${url}: closeStreams ends the stream with a proper end of body`, async () => {
+      const app = mk(fakeRecord(), undefined, withCli);
+      const r = await app.request(url, { headers: hdr() });
+      const reader = r.body!.getReader();
+      await readUntil(reader, /\n\n/);
+      closeStreams(app);
+      let done = false;
+      for (let i = 0; i < 20 && !done; i++) done = (await reader.read()).done;
+      expect(done).toBe(true);
     });
 
     test(`${url}: without a login it is 401`, async () => {

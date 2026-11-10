@@ -14,6 +14,7 @@ import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates, type ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
+import { stopServer } from "./sse";
 import { staticHandler } from "./static";
 import { createNodeWatchers, type Presence } from "./nodewatcher";
 import { UpdateHistory } from "./updatehistory";
@@ -174,7 +175,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     stop: () => {
       offRecord();
       watchers.stop();
-      void server.stop(true);
+      stopServer(server, app);
     },
   };
 }
