@@ -84,6 +84,8 @@
             <span>{item.host}: {item.message}.</span>
           {:else if item.kind === "offline-after-hub-update"}
             <span>The hub was just updated. Offline now: {item.hosts.join(", ")}. They may still be restarting.</span>
+          {:else if item.kind === "reinstall-service"}
+            <span>{item.hosts.join(", ")}: the service definition is older than this version needs. Run install.ps1 again on that machine.</span>
           {:else if item.kind === "failed"}
             <span>Update of {item.host} failed: {item.error}</span>
             {#if item.id}<UpdateOutput host={item.id} open={panelOpenByDefault(lastEntry(updates, item.id))} />{/if}

@@ -88,6 +88,12 @@ describe("node app", () => {
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);
     expect(await (await a.request(`/api/instances/${ID}/logs`, { headers: ok })).json()).toEqual({ log: "log" });
   });
+  test("/api/node reports the service definition when the node has one, and nothing when it has none", async () => {
+    const withDef = createNodeApp({ cfg, instances, auth, definition: () => ({ installed: 1, required: 2 }) });
+    expect(((await (await withDef.request("/api/node", { headers: ok })).json()) as any).definition).toEqual({ installed: 1, required: 2 });
+    const none = createNodeApp({ cfg, instances, auth, definition: () => undefined });
+    expect("definition" in ((await (await none.request("/api/node", { headers: ok })).json()) as any)).toBe(false);
+  });
   test("/api/users needs auth and returns the info", async () => {
     const a = app();
     expect((await a.request("/api/users")).status).toBe(401);

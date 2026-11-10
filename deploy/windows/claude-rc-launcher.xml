@@ -3,7 +3,11 @@
   claude-rc-launcher-svc.xml next to WinSW (claude-rc-launcher-svc.exe) and fills in the two values marked with @ signs.
   WinSW starts the launcher script, which starts claude-rc-launcher.exe, and reports the service state to Windows.
   This file is the Windows counterpart of deploy/claude-rc-launcher.service.
+
+  The next line is the version of this definition. Raise it whenever this file, the launcher script or the WinSW
+  program changes in a way that an old installation must get. See server/src/win/definition.ts.
 -->
+<!-- claude-rc-service-definition: 1 -->
 <service>
   <id>claude-rc-launcher</id>
   <name>Claude RC Launcher (node)</name>

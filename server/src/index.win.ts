@@ -6,6 +6,7 @@ import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner } from "./instances";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
+import { definitionStatus } from "./win/definition";
 import { NodeEvents } from "./updateevents";
 import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
@@ -81,7 +82,7 @@ const update = createWindowsUpdater(
 );
 
 try {
-  running = await startNode(cfg, { instances, update, events });
+  running = await startNode(cfg, { instances, update, events, definition: () => definitionStatus({ exePath: process.execPath, readFile: (p) => readFileSync(p, "utf8") }) });
   const n = await instances.restore();
   if (n > 0) console.log(`started ${n} instance${n === 1 ? "" : "s"} from the saved list`);
   confirmPendingUpdate({

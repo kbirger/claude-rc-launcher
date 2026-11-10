@@ -9,6 +9,7 @@ export type BannerItem =
   | { kind: "offline-after-hub-update"; hosts: string[] }
   | { kind: "failed"; host: string; error: string; id?: string }
   | { kind: "updating"; host: string; name: string; step?: string }
+  | { kind: "reinstall-service"; hosts: string[] }
   | { kind: "latest-unknown" };
 
 const OFFLINE_WINDOW_MS = 10 * 60_000;
@@ -82,6 +83,10 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
     }
   }
 
+  // The binary update never rewrites the service definition. A node that reports an older one needs install.ps1 again.
+  const reinstall = o.hosts.filter((h) => h.id !== "local" && h.status === "ok" && h.definition && h.definition.installed < h.definition.required).map((h) => h.name);
+  if (reinstall.length) items.push({ kind: "reinstall-service", hosts: reinstall });
+
   if (o.latestError) items.push({ kind: "latest-unknown" });
   return items;
 }
@@ -93,6 +98,7 @@ export function bannerKey(item: BannerItem): string {
     case "updating": return `updating:${item.host}`;
     case "by-hand": return `by-hand:${item.host}`;
     case "offline-after-hub-update": return `offline:${[...item.hosts].sort().join(",")}`;
+    case "reinstall-service": return `reinstall:${[...item.hosts].sort().join(",")}`;
     case "failed": return `failed:${item.id ?? ""}:${item.host}:${item.error}`;
     default: return item.kind;
   }

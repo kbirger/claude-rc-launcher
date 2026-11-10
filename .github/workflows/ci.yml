@@ -37,5 +37,5 @@ jobs:
           bun test server/test/win-config.test.ts server/test/win-instances.test.ts server/test/win-trust.test.ts
           server/test/win-update.test.ts server/test/win-install.test.ts server/test/win-launcher.test.ts
           server/test/win-path.test.ts server/test/win-bootstrap.test.ts server/test/win-token.test.ts
-          server/test/updateevents.test.ts server/test/nodeapp.test.ts
+          server/test/updateevents.test.ts server/test/nodeapp.test.ts server/test/win-definition.test.ts
       - run: bun run build:win

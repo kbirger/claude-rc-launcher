@@ -667,7 +667,10 @@ The hub keeps the last update of each machine in `<state_dir>/updates.json`. The
 If the hub runs another version than the one that served the page, the page reloads itself. If the "New" dialog is
 open, the page shows a "Reload" bar instead. While a machine updates or restarts, the "New" dialog asks you to tick
 "Start anyway" before it starts a session or a clone. The update of a Windows node restarts its sessions, and the banner
-says so. A node reports its platform in `GET /api/node`, so an old node shows no such note until it is updated.
+says so. The update replaces the two binaries and nothing else. The service definition (the WinSW XML and the launcher
+script) is written once by `install.ps1`. The XML carries a version marker, and a node reports it in `GET /api/node`.
+If a release needs a newer definition, the banner tells you to run `install.ps1` again on that node. A definition
+without a marker counts as version 1. A node reports its platform in `GET /api/node`, so an old node shows no such note until it is updated.
 
 The hub also keeps the last 20 finished updates of each machine, with their output lines, in
 `<state_dir>/update-history.json`. The page shows them in the "History" section. The hub update has no output lines,

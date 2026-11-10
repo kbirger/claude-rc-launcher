@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { sseResponse, trackStreams } from "./sse";
+import type { DefinitionStatus } from "./win/definition";
 import type { UpdateHistory } from "./updatehistory";
 import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
@@ -53,7 +54,7 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 /** `adoptDir` replaces the owner change of a new folder (tests). */
-export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined };
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
@@ -68,7 +69,8 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       clients = undefined; // no `clients` field: the hub shows "client not reported", not "no client"
       console.error(`client versions failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    return c.json({ ok: true, name: cfg.name, version: VERSION, platform: process.platform, clone: cloner !== undefined, ...(clients ? { clients } : {}) });
+    const definition = deps.definition?.();
+    return c.json({ ok: true, name: cfg.name, version: VERSION, platform: process.platform, clone: cloner !== undefined, ...(clients ? { clients } : {}), ...(definition ? { definition } : {}) });
   });
   r.post("/update", async (c) => {
     const { release } = parseUpdateRequest(await readJson(c));
@@ -171,7 +173,7 @@ const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 const MAX_EVENT_CONNECTIONS = 8;
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number }): Hono {
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   trackStreams(app);
@@ -219,7 +221,7 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       });
     });
   }
-  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
+  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
   return app;

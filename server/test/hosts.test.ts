@@ -523,6 +523,14 @@ describe("node and update routes", () => {
     expect(list.find((h: any) => h.id === "c").platform).toBeUndefined();
   });
 
+  test("the host list passes on the service definition of a node and ignores a bad one", async () => {
+    const mk = (definition: unknown): HostClient => ({ ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "n", version: "1.4.0", definition } }) });
+    const app = hub([hostCfg("a"), hostCfg("b"), hostCfg("c"), hostCfg("d")], new Map([["a", mk({ installed: 1, required: 2 })], ["b", mk({ installed: "1", required: 2 })], ["c", mk({ installed: 1.5, required: 2 })], ["d", mk(undefined)]]));
+    const list = await (await get(app, "/api/hosts")).json();
+    expect(list.find((h: any) => h.id === "a").definition).toEqual({ installed: 1, required: 2 });
+    for (const id of ["b", "c", "d"]) expect(list.find((h: any) => h.id === id).definition).toBeUndefined();
+  });
+
   test("the host list takes a node's version from its probe answer", async () => {
     const client: HostClient = { ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "nas", version: "1.4.0" } }) };
     const old: HostClient = { ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };

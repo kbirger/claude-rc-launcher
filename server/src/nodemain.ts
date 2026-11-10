@@ -1,4 +1,5 @@
 import { stopServer } from "./sse";
+import type { DefinitionStatus } from "./win/definition";
 import { createNodeApp, type Updater } from "./app";
 import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
@@ -11,7 +12,7 @@ import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { ensureNodeCert } from "./tls";
 import { NodeEvents } from "./updateevents";
 
-export type NodeDeps = { instances?: Instances; update?: Updater; limits?: ServeLimits; events?: NodeEvents };
+export type NodeDeps = { instances?: Instances; update?: Updater; limits?: ServeLimits; events?: NodeEvents; definition?: () => DefinitionStatus | undefined };
 
 export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ port: number; fingerprint: string; stop(): void }> {
   const node = cfg.node;
@@ -31,7 +32,7 @@ export async function startNode(cfg: Config, deps: NodeDeps = {}): Promise<{ por
   const update = deps.update ?? createServiceUpdater(updateEnv, events.hooks());
   const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
-  const app = createNodeApp({ cfg, instances, auth, dirOwner, update, clientVersions, events, ...(cloner ? { cloner } : {}) });
+  const app = createNodeApp({ cfg, instances, auth, dirOwner, update, clientVersions, events, ...(deps.definition ? { definition: deps.definition } : {}), ...(cloner ? { cloner } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, maxRequestBodySize: 1024 * 1024, tls: { cert: cert.certPem, key: cert.keyPem }, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`node "${cfg.name}" listening on https://${cfg.host}:${server.port}`);
   return { port: server.port!, fingerprint: cert.fingerprintSha256, stop: () => stopServer(server, app) };

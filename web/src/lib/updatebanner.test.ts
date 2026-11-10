@@ -154,3 +154,15 @@ test("the updating item carries the step text while running and not after", () =
 test("two failed items with the same host name have different keys when the ids differ", () => {
   expect(bannerKey({ kind: "failed", host: "nas", error: "e", id: "a" })).not.toBe(bannerKey({ kind: "failed", host: "nas", error: "e", id: "b" }));
 });
+
+test("a node whose service definition is older than required gets a reinstall item, an offline or equal one does not", () => {
+  const h = (id: string, o: object = {}) => ({ id, name: id.toUpperCase(), status: "ok", ...o }) as any;
+  const items = model([
+    h("local"),
+    h("a", { definition: { installed: 1, required: 2 } }),
+    h("b", { definition: { installed: 2, required: 2 } }),
+    h("c", { status: "offline", definition: { installed: 1, required: 2 } }),
+    h("d"),
+  ]);
+  expect(items.filter((i) => i.kind === "reinstall-service")).toEqual([{ kind: "reinstall-service", hosts: ["A"] }]);
+});

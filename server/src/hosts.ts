@@ -23,9 +23,16 @@ function clientVersionOf(body: unknown): string | undefined {
 /** The platform that the node reports (`win32`, `linux`), at most 20 characters. */
 const platformOf = (body: unknown): string | undefined => (isObject(body) && typeof body.platform === "string" ? body.platform.slice(0, 20) : undefined);
 
+/** The service definition version that a node reports. Only two whole numbers from 0 to 9999 count. */
+const definitionOf = (body: unknown): { installed: number; required: number } | undefined => {
+  const d = isObject(body) ? body.definition : undefined;
+  const ok = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 9999;
+  return isObject(d) && ok(d.installed) && ok(d.required) ? { installed: d.installed, required: d.required } : undefined;
+};
+
 const noClientOf = (body: unknown): boolean => isObject(body) && Array.isArray(body.clients) && body.clients.length === 0;
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; noClient?: true; platform?: string; stale: boolean; target?: string };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; noClient?: true; platform?: string; definition?: { installed: number; required: number }; stale: boolean; target?: string };
 
 /** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
 const LATEST_MAX_AGE_MS = 300_000;
@@ -86,7 +93,7 @@ export function hostsApi(o: {
           if (r.status === 200) {
             const version = isObject(r.body) && typeof r.body.version === "string" ? r.body.version : undefined;
             const clientVersion = clientVersionOf(r.body);
-            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}), ...(noClientOf(r.body) ? { noClient: true as const } : {}), ...(platformOf(r.body) ? { platform: platformOf(r.body)! } : {}), ...staleness(hubTarget, version, clientVersion) };
+            return { id: h.id, name: h.name, status: "ok", source, ...(version !== undefined ? { version } : {}), ...(clientVersion !== undefined ? { clientVersion } : {}), ...(noClientOf(r.body) ? { noClient: true as const } : {}), ...(platformOf(r.body) ? { platform: platformOf(r.body)! } : {}), ...(definitionOf(r.body) ? { definition: definitionOf(r.body)! } : {}), ...staleness(hubTarget, version, clientVersion) };
           }
           return { id: h.id, name: h.name, status: "error", error: "bad response", source, stale: false };
         } catch (e) {
