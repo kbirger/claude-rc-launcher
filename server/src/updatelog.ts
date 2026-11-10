@@ -1,5 +1,5 @@
 const MAX_LINE = 500;
-const MAX_AT = 40;
+export const MAX_AT = 40;
 
 /** The cut that every stored or compared output line gets. */
 export function cutLine(line: string): string {

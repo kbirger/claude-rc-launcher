@@ -56,14 +56,16 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
   };
 }
 
-/** Returns a function that logs one line when the status or the reason of a host changes (never on a repeat or a version change). */
-export function presenceLogger(log: (line: string) => void): (p: Presence) => void {
+const PRESENCE_LEVEL: Record<Presence["status"], "log" | "warn" | "error"> = { online: "log", restarting: "log", offline: "warn", error: "error" };
+
+/** Returns a function that logs one line when the status or the reason of a host changes (never on a repeat or a version change). The level follows the status: online and restarting log, offline warns, error errors. */
+export function presenceLogger(log: (line: string, level: "log" | "warn" | "error") => void): (p: Presence) => void {
   const last = new Map<string, string>();
   return (p) => {
     const key = `${p.status}\u0000${p.reason ?? ""}`;
     if (last.get(p.host) === key) return;
     last.set(p.host, key);
-    log(`host ${p.host}: ${p.status}${p.reason ? ` (${p.reason})` : ""}`);
+    log(`host ${p.host}: ${p.status}${p.reason ? ` (${p.reason})` : ""}`, PRESENCE_LEVEL[p.status]);
   };
 }
 
@@ -125,7 +127,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   await record.markStaleRunning();
   writeStep = stepWriter(record);
   const presenceSubs = new Set<(p: Presence) => void>();
-  const logPresence = presenceLogger((line) => console.error(line));
+  const logPresence = presenceLogger((line, level) => console[level](line));
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,

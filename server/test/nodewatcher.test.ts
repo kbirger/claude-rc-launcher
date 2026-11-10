@@ -780,6 +780,7 @@ describe("createNodeWatchers fix round 1", () => {
 });
 
 describe("presenceLogger", () => {
+  type Level = "log" | "warn" | "error";
   test("a stream that fails 5 times in a row logs once; a change of status or reason logs again; a version change does not", async () => {
     const { presenceLogger } = await import("../src/hubmain");
     const lines: string[] = [];
@@ -796,5 +797,32 @@ describe("presenceLogger", () => {
     log({ host: "nas", status: "online", version: "1", at: "t" });
     log({ host: "nas", status: "online", version: "2", at: "t" });
     expect(lines).toEqual(["host nas: offline (unreachable)", "host nas: offline (timeout)", "host nas: online"]);
+  });
+
+  test("each status logs at its own level, with the same line text", async () => {
+    const { presenceLogger } = await import("../src/hubmain");
+    const out: [string, Level][] = [];
+    const log = presenceLogger((line, level) => out.push([line, level]));
+    log({ host: "nas", status: "online", at: "t" });
+    log({ host: "nas", status: "restarting", at: "t" });
+    log({ host: "nas", status: "offline", reason: "unreachable", at: "t" });
+    log({ host: "nas", status: "error", reason: "boom", at: "t" });
+    expect(out).toEqual([
+      ["host nas: online", "log"],
+      ["host nas: restarting", "log"],
+      ["host nas: offline (unreachable)", "warn"],
+      ["host nas: error (boom)", "error"],
+    ]);
+  });
+
+  test("5 identical failures log once at warn; a status change logs again at the new level", async () => {
+    const { presenceLogger } = await import("../src/hubmain");
+    const out: [string, Level][] = [];
+    const log = presenceLogger((line, level) => out.push([line, level]));
+    for (let i = 0; i < 5; i++) log({ host: "nas", status: "offline", reason: "unreachable", at: "t" });
+    expect(out).toEqual([["host nas: offline (unreachable)", "warn"]]);
+    log({ host: "nas", status: "online", at: "t" });
+    expect(out.at(-1)).toEqual(["host nas: online", "log"]);
+    expect(out.length).toBe(2);
   });
 });

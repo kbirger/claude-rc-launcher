@@ -1,7 +1,7 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
 import type { StepName } from "./updateevents";
-import { cutLine, type UpdateLog } from "./updatelog";
+import { cutLine, MAX_AT, type UpdateLog } from "./updatelog";
 
 export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
 
@@ -185,7 +185,7 @@ export function createNodeWatchers(o: {
             const e = parse(ev.data);
             if (!e || !isStr(e.line)) continue;
             // The key holds the node's own time (cut) and the cut line, so a replay matches whatever the stored time is.
-            const key = `${isStr(e.at) ? e.at.slice(0, 40) : ""}\u0000${cutLine(e.line)}`;
+            const key = `${isStr(e.at) ? e.at.slice(0, MAX_AT) : ""}\u0000${cutLine(e.line)}`;
             const n = pending.get(key) ?? 0;
             if (n > 0) {
               pending.set(key, n - 1); // the node replays a line that the hub already holds
