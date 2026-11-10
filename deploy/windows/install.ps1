@@ -45,8 +45,8 @@
       [[node_auth.hub_key]] or [[node_auth.secret]]. Otherwise it says what to fill in. Run it again afterwards.
 
   -OpenFirewall adds an inbound rule for the port in config.toml (Private and Domain networks only).
-  -NoService only puts the files in place (for tests); it never changes the machine PATH, unless a test key is
-  given with -PathRegistryKey. -ClientRegistryKey names another registry key for the client value (tests only).
+  -NoService only puts the files in place (for tests); it never changes the machine PATH or the registry value Client,
+  unless a test key is given with -PathRegistryKey or -ClientRegistryKey. -ClientRegistryKey names another registry key for the client value (tests only).
   -Uninstall removes the service, the firewall rule and both PATH entries (<InstallDir>\bin and the old <InstallDir>),
   and keeps the files, the registry value, the config and the certificate.
 #>
@@ -224,23 +224,31 @@ function Register-Client([string]$ClientPath) {
 # replaced by the service account (which can write only to <InstallDir>\service).
 function Install-ClientAndPath([string]$Source) {
   $clientDest = Join-Path $ClientDir 'claude-rc.exe'
-  # The old layout put the client straight in <InstallDir>. It is deleted, and that folder leaves the PATH.
+  # The old layout put the client straight in <InstallDir>. It is deleted, and that folder leaves the PATH on every run.
   $oldClient = Join-Path $InstallDir 'claude-rc.exe'
-  $migrate = $false
   try {
     New-Item -ItemType Directory -Force -Path $ClientDir | Out-Null
     Copy-Item -LiteralPath $Source -Destination "$clientDest.new" -Force
     Move-Item -LiteralPath "$clientDest.new" -Destination $clientDest -Force
     Write-Host "Installed $clientDest"
-    Register-Client $clientDest
-    if (Test-Path -LiteralPath $oldClient) {
-      Remove-Item -LiteralPath $oldClient -Force
-      $migrate = $true
-      Write-Host "Removed the old client $oldClient"
+    if ($NoService -and -not $ClientOnly -and $ClientRegistryKey -eq $DefaultClientKey) {
+      Write-Host 'The client registry value was not written (-NoService).'
+    } else {
+      Register-Client $clientDest
     }
   } catch {
     Remove-Item -LiteralPath "$clientDest.new" -Force -ErrorAction SilentlyContinue
     Write-Warning "cannot install $clientDest (is claude-rc running? close it and run this script again): $($_.Exception.Message)"
+  }
+  if (Test-Path -LiteralPath $clientDest) {
+    try {
+      if (Test-Path -LiteralPath $oldClient) {
+        Remove-Item -LiteralPath $oldClient -Force
+        Write-Host "Removed the old client $oldClient"
+      }
+    } catch {
+      Write-Warning "could not remove the old client ${oldClient}: $($_.Exception.Message)"
+    }
   }
 
   $realKey = ($PathRegistryKey -eq $DefaultPathKey)
@@ -252,7 +260,7 @@ function Install-ClientAndPath([string]$Source) {
     Write-Warning 'the machine PATH was not changed: run this in an elevated PowerShell'
   } else {
     $changed = $false
-    if ($migrate -and (Remove-MachinePath $InstallDir $PathRegistryKey)) {
+    if (Remove-MachinePath $InstallDir $PathRegistryKey) {
       $changed = $true
       Write-Host "Removed $InstallDir from the machine PATH (the client moved to $ClientDir)"
     }

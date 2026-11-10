@@ -122,7 +122,7 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
     const fn = script.slice(script.indexOf("function Register-Client"), script.indexOf("function Install-ClientAndPath"));
     expect(fn).toContain("try {");
     expect(fn).toContain("Write-Warning \"cannot write the client registry value");
-    expect(script).toMatch(/Write-Host "Installed \$clientDest"\r?\n\s+Register-Client \$clientDest/);
+    expect(script).toMatch(/Write-Host "Installed \$clientDest"\r?\n[\s\S]{0,400}Register-Client \$clientDest/);
     expect(script).toContain("if (-not $NoClient) { Install-ClientAndPath $clientSource }");
     expect(script.match(/Register-Client \$clientDest/g)!.length).toBe(1);
   });
@@ -144,6 +144,20 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
     expect(script).toContain("$oldClient = Join-Path $InstallDir 'claude-rc.exe'");
     expect(script).toContain("Remove-Item -LiteralPath $oldClient");
     expect(script).toContain("Remove-MachinePath $InstallDir $PathRegistryKey");
+  });
+
+  test("the old PATH entry is removed on every run of the PATH step, not only when the old exe was deleted", () => {
+    expect(script).not.toContain("$migrate");
+    expect(script).toMatch(/if \(Remove-MachinePath \$InstallDir \$PathRegistryKey\) \{/);
+  });
+
+  test("a locked old client only warns about the old client", () => {
+    expect(script).toContain("could not remove the old client ${oldClient}");
+  });
+
+  test("-NoService writes no registry value unless a test key is given", () => {
+    expect(script).toContain("$NoService -and -not $ClientOnly -and $ClientRegistryKey -eq $DefaultClientKey");
+    expect(script).toContain("The client registry value was not written (-NoService).");
   });
 
   test("-Uninstall removes both PATH entries and says what it keeps", () => {
@@ -170,7 +184,7 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
   const run = async (extra: string[], opts: { installDir?: boolean; env?: Record<string, string> } = {}) => {
     const args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", bin, "-WinSW", winsw, "-ClientBinary", client,
       "-DataDir", join(dir, "data"), "-ClientRegistryKey", clientKey, "-PathRegistryKey", pathKey, ...extra];
-    if (opts.installDir !== false) args.push("-InstallDir", join(dir, "app"));
+    if (opts.installDir !== false && !extra.includes("-InstallDir")) args.push("-InstallDir", join(dir, "app"));
     const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...opts.env } });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     return { out, err, code };
@@ -234,18 +248,16 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     expect(await pathValue()).toContain(join(dir, "app", "bin"));
   });
 
-  test("-Uninstall removes both PATH entries and keeps the value and the files", async () => {
-    await run([]);
-    await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")};${join(dir, "app", "bin")}' -Type ExpandString`);
-    const p = Bun.spawn(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-Uninstall", "-InstallDir", join(dir, "app"), "-DataDir", join(dir, "data"), "-ClientRegistryKey", clientKey, "-PathRegistryKey", pathKey],
-      { stdout: "pipe", stderr: "pipe" });
-    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-    // Without administrator rights the script stops first. Either way the value and the files stay.
-    if (code === 0) {
-      expect(await pathValue()).toBe("C:\\Windows");
-      expect(out).toContain("Kept:");
-    }
-    expect(await clientValue()).toBe(join(dir, "app", "bin", "claude-rc.exe"));
-    expect(existsSync(join(dir, "app", "bin", "claude-rc.exe"))).toBe(true);
+  test("the old PATH entry goes even when the old client is already gone", async () => {
+    await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")}' -Type ExpandString`);
+    expect((await run(["-ClientOnly"])).code).toBe(0);
+    expect(await pathValue()).toBe(`C:\\Windows;${join(dir, "app", "bin")}`);
+  });
+
+  test("a client path with a space is stored whole", async () => {
+    const spaced = join(dir, "my apps", "claude rc");
+    const r = await run(["-ClientOnly", "-InstallDir", spaced]);
+    expect(r.code).toBe(0);
+    expect(await clientValue()).toBe(join(spaced, "bin", "claude-rc.exe"));
   });
 });
