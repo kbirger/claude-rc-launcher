@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import os from "node:os";
 import path from "node:path";
 import type { Config } from "./config";
-import { readRegisteredClients } from "./installs";
+import { readRegisteredClients, type RegQueryResult } from "./installs";
 import type { RunResult } from "./release";
 import type { UpdateEnv } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -34,21 +34,54 @@ type Lstat = (p: string) => { uid: number; mode: number };
 export type RegistryFs = {
   lstat?: Lstat;
   readFile?: (p: string) => string;
+  regQuery?: (key: string, value: string) => RegQueryResult;
   platform?: string;
   env?: Record<string, string | undefined>;
   warn?: (line: string) => void;
 };
 
 /** `lstat` for the registry reader: it does not follow symlinks, and a missing path is `undefined`. */
-export function registryStat(lstat: Lstat, platform: string): (p: string) => { uid: number; mode: number } | undefined {
+export function registryStat(lstat: Lstat): (p: string) => { uid: number; mode: number } | undefined {
   return (p) => {
     try {
       const s = lstat(p);
-      return platform === "win32" ? { uid: 0, mode: 0o100644 } : { uid: s.uid, mode: s.mode };
+      return { uid: s.uid, mode: s.mode };
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") return undefined;
       throw e;
+    }
+  };
+}
+
+/**
+ * Reads the output of `reg query <key> /v <value>`: the line `    Client    REG_SZ    <path>` gives the path (it may
+ * hold spaces). Exit 1 with nothing on stdout means the key or value does not exist. Anything else is an error.
+ */
+export function parseRegQuery(code: number | null | undefined, stdout: string, stderr: string, value: string): RegQueryResult {
+  if (code === 1 && stdout.trim() === "") return { status: "missing" };
+  if (code !== 0) return { status: "error", message: `reg.exe ${code === null || code === undefined ? "did not finish (timeout or signal)" : `exit ${code}`}${stderr.trim() ? `: ${stderr.trim()}` : ""}` };
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = /^\s+(\S+)\s+REG_SZ\s+(.*)$/.exec(line);
+    if (m && m[1].toLowerCase() === value.toLowerCase()) return { status: "ok", data: m[2].trim() };
+  }
+  return { status: "error", message: `no ${value} string value in the reg.exe output` };
+}
+
+type Spawn = (args: string[], opts: { timeout: number }) => { exitCode: number | null; stdout: { toString(): string }; stderr: { toString(): string } };
+
+/** A `regQuery` that runs `%SystemRoot%\System32\reg.exe` (no shell) and reads the 64-bit registry view. */
+export function makeRegQuery(env: Record<string, string | undefined>, spawn?: Spawn): (key: string, value: string) => RegQueryResult {
+  const exe = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "reg.exe");
+  const go: Spawn =
+    spawn ??
+    ((args, o) => Bun.spawnSync(args, { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: o.timeout, killSignal: "SIGKILL" }));
+  return (key, value) => {
+    try {
+      const r = go([exe, "query", key, "/v", value, "/reg:64"], { timeout: 2000 });
+      return parseRegQuery(r.exitCode, r.stdout.toString(), r.stderr.toString(), value);
+    } catch (e) {
+      return { status: "error", message: e instanceof Error ? e.message : String(e) };
     }
   };
 }
@@ -120,6 +153,8 @@ export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">, fs: Re
   const platform = fs.platform ?? process.platform;
   const lstat: Lstat = fs.lstat ?? ((p) => lstatSync(p));
   const warn = fs.warn ?? console.warn;
+  const env = fs.env ?? process.env;
+  const regQuery = platform === "win32" ? (fs.regQuery ?? makeRegQuery(env)) : undefined;
   return {
     fetch: globalThis.fetch,
     run,
@@ -144,7 +179,7 @@ export function realUpdateEnv(cfg: Pick<Config, "serviceHome" | "scope">, fs: Re
     realpath: (p) => realpathSync(p),
     pathEnv: process.env.PATH ?? process.env.Path ?? "",
     programFiles: process.env.ProgramFiles,
-    registeredClients: () => readRegisteredClients({ platform, env: fs.env ?? process.env, readFile: fs.readFile ?? ((p) => readFileSync(p, "utf8")), stat: registryStat(lstat, platform) }, warn),
+    registeredClients: () => readRegisteredClients({ platform, env, readFile: fs.readFile ?? ((p) => readFileSync(p, "utf8")), stat: registryStat(lstat), ...(regQuery ? { regQuery } : {}) }, warn),
     trustedClient: trustedClientCheck(lstat, platform, warn),
     homes: [cfg.serviceHome, "/root"],
     startWatchdog(script) {

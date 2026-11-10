@@ -84,8 +84,9 @@ export function findClients(o: FindClientsInput): string[] {
       .find((p) => o.exists(p));
     if (onPath) scanned.push(onPath);
     if (o.programFiles) {
-      const p = path.win32.join(o.programFiles, CLIENT, `${CLIENT}.exe`);
-      if (o.exists(p)) scanned.push(p);
+      for (const p of [path.win32.join(o.programFiles, CLIENT, "bin", `${CLIENT}.exe`), path.win32.join(o.programFiles, CLIENT, `${CLIENT}.exe`)]) {
+        if (o.exists(p)) scanned.push(p);
+      }
     }
   } else {
     const onPath = o.pathEnv

@@ -62,6 +62,15 @@ describe("findClients", () => {
     const f = "C:\\Program Files\\claude-rc\\claude-rc.exe";
     expect(findClients({ ...fs([f]), platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files" })).toEqual([f]);
   });
+  test("Windows: both Program Files defaults are found without a PATH entry, each real file once", () => {
+    const a = "C:\\Program Files\\claude-rc\\bin\\claude-rc.exe";
+    const b = "C:\\Program Files\\claude-rc\\claude-rc.exe";
+    const base = { platform: "win32", pathEnv: "", homes: [], programFiles: "C:\\Program Files" };
+    expect(findClients({ ...fs([a]), ...base })).toEqual([a]);
+    expect(findClients({ ...fs([b]), ...base })).toEqual([b]);
+    expect(findClients({ ...fs([a, b]), ...base })).toEqual([a, b]);
+    expect(findClients({ ...fs([a, b]), ...base, registered: [a] })).toEqual([a, b]);
+  });
   test("Windows: registered paths are deduplicated without regard to case", () => {
     const f = "C:\\Program Files\\claude-rc\\claude-rc.exe";
     const o = { exists: (p: string) => p.toLowerCase() === f.toLowerCase(), realpath: (p: string) => p };

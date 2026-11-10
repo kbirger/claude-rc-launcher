@@ -1,20 +1,19 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { readRegisteredClients, registryPath, resetRegistryLog, type RegistryIo } from "../src/installs";
+import { readRegisteredClients, registryPath, resetRegistryLog, type RegQueryResult, type RegistryIo } from "../src/installs";
 
 beforeEach(() => resetRegistryLog());
 
 const FILE = "/etc/claude-rc-launcher/installs";
 const DIR = "/etc/claude-rc-launcher";
-const WFILE = "C:\\ProgramData\\claude-rc-registry\\installs";
 
 type St = { uid: any; mode: any } | undefined;
 const REG: St = { uid: 0, mode: 0o100644 };
 const DIRST: St = { uid: 0, mode: 0o040755 };
 
-type Over = { text?: any; stats?: Record<string, St>; platform?: string };
+type Over = { text?: any; stats?: Record<string, St>; platform?: string; reg?: RegQueryResult };
 function io(o: Over = {}): RegistryIo {
   const platform = o.platform ?? "linux";
-  const stats: Record<string, St> = o.stats ?? (platform === "win32" ? { [WFILE]: REG } : { [FILE]: REG, [DIR]: DIRST });
+  const stats: Record<string, St> = o.stats ?? { [FILE]: REG, [DIR]: DIRST };
   return {
     platform,
     env: {},
@@ -23,6 +22,7 @@ function io(o: Over = {}): RegistryIo {
       return o.text ?? "";
     },
     stat: (p) => stats[p],
+    regQuery: o.reg ? () => o.reg! : undefined,
   };
 }
 const run = (o: Over) => {
@@ -41,11 +41,9 @@ const refused = (o: Over) => {
 };
 
 describe("registryPath", () => {
-  test("linux and others use /etc, win32 uses ProgramData", () => {
+  test("it is the Linux path", () => {
     expect(registryPath("linux", {})).toBe(FILE);
     expect(registryPath("darwin", {})).toBe(FILE);
-    expect(registryPath("win32", { ProgramData: "D:\\PD" })).toBe("D:\\PD\\claude-rc-registry\\installs");
-    expect(registryPath("win32", {})).toBe(WFILE);
   });
 });
 
@@ -167,38 +165,46 @@ describe("readRegisteredClients on linux", () => {
 });
 
 describe("readRegisteredClients on win32", () => {
-  const win = (text: string, extra: Over = {}) =>
-    run({ platform: "win32", text, stats: { [WFILE]: { uid: 1000, mode: 0o666 } }, ...extra }).r;
+  const win = (reg: RegQueryResult) => run({ platform: "win32", reg });
+  const okv = (data: string): RegQueryResult => ({ status: "ok", data });
 
-  test("no owner or mode check; spaces, letter case and slashes are accepted", () => {
-    expect(win("client C:\\Program Files\\claude-rc\\claude-rc.exe\nclient C:\\x\\CLAUDE-RC.EXE\nclient D:/x/claude-rc.exe\n")).toEqual([
-      "C:\\Program Files\\claude-rc\\claude-rc.exe",
-      "C:\\x\\CLAUDE-RC.EXE",
-      "D:/x/claude-rc.exe",
-    ]);
+  test("it asks for HKLM\\SOFTWARE\\claude-rc and Client", () => {
+    const calls: string[][] = [];
+    const i: RegistryIo = { ...io({ platform: "win32" }), regQuery: (k, v) => (calls.push([k, v]), okv("C:\\x\\claude-rc.exe")) };
+    expect(readRegisteredClients(i)).toEqual(["C:\\x\\claude-rc.exe"]);
+    expect(calls).toEqual([["HKLM\\SOFTWARE\\claude-rc", "Client"]]);
   });
 
-  test("a name without .exe, a relative path and .. are ignored", () => {
-    expect(win("client C:\\x\\claude-rc\nclient x\\claude-rc.exe\nclient C:\\a\\..\\b\\claude-rc.exe\nclient C:\\x\\\nclient C:/a\\..\\claude-rc.exe\n")).toEqual([]);
+  test("an ok value gives its path", () => {
+    expect(win(okv("C:\\Program Files\\claude-rc\\bin\\claude-rc.exe")).r).toEqual(["C:\\Program Files\\claude-rc\\bin\\claude-rc.exe"]);
   });
 
-  test("UNC, device, rooted and drive-relative paths are ignored", () => {
-    const text = [
-      "client \\\\server\\share\\claude-rc.exe",
-      "client //server/share/claude-rc.exe",
-      "client \\\\?\\C:\\x\\claude-rc.exe",
-      "client \\foo\\claude-rc.exe",
-      "client C:claude-rc.exe",
-    ].join("\n");
-    expect(win(text)).toEqual([]);
+  test("a missing value gives [] and no log", () => {
+    const { r, logs } = win({ status: "missing" });
+    expect(r).toEqual([]);
+    expect(logs).toEqual([]);
   });
 
-  test("duplicates differing in case are dropped", () => {
-    expect(win("client C:\\x\\claude-rc.exe\nclient c:\\X\\CLAUDE-RC.EXE\n")).toEqual(["C:\\x\\claude-rc.exe"]);
+  test("an error gives [] and one log line, once for repeated calls", () => {
+    const logs: string[] = [];
+    const i = io({ platform: "win32", reg: { status: "error", message: "reg.exe exit 5" } });
+    for (let n = 0; n < 3; n++) expect(readRegisteredClients(i, (l) => logs.push(l))).toEqual([]);
+    expect(logs.length).toBe(1);
+    expect(logs[0]).toContain("reg.exe exit 5");
   });
 
-  test("a missing file gives []", () => {
-    expect(win("client C:\\x\\claude-rc.exe\n", { stats: {} })).toEqual([]);
+  test("no regQuery gives []", () => {
+    expect(readRegisteredClients({ ...io({ platform: "win32" }), regQuery: undefined })).toEqual([]);
+  });
+
+  test("UNC, relative, .. , wrong name and control characters give []", () => {
+    for (const v of ["\\\\srv\\share\\claude-rc.exe", "C:\\a\\..\\claude-rc.exe", "claude-rc.exe", "C:\\x\\other.exe", "C:\\x\\claude-rc.exe\u0001", "C:\\x\\a\nb\\claude-rc.exe", "C:claude-rc.exe", "C:\\x\\"]) {
+      expect(win(okv(v)).r).toEqual([]);
+    }
+  });
+
+  test("another letter case of claude-rc.exe is accepted", () => {
+    expect(win(okv("C:\\x\\CLAUDE-RC.EXE")).r).toEqual(["C:\\x\\CLAUDE-RC.EXE"]);
   });
 });
 

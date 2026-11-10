@@ -3,7 +3,7 @@ import type { Config } from "../src/config";
 import { lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { realUpdateEnv, registryStat, trustedClientCheck } from "../src/realupdate";
+import { makeRegQuery, parseRegQuery, realUpdateEnv, registryStat, trustedClientCheck } from "../src/realupdate";
 import { VERSION } from "../src/version";
 
 describe("realUpdateEnv", () => {
@@ -38,20 +38,47 @@ describe("realUpdateEnv", () => {
     expect(env.registeredClients?.()).toEqual(["/opt/claude-rc"]);
   });
 
+  describe("registry value on Windows", () => {
+    const SAMPLE = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\claude-rc\r\n    Client    REG_SZ    C:\\Program Files\\claude-rc\\bin\\claude-rc.exe\r\n\r\n";
+    const sp = (r: any) => () => r;
+    test("parseRegQuery reads a path with spaces", () => {
+      expect(parseRegQuery(0, SAMPLE, "", "Client")).toEqual({ status: "ok", data: "C:\\Program Files\\claude-rc\\bin\\claude-rc.exe" });
+    });
+    test("exit 1 with no output is missing; other failures are errors", () => {
+      expect(parseRegQuery(1, "", "ERROR: The system was unable to find the specified registry key or value.", "Client")).toEqual({ status: "missing" });
+      expect(parseRegQuery(2, "", "boom", "Client").status).toBe("error");
+      expect(parseRegQuery(null, "", "", "Client").status).toBe("error");
+      expect(parseRegQuery(0, "garbage", "", "Client").status).toBe("error");
+    });
+    test("makeRegQuery runs reg.exe from SystemRoot with an argument array and a 2 s timeout", () => {
+      const calls: any[] = [];
+      const q = makeRegQuery({ SystemRoot: "D:\\Win" }, (a, o) => (calls.push([a, o]), { exitCode: 0, stdout: SAMPLE, stderr: "" }));
+      expect(q("HKLM\\SOFTWARE\\claude-rc", "Client").status).toBe("ok");
+      expect(calls).toEqual([[["D:\\Win\\System32\\reg.exe", "query", "HKLM\\SOFTWARE\\claude-rc", "/v", "Client", "/reg:64"], { timeout: 2000 }]]);
+      makeRegQuery({}, (a) => (calls.push(a), { exitCode: 1, stdout: "", stderr: "" }))("k", "v");
+      expect(calls[1][0]).toBe("C:\\Windows\\System32\\reg.exe");
+    });
+    test("a thrown spawn is an error", () => {
+      const q = makeRegQuery({}, () => { throw new Error("spawn failed"); });
+      expect(q("k", "v")).toEqual({ status: "error", message: "spawn failed" });
+    });
+    test("realUpdateEnv on win32 feeds regQuery to the registry reader", () => {
+      const env = realUpdateEnv(cfg, { platform: "win32", env: {}, regQuery: sp({ status: "ok", data: "C:\\x\\claude-rc.exe" }) });
+      expect(env.registeredClients?.()).toEqual(["C:\\x\\claude-rc.exe"]);
+    });
+  });
+
   describe("registryStat", () => {
     test("ENOENT and ENOTDIR give undefined, other errors throw", () => {
-      for (const code of ["ENOENT", "ENOTDIR"]) expect(registryStat(() => { throw Object.assign(new Error(code), { code }); }, "linux")("/x")).toBeUndefined();
-      expect(() => registryStat(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }, "linux")("/x")).toThrow("denied");
-    });
-    test("win32 gives the fixed value", () => {
-      expect(registryStat(() => ({ uid: 1000, mode: 0o100777 }), "win32")("C:\\x")).toEqual({ uid: 0, mode: 0o100644 });
+      for (const code of ["ENOENT", "ENOTDIR"]) expect(registryStat(() => { throw Object.assign(new Error(code), { code }); })("/x")).toBeUndefined();
+      expect(() => registryStat(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); })("/x")).toThrow("denied");
     });
     test("the real lstat does not follow a symlink", () => {
       const dir = mkdtempSync(path.join(tmpdir(), "rs-"));
       try {
         writeFileSync(path.join(dir, "f"), "x");
         symlinkSync(path.join(dir, "f"), path.join(dir, "l"));
-        const st = registryStat((p) => lstatSync(p), "linux");
+        const st = registryStat((p) => lstatSync(p));
         expect((st(path.join(dir, "l"))!.mode & 0o170000)).toBe(0o120000);
         expect((st(path.join(dir, "f"))!.mode & 0o170000)).toBe(0o100000);
         expect(st(path.join(dir, "gone"))).toBeUndefined();
