@@ -275,12 +275,13 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     const old = join(dir, "claude-rc-launcher");
     const r = await run(["-InstallDir", old]);
     expect(r.code).toBe(0);
-    // The service account here is the account that runs the test. Which rights it shows depends on the machine (a CI
-    // runner already has full control through the temp folder), so check only whether it has an entry of its own.
+    // The service account here is the account that runs the test, and it can be an administrator or the owner (a CI
+    // runner is both), so it can show full control on bin too. What must hold: bin has no Modify entry, and the service
+    // folder has an entry for the account.
     const who = (await ps("[Security.Principal.WindowsIdentity]::GetCurrent().Name")).out;
     const entry = new RegExp(`${who.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`, "i");
     const bin = (await ps(`icacls '${join(old, "bin")}'`)).out;
-    expect(bin).not.toMatch(entry);
+    expect(bin).not.toMatch(/\(M\)/);
     expect(bin).toContain("(F)");
     expect((await ps(`icacls '${join(old, "service")}'`)).out).toMatch(entry);
   });
