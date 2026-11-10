@@ -146,3 +146,47 @@ describe("parseCli", () => {
     expect(() => parseCli(["list", "--bogus"])).toThrow("--bogus");
   });
 });
+
+describe("hubClient.stream", () => {
+  const sse = (body: string) => new Response(body, { headers: { "content-type": "text/event-stream" } });
+  test("parses events and sends the bearer token", async () => {
+    const h = fakeHub(() => sse(": keepalive\n\nevent: log\ndata: {\"a\":1}\n\nevent: presence\ndata: x\n\n"));
+    const c = hubClient({ creds: creds(h.url), save: () => {}, renew: async (x) => x, now: () => 0 });
+    const got: { event: string; data: string }[] = [];
+    for await (const e of c.stream("/cli/api/events")) got.push(e);
+    expect(got).toEqual([{ event: "log", data: '{"a":1}' }, { event: "presence", data: "x" }]);
+    expect(h.seen[0]!.auth).toBe("Bearer tok1");
+    expect(h.seen[0]!.path).toBe("/cli/api/events");
+  });
+  test("renews once after a 401", async () => {
+    const h = fakeHub((r) => (r.auth === "Bearer tok1" ? json({ error: "no" }, 401) : sse("event: log\ndata: 1\n\n")));
+    let renewed = 0;
+    const c = hubClient({ creds: creds(h.url), save: () => {}, renew: async (x) => (renewed++, { ...x, idToken: "tok2" }), now: () => 0 });
+    const got: unknown[] = [];
+    for await (const e of c.stream("/cli/api/events")) got.push(e);
+    expect(renewed).toBe(1);
+    expect(got).toHaveLength(1);
+    expect(h.seen.map((s) => s.auth)).toEqual(["Bearer tok1", "Bearer tok2"]);
+  });
+  test("a second 401 is a login error, and other statuses throw HubError", async () => {
+    const h = fakeHub(() => json({ error: "no" }, 401));
+    const c = hubClient({ creds: creds(h.url), save: () => {}, renew: async (x) => x, now: () => 0 });
+    await expect((async () => { for await (const _ of c.stream("/x")) { /* none */ } })()).rejects.toMatchObject({ code: 2 });
+    const h2 = fakeHub(() => json({ error: "nf" }, 404));
+    const c2 = hubClient({ creds: creds(h2.url), save: () => {}, renew: async (x) => x, now: () => 0 });
+    const e = await (async () => { for await (const _ of c2.stream("/x")) { /* none */ } })().catch((x) => x);
+    expect(e).toBeInstanceOf(HubError);
+    expect(e.status).toBe(404);
+  });
+  test("ends on abort", async () => {
+    const h = fakeHub(() => new Response(new ReadableStream({ start(ctl) { ctl.enqueue(new TextEncoder().encode("event: log\ndata: 1\n\n")); } }), { headers: { "content-type": "text/event-stream" } }));
+    const c = hubClient({ creds: creds(h.url), save: () => {}, renew: async (x) => x, now: () => 0 });
+    const ac = new AbortController();
+    const got: unknown[] = [];
+    for await (const e of c.stream("/cli/api/events", { signal: ac.signal })) {
+      got.push(e);
+      ac.abort();
+    }
+    expect(got).toHaveLength(1);
+  });
+});

@@ -311,3 +311,115 @@ describe("index: update --all-nodes", () => {
     expect(out.at(-1)).toBe(`claude-rc is already up to date (${VERSION})`);
   });
 });
+
+/** A fake event stream. Each open takes the next script: events to send, or an Error to fail the open. */
+type Script = ({ event: string; data: string } | "end")[] | Error;
+type Ev = { host: string; line: string };
+const logEv = (host: string, line: string) => ({ event: "log", data: JSON.stringify({ host, line, at: 1 }) });
+
+async function runLive(opts: { scripts: Script[]; onPost?: Record<string, Ev[]>; json?: boolean }) {
+  const h = fakeHub(ALL, GOOD);
+  const s = fakeSys();
+  const out: string[] = [];
+  const err: string[] = [];
+  const opens: { aborted: () => boolean }[] = [];
+  const queues: ((ev: { event: string; data: string } | "end") => void)[] = [];
+  const hubAny = h.hub as any;
+  const baseRequest = hubAny.request.bind(hubAny);
+  hubAny.request = async (method: string, p: string, ...rest: unknown[]) => {
+    const r = await baseRequest(method, p, ...rest);
+    const m = /^\/cli\/api\/hosts\/([^/]+)\/update$/.exec(p);
+    if (m && method === "POST") {
+      for (const e of opts.onPost?.[m[1]!] ?? []) queues.at(-1)?.(logEv(e.host, e.line));
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return r;
+  };
+  let n = 0;
+  hubAny.stream = (path: string, o?: { signal?: AbortSignal }) => {
+    const script = opts.scripts[Math.min(n++, opts.scripts.length - 1)]!;
+    opens.push({ aborted: () => !!o?.signal?.aborted });
+    const pending: ({ event: string; data: string } | "end")[] = [];
+    let wake: (() => void) | undefined;
+    if (!(script instanceof Error)) queues.push((ev) => (pending.push(ev), wake?.()));
+    return (async function* () {
+      if (script instanceof Error) throw script;
+      for (const e of script) {
+        if (e === "end") return;
+        yield e;
+      }
+      // Stay open and deliver what onPost pushes, until the signal aborts.
+      const aborted = new Promise<void>((res) => o?.signal?.addEventListener("abort", () => res()));
+      for (;;) {
+        if (o?.signal?.aborted) return;
+        const ev = pending.shift();
+        if (ev === "end") return;
+        if (ev) {
+          yield ev;
+          continue;
+        }
+        await Promise.race([new Promise<void>((res) => (wake = res)), aborted]);
+      }
+    })();
+  };
+  let error: ExitError | undefined;
+  try {
+    await updateAll({ flags: { "all-nodes": true, ...(opts.json ? { json: true } : {}) } as any, hub: h.hub, out: (x) => out.push(x), err: (x) => err.push(x), sys: s.sys });
+  } catch (e) {
+    if (!(e instanceof ExitError)) throw e;
+    error = e;
+  }
+  return { ...h, out, err, error, opens, count: () => n };
+}
+
+describe("updateAll live output", () => {
+  const lines = { a: [{ host: "a", line: "downloading" }, { host: "a", line: "installing" }], b: [{ host: "b", line: "verifying" }], local: [{ host: "local", line: "restarting" }] };
+
+  test("prints each log line as [host] line, in order; the snapshot and other hosts are ignored", async () => {
+    const snap = { event: "snapshot", data: JSON.stringify({ updates: [], logs: { a: [{ line: "OLD", at: 0 }] }, presence: [] }) };
+    const r = await runLive({ scripts: [[snap, logEv("zzz", "not updated")]], onPost: lines });
+    expect(r.error).toBeUndefined();
+    const live = r.out.filter((l) => /^\[(a|b|local)\] /.test(l));
+    expect(live).toEqual(["[a] downloading", "[a] installing", "[b] verifying", "[local] restarting"]);
+    expect(r.out.join("\n")).not.toContain("OLD");
+    expect(r.out.join("\n")).toContain("MACHINE");
+    expect(r.err).toEqual([]);
+    expect(r.opens[0]!.aborted()).toBe(true);
+  });
+
+  test("the stream opens before the first update", async () => {
+    const r = await runLive({ scripts: [[]], onPost: lines });
+    expect(r.count()).toBeGreaterThan(0);
+    expect(r.calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/cli/api/hosts/a/update", "/cli/api/hosts/b/update", "/cli/api/hosts/local/update"]);
+  });
+
+  test("with --json the lines go to standard error and the result stays on standard output", async () => {
+    const r = await runLive({ scripts: [[]], onPost: lines, json: true });
+    expect(r.err).toEqual(["[a] downloading", "[a] installing", "[b] verifying", "[local] restarting"]);
+    expect(r.out.some((l) => /^\[(a|b|local)\] /.test(l))).toBe(false);
+    expect(JSON.parse(r.out.join("\n")).map((x: { machine: string }) => x.machine)).toEqual(["a", "b", "local", "client"]);
+  });
+
+  test("a stream that cannot be opened changes nothing", async () => {
+    const r = await runLive({ scripts: [new HubError("HTTP 404", 404, undefined)], onPost: lines });
+    expect(r.error).toBeUndefined();
+    expect(r.out.some((l) => /^\[(a|b|local)\] /.test(l))).toBe(false);
+    expect(r.out.join("\n")).toContain("MACHINE");
+    expect(r.calls.filter((c) => c.method === "POST")).toHaveLength(3);
+    expect(r.count()).toBe(1);
+  });
+
+  test("a stream that ends is reopened, and lines after the reopen appear", async () => {
+    const r = await runLive({ scripts: [[logEv("a", "first"), "end"], []], onPost: { local: [{ host: "local", line: "after restart" }] } });
+    expect(r.count()).toBe(2);
+    expect(r.out.filter((l) => /^\[(a|b|local)\] /.test(l))).toEqual(["[a] first", "[local] after restart"]);
+    expect(r.error).toBeUndefined();
+  });
+
+  test("a stream that keeps failing after it opened gives up silently", async () => {
+    const r = await runLive({ scripts: [[logEv("a", "first"), "end"], new Error("down")], onPost: lines });
+    expect(r.error).toBeUndefined();
+    expect(r.count()).toBeLessThanOrEqual(12);
+    expect(r.out.join("\n")).toContain("MACHINE");
+  });
+});

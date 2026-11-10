@@ -107,11 +107,44 @@ async function updateClient(flags: Flags, sys: Sys): Promise<UpdateRow> {
   return { ...row, status: "up-to-date" };
 }
 
+const STREAM_RETRIES = 10;
+const STREAM_WAIT_MS = 2_000;
+
+/**
+ * Prints the `log` events of the hub for the hosts in `ids`, from the moment the stream opens (the snapshot holds
+ * older lines and is ignored). A stream that never opened (an older hub, no route) ends the watcher silently. A
+ * stream that opened and then ended, as when the hub restarts, is reopened a few times. Errors never escape.
+ */
+async function watchLogs(hub: HubClient, sys: Sys, ids: Set<string>, print: (s: string) => void, signal: AbortSignal): Promise<void> {
+  let retries = 0;
+  let everOpened = false;
+  while (!signal.aborted) {
+    try {
+      for await (const ev of hub.stream("/cli/api/events", { signal })) {
+        if (signal.aborted) return;
+        everOpened = true;
+        retries = 0;
+        if (ev.event !== "log") continue;
+        try {
+          const d = JSON.parse(ev.data) as { host?: unknown; line?: unknown };
+          if (typeof d.host === "string" && typeof d.line === "string" && ids.has(d.host)) print(`[${d.host}] ${d.line}`);
+        } catch {
+          /* a bad event is skipped */
+        }
+      }
+    } catch {
+      /* handled below */
+    }
+    if (signal.aborted || !everOpened || ++retries > STREAM_RETRIES) return;
+    await sys.sleep(STREAM_WAIT_MS);
+  }
+}
+
 /**
  * `claude-rc update --all-nodes`: updates every remote host the hub knows, then the hub itself (`local`, which
  * restarts and drops the connection), then this client. One failed machine does not stop the others.
  */
-export async function updateAll(o: { flags: Flags; hub: HubClient; out: (s: string) => void; sys?: Sys }): Promise<void> {
+export async function updateAll(o: { flags: Flags; hub: HubClient; out: (s: string) => void; err?: (s: string) => void; sys?: Sys }): Promise<void> {
   const { flags, hub, out } = o;
   const sys = o.sys ?? realSys;
   checkAllNodesFlags(flags);
@@ -120,10 +153,19 @@ export async function updateAll(o: { flags: Flags; hub: HubClient; out: (s: stri
   const hosts = await hub.request<HostInfo[]>("GET", "/cli/api/hosts");
   const local = hosts.find((h) => h.id === "local") ?? { id: "local", name: "local", status: "ok" as const, stale: false };
   const rows: UpdateRow[] = [];
-  for (const h of hosts.filter((h) => h.id !== "local")) rows.push(await updateHost(hub, sys, h, flags.release, progress));
-  rows.push(await updateHost(hub, sys, local, flags.release, progress));
-  progress("updating this client ...");
-  rows.push(await updateClient(flags, sys));
+  const stop = new AbortController();
+  const ids = new Set([...hosts.filter((h) => h.id !== "local"), local].filter((h) => h.status === "ok").map((h) => h.id));
+  const err = o.err ?? ((s: string) => console.error(s));
+  // The watcher never rejects and never changes a result. It is not awaited: it may sleep between two attempts.
+  void watchLogs(hub, sys, ids, flags.json ? err : out, stop.signal).catch(() => {});
+  try {
+    for (const h of hosts.filter((h) => h.id !== "local")) rows.push(await updateHost(hub, sys, h, flags.release, progress));
+    rows.push(await updateHost(hub, sys, local, flags.release, progress));
+    progress("updating this client ...");
+    rows.push(await updateClient(flags, sys));
+  } finally {
+    stop.abort();
+  }
 
   if (flags.json) out(JSON.stringify(rows, null, 2));
   else {

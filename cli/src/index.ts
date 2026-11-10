@@ -168,7 +168,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     const hub = hubClient({ creds, save: (c) => saveCreds(env.credsFile, c), renew: (c) => renew(c, env.fetch), ...(env.fetch ? { fetch: env.fetch } : {}) });
 
     if (name === "update") {
-      await updateAll({ flags, hub, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+      await updateAll({ flags, hub, out: io.out, err: io.err, ...(env.sys ? { sys: env.sys } : {}) });
       return 0;
     }
     if (name === "node") {

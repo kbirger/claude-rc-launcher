@@ -860,6 +860,13 @@ The command updates the machines in this order. First come the nodes, one after 
 is the machine named `local`. The hub restarts, and the command waits for it to answer again. The last step is the
 client copy that runs the command. One failed machine does not stop the others.
 
+While the command runs, it shows the live output of each update. Each line starts with the machine name, as in
+`[a] downloading`. The lines come from the hub, in the order it receives them, and only for the machines in this run.
+Lines of an earlier update do not appear. With `--json`, these lines go to standard error and the rows stay on
+standard output. If the hub is too old to send them, the command shows no lines and still updates every machine. When
+the hub restarts for its own update, the command opens the stream again, so the last lines still appear. A problem
+with the stream never changes the result or the exit code.
+
 On each machine, the service checks the download against `SHA256SUMS`, keeps the old binary as `.prev` and restarts. A
 watchdog (a small script outside the service) puts the old binary back if the new one does not stay active.
 
