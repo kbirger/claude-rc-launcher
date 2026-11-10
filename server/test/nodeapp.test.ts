@@ -70,10 +70,11 @@ describe("node app", () => {
     expect((await (await n2).json()).clients).toEqual([{ path: "/p", version: "1.0.0" }]);
     expect(starts).toBe(2); // sharing one lookup is createClientVersions' job (see serviceupdate.test.ts)
   });
-  test("a throwing client lookup gives 200 with no clients", async () => {
+  test("a throwing client lookup gives 200 and no clients field", async () => {
     const a = createNodeApp({ cfg, instances, auth, clientVersions: async () => { throw new Error("boom"); } });
     const r = await a.request("/api/node", { headers: ok });
-    expect([r.status, (await r.json()).clients]).toEqual([200, []]);
+    const body = await r.json();
+    expect([r.status, "clients" in body]).toEqual([200, false]);
   });
   test("/api routes need auth", async () => {
     for (const p of ["/api/node", "/api/instances", "/api/fs"]) expect((await app().request(p)).status).toBe(401);
