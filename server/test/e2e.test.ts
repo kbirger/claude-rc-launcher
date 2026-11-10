@@ -82,8 +82,8 @@ describe("hub + node end to end", () => {
     // The client copies on the machine running the test decide `clientVersion` and `noClient`, and the latest release decides `stale` and `target`, so they are left out here.
     const list = ((await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[]).map(({ clientVersion: _c, noClient: _n, stale: _s, target: _t, ...h }) => h);
     expect(list).toEqual([
-      { id: "local", name: "hub", status: "ok", version: VERSION },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION },
+      { id: "local", name: "hub", status: "ok", version: VERSION, platform: process.platform },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, platform: process.platform },
     ]);
     expect(await (await fetch(s.hubUrl("/api/hosts/nas/instances"), { headers: s.h() })).json()).toMatchObject([{ name: "pi-one" }]);
     const r = await fetch(s.hubUrl("/api/hosts/nas/instances"), { method: "POST", headers: s.h(), body: JSON.stringify({ path: "/proj", name: "x" }) });

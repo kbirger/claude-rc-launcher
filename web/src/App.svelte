@@ -9,6 +9,7 @@
   import { showsFinishedPanel } from "./lib/updateoutput";
   import { hostsQuery, latestQuery, updatesQuery } from "./lib/queries";
   import HubVersionLine from "./lib/HubVersionLine.svelte";
+  import { busyReason, reloadDecision } from "./lib/updatewarn";
   import UpdateHistory from "./lib/UpdateHistory.svelte";
   import UpdateBanner from "./lib/UpdateBanner.svelte";
   import HostPicker from "./lib/HostPicker.svelte";
@@ -42,6 +43,29 @@
   let showNew = $state(false);
   let refreshKey = $state(0);
 
+  // The page code only changes with a reload. When the hub runs another version than the one that served this page, reload
+  // (or ask, while the New dialog is open).
+  let loadedVersion: string | undefined;
+  let reloadBar = $state(false);
+  const hubVersion = $derived(hostsQ.data?.find((h) => h.id === "local")?.version);
+  $effect(() => {
+    const current = hubVersion;
+    if (!current || reloadBar) return;
+    if (loadedVersion === undefined) {
+      loadedVersion = current;
+      return;
+    }
+    const last = Number(sessionStorage.getItem("claude-rc:reload") ?? 0);
+    const d = reloadDecision({ loaded: loadedVersion, current, dialogOpen: showNew, lastReloadAt: last, now: Date.now() });
+    if (d === "bar") reloadBar = true;
+    if (d === "reload") {
+      console.info(`[claude-rc] the hub runs ${current}, this page was loaded from ${loadedVersion}: reloading`);
+      sessionStorage.setItem("claude-rc:reload", String(Date.now()));
+      location.reload();
+    }
+  });
+  const selectedBusy = $derived(busyReason(hosts.find((h) => h.id === selected), lastEntry(updatesQ.data ?? [], selected), now));
+
   // A remembered or previously selected host that is gone falls back to local. One that is restarting or offline stays.
   $effect(() => {
     if (!hostsQ.data) return;
@@ -74,6 +98,12 @@
   <span class="user">{me?.name ?? ""}</span>
   <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>
 </header>
+{#if reloadBar}
+  <section class="reload" role="status">
+    <span>The hub was updated. Reload to get the new page.</span>
+    <button class="primary" onclick={() => location.reload()}>Reload</button>
+  </section>
+{/if}
 <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
 {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], selected))}
   {#key selected}
@@ -94,6 +124,7 @@
   {#key selected}
     <NewDialog
       host={selected}
+      busyReason={selectedBusy}
       onclose={() => (showNew = false)}
       onstarted={() => {
         showNew = false;
@@ -105,6 +136,7 @@
 
 <style>
   .finished { padding: 4px 16px; }
+  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); border-left: 3px solid var(--warn); }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
   h1 { font-size: 1.1rem; margin: 0; flex: 1; }
   .user { color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

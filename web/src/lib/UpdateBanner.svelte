@@ -4,6 +4,7 @@
   import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
   import UpdateOutput from "./UpdateOutput.svelte";
   import { panelOpenByDefault } from "./updateoutput";
+  import { windowsNames } from "./updatewarn";
   import { bannerKey, bannerModel, isRunning, lastEntry, mergeCallErrors, pruneCallErrors, type BannerItem, type CallError } from "./updatebanner";
 
   let { hosts, updates, latestError }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean } = $props();
@@ -75,7 +76,7 @@
             <span>Updating {item.name}{item.step ? `: ${item.step}` : "..."}</span>
             <UpdateOutput host={item.host} open={panelOpenByDefault(lastEntry(updates, item.host))} />
           {:else if item.kind === "node-update"}
-            <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.</span>
+            <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.{#if windowsNames(item.hosts, hosts).length} The update restarts the sessions on {windowsNames(item.hosts, hosts).join(", ")}.{/if}</span>
             <button class="primary" disabled={busy} onclick={() => updateNodes(item.hosts)}>Update all nodes</button>
           {:else if item.kind === "hub-local-build"}
             <span class="muted">The hub runs a local build. Its version cannot be compared.</span>

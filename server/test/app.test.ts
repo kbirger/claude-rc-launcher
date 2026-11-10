@@ -421,7 +421,7 @@ describe("host-scoped API", () => {
     const app = createApp({ cfg: local, instances: f.svc, userAuth: oidcUserAuth(local, oidc) });
     const r = await app.request("/api/hosts", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false }]);
+    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false }]);
   });
   test("an unknown host is 404", async () => {
     const r = await mk().app.request("/api/hosts/other/instances", { headers: H() });
@@ -479,7 +479,7 @@ describe("POST /update on the local host", () => {
   test("GET /node returns ok, name and version", async () => {
     const r = await withUpdate().request("/api/hosts/local/node", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION, clone: false, clients: [] });
+    expect(await r.json()).toEqual({ ok: true, name: cfg.name, version: VERSION, platform: process.platform, clone: false, clients: [] });
   });
 });
 

@@ -664,6 +664,11 @@ does not answer, the page shows `latest unknown` and offers no hub update.
 The hub keeps the last update of each machine in `<state_dir>/updates.json`. The status is `running`, `updated`,
 `up-to-date`, `failed`, `rolled back` or `unknown`. Every browser sees the same record.
 
+If the hub runs another version than the one that served the page, the page reloads itself. If the "New" dialog is
+open, the page shows a "Reload" bar instead. While a machine updates or restarts, the "New" dialog asks you to tick
+"Start anyway" before it starts a session or a clone. The update of a Windows node restarts its sessions, and the banner
+says so. A node reports its platform in `GET /api/node`, so an old node shows no such note until it is updated.
+
 The hub also keeps the last 20 finished updates of each machine, with their output lines, in
 `<state_dir>/update-history.json`. The page shows them in the "History" section. The hub update has no output lines,
 because the old process ends before the new process settles the record. The route is `GET /api/updates/history`.

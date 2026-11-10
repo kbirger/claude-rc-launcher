@@ -147,7 +147,7 @@ describe("host list client versions", () => {
   });
   test("local gets its clientVersion from the local /node", async () => {
     const app = hub([], new Map(), { clientVersions: async () => [{ path: "/a", version: "0.9.0" }, { path: "/b" }] });
-    expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0", stale: false });
+    expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0", platform: process.platform, stale: false });
   });
 });
 
@@ -159,9 +159,9 @@ describe("host list", () => {
     const r = await get(app, "/api/hosts");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, stale: false },
-      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, noClient: true, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false },
+      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false },
     ]);
   });
 
@@ -177,8 +177,8 @@ describe("host list", () => {
     expect(Date.now() - t0).toBeLessThan(2_500);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false },
       { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config", stale: false },
       { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config", stale: false },
     ]);
@@ -191,7 +191,7 @@ describe("host list", () => {
     const wrongPin = createHostClient({ ...b.host, ca: other.host.ca }, secretAuthorizer(b.secret));
     const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", wrongPin]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
       { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config", stale: false },
       { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config", stale: false },
     ]);
@@ -510,8 +510,17 @@ describe("node and update routes", () => {
   test("GET node returns name and version for local and for a node", async () => {
     const n = await startNode("nas");
     const app = hub([n.host], new Map([["nas", n.client]]));
-    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, clone: false, clients: [] });
-    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, clone: false, clients: [] });
+    expect(await (await get(app, "/api/hosts/nas/node")).json()).toEqual({ ok: true, name: "nas", version: VERSION, platform: process.platform, clone: false, clients: [] });
+    expect(await (await get(app, "/api/hosts/local/node")).json()).toEqual({ ok: true, name: "box", version: VERSION, platform: process.platform, clone: false, clients: [] });
+  });
+
+  test("the host list passes on the platform of a node, cut to 20 characters, and ignores a value that is not text", async () => {
+    const mk = (platform: unknown): HostClient => ({ ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "n", version: "1.4.0", platform } }) });
+    const app = hub([hostCfg("a"), hostCfg("b"), hostCfg("c")], new Map([["a", mk("win32")], ["b", mk("x".repeat(50))], ["c", mk(7)]]));
+    const list = await (await get(app, "/api/hosts")).json();
+    expect(list.find((h: any) => h.id === "a").platform).toBe("win32");
+    expect(list.find((h: any) => h.id === "b").platform).toBe("x".repeat(20));
+    expect(list.find((h: any) => h.id === "c").platform).toBeUndefined();
   });
 
   test("the host list takes a node's version from its probe answer", async () => {
@@ -519,7 +528,7 @@ describe("node and update routes", () => {
     const old: HostClient = { ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };
     const app = hub([hostCfg("nas"), hostCfg("old")], new Map([["nas", client], ["old", old]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
       { id: "nas", name: "nas", status: "ok", source: "config", version: "1.4.0", stale: false },
       { id: "old", name: "old", status: "ok", source: "config", stale: false },
     ]);

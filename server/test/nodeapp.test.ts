@@ -82,7 +82,7 @@ describe("node app", () => {
   });
   test("/api/node and instance routes work with auth", async () => {
     const a = app();
-    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, clone: false, clients: [] });
+    expect(await (await a.request("/api/node", { headers: ok })).json()).toEqual({ ok: true, name: "pi", version: VERSION, platform: process.platform, clone: false, clients: [] });
     expect(await (await a.request("/api/instances", { headers: ok })).json()).toEqual([inst]);
     expect((await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) })).status).toBe(201);
     expect((await a.request(`/api/instances/${ID}`, { method: "DELETE", headers: json })).status).toBe(204);

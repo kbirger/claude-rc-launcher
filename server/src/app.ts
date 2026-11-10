@@ -68,7 +68,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       clients = undefined; // no `clients` field: the hub shows "client not reported", not "no client"
       console.error(`client versions failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    return c.json({ ok: true, name: cfg.name, version: VERSION, clone: cloner !== undefined, ...(clients ? { clients } : {}) });
+    return c.json({ ok: true, name: cfg.name, version: VERSION, platform: process.platform, clone: cloner !== undefined, ...(clients ? { clients } : {}) });
   });
   r.post("/update", async (c) => {
     const { release } = parseUpdateRequest(await readJson(c));

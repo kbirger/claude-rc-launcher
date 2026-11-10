@@ -7,12 +7,15 @@
   import { iconKind } from "./foldericon";
   import { ApiError, browse, getNode, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "./api";
 
-  let { host, onclose, onstarted }: { host: string; onclose: () => void; onstarted: () => void } = $props();
+  let { host, onclose, onstarted, busyReason }: { host: string; onclose: () => void; onstarted: () => void; busyReason?: string } = $props();
 
   let listing = $state<DirListing | null>(null);
   let name = $state("");
   let error = $state("");
   let busy = $state(false);
+  // Set while the machine updates or restarts: a start or a clone can be cut off, so the user must agree first.
+  let ack = $state(false);
+  const needsAck = $derived(!!busyReason && !ack);
   let creating = $state(false);
   let folderName = $state("");
   let usersInfo = $state<UsersInfo | null>(null);
@@ -94,7 +97,7 @@
   }
 
   async function start(addTrust = false) {
-    if (!listing || atTop) return;
+    if (!listing || atTop || needsAck) return;
     const a = trustStartArgs(trustPrompt, listing, chosenUser, addTrust);
     busy = true;
     error = "";
@@ -119,6 +122,12 @@
       <h2>New instance</h2>
       <button onclick={onclose} disabled={cloneBusy} aria-label="Close">Close</button>
     </div>
+    {#if busyReason}
+      <div class="warn" role="alert">
+        <p>This machine {busyReason}. A session or a clone that you start now can be cut off, and the page can show an error for something that worked.</p>
+        <label><input type="checkbox" bind:checked={ack} /> Start anyway</label>
+      </div>
+    {/if}
     {#if usersInfo}
       <label class="runas">Run as
         <select value={user} disabled={cloning} onchange={changeUser}>
@@ -135,7 +144,7 @@
     <div class="bar">
       <button class="icon-btn" aria-label="Up one folder" title="Up one folder" disabled={!listing || listing.parent === null || cloning} onclick={() => go(listing!.parent!)}><ActionIcon name="up" /></button>
       <button class="icon-btn" aria-label="New folder" title="New folder" aria-pressed={creating} disabled={atTop} onclick={() => (creating = !creating)}><ActionIcon name="new-folder" /></button>
-      {#if canClone}<button class="gh-btn" disabled={atTop || cloning} onclick={() => { cloning = true; creating = false; }}><ActionIcon name="github" />Clone with GitHub</button>{/if}
+      {#if canClone}<button class="gh-btn" disabled={atTop || cloning || needsAck} onclick={() => { cloning = true; creating = false; }}><ActionIcon name="github" />Clone with GitHub</button>{/if}
     </div>
     {#if creating}
       <form class="bar" onsubmit={(e) => { e.preventDefault(); createFolder(); }}>
@@ -159,18 +168,21 @@
         <div class="trust" role="alert">
           <p><code>{trustPrompt.path}</code> is not trusted for <code>{trustPrompt.user}</code>.</p>
           <div class="bar">
-            <button class="primary" disabled={busy} onclick={() => start(true)}>Trust and start</button>
+            <button class="primary" disabled={busy || needsAck} onclick={() => start(true)}>Trust and start</button>
             <button disabled={busy} onclick={() => (trustPrompt = null)}>Cancel</button>
           </div>
         </div>
       {/if}
-      <button class="primary" disabled={atTop || busy} onclick={() => start()}>Start here</button>
+      <button class="primary" disabled={atTop || busy || needsAck} onclick={() => start()}>Start here</button>
     </div>
     {/if}
   </div>
 </div>
 
 <style>
+  .warn { border-left: 3px solid var(--warn); padding: 4px 8px; margin: 0 0 8px; }
+  .warn p { margin: 0 0 4px; }
+  .warn label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
   .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: stretch; justify-content: center; }
   .dialog { background: var(--bg); width: 100%; display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
   @media (min-width: 640px) {
