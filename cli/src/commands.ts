@@ -3,7 +3,7 @@ import { ExitError } from "./creds";
 import { table } from "./format";
 import { HubError, type HubClient } from "./hub";
 
-type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null };
+type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string };
 type HostInfo = { id: string; name: string; status: string; error?: string };
 type DirListing = { path: string; parent: string | null; dirs: { name: string; path: string; trusted?: boolean }[] };
 
@@ -99,7 +99,13 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
     }
     case "list": {
       const list = await hub.request<Instance[]>("GET", `${host}/instances`);
-      show(list, () => table([["ID", "NAME", "STATE", "PATH"], ...list.map((i) => [i.id, i.name, i.state, i.path])]));
+      const withUser = list.some((i) => i.user);
+      show(list, () =>
+        table([
+          ["ID", "NAME", "STATE", ...(withUser ? ["USER"] : []), "PATH"],
+          ...list.map((i) => [i.id, i.name, i.state, ...(withUser ? [i.user ?? ""] : []), i.path]),
+        ]),
+      );
       return;
     }
     case "start": {

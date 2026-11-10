@@ -208,6 +208,14 @@ Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host
   `service_user` must be the account that the service runs as. The node stops at start-up if it is not.
 - Every instance runs as the service account. `--user` is refused. The default `service_home` is `%USERPROFILE%`, the
   default `roots` is that folder, and the default `tls.state_dir` is `C:\ProgramData\claude-rc-launcher`.
+- If the service account is an administrator, each session has two entries: `<user>` and `<user> (admin)`. The plain
+  entry is the default and runs the session restricted. The `(admin)` entry runs it with the full service token, as
+  before. A service account that is not an administrator has one entry and no change.
+- A restricted session keeps one privilege, the Administrators group is deny-only, and the integrity level is Medium.
+  The cost is that access which only the Administrators group gave is gone. Use `(admin)` for work that needs it.
+  A restricted session gets the registry environment of the account, not variables that are set only on the service.
+- Saved sessions of an administrator service restart restricted after this release. Start them again as `(admin)` if
+  they need the old behavior.
 - Instances live and die with the node process. The node keeps a list in `<state_dir>\instances\instances.json` and
   starts those instances again when it starts. Logs of each instance are in `<state_dir>\instances\logs\<id>.log`.
 - `claude` trusts a folder only if `.claude.json` has an entry for the path with forward slashes and the same

@@ -60,6 +60,17 @@ describe("commands", () => {
     expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+/srv/p`));
   });
 
+  test("list adds a USER column only when an instance has a user", async () => {
+    const withUser = [{ id: ID, name: "n", state: "active", path: "/srv/p", startedAt: null, user: "svc (admin)" }];
+    const s = setup({ "GET /cli/api/hosts/local/instances": () => withUser });
+    await s.run("list");
+    expect(s.out.join("\n")).toMatch(new RegExp(`ID\\s+NAME\\s+STATE\\s+USER\\s+PATH`));
+    expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+svc \\(admin\\)\\s+/srv/p`));
+    const plain = setup({ "GET /cli/api/hosts/local/instances": () => [{ ...withUser[0]!, user: undefined }] });
+    await plain.run("list");
+    expect(plain.out.join("\n")).not.toContain("USER");
+  });
+
   test("start sends path and name and prints the new id", async () => {
     const s = setup({ "POST /cli/api/hosts/local/instances": () => new Response(JSON.stringify({ id: ID, name: "x", path: "/srv/p", state: "active", startedAt: null }), { status: 201 }) });
     const r = await s.run("start", "/srv/p", "--name", "x");
@@ -407,6 +418,12 @@ describe("clone, repos and gh-login", () => {
   });
 
   const cloneDone = { [`POST ${H}/clone`]: accepted, [`GET ${H}/clone/job1`]: () => ({ state: "done", path: "/srv/r" }) };
+
+  test("the 428 hint after a clone keeps the (admin) entry, quoted", async () => {
+    const s = setup({ [`GET ${H}/users`]: () => [], ...cloneDone, [`POST ${H}/instances`]: err(428, { error: "/srv/r is not trusted" }) });
+    const r = await s.run("clone", "o/r", "/srv", "--user", "svc (admin)");
+    expect(r.err[0]).toContain(`start /srv/r --force --user 'svc (admin)'"`);
+  });
 
   test("a 428 after a successful clone says where the clone is and how to start it", async () => {
     const s = setup({ ...cloneDone, [`POST ${H}/instances`]: err(428, { error: "/srv/r is not trusted" }) });
