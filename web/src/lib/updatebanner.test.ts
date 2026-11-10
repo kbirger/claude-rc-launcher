@@ -139,3 +139,8 @@ test("a running entry ages out after 10 minutes: updating goes, hub-update and n
   expect(isRunning(entry({ status: "running", startedAt: "2026-11-09T11:50:00Z" }), now)).toBe(true);
   expect(isRunning(entry({ status: "running", startedAt: "2026-11-09T11:49:59Z" }), now)).toBe(false);
 });
+
+test("a client asset 404 is a failed item, not the node by-hand advice", () => {
+  const error = "the client update failed: C:\\claude-rc.exe: cannot download https://x/claude-rc-windows-x64.exe: HTTP 404";
+  expect(model([hub(), node()], [entry({ host: "n1", status: "failed", error })]).some((i) => i.kind === "by-hand")).toBe(false);
+});

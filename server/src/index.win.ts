@@ -71,6 +71,7 @@ const dataDir = cfg.node!.tls.stateDir;
 const update = createWindowsUpdater(
   realWinUpdateEnv({
     dataDir,
+    cfg,
     // Wait a moment so that the answer to the update request is sent first.
     scheduleExit: () => void setTimeout(() => void shutdown(UPDATE_EXIT_CODE), 2000),
   }),

@@ -17,7 +17,7 @@ The user chose a better source of truth: the installers record where they put th
 
 ## Non-goals
 
-- Updating the Windows client from the UI. The Windows service account cannot write `C:\Program Files`. The README keeps saying that you update the Windows client by hand.
+- Updating the Windows client from the UI. A standard service account cannot write `C:\Program Files`. An administrator service account can, so the Windows node tries to update the client. When the write is refused, the update report says to update the client by hand. See the "Updating" part of the Windows node section in the README.
 - Recording the service binary or any other file. The registry lists client copies only.
 - Registering a client that a non-administrator installs. That client is found by the scan, as today.
 - Admin tooling to edit the registry. The installers write it, and an administrator can edit it with a text editor.

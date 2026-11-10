@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { sha256 } from "../src/release";
 import { UpdateRefused } from "../src/serviceupdate";
 import {
-  PENDING_FILE, STAY_ACTIVE_SECONDS, WIN_ASSET, confirmPendingUpdate, createWindowsUpdater, pendingPath, type WinUpdateEnv,
+  PENDING_FILE, STAY_ACTIVE_SECONDS, WIN_ASSET, WIN_CLIENT_ASSET, confirmPendingUpdate, createWindowsUpdater, pendingPath, type WinUpdateEnv,
 } from "../src/win/update";
 
 const DIR = "C:\\Program Files\\claude-rc-launcher";
@@ -21,12 +21,16 @@ let assetStatus: number;
 let versionAnswers: Map<string, string | undefined>; // by file content: what `--version` reports
 let failRename: ((from: string, to: string) => boolean) | null;
 let failWrite: ((p: string) => boolean) | null;
+let clientRelease: Uint8Array; // what the release server serves for the client asset
+let clientSums: string | null;
+let clientPaths: string[]; // what the client registry lookup returns
 
 function env(over: Partial<WinUpdateEnv> = {}): WinUpdateEnv {
   return {
     fetch: (async (url: string) => {
       if (String(url).endsWith(`/${WIN_ASSET}`)) return assetStatus === 200 ? new Response(released as unknown as BodyInit) : new Response("nope", { status: assetStatus });
-      if (String(url).endsWith("/SHA256SUMS")) return sums === null ? new Response("nope", { status: 404 }) : new Response(sums);
+      if (String(url).endsWith(`/${WIN_CLIENT_ASSET}`)) return new Response(clientRelease as unknown as BodyInit);
+      if (String(url).endsWith("/SHA256SUMS")) return sums === null ? new Response("nope", { status: 404 }) : new Response(`${sums}${clientSums ?? ""}`);
       return new Response("?", { status: 500 });
     }) as unknown as typeof fetch,
     platform: "win32",
@@ -34,6 +38,7 @@ function env(over: Partial<WinUpdateEnv> = {}): WinUpdateEnv {
     execPath: EXE,
     version: "0.5.0",
     dataDir: DATA,
+    clients: () => clientPaths,
     exists: (p) => files.has(p),
     readFile: (p) => {
       const f = files.get(p);
@@ -66,11 +71,19 @@ function publish(content: string, version: string | null = "0.5.1") {
   versionAnswers.set(content, version ?? undefined);
 }
 
+function publishClient(content: string, version: string | null = "0.5.1") {
+  clientRelease = enc(content);
+  clientSums = `${sha256(clientRelease)}  ${WIN_CLIENT_ASSET}\n`;
+  versionAnswers.set(content, version ?? undefined);
+}
+
 beforeEach(() => {
   files = new Map([[EXE, enc("OLD")], [WRAPPER, enc("WINSW")]]);
   log = []; exits = 0; assetStatus = 200; failRename = null; failWrite = null;
   versionAnswers = new Map([["OLD", "0.5.0"]]);
   publish("NEW");
+  publishClient("NEWCLIENT");
+  clientPaths = [];
 });
 
 const status = async (p: Promise<unknown>) => {
@@ -249,5 +262,161 @@ describe("confirmPendingUpdate", () => {
     });
     timers[0]!.fn();
     expect(log.join("\n")).toContain("EBUSY");
+  });
+});
+
+describe("client update", () => {
+  const CLIENT = "C:\\Program Files\\claude-rc\\bin\\claude-rc.exe";
+  beforeEach(() => {
+    files.set(CLIENT, enc("OLDCLIENT"));
+    versionAnswers.set("OLDCLIENT", "0.5.0");
+    clientPaths = [CLIENT];
+  });
+  const leftovers = () => [...files.keys()].filter((k) => k.endsWith(".new"));
+
+  test("the client is updated, then the service is replaced", async () => {
+    const r = await createWindowsUpdater(env()).run();
+    expect(r).toEqual({ status: "restarting", from: "0.5.0", to: "0.5.1", clients: [{ path: CLIENT, status: "updated", from: "0.5.0", to: "0.5.1" }] });
+    expect(dec(files.get(CLIENT))).toBe("NEWCLIENT");
+    expect(dec(files.get(`${CLIENT}.prev`))).toBe("OLDCLIENT");
+    expect(dec(files.get(EXE))).toBe("NEW");
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("an old .prev from an earlier update is removed before the rename", async () => {
+    files.set(`${CLIENT}.prev`, enc("ANCIENT"));
+    const realRename = env().rename;
+    const r = await createWindowsUpdater(env({
+      rename: (from, to) => {
+        if (to === `${CLIENT}.prev` && files.has(to)) throw new Error("EEXIST");
+        realRename(from, to);
+      },
+    })).run();
+    expect(r.clients[0]!.status).toBe("updated");
+    expect(dec(files.get(`${CLIENT}.prev`))).toBe("OLDCLIENT");
+  });
+
+  test("a refused write is a failed client with the by-hand message, and the service still updates", async () => {
+    failWrite = (p) => p === `${CLIENT}.new`;
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.status).toBe("restarting");
+    expect(r.clients).toHaveLength(1);
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(r.clients[0]!.error).toContain("EACCES");
+    expect(r.clients[0]!.error).toContain("install.ps1 -ClientOnly");
+    expect(dec(files.get(CLIENT))).toBe("OLDCLIENT");
+    expect(dec(files.get(EXE))).toBe("NEW");
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("a refused first rename leaves the client alone and removes .new", async () => {
+    failRename = (from) => from === CLIENT;
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(r.clients[0]!.error).toContain("install.ps1 -ClientOnly");
+    expect(dec(files.get(CLIENT))).toBe("OLDCLIENT");
+    expect(leftovers()).toEqual([]);
+    expect(r.status).toBe("restarting");
+  });
+
+  test("when the second rename fails, .prev is put back and .new is removed", async () => {
+    failRename = (from) => from === `${CLIENT}.new`;
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(dec(files.get(CLIENT))).toBe("OLDCLIENT");
+    expect(files.has(`${CLIENT}.prev`)).toBe(false);
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("when .prev cannot be put back either, the error says so", async () => {
+    failRename = (from) => from === `${CLIENT}.new` || from === `${CLIENT}.prev`;
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients[0]!.error).toContain(`${CLIENT}.prev could not be put back`);
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("a new client that does not answer --version is not installed and .new is removed", async () => {
+    publishClient("BROKENCLIENT", null);
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(r.clients[0]!.error).toContain("did not answer --version");
+    expect(dec(files.get(CLIENT))).toBe("OLDCLIENT");
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("a failed client download fails every client and the service still updates", async () => {
+    clientSums = `${"0".repeat(64)}  ${WIN_CLIENT_ASSET}\n`;
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.status).toBe("restarting");
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(r.clients[0]!.error).toContain("does not match SHA256SUMS");
+    expect(dec(files.get(CLIENT))).toBe("OLDCLIENT");
+  });
+
+  test("a client that already matches is up-to-date", async () => {
+    publishClient("OLDCLIENT", "0.5.0");
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients).toEqual([{ path: CLIENT, status: "up-to-date" }]);
+    expect(files.has(`${CLIENT}.prev`)).toBe(false);
+  });
+
+  test("clients-only when the service is current and only a client changed", async () => {
+    publish("OLD");
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.status).toBe("clients-only");
+    expect(r.clients[0]!.status).toBe("updated");
+    expect(dec(files.get(CLIENT))).toBe("NEWCLIENT");
+    expect(exits).toBe(0);
+  });
+
+  test("up-to-date when nothing changed", async () => {
+    publish("OLD");
+    publishClient("OLDCLIENT", "0.5.0");
+    const r = await createWindowsUpdater(env()).run();
+    expect(r).toEqual({ status: "up-to-date", from: "0.5.0", clients: [{ path: CLIENT, status: "up-to-date" }] });
+  });
+
+  test("failed (as on Linux) when the service is current and a client failed", async () => {
+    publish("OLD");
+    failWrite = (p) => p === `${CLIENT}.new`;
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.status).toBe("failed");
+    expect(r.error).toContain("the client update failed");
+    expect(r.error).toContain(CLIENT);
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("no clients means no client download", async () => {
+    clientPaths = [];
+    clientSums = `${"0".repeat(64)}  ${WIN_CLIENT_ASSET}\n`; // would fail if it were checked
+    const r = await createWindowsUpdater(env()).run();
+    expect(r).toEqual({ status: "restarting", from: "0.5.0", to: "0.5.1", clients: [] });
+  });
+
+  test("an old .prev that cannot be removed (EBUSY) does not fail the client", async () => {
+    files.set(`${CLIENT}.prev`, enc("ANCIENT"));
+    const r = await createWindowsUpdater(env({
+      remove: (p) => {
+        if (p === `${CLIENT}.prev`) throw new Error("EBUSY");
+        files.delete(p);
+      },
+    })).run();
+    expect(r.clients[0]!.status).toBe("updated");
+    expect(dec(files.get(CLIENT))).toBe("NEWCLIENT");
+    expect(dec(files.get(`${CLIENT}.prev`))).toBe("OLDCLIENT");
+  });
+
+  test("a client path that is not named claude-rc.exe is refused and untouched", async () => {
+    const odd = "C:\\Windows\\System32\\cmd.exe";
+    files.set(odd, enc("CMD"));
+    clientPaths = [odd, CLIENT.toUpperCase().replace("CLAUDE-RC.EXE", "Claude-RC.EXE")];
+    files.set(clientPaths[1]!, enc("OLDCLIENT"));
+    const r = await createWindowsUpdater(env()).run();
+    expect(r.clients[0]!.status).toBe("failed");
+    expect(r.clients[0]!.error).toContain("is not named claude-rc.exe");
+    expect(dec(files.get(odd))).toBe("CMD");
+    expect(leftovers()).toEqual([]);
+    expect(r.clients[1]!.status).toBe("updated");
   });
 });

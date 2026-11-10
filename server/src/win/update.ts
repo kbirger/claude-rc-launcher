@@ -2,7 +2,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { win32 } from "node:path";
 import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256, type ReleaseIo } from "../release";
-import { UpdateRefused, type UpdateReport } from "../serviceupdate";
+import { realUpdateEnv } from "../realupdate";
+import { clientsOf, UpdateRefused, type ClientResult, type UpdateReport } from "../serviceupdate";
+import type { Config } from "../config";
 import { VERSION } from "../version";
 
 /**
@@ -11,9 +13,14 @@ import { VERSION } from "../version";
  * exits with a non-zero code, and WinSW restarts it (restart on failure). deploy/windows/claude-rc-launcher-run.ps1
  * starts the agent and puts `<exe>.prev` back if the new agent does not stay up. The new agent deletes the file
  * after STAY_ACTIVE_SECONDS: the update is kept. The Linux updater (serviceupdate.ts) is not used here.
+ *
+ * The client copies (`claude-rc.exe`) are updated first, the same way. This works only when the service account may
+ * write the client folder (an administrator account can). When a write is refused, the client stays as it was and
+ * the report says to update it by hand. That failure does not stop the service update.
  */
 
 export const WIN_ASSET = "claude-rc-launcher-win-x64.exe";
+export const WIN_CLIENT_ASSET = "claude-rc-windows-x64.exe";
 export const SERVICE_EXE = "claude-rc-launcher.exe";
 export const WINSW_EXE = "claude-rc-launcher-svc.exe";
 export const PENDING_FILE = "update-pending.json";
@@ -24,6 +31,8 @@ export const UPDATE_EXIT_CODE = 75;
 
 const VERSION_TIMEOUT_MS = 10_000;
 const PREFIX = "claude-rc-launcher";
+const CLIENT_PREFIX = "claude-rc";
+const BY_HAND = "Update the client by hand: run install.ps1 -ClientOnly in an elevated PowerShell";
 
 export const pendingPath = (dataDir: string): string => win32.join(dataDir, PENDING_FILE);
 
@@ -35,14 +44,16 @@ export interface WinUpdateEnv extends Pick<ReleaseIo, "fetch"> {
   execPath: string;
   version: string;
   dataDir: string;
+  /** The client copies on this machine (the same lookup as the version list of `GET /node`). */
+  clients(): string[];
   exists(p: string): boolean;
   readFile(p: string): Uint8Array;
   writeFile(p: string, data: Uint8Array): void;
   /** Moves `from` over `to`. Works for a running executable. Replaces an existing `to`. */
   rename(from: string, to: string): void;
   remove(p: string): void;
-  /** The version a binary reports with `--version`, or undefined if it does not answer. */
-  versionOf(exe: string): string | undefined;
+  /** The version a binary reports with `--version` (`<prefix> <version>`, the service prefix by default), or undefined if it does not answer. */
+  versionOf(exe: string, prefix?: string): string | undefined;
   now(): Date;
   /** Ends this process shortly (so that the answer to the request can be sent), with UPDATE_EXIT_CODE. */
   scheduleExit(): void;
@@ -64,9 +75,57 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
     if (!env.exists(wrapper)) throw new UpdateRefused(409, `this process is not the installed service: ${wrapper} is missing`);
   };
 
+  /** Same two renames as the service swap. Any refusal leaves the client as it was. */
+  const updateClient = (p: string, binary: Uint8Array): ClientResult => {
+    const fresh = `${p}.new`;
+    const prev = `${p}.prev`;
+    const fail = (why: string): ClientResult => {
+      try {
+        env.remove(fresh);
+      } catch {
+        // the file stays, and the next update overwrites it
+      }
+      return { path: p, status: "failed", error: `${why}. ${BY_HAND}` };
+    };
+    if (win32.basename(p).toLowerCase() !== `${CLIENT_PREFIX}.exe`) return fail(`${p} is not named ${CLIENT_PREFIX}.exe, so it is not touched`);
+    try {
+      if (sha256(env.readFile(p)) === sha256(binary)) return { path: p, status: "up-to-date" };
+      const from = env.versionOf(p, CLIENT_PREFIX);
+      // An old backup is only removed for tidiness: a rename onto it works too. A running image cannot be deleted.
+      try {
+        env.remove(prev);
+      } catch {
+        try {
+          env.rename(prev, `${prev}.${env.now().getTime()}.old`);
+        } catch {
+          // the rename below replaces it
+        }
+      }
+      env.writeFile(fresh, binary);
+      const to = env.versionOf(fresh, CLIENT_PREFIX);
+      if (to === undefined) return fail("the new client did not answer --version. Nothing was installed");
+      env.rename(p, prev);
+      try {
+        env.rename(fresh, p);
+      } catch (e) {
+        let restored = true;
+        try {
+          env.rename(prev, p);
+        } catch {
+          restored = false;
+        }
+        return fail(`installing the new client failed: ${message(e)}. ${restored ? "The previous client is in place" : `${prev} could not be put back`}`);
+      }
+      return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
+    } catch (e) {
+      return fail(message(e));
+    }
+  };
+
   const update = async (release: string | undefined): Promise<UpdateReport> => {
     const from = env.version;
-    const failed = (error: string): UpdateReport => ({ status: "failed", from, clients: [], error });
+    const clients: ClientResult[] = [];
+    const failed = (error: string): UpdateReport => ({ status: "failed", from, clients, error });
 
     let binary: Uint8Array;
     try {
@@ -75,7 +134,26 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
       if (e instanceof ReleaseError) return failed(e.message);
       throw e;
     }
-    if (sha256(env.readFile(exe)) === sha256(binary)) return { status: "up-to-date", from, clients: [] };
+
+    // The client copies, before the service. A failure here is reported and does not stop the service update.
+    const paths = env.clients();
+    if (paths.length > 0) {
+      let client: Uint8Array | undefined;
+      let error = "";
+      try {
+        client = await downloadAsset(env, WIN_CLIENT_ASSET, release);
+      } catch (e) {
+        if (!(e instanceof ReleaseError)) throw e;
+        error = `client asset: ${e.message}. ${BY_HAND}`;
+      }
+      for (const p of paths) clients.push(client ? updateClient(p, client) : { path: p, status: "failed", error });
+    }
+    const clientErrors = clients.filter((c) => c.status === "failed").map((c) => `${c.path}: ${c.error}`);
+
+    if (sha256(env.readFile(exe)) === sha256(binary)) {
+      if (clientErrors.length > 0) return failed(`the client update failed: ${clientErrors.join("; ")}`);
+      return { status: clients.some((c) => c.status === "updated") ? "clients-only" : "up-to-date", from, clients };
+    }
 
     const fresh = `${exe}.new`;
     const prev = `${exe}.prev`;
@@ -102,7 +180,7 @@ export function createWindowsUpdater(env: WinUpdateEnv): { run(release?: string)
         return failed(`cannot write ${PENDING_FILE}: ${message(e)}. ${restored ? "The previous binary was restored" : `${prev} could not be put back`}`);
       }
       env.scheduleExit();
-      return { status: "restarting", from, to, clients: [] };
+      return { status: "restarting", from, to, clients };
     } catch (e) {
       env.remove(fresh);
       return failed(message(e));
@@ -172,8 +250,11 @@ export function confirmPendingUpdate(o: {
 }
 
 /** The real machine. `scheduleExit` is the caller's, so that it can end the instances first. */
-export function realWinUpdateEnv(o: { dataDir: string; scheduleExit(): void }): WinUpdateEnv {
+export function realWinUpdateEnv(o: { dataDir: string; cfg: Pick<Config, "serviceHome" | "scope">; scheduleExit(): void }): WinUpdateEnv {
+  // The one client lookup: the same one that fills `clients` of `GET /node` (nodemain.ts).
+  const lookup = realUpdateEnv(o.cfg);
   return {
+    clients: () => clientsOf(lookup),
     fetch: globalThis.fetch,
     platform: process.platform,
     arch: process.arch,
@@ -185,10 +266,10 @@ export function realWinUpdateEnv(o: { dataDir: string; scheduleExit(): void }): 
     writeFile: (p, data) => writeFileSync(p, data),
     rename: (from, to) => renameSync(from, to),
     remove: (p) => rmSync(p, { force: true }),
-    versionOf(p) {
+    versionOf(p, prefix = PREFIX) {
       const r = spawnSync(p, ["--version"], { timeout: VERSION_TIMEOUT_MS, encoding: "utf8", windowsHide: true });
       const line = (r.stdout ?? "").trim().split("\n")[0]?.trim() ?? "";
-      return r.status === 0 && line.startsWith(`${PREFIX} `) ? line.slice(PREFIX.length + 1).trim() : undefined;
+      return r.status === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
     },
     now: () => new Date(),
     scheduleExit: o.scheduleExit,
