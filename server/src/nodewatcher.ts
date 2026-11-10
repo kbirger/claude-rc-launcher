@@ -118,11 +118,13 @@ export function createNodeWatchers(o: {
       }
       settle(cls);
     };
-    enders.set(id, () => {
+    // The restart window is over: `restarting` becomes `offline` (with a reason only for a class that means offline).
+    const endWindow = () => {
       lastStep = undefined;
       restartDeadline = undefined;
-      settle(lastClass);
-    });
+      if (presence.get(id)?.status === "restarting") publish("offline", lastClass !== undefined && OFFLINE_CLASSES.has(lastClass) ? { reason: lastClass } : {});
+    };
+    enders.set(id, endWindow);
 
     while (!signal.aborted) {
       const entry = o.registry.get(id);
@@ -146,6 +148,12 @@ export function createNodeWatchers(o: {
         }
       };
       void watchdog();
+      // A connect attempt that is still running at the end of the restart window must not keep `restarting`.
+      if (restartDeadline !== undefined && presence.get(id)?.status === "restarting") {
+        void wait(Math.max(restartDeadline - now().getTime(), 0), ac.signal).then(() => {
+          if (!ac.signal.aborted && presence.get(id)?.status === "restarting") endWindow();
+        });
+      }
 
       let failure: string | undefined;
       let snapshotAt: number | undefined;
@@ -168,7 +176,7 @@ export function createNodeWatchers(o: {
             }
             snapshotAt = now().getTime();
             restartDeadline = undefined;
-            lastStep = upd && isStr(upd.step) && upd.step in STEPS ? (upd.step as StepName) : undefined;
+            lastStep = upd && isStr(upd.step) && Object.hasOwn(STEPS, upd.step) ? (upd.step as StepName) : undefined;
             pending = new Map();
             for (const k of seen) pending.set(k, (pending.get(k) ?? 0) + 1);
             publish("online", isStr(snap.version) ? { version: snap.version } : {});
@@ -187,7 +195,7 @@ export function createNodeWatchers(o: {
             }
           } else if (ev.event === "step") {
             const e = parse(ev.data);
-            if (!e || !isStr(e.step) || !(e.step in STEPS)) continue;
+            if (!e || !isStr(e.step) || !Object.hasOwn(STEPS, e.step)) continue;
             const step: StepEvent = {
               step: e.step as StepName,
               ...(isStr(e.to) ? { to: e.to } : {}),
@@ -223,7 +231,7 @@ export function createNodeWatchers(o: {
         if (rest < ms) {
           await wait(rest, signal);
           if (signal.aborted) return;
-          if (presence.get(id)?.status === "restarting") settle(lastClass);
+          endWindow();
           ms -= rest;
         }
       }
@@ -248,7 +256,7 @@ export function createNodeWatchers(o: {
     if (id === "local" || running.has(id)) return;
     const ctl = new AbortController();
     running.set(id, ctl);
-    void supervise(id, ctl).finally(() => {
+    void supervise(id, ctl).catch(() => {}).finally(() => {
       if (running.get(id) === ctl) running.delete(id);
     });
   };

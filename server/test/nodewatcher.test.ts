@@ -686,4 +686,62 @@ describe("createNodeWatchers fix round 1", () => {
     expect(s.statuses().filter((x) => x === "restarting").length).toBe(1);
     s.w.endRestarting("pi"); // unknown host: nothing
   });
+
+  test("endRestarting after a bad response drop gives offline without a reason", async () => {
+    const s = setup();
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot();
+    c.push("step", { step: "restarting" });
+    await flush();
+    c.fail(new HostError("nas", "bad response"));
+    await flush();
+    expect(s.statuses()).toEqual(["online", "restarting"]);
+    s.w.endRestarting("nas");
+    expect(s.statuses()).toEqual(["online", "restarting", "offline"]);
+    expect(s.w.presence()[0]!.reason).toBeUndefined();
+    s.nodes.nas!.failures.push(new HostError("nas", "bad response"));
+    await s.clock.advance(5_000);
+    expect(s.statuses().filter((x) => x === "restarting").length).toBe(1);
+  });
+
+  test("step names that are inherited object keys are ignored", async () => {
+    const s = setup();
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot("1", { step: "toString" });
+    c.push("step", { step: "toString" });
+    c.push("step", { step: "__proto__" });
+    c.push("step", { step: "constructor" });
+    c.push("step", { step: "installing" });
+    await flush();
+    expect(s.steps).toEqual([["nas", { step: "installing" }]]);
+    c.close();
+    await flush();
+    expect(s.statuses()).toEqual(["online", "offline"]);
+  });
+
+  test("a connect that hangs and began before the deadline still gives offline at 90 seconds", async () => {
+    const s = setup();
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot();
+    c.push("step", { step: "restarting" });
+    await flush();
+    c.close();
+    await flush();
+    expect(s.statuses()).toEqual(["online", "restarting"]);
+    const node = s.nodes.nas!;
+    node.client.stream = (_p, o) => {
+      node.opens.push(s.clock.t);
+      if (s.clock.t - node.opens[0]! < 70_000) return Promise.reject(new HostError("nas", "unreachable"));
+      return new Promise((resolve) => o!.signal!.addEventListener("abort", () => resolve((async function* () {})()), { once: true }));
+    };
+    await s.clock.advance(89_000);
+    expect(node.opens[node.opens.length - 1]! - node.opens[0]!).toBeGreaterThanOrEqual(70_000); // the hanging attempt is running
+    expect(s.statuses()).toEqual(["online", "restarting"]);
+    await s.clock.advance(1_500);
+    expect(s.statuses()).toEqual(["online", "restarting", "offline"]);
+    expect(s.w.presence()[0]!.reason).toBe("unreachable");
+  });
 });
