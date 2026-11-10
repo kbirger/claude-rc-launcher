@@ -167,20 +167,34 @@ notepad install.ps1
 From a clone, run `.\deploy\windows\install.ps1` instead. It uses `dist\claude-rc-launcher-win-x64.exe` when that file
 exists (`bun run build:win` makes it). `-Binary <file>` and `-Release v1.2.3` choose another binary.
 
-The script also installs the command-line client as `C:\Program Files\claude-rc\claude-rc.exe` and adds that folder to the
-machine `PATH`. Open a new terminal to use `claude-rc`. The client has a folder of its own on purpose: the service
-account can write to the node's folder (see Updating below), and a folder on the `PATH` must not be writable by it.
-`-NoClient` skips the client and the `PATH` change, `-ClientBinary <file>` chooses the file, and `-ClientOnly` installs only
-the client and the `PATH` entry, with no node and no service. The script keeps the
-other entries of the `PATH` as they are, adds the folder only once, and `-Uninstall` takes it off again.
+The installer puts everything under one parent folder, `C:\Program Files\claude-rc` (`-InstallDir` changes it):
 
-The script installs the node binary, WinSW and a small launcher script into `C:\Program Files\claude-rc-launcher`, and creates
-`C:\ProgramData\claude-rc-launcher\config.toml` from `deploy\windows\node.config.example.toml`. It never changes an
-existing `config.toml`. It limits the data folder (it holds the certificate key) to `SYSTEM`, Administrators and the
-service account. WinSW then asks for the account and its password: enter the user that you signed in to `claude` with.
+- `bin\claude-rc.exe` is the command-line client. The folder `bin` is on the machine `PATH`. Open a new terminal to use
+  `claude-rc`. Only administrators can write there.
+- `service\` holds the node binary, WinSW and a small launcher script. The service account gets Modify rights on this
+  folder only, so it cannot replace a program on the `PATH`.
+
+The installer also records the full path of the client in the registry value `HKLM\SOFTWARE\claude-rc`, `Client` (a
+`REG_SZ`). The node reads it to find the client. By default only administrators can write under `HKLM\SOFTWARE`, so a
+user without administrator rights cannot make the node run another program. `-NoClient` skips the client, the `PATH`
+entry and the registry value. `-ClientBinary <file>` chooses the file. `-ClientOnly` installs only the client, the `PATH`
+entry and the registry value, with no node and no service. The script keeps the other entries of the `PATH` as they are
+and adds the folder only once.
+
+The script creates `C:\ProgramData\claude-rc-launcher\config.toml` from `deploy\windows\node.config.example.toml`. It never
+changes an existing `config.toml`. It limits the data folder (it holds the certificate key) to `SYSTEM`, Administrators and
+the service account. WinSW then asks for the account and its password: enter the user that you signed in to `claude` with.
 The service starts when `config.toml` has no placeholders left and has at least one `[[node_auth.hub_key]]` or
 `[[node_auth.secret]]`. Otherwise the script says what to fill in. Edit the file and run the same install command again.
 `-OpenFirewall` adds an inbound rule for the port in `config.toml`, for Private and Domain networks only.
+
+**Older installs.** Earlier versions used `C:\Program Files\claude-rc-launcher` for the node and
+`C:\Program Files\claude-rc` for the client. If you run the installer again without `-InstallDir`, the service stays in
+`C:\Program Files\claude-rc-launcher` (it gets the same Modify grant there), because moving a running service needs an
+uninstall and an install. The client goes to the new `bin` folder. The installer deletes the old
+`C:\Program Files\claude-rc\claude-rc.exe`, takes `C:\Program Files\claude-rc` off the `PATH` and adds
+`C:\Program Files\claude-rc\bin`. The old registry folder `C:\ProgramData\claude-rc-registry` is no longer used. You can
+delete it.
 
 Then pair the node with the hub as in [Add a node](#add-a-node): `claude-rc host add win --url https://<this-pc>:8443`.
 
@@ -208,8 +222,8 @@ after three tries, about 20 seconds in all, and writes the reason to `logs\updat
 again with `install.ps1` also works. The service account needs write access to the install folder for this. The script
 gives it Modify rights there. The service already runs as that account, so this does not give it more power.
 
-**Remove.** `.\install.ps1 -Uninstall` removes the service and the firewall rule. It keeps the files, the config and
-the certificate. The password of the account and the recovery actions are set when the service is registered. To change
+**Remove.** `.\install.ps1 -Uninstall` removes the service, the firewall rule and both `PATH` entries. It keeps the files,
+the registry value `HKLM\SOFTWARE\claude-rc`, the config and the certificate, and it prints what it kept. The password of the account and the recovery actions are set when the service is registered. To change
 them, uninstall and run the script again.
 
 ### Print the version
@@ -589,25 +603,26 @@ A machine shows its client in one of four ways:
 - `no client`, when the node looked and found none.
 - `client not reported`, when the node is too old to report clients or the answer is missing.
 
-A node finds its clients through a client registry file, which lists each installed client on one line:
+A node finds its clients through a client registry. On Linux it is a file that lists each installed client on one line:
 
 ```
 client <absolute path>
 ```
 
-The file lives at `/etc/claude-rc-launcher/installs` on Linux and at `%ProgramData%\claude-rc-registry\installs` on
-Windows. On Linux, the node reads the file only if root owns it and neither the group nor others can write it. The node
-applies the same check to the folder. A client entry also needs its real file and folder owned by root, with no group or
-other write access. Otherwise the node skips that entry and logs a line.
+The file is `/etc/claude-rc-launcher/installs`. The node reads it only if root owns it and neither the group nor others can
+write it. The node applies the same check to the folder. A client entry also needs its real file and folder owned by root,
+with no group or other write access. Otherwise the node skips that entry and logs a line. `install-cli.sh` writes the line
+when it runs as root or through `sudo`.
 
-`install-cli.sh` writes the line when it runs as root or through `sudo`. `install.ps1`, the elevated installer, writes it
-on Windows. It gives the registry its own folder, which only administrators can change. The installer takes ownership of
-that folder and replaces a registry that someone else owned. If a reparse point or junction sits at that path, the
-installer skips the registry.
+On Windows the registry is the value `Client` (a `REG_SZ`) under `HKLM\SOFTWARE\claude-rc`. It holds the full path of
+`claude-rc.exe`. `install.ps1`, the elevated installer, writes it. By default only administrators can write under
+`HKLM\SOFTWARE`, so the node does not check the key. A missing key is normal and gives no log line. The node ignores a
+value that is not a local path to a file named `claude-rc.exe`.
 
 The node also always scans for clients. On Linux, it scans the `PATH` and the `~/.local/bin` folders of the service user
-and of root. On Windows, it scans the `PATH` (split on `;`) and `%ProgramFiles%\claude-rc`. Registered entries come
-first, and each real file appears once. Only the scan finds a client installed without administrator rights.
+and of root. On Windows, it scans the `PATH` (split on `;`) and two default places under `%ProgramFiles%`:
+`claude-rc\bin\claude-rc.exe` and the older `claude-rc\claude-rc.exe`. Registered entries come first, and each real file
+appears once. Only the scan finds a client installed without administrator rights.
 
 The hub restarts while it updates, and the page reconnects by itself.
 

@@ -85,7 +85,7 @@ afterEach(async () => {
   await Bun.spawn(["reg.exe", "delete", regPath, "/f"]).exited;
 });
 
-const nodeArgs = () => `-NoService -NoClient -Binary '${q(join(work, "node.exe"))}' -WinSW '${q(join(work, "winsw.exe"))}' -InstallDir '${q(join(work, "bin"))}' -DataDir '${q(join(work, "data"))}'`;
+const nodeArgs = () => `-NoService -NoClient -Binary '${q(join(work, "node.exe"))}' -WinSW '${q(join(work, "winsw.exe"))}' -InstallDir '${q(join(work, "app"))}' -DataDir '${q(join(work, "data"))}'`;
 
 describe.skipIf(!windows)("install.ps1 started without the release files (irm | iex)", () => {
   beforeEach(async () => {
@@ -99,12 +99,12 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
     expect(r.code).toBe(0);
     expect(r.out).toContain("Downloading claude-rc-launcher-win-installer.zip");
     expect(requests).toEqual(["/claude-rc-launcher-win-installer.zip", "/SHA256SUMS"]);
-    const xml = await readFile(join(work, "bin", "claude-rc-launcher-svc.xml"), "utf8");
+    const xml = await readFile(join(work, "app", "service", "claude-rc-launcher-svc.xml"), "utf8");
     expect(xml).toContain("<id>claude-rc-launcher</id>"); // the XML came out of the zip
     expect(xml).toContain(join(work, "data", "config.toml"));
-    expect(await readFile(join(work, "bin", "claude-rc-launcher-run.ps1"), "utf8")).toContain("update-pending.json");
+    expect(await readFile(join(work, "app", "service", "claude-rc-launcher-run.ps1"), "utf8")).toContain("update-pending.json");
     expect(await readFile(join(work, "data", "config.toml"), "utf8")).toContain('mode = "node"');
-    expect(await readFile(join(work, "bin", "claude-rc-launcher.exe"), "utf8")).toBe("MZ node");
+    expect(await readFile(join(work, "app", "service", "claude-rc-launcher.exe"), "utf8")).toBe("MZ node");
   });
 
   test("a lone install.ps1 run as a file does the same", async () => {
@@ -114,7 +114,7 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
     const r = await ps(`& '${q(join(lone, "install.ps1"))}' ${nodeArgs()}`);
     expect(r.code).toBe(0);
     expect(requests).toContain("/claude-rc-launcher-win-installer.zip");
-    expect(existsSync(join(work, "bin", "claude-rc-launcher-svc.xml"))).toBe(true);
+    expect(existsSync(join(work, "app", "service", "claude-rc-launcher-svc.xml"))).toBe(true);
   });
 
   test("a zip that does not match SHA256SUMS installs nothing", async () => {
@@ -122,7 +122,7 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
     const r = await asScriptBlock(nodeArgs());
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("does not match SHA256SUMS");
-    expect(existsSync(join(work, "bin"))).toBe(false);
+    expect(existsSync(join(work, "app"))).toBe(false);
     expect(existsSync(join(work, "data"))).toBe(false);
   });
 
@@ -138,7 +138,7 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
     const r = await asScriptBlock(nodeArgs());
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("cannot download");
-    expect(existsSync(join(work, "bin"))).toBe(false);
+    expect(existsSync(join(work, "app"))).toBe(false);
   });
 
   test("a zip without the launcher script is refused, and does not loop", async () => {
@@ -153,8 +153,9 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
   });
 
   test("-ClientOnly needs no zip: it fetches only the client and sets the PATH", async () => {
-    const clientDir = join(work, "client dir");
-    const r = await asScriptBlock(`-ClientOnly -ClientDir '${q(clientDir)}' -PathRegistryKey '${q(regKey)}'`);
+    const installDir = join(work, "claude rc");
+    const clientDir = join(installDir, "bin");
+    const r = await asScriptBlock(`-ClientOnly -InstallDir '${q(installDir)}' -ClientRegistryKey '${q(regKey)}-client' -PathRegistryKey '${q(regKey)}'`);
     expect(r.err).toBe("");
     expect(r.code).toBe(0);
     expect(requests.sort()).toEqual(["/SHA256SUMS", "/claude-rc-windows-x64.exe"]);
@@ -165,11 +166,12 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
 
   test("a client that does not match SHA256SUMS is refused and the PATH is left alone", async () => {
     files.set("/SHA256SUMS", new TextEncoder().encode(`${"0".repeat(64)}  claude-rc-windows-x64.exe\n`));
-    const clientDir = join(work, "client dir");
-    const r = await asScriptBlock(`-ClientOnly -ClientDir '${q(clientDir)}' -PathRegistryKey '${q(regKey)}'`);
+    const installDir = join(work, "claude rc");
+    const clientDir = join(installDir, "bin");
+    const r = await asScriptBlock(`-ClientOnly -InstallDir '${q(installDir)}' -ClientRegistryKey '${q(regKey)}-client' -PathRegistryKey '${q(regKey)}'`);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("does not match SHA256SUMS");
-    expect(existsSync(clientDir)).toBe(false);
+    expect(existsSync(installDir)).toBe(false);
     const q2 = await Bun.spawn(["reg.exe", "query", regPath, "/v", "Path"], { stdout: "pipe" });
     expect((await new Response(q2.stdout).text()).trim().endsWith("C:\\Windows")).toBe(true);
   });

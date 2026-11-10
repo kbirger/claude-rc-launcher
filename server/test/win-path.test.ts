@@ -21,7 +21,8 @@ let dir: string;
 let key: string; // HKCU:\Software\...
 let regPath: string; // HKCU\Software\... (reg.exe form)
 let client: string;
-let clientDir: string;
+let installDir: string;
+let clientDir: string; // <installDir>\bin
 
 async function run(cmd: string[]) {
   const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
@@ -40,7 +41,7 @@ async function readPath(): Promise<{ type: string; value: string }> {
 }
 async function install(extra: string[] = [], opts: { key?: string; client?: boolean } = {}) {
   const args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", join(dir, "node.exe"), "-WinSW", join(dir, "winsw.exe"),
-    "-InstallDir", join(dir, "bin"), "-DataDir", join(dir, "data"), "-ClientDir", clientDir, "-PathRegistryKey", opts.key ?? key];
+    "-InstallDir", installDir, "-DataDir", join(dir, "data"), "-ClientRegistryKey", `${key}-client`, "-PathRegistryKey", opts.key ?? key];
   if (opts.client !== false) args.push("-ClientBinary", client);
   return run([...args, ...extra]);
 }
@@ -48,7 +49,8 @@ async function install(extra: string[] = [], opts: { key?: string; client?: bool
 beforeEach(async () => {
   if (!windows) return;
   dir = await mkdtemp(join(tmpdir(), "winpath-"));
-  clientDir = join(dir, "claude-rc client"); // with a space, as Program Files has
+  installDir = join(dir, "claude rc"); // with a space, as Program Files has
+  clientDir = join(installDir, "bin");
   client = join(dir, "claude-rc-windows-x64.exe");
   await Promise.all([writeFile(join(dir, "node.exe"), "MZ node"), writeFile(join(dir, "winsw.exe"), "MZ winsw"), writeFile(client, "MZ client")]);
   const name = `claude-rc-pathtest-${Math.random().toString(36).slice(2)}`;
@@ -59,6 +61,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (!windows) return;
   await reg("delete", regPath, "/f");
+  await reg("delete", `${regPath}-client`, "/f");
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -74,7 +77,7 @@ describe.skipIf(!windows)("install.ps1: the claude-rc client and the PATH", () =
     const r = await install();
     expect(r.code).toBe(0);
     expect(await readFile(join(clientDir, "claude-rc.exe"), "utf8")).toBe("MZ client");
-    expect(existsSync(join(dir, "bin", "claude-rc.exe"))).toBe(false); // not in the node's folder
+    expect(existsSync(join(installDir, "service", "claude-rc.exe"))).toBe(false); // not in the node's folder
     const p = await readPath();
     expect(p.type).toBe("REG_EXPAND_SZ");
     expect(p.value).toBe(`C:\\Windows;%SystemRoot%\\system32;C:\\Tools;${clientDir}`); // the old entries are unchanged, unexpanded
@@ -118,14 +121,14 @@ describe.skipIf(!windows)("install.ps1: the claude-rc client and the PATH", () =
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("not a Windows executable");
     expect(await readPath()).toEqual(before);
-    expect(existsSync(join(dir, "bin", "claude-rc-launcher.exe"))).toBe(false);
+    expect(existsSync(join(installDir, "service", "claude-rc-launcher.exe"))).toBe(false);
   });
 
   test("-ClientOnly installs only the client and the PATH entry: no node, no service files", async () => {
     const r = await install(["-ClientOnly"]);
     expect(r.code).toBe(0);
     expect(await readFile(join(clientDir, "claude-rc.exe"), "utf8")).toBe("MZ client");
-    expect(existsSync(join(dir, "bin"))).toBe(false);
+    expect(existsSync(join(installDir, "service"))).toBe(false);
     expect(existsSync(join(dir, "data"))).toBe(false);
     expect((await readPath()).value).toBe(`C:\\Windows;%SystemRoot%\\system32;C:\\Tools;${clientDir}`);
     expect((await install(["-ClientOnly"])).out).toContain("already on the machine PATH");

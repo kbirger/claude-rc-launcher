@@ -15,7 +15,7 @@
   A lone install.ps1 (this file, without the files of the release zip next to it) downloads the release zip, checks it
   against SHA256SUMS and runs the install.ps1 inside. From a clone or an unpacked zip it uses the files next to it:
 
-    .\install.ps1 [-Binary <exe>] [-Release v1.2.3] [-Account DOMAIN\user] [-OpenFirewall] [-NoClient]
+    .\install.ps1 [-Binary <exe>] [-Release v1.2.3] [-Account DOMAIN\user] [-InstallDir <folder>] [-OpenFirewall] [-NoClient]
     .\install.ps1 -ClientOnly [-Release v1.2.3]      only the claude-rc client and the PATH (no node, no service)
     .\install.ps1 -Uninstall
 
@@ -23,14 +23,19 @@
     * Gets claude-rc-launcher-win-x64.exe: -Binary, else .\..\..\dist\, else the GitHub release (the latest, or
       -Release). A download is checked against the SHA256SUMS of the same release.
     * Gets the command-line client the same way (-ClientBinary, else .\..\..\dist\claude-rc.exe, else the release asset
-      claude-rc-windows-x64.exe), installs it as <ClientDir>\claude-rc.exe and adds <ClientDir> to the machine PATH.
-      Open a new terminal afterwards. -NoClient skips both. ClientDir is a folder of its own
-      (C:\Program Files\claude-rc), not -InstallDir: the service account can write to -InstallDir, and a folder on
-      the PATH must not be writable by it.
+      claude-rc-windows-x64.exe), installs it as <InstallDir>\bin\claude-rc.exe, adds <InstallDir>\bin to the machine
+      PATH and records the path in the registry value HKLM\SOFTWARE\claude-rc, Client (the node reads it to find the
+      client). Open a new terminal afterwards. -NoClient skips all three. Only administrators can write under
+      HKLM\SOFTWARE, so a user cannot make the node run another program. <InstallDir>\bin gets no extra rights: the
+      service account cannot replace a program on the PATH.
     * Gets WinSW (the Windows service wrapper) v2.12.0 and checks it against a pinned SHA-256.
-    * Copies both into -InstallDir, with the launcher script, and writes the WinSW definition next to them. The
-      service account gets Modify rights on -InstallDir: the agent updates its own binary there. The binary is written as a
-      new file and moved over the old one, after the service is stopped.
+    * Copies both into <InstallDir>\service, with the launcher script, and writes the WinSW definition next to them.
+      The service account gets Modify rights on that folder only: the agent updates its own binary there. The binary is
+      written as a new file and moved over the old one, after the service is stopped.
+      -InstallDir is the one parent folder (default C:\Program Files\claude-rc). An older install keeps its service in
+      C:\Program Files\claude-rc-launcher: when -InstallDir is not given, that folder holds the service and <InstallDir>\service
+      does not exist yet, the service stays there. The client still goes to <InstallDir>\bin. The old client
+      <InstallDir>\claude-rc.exe is deleted and its PATH entry is replaced by <InstallDir>\bin.
     * Creates <DataDir>\config.toml from node.config.example.toml. An existing config.toml is NEVER changed.
     * Limits <DataDir> (it holds the certificate key) to SYSTEM, Administrators and the service account.
     * Registers the service. WinSW asks for the account and its password: enter -Account and its password.
@@ -41,8 +46,9 @@
 
   -OpenFirewall adds an inbound rule for the port in config.toml (Private and Domain networks only).
   -NoService only puts the files in place (for tests); it never changes the machine PATH, unless a test key is
-  given with -PathRegistryKey. -Uninstall removes the service, the firewall rule and the PATH entry, and keeps the
-  files, the config and the certificate.
+  given with -PathRegistryKey. -ClientRegistryKey names another registry key for the client value (tests only).
+  -Uninstall removes the service, the firewall rule and both PATH entries (<InstallDir>\bin and the old <InstallDir>),
+  and keeps the files, the registry value, the config and the certificate.
 #>
 [CmdletBinding()]
 param(
@@ -50,14 +56,14 @@ param(
   [string]$Release,
   [string]$WinSW,
   [string]$ClientBinary,
-  [string]$InstallDir = (Join-Path $env:ProgramFiles 'claude-rc-launcher'),
-  [string]$ClientDir = (Join-Path $env:ProgramFiles 'claude-rc'),
+  # The one parent folder: bin (the client, on the PATH) and service (the node, WinSW, the launcher script).
+  [string]$InstallDir = (Join-Path $env:ProgramFiles 'claude-rc'),
   [string]$DataDir = (Join-Path $env:ProgramData 'claude-rc-launcher'),
-  # The folder of the client registry file `installs`, which the node reads to find installed clients.
-  [string]$RegistryDir = (Join-Path $env:ProgramData 'claude-rc-registry'),
   [string]$Account = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
   # The registry key that holds the machine PATH. Only tests give another one.
   [string]$PathRegistryKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+  # The registry key whose value Client holds the path of the client. The node reads it. Only tests give another one.
+  [string]$ClientRegistryKey = 'HKLM:\SOFTWARE\claude-rc',
   [switch]$OpenFirewall,
   [switch]$NoClient,
   [switch]$ClientOnly,
@@ -88,6 +94,7 @@ $Repo = 'kbirger/claude-rc-launcher'
 $AssetName = 'claude-rc-launcher-win-x64.exe'
 $ClientAsset = 'claude-rc-windows-x64.exe'
 $DefaultPathKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+$DefaultClientKey = 'HKLM:\SOFTWARE\claude-rc'
 # WinSW v2.12.0 WinSW-x64.exe, from https://github.com/winsw/winsw/releases/tag/v2.12.0 (hash seen on 2026-11-08).
 $WinSWUrl = 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe'
 $WinSWSha256 = '05B82D46AD331CC16BDC00DE5C6332C1EF818DF8CEEFCD49C726553209B3A0DA'
@@ -96,9 +103,17 @@ $FirewallRule = 'claude-rc-launcher node'
 # The folder of this file, or '' when the script did not start from a file (irm <url> | iex).
 $Here = [string](Get-Variable -Name PSScriptRoot -ValueOnly -ErrorAction SilentlyContinue)
 $InstallerAsset = 'claude-rc-launcher-win-installer.zip'
-$SvcExe = Join-Path $InstallDir "$Name-svc.exe"
-$SvcXml = Join-Path $InstallDir "$Name-svc.xml"
-$Dest = Join-Path $InstallDir "$Name.exe"
+$ClientDir = Join-Path $InstallDir 'bin'
+$ServiceDir = Join-Path $InstallDir 'service'
+# An older install keeps its service in Program Files\claude-rc-launcher. Moving a running service needs an uninstall,
+# so a reinstall without -InstallDir keeps it there.
+$OldServiceExe = Join-Path $env:ProgramFiles "claude-rc-launcher\$Name-svc.exe"
+if (-not $PSBoundParameters.ContainsKey('InstallDir') -and (Test-Path -LiteralPath $OldServiceExe) -and -not (Test-Path -LiteralPath $ServiceDir)) {
+  $ServiceDir = Split-Path -Parent $OldServiceExe
+}
+$SvcExe = Join-Path $ServiceDir "$Name-svc.exe"
+$SvcXml = Join-Path $ServiceDir "$Name-svc.xml"
+$Dest = Join-Path $ServiceDir "$Name.exe"
 $ConfigFile = Join-Path $DataDir 'config.toml'
 
 function Test-Admin {
@@ -187,93 +202,42 @@ function Get-ClientSource([string]$TempDir) {
   $path
 }
 
-# $true when the folder or file is a reparse point (a junction or symbolic link): it is never followed.
-function Test-ReparsePoint([string]$Path) {
-  [bool]((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
-}
-
-# $true when SYSTEM or the Administrators group owns the path. A standard user can create folders in ProgramData and
-# then owns them, which lets that user change the ACL later.
-function Test-TrustedOwner([string]$Path) {
-  $sid = (Get-Acl -LiteralPath $Path).GetOwner([System.Security.Principal.SecurityIdentifier])
-  @('S-1-5-32-544', 'S-1-5-18') -contains $sid.Value
-}
-
-function Set-AdminOwner([string]$Path) {
-  & icacls.exe $Path /setowner '*S-1-5-32-544' | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "icacls /setowner failed on $Path" }
-}
-
-# Adds "client <path>" to the registry file the node reads (once). The registry has a folder of its own, like ClientDir,
-# because the service account can write the data folder: only SYSTEM and Administrators may change this folder and
-# file, and Users may read them (they hold no secret). The node runs the programs the file lists, and on Windows it
-# does not check the ACL, so this function must make sure that administrators own the folder and the file.
-# A folder or file that someone else owns is taken over and its content is discarded. A reparse point is skipped.
-# A failure here is a warning: the client is installed and the node still finds it by scanning.
+# Records the client path in the registry value Client (REG_SZ) that the node reads. Only administrators can write under
+# HKLM\SOFTWARE by default, so no user can make the node run another program. A failure here is a warning: the client is
+# installed and the node still finds it by scanning.
 function Register-Client([string]$ClientPath) {
-  $file = Join-Path $RegistryDir 'installs'
-  $line = "client $ClientPath"
-  $createdFile = $false
   try {
-    # The folder is locked to administrators, so it must not be a folder the service account has to write.
-    $regFull = [IO.Path]::GetFullPath($RegistryDir).TrimEnd('\')
-    foreach ($own in @($DataDir, $InstallDir, $ClientDir)) {
-      if ($regFull -ieq [IO.Path]::GetFullPath($own).TrimEnd('\')) {
-        Write-Warning "the client registry was not written: -RegistryDir ($RegistryDir) must be a folder of its own, not $own"
-        return
-      }
+    # A 32-bit PowerShell on 64-bit Windows would write to the 32-bit view, which the node does not read.
+    if ($ClientRegistryKey -eq $DefaultClientKey -and [Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+      Write-Warning 'the client registry value was not written: this is a 32-bit PowerShell. Run the 64-bit one (the node scans for the client anyway)'
+      return
     }
-    $untrusted = $false
-    $dirExists = Test-Path -LiteralPath $RegistryDir
-    if ($dirExists) {
-      if (Test-ReparsePoint $RegistryDir) { Write-Warning "the client registry was not written: $RegistryDir is a junction or link"; return }
-      if (-not (Test-TrustedOwner $RegistryDir)) { $untrusted = $true }
-    }
-    $fileExists = $dirExists -and (Test-Path -LiteralPath $file)
-    if ($fileExists) {
-      if (Test-ReparsePoint $file) { Write-Warning "the client registry was not written: $file is a junction or link"; return }
-      if (-not (Test-TrustedOwner $file)) { $untrusted = $true }
-    }
-    if ($untrusted) { Write-Warning "the client registry at $RegistryDir belonged to someone else: it was taken over and its old content was discarded" }
-    New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
-    Set-AdminOwner $RegistryDir
-    & icacls.exe $RegistryDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)R' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $RegistryDir" }
-    if ($untrusted -and $fileExists) {
-      # Delete it and start a new file: the old file may still be open for writing in the hands of its owner.
-      Remove-Item -LiteralPath $file -Force
-      $fileExists = $false
-    }
-    if (-not $fileExists) {
-      [IO.File]::WriteAllText($file, '', (New-Object Text.UTF8Encoding($false)))
-      $createdFile = $true
-    }
-    Set-AdminOwner $file
-    & icacls.exe $file /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' '*S-1-5-32-545:R' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $file" }
-    $old = [IO.File]::ReadAllText($file)
-    $known = @($old -split "`n" | Where-Object { $_.TrimEnd("`r") -ieq $line }).Count -gt 0
-    if (-not $known) {
-      $sep = if ($old -and -not $old.EndsWith("`n")) { "`n" } else { '' }
-      [IO.File]::AppendAllText($file, "$sep$line`n", (New-Object Text.UTF8Encoding($false)))
-      Write-Host "Registered $ClientPath in $file"
-    }
+    if (-not (Test-Path -LiteralPath $ClientRegistryKey)) { New-Item -Path $ClientRegistryKey -Force | Out-Null }
+    Set-ItemProperty -LiteralPath $ClientRegistryKey -Name Client -Value $ClientPath -Type String
+    Write-Host "Registered $ClientPath in $ClientRegistryKey (Client)"
   } catch {
-    if ($createdFile) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
-    Write-Warning "cannot write the client registry $file (the client is installed; the node still finds it by scanning): $($_.Exception.Message)"
+    Write-Warning "cannot write the client registry value $ClientRegistryKey (the client is installed; the node still finds it by scanning): $($_.Exception.Message)"
   }
 }
 
-# The client lives in a folder of its own. Only administrators can write there, so a program on the PATH cannot be
-# replaced by the service account (which can write to the node's install folder).
+# The client lives in <InstallDir>\bin. Only administrators can write there, so a program on the PATH cannot be
+# replaced by the service account (which can write only to <InstallDir>\service).
 function Install-ClientAndPath([string]$Source) {
   $clientDest = Join-Path $ClientDir 'claude-rc.exe'
+  # The old layout put the client straight in <InstallDir>. It is deleted, and that folder leaves the PATH.
+  $oldClient = Join-Path $InstallDir 'claude-rc.exe'
+  $migrate = $false
   try {
     New-Item -ItemType Directory -Force -Path $ClientDir | Out-Null
     Copy-Item -LiteralPath $Source -Destination "$clientDest.new" -Force
     Move-Item -LiteralPath "$clientDest.new" -Destination $clientDest -Force
     Write-Host "Installed $clientDest"
     Register-Client $clientDest
+    if (Test-Path -LiteralPath $oldClient) {
+      Remove-Item -LiteralPath $oldClient -Force
+      $migrate = $true
+      Write-Host "Removed the old client $oldClient"
+    }
   } catch {
     Remove-Item -LiteralPath "$clientDest.new" -Force -ErrorAction SilentlyContinue
     Write-Warning "cannot install $clientDest (is claude-rc running? close it and run this script again): $($_.Exception.Message)"
@@ -286,11 +250,19 @@ function Install-ClientAndPath([string]$Source) {
     Write-Warning "the machine PATH was not changed, because $clientDest is not there"
   } elseif ($realKey -and -not (Test-Admin)) {
     Write-Warning 'the machine PATH was not changed: run this in an elevated PowerShell'
-  } elseif (Add-MachinePath $ClientDir $PathRegistryKey) {
-    if ($realKey) { Send-EnvironmentChange }
-    Write-Host "Added $ClientDir to the machine PATH. Open a new terminal to use 'claude-rc'."
   } else {
-    Write-Host "$ClientDir is already on the machine PATH"
+    $changed = $false
+    if ($migrate -and (Remove-MachinePath $InstallDir $PathRegistryKey)) {
+      $changed = $true
+      Write-Host "Removed $InstallDir from the machine PATH (the client moved to $ClientDir)"
+    }
+    if (Add-MachinePath $ClientDir $PathRegistryKey) {
+      $changed = $true
+      Write-Host "Added $ClientDir to the machine PATH. Open a new terminal to use 'claude-rc'."
+    } else {
+      Write-Host "$ClientDir is already on the machine PATH"
+    }
+    if ($changed -and $realKey) { Send-EnvironmentChange }
   }
 }
 
@@ -333,18 +305,20 @@ if ($Uninstall) {
     Remove-NetFirewallRule -DisplayName $FirewallRule
     Write-Host "Removed the firewall rule '$FirewallRule'"
   }
-  if (Remove-MachinePath $ClientDir $PathRegistryKey) {
-    Send-EnvironmentChange
-    Write-Host "Removed $ClientDir from the machine PATH"
+  foreach ($dir in @($ClientDir, $InstallDir)) {
+    if (Remove-MachinePath $dir $PathRegistryKey) {
+      if ($PathRegistryKey -eq $DefaultPathKey) { Send-EnvironmentChange }
+      Write-Host "Removed $dir from the machine PATH"
+    }
   }
-  Write-Host "Kept: $InstallDir, $ClientDir, $DataDir (config, certificate, instance list). Delete them by hand to remove everything."
+  Write-Host "Kept: the files in $InstallDir and $ServiceDir, the registry value Client in $ClientRegistryKey, and $DataDir (config, certificate, instance list). Delete them by hand to remove everything."
   return
 }
 
 # ---- checks -----------------------------------------------------------------------------------------------
 if ($ClientOnly -and $NoClient) { throw '-ClientOnly and -NoClient cannot be used together' }
 if ($ClientOnly) {
-  # Only the client and the PATH. The machine PATH needs administrator rights.
+  # Only the client, the PATH and the registry value. The machine PATH needs administrator rights.
   if ($PathRegistryKey -eq $DefaultPathKey -and -not (Test-Admin)) { throw 'run this in an elevated PowerShell (Run as administrator)' }
   if ($Release -and $Release -notmatch $ReleaseTagPattern) { throw "invalid release tag: $Release (for example v1.2.3)" }
   $tempClient = Join-Path ([IO.Path]::GetTempPath()) ("$Name-client-" + [Guid]::NewGuid().ToString('N'))
@@ -428,7 +402,7 @@ try {
   }
 
   # ---- place the files ------------------------------------------------------------------------------------
-  New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir, (Join-Path $DataDir 'logs') | Out-Null
+  New-Item -ItemType Directory -Force -Path $ServiceDir, $DataDir, (Join-Path $DataDir 'logs') | Out-Null
   # Write next to the destination, then move over it, so a failed copy never leaves half a file.
   foreach ($pair in @(@($Binary, $Dest), @($WinSW, $SvcExe))) {
     $tmp = "$($pair[1]).new"
@@ -441,13 +415,13 @@ try {
   $xml = $xml.Replace('@CONFIG@', [Security.SecurityElement]::Escape($ConfigFile)).Replace('@DATA_DIR@', [Security.SecurityElement]::Escape($DataDir))
   [IO.File]::WriteAllText($SvcXml, $xml, (New-Object Text.UTF8Encoding($false)))
   Write-Host "Wrote $SvcXml"
-  Copy-Item -LiteralPath $launcher -Destination (Join-Path $InstallDir "$Name-run.ps1") -Force
+  Copy-Item -LiteralPath $launcher -Destination (Join-Path $ServiceDir "$Name-run.ps1") -Force
   Write-Host "Installed the launcher script $Name-run.ps1"
 
   # The agent updates itself: it renames its own .exe and puts the new one in place, so the service account needs to
-  # change files in the install folder. The inherited permissions stay as they are.
-  & icacls.exe $InstallDir /grant "${Account}:(OI)(CI)M" | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "icacls failed on $InstallDir (is '$Account' a valid account name?)" }
+  # change files in the service folder, and only there (not in <InstallDir> or bin). The inherited permissions stay.
+  & icacls.exe $ServiceDir /grant "${Account}:(OI)(CI)M" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls failed on $ServiceDir (is '$Account' a valid account name?)" }
 
   if (-not (Test-Path -LiteralPath $ConfigFile)) {
     $conf = [IO.File]::ReadAllText($example).Replace('__SERVICE_USER__', $ShortUser)
