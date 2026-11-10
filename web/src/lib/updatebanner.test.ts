@@ -38,9 +38,14 @@ test("a node that failed with 404 gives by-hand", () => {
   expect(items).toEqual([{ kind: "by-hand", host: "node one", message: "run claude-rc node update on it once" }]);
 });
 
-test("a hub that updated but is still stale gives by-hand", () => {
-  const items = model([hub({ stale: true, target: "1.3.0" })], [entry({ finishedAt: "2026-11-09T01:00:00Z" })]);
+test("a hub that updated a moment ago and is still stale gives by-hand", () => {
+  const items = model([hub({ stale: true, target: "1.3.0" })], [entry({ finishedAt: "2026-11-09T11:58:30Z" })]);
   expect(items.map((i) => i.kind)).toEqual(["hub-update", "by-hand"]);
+});
+
+test("a hub that updated long ago and is stale now (a newer release came out) gives only hub-update", () => {
+  const items = model([hub({ stale: true, target: "1.3.0" })], [entry({ finishedAt: "2026-11-09T01:00:00Z" })]);
+  expect(items.map((i) => i.kind)).toEqual(["hub-update"]);
 });
 
 test("offline-after-hub-update shows within 10 minutes only", () => {

@@ -25,6 +25,7 @@ export const isRunning = (e: UpdateEntry | undefined, now: Date) => e?.status ==
 const unknownVersion = (v?: string) => v === "dev" || (v !== undefined && v.includes("+"));
 
 export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; now: Date }): BannerItem[] {
+  const now = o.now;
   const items: BannerItem[] = [];
   const hub = o.hosts.find((h) => h.id === "local");
   const last = (id: string) => lastEntry(o.updates, id);
@@ -57,7 +58,9 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
     const e = last(id);
     if (!e) continue;
     if (id === "local") {
-      if (e.status === "updated" && hub?.stale) {
+      // Only right after the update. Later, a stale hub means that a newer release came out since.
+      const age = now.getTime() - Date.parse(e.finishedAt ?? e.startedAt);
+      if (e.status === "updated" && hub?.stale && age <= OFFLINE_WINDOW_MS) {
         byHand.add(id);
         items.push({ kind: "by-hand", host: nameOf(id), message: BY_HAND_HUB });
       }
