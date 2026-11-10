@@ -24,10 +24,10 @@ export interface HostClient {
   ): Promise<{ status: number; body: unknown }>;
   /**
    * Opens `GET <path>` as an event stream. No body timeout. Aborting `signal` ends the iteration without an error.
-   * Breaking out of the loop closes the connection. A clean server close ends the iteration silently, so the caller
+   * `onActivity` runs each time bytes arrive, keepalive comments included. Breaking out of the loop closes the connection. A clean server close ends the iteration silently, so the caller
    * must treat "the loop ended and the signal is not aborted" as a disconnect. Any mid-stream error is a `bad response`.
    */
-  stream(path: string, o?: { signal?: AbortSignal }): Promise<AsyncIterable<SseEvent>>;
+  stream(path: string, o?: { signal?: AbortSignal; onActivity?: () => void }): Promise<AsyncIterable<SseEvent>>;
 }
 
 /** Returns the full `Authorization` header value for one exact request. */
@@ -183,7 +183,7 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
       const body = res.body;
       return (async function* () {
         try {
-          yield* readSse(body);
+          yield* readSse(body, opts.onActivity ? { onActivity: opts.onActivity } : {});
         } catch (e) {
           if (opts.signal?.aborted) return;
           return fail("bad response", e);

@@ -73,4 +73,12 @@ describe("readSse", () => {
     expect(out[0]!.data.length).toBe(500 * 1024);
     expect(500 * 1024).toBeLessThan(MAX_SSE_BYTES);
   });
+
+  test("onActivity fires for every chunk, including chunks that hold only comments", async () => {
+    let n = 0;
+    const out: SseEvent[] = [];
+    for await (const e of readSse(bodyOf([": keepalive\n\n", ": keepalive\n\n", "event: a\ndata: 1\n\n"]), { onActivity: () => n++ })) out.push(e);
+    expect(out).toEqual([{ event: "a", data: "1" }]);
+    expect(n).toBe(3);
+  });
 });

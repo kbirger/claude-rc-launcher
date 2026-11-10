@@ -6,9 +6,10 @@ export type SseEvent = { event: string; data: string };
 /**
  * Reads a Server-Sent Events body. Skips comment lines, joins `data:` lines with `\n`, and accepts `\n`, `\r\n`
  * and `\r` line ends. The default event name is `message`. When the caller stops iterating, the reader is
- * cancelled so the connection closes. This file has no server-only imports: the CLI may reuse it.
+ * cancelled so the connection closes. `onActivity` runs each time bytes arrive, even when they hold only comments,
+ * so a caller can tell a silent connection from a quiet one. This file has no server-only imports: the CLI may reuse it.
  */
-export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity?: () => void } = {}): AsyncGenerator<SseEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -45,6 +46,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      o.onActivity?.();
       buf += decoder.decode(value, { stream: true });
       let start = 0;
       let i = scan;

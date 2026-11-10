@@ -19,6 +19,7 @@ type Store = { dir: string; makeClient: (h: HostConfig) => HostClient };
  */
 export class HostRegistry {
   private chain: Promise<unknown> = Promise.resolve();
+  private subs = new Set<(e: { type: "added" | "removed"; id: string }) => void>();
 
   private constructor(
     private entries: HostEntry[],
@@ -72,6 +73,22 @@ export class HostRegistry {
     return new HostRegistry(entries, { dir: o.stateDir, makeClient: o.makeClient });
   }
 
+  /** Runs `fn` after `add` or `remove` has changed the list. A throwing listener does not break the others. Returns the unsubscribe function. */
+  onChange(fn: (e: { type: "added" | "removed"; id: string }) => void): () => void {
+    this.subs.add(fn);
+    return () => void this.subs.delete(fn);
+  }
+
+  private notify(type: "added" | "removed", id: string): void {
+    for (const fn of [...this.subs]) {
+      try {
+        fn({ type, id });
+      } catch {
+        // one bad listener must not stop the others
+      }
+    }
+  }
+
   list(): HostEntry[] {
     return [...this.entries];
   }
@@ -97,6 +114,7 @@ export class HostRegistry {
         throw e;
       }
       this.entries = next;
+      this.notify("added", h.id);
     });
   }
 
@@ -109,6 +127,7 @@ export class HostRegistry {
       const next = this.entries.filter((x) => x !== e);
       await this.persist(next);
       this.entries = next;
+      this.notify("removed", id);
       await rm(path.join(this.store.dir, "pins", `${id}.pem`), { force: true });
     });
   }
