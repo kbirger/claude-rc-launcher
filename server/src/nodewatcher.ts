@@ -10,15 +10,38 @@ type Registry = Pick<HostRegistry, "list" | "get" | "onChange">;
 
 const SILENCE_MS = 45_000;
 const RESTART_WINDOW_MS = 90_000;
+const STABLE_MS = 30_000; // a stream that stayed up this long counts as a good connection
+const CRASH_WAIT_MS = 30_000;
 const WAITS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const JITTER = 0.2;
 const OFFLINE_CLASSES = new Set(["unreachable", "timeout"]);
+const HARD_CLASSES = new Set(["rejected our credentials", "certificate mismatch"]);
+const STEPS: Record<StepName, true> = {
+  downloading: true,
+  verifying: true,
+  "installing-client": true,
+  installing: true,
+  restarting: true,
+  failed: true,
+  "up-to-date": true,
+};
 
 const defaultSleep = (ms: number) =>
   new Promise<void>((r) => {
     const t = setTimeout(r, ms) as { unref?: () => void };
     t.unref?.();
   });
+
+const isStr = (v: unknown): v is string => typeof v === "string";
+
+function parse(data: string): Record<string, unknown> | undefined {
+  try {
+    const v = JSON.parse(data);
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * One loop for each host of the registry (except `local`). Each loop keeps an event stream open to its node,
@@ -33,12 +56,13 @@ export function createNodeWatchers(o: {
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
-}): { presence(): Presence[]; stop(): void } {
+}): { presence(): Presence[]; endRestarting(host: string): void; stop(): void } {
   const now = o.now ?? (() => new Date());
   const sleep = o.sleep ?? defaultSleep;
   const random = o.random ?? Math.random;
   const presence = new Map<string, Presence>();
   const running = new Map<string, AbortController>();
+  const enders = new Map<string, () => void>();
 
   const safe = (fn: () => void) => {
     try {
@@ -48,42 +72,57 @@ export function createNodeWatchers(o: {
     }
   };
 
-  // Resolves after `ms`, or at once when `signal` aborts.
+  // Resolves after `ms`, or at once when `signal` aborts. Leaves no listener behind.
   const wait = (ms: number, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
       if (signal.aborted) return resolve();
-      signal.addEventListener("abort", () => resolve(), { once: true });
-      void sleep(ms).then(resolve);
+      const onAbort = () => resolve();
+      signal.addEventListener("abort", onAbort, { once: true });
+      void sleep(ms).then(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      });
     });
+
+  const publishFor = (id: string, signal: AbortSignal, status: Presence["status"], extra: { version?: string; reason?: string } = {}) => {
+    if (signal.aborted) return;
+    const old = presence.get(id);
+    if (old && old.status === status && old.version === extra.version && old.reason === extra.reason) return;
+    const p: Presence = { host: id, status, ...(extra.version !== undefined ? { version: extra.version } : {}), ...(extra.reason !== undefined ? { reason: extra.reason } : {}), at: now().toISOString() };
+    presence.set(id, p);
+    safe(() => o.onPresence(p));
+  };
 
   async function watch(id: string, ctl: AbortController): Promise<void> {
     const signal = ctl.signal;
+    const publish = (status: Presence["status"], extra: { version?: string; reason?: string } = {}) => publishFor(id, signal, status, extra);
     let attempt = 0;
     let lastStep: StepName | undefined;
     let restartDeadline: number | undefined;
     let lastClass: string | undefined;
+    // The start time of the update that the lines belong to: undefined = none seen, null = a live update of unknown start.
+    let lastStarted: string | null | undefined;
     let seen: string[] = []; // keys of the node lines that the log already holds, oldest first
 
-    const publish = (status: Presence["status"], extra: { version?: string; reason?: string } = {}) => {
-      if (signal.aborted) return;
-      const old = presence.get(id);
-      if (old && old.status === status && old.version === extra.version && old.reason === extra.reason) return;
-      const p: Presence = { host: id, status, ...(extra.version !== undefined ? { version: extra.version } : {}), ...(extra.reason !== undefined ? { reason: extra.reason } : {}), at: now().toISOString() };
-      presence.set(id, p);
-      safe(() => o.onPresence(p));
+    // Presence for a failure class, once the restart window does not apply.
+    const settle = (cls: string | undefined) => {
+      if (cls === undefined || OFFLINE_CLASSES.has(cls)) publish("offline", cls ? { reason: cls } : {});
+      else publish("error", { reason: cls });
     };
-
     // The presence after a drop. After a `restarting` step, a node that is gone is `restarting` for 90 seconds.
-    const dropped = (cls: string | undefined, midStream: boolean) => {
+    const dropped = (cls: string | undefined) => {
       lastClass = cls;
-      const offlineClass = cls === undefined || OFFLINE_CLASSES.has(cls);
-      if (lastStep === "restarting" && (offlineClass || midStream)) {
+      if (lastStep === "restarting" && !(cls && HARD_CLASSES.has(cls))) {
         restartDeadline ??= now().getTime() + RESTART_WINDOW_MS;
         if (now().getTime() < restartDeadline) return publish("restarting");
       }
-      if (offlineClass) return publish("offline", cls ? { reason: cls } : {});
-      publish("error", { reason: cls! });
+      settle(cls);
     };
+    enders.set(id, () => {
+      lastStep = undefined;
+      restartDeadline = undefined;
+      settle(lastClass);
+    });
 
     while (!signal.aborted) {
       const entry = o.registry.get(id);
@@ -102,76 +141,106 @@ export function createNodeWatchers(o: {
             ac.abort();
             return;
           }
-          await sleep(rest);
-          if (done) return;
+          await wait(rest, ac.signal);
+          if (done || ac.signal.aborted) return;
         }
       };
       void watchdog();
 
-      let opened = false;
       let failure: string | undefined;
-      let midStream = false;
+      let snapshotAt: number | undefined;
       try {
         const events = await entry.client.stream("/api/events", { signal: ac.signal, onActivity: () => (last = now().getTime()) });
-        opened = true;
         let pending = new Map<string, number>();
         for await (const ev of events) {
+          if (signal.aborted) break;
           if (ev.event === "snapshot") {
-            const snap = JSON.parse(ev.data) as { version?: string; update?: { step?: StepName } | null };
-            attempt = 0;
+            const snap = parse(ev.data);
+            if (!snap) throw new Error("bad snapshot");
+            const upd = snap.update && typeof snap.update === "object" ? (snap.update as Record<string, unknown>) : undefined;
+            const started = upd && isStr(upd.startedAt) ? upd.startedAt : undefined;
+            if (started !== undefined) {
+              if (isStr(lastStarted) && lastStarted !== started) {
+                o.log.clear(id); // the hub missed the start of this update
+                seen = [];
+              }
+              lastStarted = started;
+            }
+            snapshotAt = now().getTime();
             restartDeadline = undefined;
-            lastStep = snap.update?.step;
+            lastStep = upd && isStr(upd.step) && upd.step in STEPS ? (upd.step as StepName) : undefined;
             pending = new Map();
             for (const k of seen) pending.set(k, (pending.get(k) ?? 0) + 1);
-            publish("online", typeof snap.version === "string" ? { version: snap.version } : {});
+            publish("online", isStr(snap.version) ? { version: snap.version } : {});
           } else if (ev.event === "log") {
-            const e = JSON.parse(ev.data) as { line: string; at: string };
-            const key = `${e.at}\u0000${e.line}`;
+            const e = parse(ev.data);
+            if (!e || !isStr(e.line)) continue;
+            const at = isStr(e.at) ? e.at : now().toISOString();
+            const key = `${at}\u0000${e.line}`;
             const n = pending.get(key) ?? 0;
             if (n > 0) {
               pending.set(key, n - 1); // the node replays a line that the hub already holds
             } else {
               seen.push(key);
               if (seen.length > 200) seen.shift();
-              o.log.add(id, e.line);
+              o.log.add(id, e.line, at);
             }
           } else if (ev.event === "step") {
-            const e = JSON.parse(ev.data) as StepEvent;
-            lastStep = e.step;
-            if (e.step === "downloading") {
+            const e = parse(ev.data);
+            if (!e || !isStr(e.step) || !(e.step in STEPS)) continue;
+            const step: StepEvent = {
+              step: e.step as StepName,
+              ...(isStr(e.to) ? { to: e.to } : {}),
+              ...(isStr(e.client) ? { client: e.client } : {}),
+              ...(isStr(e.detail) ? { detail: e.detail } : {}),
+            };
+            lastStep = step.step;
+            if (step.step === "downloading") {
               o.log.clear(id);
               seen = [];
               pending = new Map();
+              lastStarted = null;
             }
-            safe(() => o.onStep(id, e));
+            safe(() => o.onStep(id, step));
           }
         }
       } catch (e) {
         failure = e instanceof HostError ? e.reason : "bad response";
-        midStream = opened;
       } finally {
         done = true;
         signal.removeEventListener("abort", stopAll);
         ac.abort();
       }
       if (signal.aborted) return;
-      if (failure) dropped(failure, midStream);
-      else dropped(silent ? "timeout" : undefined, true);
+      if (snapshotAt !== undefined && now().getTime() - snapshotAt >= STABLE_MS) attempt = 0;
+      dropped(failure ?? (silent ? "timeout" : undefined));
 
       // Wait before the next try. A node in the restart window turns `offline` when the window ends.
       const base = WAITS_MS[Math.min(attempt++, WAITS_MS.length - 1)]!;
       let ms = base * (1 + JITTER * random());
-      const p = presence.get(id);
-      if (p?.status === "restarting" && restartDeadline !== undefined) {
-        const rest = restartDeadline - now().getTime();
+      if (presence.get(id)?.status === "restarting" && restartDeadline !== undefined) {
+        const rest = Math.max(restartDeadline - now().getTime(), 0);
         if (rest < ms) {
-          await wait(Math.max(rest, 0), signal);
+          await wait(rest, signal);
           if (signal.aborted) return;
-          dropped(lastClass, false);
-          ms -= Math.max(rest, 0);
+          if (presence.get(id)?.status === "restarting") settle(lastClass);
+          ms -= rest;
         }
       }
       await wait(ms, signal);
+    }
+  }
+
+  // A watcher that crashes publishes an error, waits and starts again.
+  async function supervise(id: string, ctl: AbortController): Promise<void> {
+    while (!ctl.signal.aborted) {
+      try {
+        await watch(id, ctl);
+        return;
+      } catch {
+        publishFor(id, ctl.signal, "error", { reason: "bad response" });
+        await wait(CRASH_WAIT_MS, ctl.signal);
+      }
     }
   }
 
@@ -179,13 +248,14 @@ export function createNodeWatchers(o: {
     if (id === "local" || running.has(id)) return;
     const ctl = new AbortController();
     running.set(id, ctl);
-    void watch(id, ctl).catch(() => {}).finally(() => {
+    void supervise(id, ctl).finally(() => {
       if (running.get(id) === ctl) running.delete(id);
     });
   };
   const stopOne = (id: string) => {
     running.get(id)?.abort();
     running.delete(id);
+    enders.delete(id);
     o.log.clear(id);
     presence.delete(id);
   };
@@ -195,10 +265,15 @@ export function createNodeWatchers(o: {
 
   return {
     presence: () => [...presence.values()],
+    endRestarting(host) {
+      if (presence.get(host)?.status === "restarting") enders.get(host)?.();
+    },
     stop() {
       off();
       for (const ctl of running.values()) ctl.abort();
       running.clear();
+      enders.clear();
+      presence.clear();
     },
   };
 }

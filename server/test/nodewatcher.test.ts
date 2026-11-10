@@ -226,7 +226,17 @@ describe("createNodeWatchers presence", () => {
     });
   }
 
-  test("a mid-stream error gives error, a version change while online is a new presence", async () => {
+  test("a version change while online is a new presence", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot("1");
+    s.nodes.nas!.last.snapshot("1");
+    s.nodes.nas!.last.snapshot("2");
+    await flush();
+    expect(s.presence.map((p) => [p.status, p.version])).toEqual([["online", "1"], ["online", "2"]]);
+  });
+
+  test("a mid-stream error gives error", async () => {
     const s = setup();
     await flush();
     s.nodes.nas!.last.snapshot("1");
@@ -276,6 +286,10 @@ describe("createNodeWatchers reconnect", () => {
     s.nodes.nas!.last.snapshot();
     await flush();
     const n = s.nodes.nas!.opens.length;
+    for (let i = 0; i < 2; i++) {
+      await s.clock.advance(15_000);
+      s.nodes.nas!.last.keepalive();
+    }
     s.nodes.nas!.last.close();
     await flush();
     await s.clock.advance(999);
@@ -457,5 +471,219 @@ describe("createNodeWatchers registry", () => {
     s.nodes.nas!.last.push("log", { line: "after", at: "t" });
     await flush();
     expect(s.log.get("nas").map((l) => l.line)).toEqual(["after"]);
+  });
+});
+
+const gaps = (opens: number[]) => opens.slice(1).map((t, i) => (t - opens[i]!) / 1000);
+
+describe("createNodeWatchers fix round 1", () => {
+  test("a crash-looping node (snapshot, then close at once) gets waits that grow 1, 2, 5, 10, 30", async () => {
+    const s = setup(["nas"], { random: () => 0 });
+    const t0 = s.clock.t;
+    let handled = 0;
+    for (let sec = 0; sec < 130; sec++) {
+      await flush();
+      if (s.nodes.nas!.conns.length > handled) {
+        handled = s.nodes.nas!.conns.length;
+        s.nodes.nas!.last.snapshot();
+        s.nodes.nas!.last.close();
+      }
+      await s.clock.advance(1_000);
+    }
+    expect(s.nodes.nas!.opens.slice(0, 7).map((t) => (t - t0) / 1000)).toEqual([0, 1, 3, 8, 18, 48, 78]);
+  });
+
+  test("the abort listener is removed when a retry wait ends first", async () => {
+    const adds = new Map<object, Set<unknown>>();
+    const proto = AbortSignal.prototype as any;
+    const origAdd = proto.addEventListener;
+    const origRemove = proto.removeEventListener;
+    proto.addEventListener = function (this: object, type: string, fn: unknown, opt: unknown) {
+      if (type === "abort") (adds.get(this) ?? adds.set(this, new Set()).get(this)!).add(fn);
+      return origAdd.call(this, type, fn, opt);
+    };
+    proto.removeEventListener = function (this: object, type: string, fn: unknown, opt: unknown) {
+      if (type === "abort") adds.get(this)?.delete(fn);
+      return origRemove.call(this, type, fn, opt);
+    };
+    try {
+      const s = setup(["nas"], { pre: (n) => n.nas!.failures.push(...Array.from({ length: 40 }, () => new HostError("nas", "unreachable"))) });
+      await s.clock.advance(600_000);
+      expect(s.nodes.nas!.opens.length).toBeGreaterThan(15);
+      const most = Math.max(0, ...[...adds.values()].map((x) => x.size));
+      expect(most).toBeLessThanOrEqual(3);
+      s.w.stop();
+    } finally {
+      proto.addEventListener = origAdd;
+      proto.removeEventListener = origRemove;
+    }
+  });
+
+  test("events that are buffered behind a remove do not reach the log or onStep", async () => {
+    const calls: string[] = [];
+    const s = setup(["nas"], { onStep: (_h, e) => { calls.push(e.step); if (e.step === "downloading") s.reg.remove("nas"); } });
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot();
+    c.push("log", { line: "a", at: "t1" });
+    c.push("step", { step: "downloading" });
+    c.push("log", { line: "b", at: "t2" });
+    c.push("step", { step: "installing" });
+    await flush();
+    expect(calls).toEqual(["downloading"]);
+    expect(s.log.get("nas")).toEqual([]);
+  });
+
+  test("in the restart window every connect failure but certificate and credentials stays restarting", async () => {
+    const s = setup(["nas"]);
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("step", { step: "restarting" });
+    s.nodes.nas!.last.close();
+    await flush();
+    for (let i = 0; i < 10; i++) s.nodes.nas!.failures.push(new HostError("nas", i % 2 ? "unreachable" : "bad response"));
+    await s.clock.advance(20_000);
+    expect(s.statuses()).toEqual(["online", "restarting"]);
+    s.nodes.nas!.failures.length = 0;
+    s.nodes.nas!.failures.push(new HostError("nas", "certificate mismatch"));
+    await s.clock.advance(40_000);
+    expect(s.statuses()).toEqual(["online", "restarting", "error"]);
+  });
+
+  test("a snapshot with a different update start clears the lines of the host", async () => {
+    const s = setup();
+    await flush();
+    let c = s.nodes.nas!.last;
+    c.snapshot("1", { step: "installing", startedAt: "A" });
+    c.push("log", { line: "old", at: "t1" });
+    c.close();
+    await flush();
+    await s.clock.advance(1_000);
+    c = s.nodes.nas!.last;
+    c.snapshot("1", { step: "installing", startedAt: "B" });
+    c.push("log", { line: "new", at: "t2" });
+    await flush();
+    expect(s.log.get("nas").map((l) => l.line)).toEqual(["new"]);
+    // the same start again keeps the lines
+    c.close();
+    await flush();
+    await s.clock.advance(5_000);
+    s.nodes.nas!.last.snapshot("1", { step: "installing", startedAt: "B" });
+    await flush();
+    expect(s.log.get("nas").map((l) => l.line)).toEqual(["new"]);
+  });
+
+  test("a live downloading step does not make the next snapshot clear the lines", async () => {
+    const s = setup();
+    await flush();
+    let c = s.nodes.nas!.last;
+    c.snapshot("1", { step: "installing", startedAt: "A" });
+    c.push("step", { step: "downloading" });
+    c.push("log", { line: "x", at: "t1" });
+    c.close();
+    await flush();
+    await s.clock.advance(1_000);
+    c = s.nodes.nas!.last;
+    c.snapshot("1", { step: "downloading", startedAt: "B" });
+    c.push("log", { line: "x", at: "t1" });
+    await flush();
+    expect(s.log.get("nas").map((l) => l.line)).toEqual(["x"]);
+  });
+
+  test("a crashed watcher publishes error once, waits 30 seconds and starts again", async () => {
+    const clock = new Clock();
+    const reg = fakeRegistry();
+    const node = new FakeNode(clock);
+    reg.add("nas", node.client);
+    const realGet = reg.get;
+    let boom = 1;
+    reg.get = (id: string) => {
+      if (boom-- > 0) throw new Error("registry exploded");
+      return realGet(id);
+    };
+    const presence: Presence[] = [];
+    createNodeWatchers({ registry: reg as unknown as HostRegistry, log: new UpdateLog(), onPresence: (p) => presence.push(p), onStep: () => {}, now: clock.now, sleep: clock.sleep, random: () => 0 });
+    await flush();
+    expect(presence.map((p) => [p.status, p.reason])).toEqual([["error", "bad response"]]);
+    await clock.advance(29_000);
+    expect(node.conns.length).toBe(0);
+    await clock.advance(2_000);
+    expect(node.conns.length).toBe(1);
+    node.last.snapshot();
+    await flush();
+    expect(presence.map((p) => p.status)).toEqual(["error", "online"]);
+  });
+
+  test("bad payloads are ignored", async () => {
+    const s = setup();
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot();
+    c.push("log", { line: 5, at: "t" });
+    c.push("log", null);
+    c.q.push({ event: "log", data: "{nope" });
+    c.push("step", { step: "exploding" });
+    c.push("step", { step: 3 });
+    c.push("step", { step: "verifying", to: 7 });
+    c.push("log", { line: "ok", at: "t9" });
+    await flush();
+    expect(s.log.get("nas")).toEqual([{ line: "ok", at: "t9" }]);
+    expect(s.steps).toEqual([["nas", { step: "verifying" }]]);
+    expect(s.statuses()).toEqual(["online"]);
+  });
+
+  test("the node's own time is kept for a line", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("log", { line: "a", at: "2026-01-01T00:00:00.000Z" });
+    await flush();
+    expect(s.log.get("nas")).toEqual([{ line: "a", at: "2026-01-01T00:00:00.000Z" }]);
+  });
+
+  test("a stream() that hangs until the abort is dropped at 45 seconds with reason timeout", async () => {
+    const s = setup(["nas"], {
+      pre: (n) => {
+        n.nas!.client.stream = (_p, o) =>
+          new Promise((resolve) => o!.signal!.addEventListener("abort", () => resolve((async function* () {})()), { once: true }));
+      },
+    });
+    await s.clock.advance(44_000);
+    expect(s.statuses()).toEqual([]);
+    await s.clock.advance(2_000);
+    expect(s.presence[0]).toMatchObject({ status: "offline", reason: "timeout" });
+  });
+
+  test("stop clears the presence", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    await flush();
+    expect(s.w.presence().length).toBe(1);
+    s.w.stop();
+    expect(s.w.presence()).toEqual([]);
+  });
+
+  test("endRestarting turns restarting into offline at once and only then", async () => {
+    const s = setup();
+    await flush();
+    s.w.endRestarting("nas"); // not restarting: nothing
+    s.nodes.nas!.last.snapshot();
+    await flush();
+    s.w.endRestarting("nas"); // online: nothing
+    expect(s.statuses()).toEqual(["online"]);
+    s.nodes.nas!.last.push("step", { step: "restarting" });
+    s.nodes.nas!.last.close();
+    await flush();
+    expect(s.statuses()).toEqual(["online", "restarting"]);
+    s.w.endRestarting("nas");
+    expect(s.statuses()).toEqual(["online", "restarting", "offline"]);
+    // later failures do not bring restarting back
+    s.nodes.nas!.failures.push(new HostError("nas", "unreachable"), new HostError("nas", "unreachable"));
+    await s.clock.advance(10_000);
+    expect(s.statuses().slice(-1)).toEqual(["offline"]);
+    expect(s.statuses()).not.toContain("error");
+    expect(s.statuses().filter((x) => x === "restarting").length).toBe(1);
+    s.w.endRestarting("pi"); // unknown host: nothing
   });
 });

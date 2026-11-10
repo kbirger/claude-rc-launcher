@@ -57,4 +57,13 @@ describe("UpdateLog", () => {
     expect(a).toEqual(["nas:one:2026-11-10T10:00:00.000Z"]);
     expect(b).toEqual(["one", "two"]);
   });
+
+  test("add takes an optional time that replaces now", () => {
+    const log = new UpdateLog({ now: () => new Date("2026-11-10T10:00:00.000Z") });
+    const seen: string[] = [];
+    log.onLine((e) => seen.push(e.at));
+    log.add("nas", "a", "2026-01-01T00:00:00.000Z");
+    expect(log.get("nas")[0]!.at).toBe("2026-01-01T00:00:00.000Z");
+    expect(seen).toEqual(["2026-01-01T00:00:00.000Z"]);
+  });
 });
