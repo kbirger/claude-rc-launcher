@@ -585,6 +585,7 @@ updates anything by itself.
 A machine shows its client in one of three ways:
 
 - The version, for example `0.8.4`, when the node found a client.
+- `client local build`, when the client is a local build. It is never marked stale.
 - `no client`, when the node looked and found none.
 - `client not reported`, when the node is too old to report clients or the answer is missing.
 
@@ -600,9 +601,11 @@ applies the same check to the folder. A client entry also needs its real file an
 other write access. Otherwise the node skips that entry and logs a line.
 
 `install-cli.sh` writes the line when it runs as root or through `sudo`. `install.ps1`, the elevated installer, writes it
-on Windows. It gives the registry its own folder, which only administrators can change. A client installed without
-administrator rights is not in the registry. The scan finds it instead. If a Windows node has no registry, it looks in
-`%ProgramFiles%\claude-rc` and on the `PATH`.
+on Windows. It gives the registry its own folder, which only administrators can change.
+
+The node also always scans for clients. On Linux, it scans the `PATH` and the `~/.local/bin` folders of the service user
+and of root. On Windows, it scans the `PATH` (split on `;`) and `%ProgramFiles%\claude-rc`. Registered entries come
+first, and each real file appears once. Only the scan finds a client installed without administrator rights.
 
 The hub restarts while it updates, and the page reconnects by itself.
 
@@ -620,7 +623,9 @@ Keep these limits in mind:
 - The watchdog can roll back a new hub binary that starts and then fails within its first 30 seconds. The record may
   still say `updated` until the next update.
 - A node that is too old to have the update route needs `claude-rc node update` once.
-- An older node does not report clients, so it shows `client not reported` until you update it. After you update a Windows node to this release, its client version shows.
+- An older node does not report clients, so it shows `client not reported` until you update it.
+- Before this release, a Windows node looked for its client with Linux rules and reported none. After you update it, its
+  client version shows.
 - Some releases change how the hub talks to the nodes. After such a release, the hub can lose the nodes. Roll such a
   release out by hand.
 - Any logged-in user can start an update until admin status exists.
