@@ -193,6 +193,13 @@ describe("readRegisteredClients on win32", () => {
     expect(logs[0]).toContain("reg.exe exit 5");
   });
 
+  test("a value that fails validation gives [] and one log line", () => {
+    const { r, logs } = win(okv("\\\\server\\share\\claude-rc.exe"));
+    expect(r).toEqual([]);
+    expect(logs.length).toBe(1);
+    expect(logs[0]).toContain("not a local path to claude-rc.exe");
+  });
+
   test("no regQuery gives []", () => {
     expect(readRegisteredClients({ ...io({ platform: "win32" }), regQuery: undefined })).toEqual([]);
   });

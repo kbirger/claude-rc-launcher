@@ -1,5 +1,7 @@
 # Client Registry Implementation Plan
 
+> **Status:** the Windows parts are superseded by `docs/superpowers/specs/2026-11-09-windows-layout-design.md` (the registry file becomes an HKLM registry value). The Linux parts stay.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A node reports the client versions that its installers recorded in a root-owned file, and a Windows node finds its client without that file. The UI tells "no client" from "client not reported".

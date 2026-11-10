@@ -31,7 +31,7 @@ export interface UpdateEnv extends ReleaseIo, Omit<FindClientsInput, "registered
   version: string;
   scope: "system" | "user";
   readFile(p: string): Uint8Array;
-  /** The client paths in the registry file (`pathEnv` is the service's own PATH, `homes` the service user's and root's). */
+  /** The client paths in the client registry (a file on Linux, a registry value on Windows) (`pathEnv` is the service's own PATH, `homes` the service user's and root's). */
   registeredClients?(): string[];
   /** Like `run`, without blocking the event loop. When it is missing, callers fall back to `run`. */
   runAsync?(args: string[], opts?: { timeoutMs?: number }): Promise<RunResult>;

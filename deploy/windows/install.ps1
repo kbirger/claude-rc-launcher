@@ -107,10 +107,26 @@ $ClientDir = Join-Path $InstallDir 'bin'
 $ServiceDir = Join-Path $InstallDir 'service'
 # An older install keeps its service in Program Files\claude-rc-launcher. Moving a running service needs an uninstall,
 # so a reinstall without -InstallDir keeps it there.
+# This applies only while the service is registered there: after -Uninstall a new install uses the new layout.
 $OldServiceExe = Join-Path $env:ProgramFiles "claude-rc-launcher\$Name-svc.exe"
-if (-not $PSBoundParameters.ContainsKey('InstallDir') -and (Test-Path -LiteralPath $OldServiceExe) -and -not (Test-Path -LiteralPath $ServiceDir)) {
+
+# The folder of the program that the registered service runs, or '' when there is no service. The PathName may be
+# quoted ("C:\Program Files\x\svc.exe" arg) or not.
+function Get-RegisteredServiceDir {
+  $cim = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+  if (-not $cim -or -not $cim.PathName) { return '' }
+  $pn = [string]$cim.PathName
+  $exe = if ($pn.StartsWith('"')) { ($pn -split '"')[1] } elseif ($pn -match '^(.*?\.exe)(\s|$)') { $Matches[1] } else { $pn }
+  return (Split-Path -Parent $exe)
+}
+$RegisteredDir = Get-RegisteredServiceDir
+if (-not $PSBoundParameters.ContainsKey('InstallDir') -and $RegisteredDir -and
+    $RegisteredDir.TrimEnd('\') -ieq (Split-Path -Parent $OldServiceExe).TrimEnd('\') -and
+    (Test-Path -LiteralPath $OldServiceExe) -and -not (Test-Path -LiteralPath $ServiceDir)) {
   $ServiceDir = Split-Path -Parent $OldServiceExe
 }
+# The default parent folder. Only this folder (or one that holds the old client) is taken off the machine PATH.
+$DefaultInstallDir = (Join-Path $env:ProgramFiles 'claude-rc').TrimEnd('\')
 $SvcExe = Join-Path $ServiceDir "$Name-svc.exe"
 $SvcXml = Join-Path $ServiceDir "$Name-svc.xml"
 $Dest = Join-Path $ServiceDir "$Name.exe"
@@ -224,10 +240,17 @@ function Register-Client([string]$ClientPath) {
 # replaced by the service account (which can write only to <InstallDir>\service).
 function Install-ClientAndPath([string]$Source) {
   $clientDest = Join-Path $ClientDir 'claude-rc.exe'
-  # The old layout put the client straight in <InstallDir>. It is deleted, and that folder leaves the PATH on every run.
+  # The old layout put the client straight in <InstallDir>. It is deleted, and that folder leaves the PATH. This happens on every run for the default folder, and for another
+  # -InstallDir only while the old client is there.
   $oldClient = Join-Path $InstallDir 'claude-rc.exe'
+  $hadOldClient = Test-Path -LiteralPath $oldClient
+  $dropOldPath = $hadOldClient -or ($InstallDir.TrimEnd('\') -ieq $DefaultInstallDir)
   try {
     New-Item -ItemType Directory -Force -Path $ClientDir | Out-Null
+    # bin is on the machine PATH, so only SYSTEM and Administrators write there, whatever -InstallDir is (even the old
+    # service folder, where the service account has Modify rights that bin would inherit).
+    & icacls.exe $ClientDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $ClientDir" }
     Copy-Item -LiteralPath $Source -Destination "$clientDest.new" -Force
     Move-Item -LiteralPath "$clientDest.new" -Destination $clientDest -Force
     Write-Host "Installed $clientDest"
@@ -260,7 +283,7 @@ function Install-ClientAndPath([string]$Source) {
     Write-Warning 'the machine PATH was not changed: run this in an elevated PowerShell'
   } else {
     $changed = $false
-    if (Remove-MachinePath $InstallDir $PathRegistryKey) {
+    if ($dropOldPath -and (Remove-MachinePath $InstallDir $PathRegistryKey)) {
       $changed = $true
       Write-Host "Removed $InstallDir from the machine PATH (the client moved to $ClientDir)"
     }
@@ -313,7 +336,9 @@ if ($Uninstall) {
     Remove-NetFirewallRule -DisplayName $FirewallRule
     Write-Host "Removed the firewall rule '$FirewallRule'"
   }
-  foreach ($dir in @($ClientDir, $InstallDir)) {
+  $oldDirs = @($ClientDir)
+  if ((Test-Path -LiteralPath (Join-Path $InstallDir 'claude-rc.exe')) -or ($InstallDir.TrimEnd('\') -ieq $DefaultInstallDir)) { $oldDirs += $InstallDir }
+  foreach ($dir in $oldDirs) {
     if (Remove-MachinePath $dir $PathRegistryKey) {
       if ($PathRegistryKey -eq $DefaultPathKey) { Send-EnvironmentChange }
       Write-Host "Removed $dir from the machine PATH"
@@ -401,6 +426,12 @@ try {
 
   # ---- stop the service so its files can be replaced ------------------------------------------------------
   $svc = Get-NodeService
+  if ($svc -and -not $NoService) {
+    $runsFrom = Get-RegisteredServiceDir
+    if ($runsFrom -and $runsFrom.TrimEnd('\') -ine $ServiceDir.TrimEnd('\')) {
+      throw "the service runs from $runsFrom, not from $ServiceDir. Run without -InstallDir to keep it there, or run -Uninstall first and delete that folder"
+    }
+  }
   $wasRunning = $false
   if ($svc -and -not $NoService -and $svc.Status -ne 'Stopped') {
     $wasRunning = $true

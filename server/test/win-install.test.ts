@@ -131,7 +131,8 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
     const grants = script.split(/\r?\n/).filter((l) => l.includes("icacls.exe") && l.includes("/grant "));
     expect(grants).toHaveLength(1);
     expect(grants[0]).toContain("icacls.exe $ServiceDir /grant");
-    expect(script).not.toMatch(/icacls\.exe \$(InstallDir|ClientDir)/);
+    expect(script).not.toMatch(/icacls\.exe \$InstallDir/);
+    expect(script).not.toMatch(/icacls\.exe \$ClientDir \/grant /);
   });
 
   test("the old layout is recognised: no -InstallDir, an old service exe, and no new service folder", () => {
@@ -148,7 +149,7 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
 
   test("the old PATH entry is removed on every run of the PATH step, not only when the old exe was deleted", () => {
     expect(script).not.toContain("$migrate");
-    expect(script).toMatch(/if \(Remove-MachinePath \$InstallDir \$PathRegistryKey\) \{/);
+    expect(script).toMatch(/if \(\$dropOldPath -and \(Remove-MachinePath \$InstallDir \$PathRegistryKey\)\) \{/);
   });
 
   test("a locked old client only warns about the old client", () => {
@@ -160,9 +161,33 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
     expect(script).toContain("The client registry value was not written (-NoService).");
   });
 
+  test("bin gets its own ACL: no inheritance, SYSTEM and Administrators full, Users read and execute", () => {
+    expect(script).toContain("& icacls.exe $ClientDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX'");
+    expect(script).toContain('throw "icacls failed on $ClientDir"');
+  });
+
+  test("the old layout applies only while the service is registered there", () => {
+    expect(script).toContain("$RegisteredDir.TrimEnd('\\') -ieq (Split-Path -Parent $OldServiceExe).TrimEnd('\\')");
+    expect(script).toContain("Get-CimInstance Win32_Service");
+  });
+
+  test("a service that runs from another folder stops the install", () => {
+    expect(script).toContain("$runsFrom.TrimEnd('\\') -ine $ServiceDir.TrimEnd('\\')");
+    expect(script).toContain("the service runs from $runsFrom, not from $ServiceDir. Run without -InstallDir to keep it there, or run -Uninstall first and delete that folder");
+  });
+
+  test("only the default parent folder, or one that holds the old client, leaves the PATH", () => {
+    expect(script).toContain("$dropOldPath = $hadOldClient -or ($InstallDir.TrimEnd('\\') -ieq $DefaultInstallDir)");
+    expect(script).toContain("if ($dropOldPath -and (Remove-MachinePath $InstallDir $PathRegistryKey))");
+    expect(script).toContain("$DefaultInstallDir = (Join-Path $env:ProgramFiles 'claude-rc').TrimEnd('\\')");
+    const un = script.slice(script.indexOf("if ($Uninstall) {"), script.indexOf("# ---- checks"));
+    expect(un).toContain("$InstallDir.TrimEnd('\\') -ieq $DefaultInstallDir");
+    expect(un).toContain("Join-Path $InstallDir 'claude-rc.exe'");
+  });
+
   test("-Uninstall removes both PATH entries and says what it keeps", () => {
     const un = script.slice(script.indexOf("if ($Uninstall) {"), script.indexOf("# ---- checks"));
-    expect(un).toContain("foreach ($dir in @($ClientDir, $InstallDir))");
+    expect(un).toContain("foreach ($dir in $oldDirs)");
     expect(un).toContain("Remove-MachinePath $dir $PathRegistryKey");
     expect(un).toContain("Kept:");
     expect(un).toContain("registry value");
@@ -248,10 +273,28 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     expect(await pathValue()).toContain(join(dir, "app", "bin"));
   });
 
-  test("the old PATH entry goes even when the old client is already gone", async () => {
+  test("the default parent folder leaves the PATH even when the old client is already gone", async () => {
+    const pf = join(dir, "pf");
+    const def = join(pf, "claude-rc");
+    await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${def}' -Type ExpandString`);
+    expect((await run(["-ClientOnly"], { installDir: false, env: { ProgramFiles: pf } })).code).toBe(0);
+    expect(await pathValue()).toBe(`C:\\Windows;${join(def, "bin")}`);
+  });
+
+  test("a custom -InstallDir stays on the PATH when there is no old client", async () => {
     await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")}' -Type ExpandString`);
     expect((await run(["-ClientOnly"])).code).toBe(0);
-    expect(await pathValue()).toBe(`C:\\Windows;${join(dir, "app", "bin")}`);
+    expect(await pathValue()).toBe(`C:\\Windows;${join(dir, "app")};${join(dir, "app", "bin")}`);
+  });
+
+  test("bin never gets the Modify grant of the service account, even inside the old service folder", async () => {
+    const old = join(dir, "claude-rc-launcher");
+    const r = await run(["-InstallDir", old]);
+    expect(r.code).toBe(0);
+    const acl = (await ps(`icacls '${join(old, "bin")}'`)).out;
+    expect(acl).not.toMatch(/\(M\)/);
+    expect(acl).toContain("(F)");
+    expect((await ps(`icacls '${join(old, "service")}'`)).out).toMatch(/\(M\)/);
   });
 
   test("a client path with a space is stored whole", async () => {

@@ -56,10 +56,12 @@ export function registryStat(lstat: Lstat): (p: string) => { uid: number; mode: 
 
 /**
  * Reads the output of `reg query <key> /v <value>`: the line `    Client    REG_SZ    <path>` gives the path (it may
- * hold spaces). Exit 1 with nothing on stdout means the key or value does not exist. Anything else is an error.
+ * hold spaces). Exit 1 with nothing on stdout and no error text (or the "unable to find" text) means the key or value does not exist. Anything else is an error.
  */
 export function parseRegQuery(code: number | null | undefined, stdout: string, stderr: string, value: string): RegQueryResult {
-  if (code === 1 && stdout.trim() === "") return { status: "missing" };
+  // reg.exe also exits 1 with empty stdout for access denied and other failures: only its "unable to find" message
+  // (or no message at all) means missing.
+  if (code === 1 && stdout.trim() === "" && (stderr.trim() === "" || /unable to find/i.test(stderr))) return { status: "missing" };
   if (code !== 0) return { status: "error", message: `reg.exe ${code === null || code === undefined ? "did not finish (timeout or signal)" : `exit ${code}`}${stderr.trim() ? `: ${stderr.trim()}` : ""}` };
   for (const line of stdout.split(/\r?\n/)) {
     const m = /^\s+(\S+)\s+REG_SZ\s+(.*)$/.exec(line);

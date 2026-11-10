@@ -83,6 +83,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (!windows) return;
   await Bun.spawn(["reg.exe", "delete", regPath, "/f"]).exited;
+  await Bun.spawn(["reg.exe", "delete", `${regPath}-client`, "/f"]).exited;
 });
 
 const nodeArgs = () => `-NoService -NoClient -Binary '${q(join(work, "node.exe"))}' -WinSW '${q(join(work, "winsw.exe"))}' -InstallDir '${q(join(work, "app"))}' -DataDir '${q(join(work, "data"))}'`;

@@ -46,6 +46,8 @@ describe("realUpdateEnv", () => {
     });
     test("exit 1 with no output is missing; other failures are errors", () => {
       expect(parseRegQuery(1, "", "ERROR: The system was unable to find the specified registry key or value.", "Client")).toEqual({ status: "missing" });
+      expect(parseRegQuery(1, "", "", "Client")).toEqual({ status: "missing" });
+      expect(parseRegQuery(1, "", "ERROR: Access is denied.", "Client").status).toBe("error");
       expect(parseRegQuery(2, "", "boom", "Client").status).toBe("error");
       expect(parseRegQuery(null, "", "", "Client").status).toBe("error");
       expect(parseRegQuery(0, "garbage", "", "Client").status).toBe("error");

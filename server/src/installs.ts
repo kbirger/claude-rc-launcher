@@ -37,7 +37,8 @@ export function resetRegistryLog(): void {
 }
 
 /**
- * The client paths in the registry file, in file order, or `[]`. On Linux the file must be a regular file and its
+ * The client paths in the client registry, in order, or `[]`. On Windows it is the registry value HKLM\SOFTWARE\claude-rc, Client.
+ * On Linux it is a file that must be a regular file and its
  * directory a directory, both owned by root and not writable by group or others (setgid and sticky bits are
  * allowed), else nothing is trusted and one line is logged (once per process for the same message). Never throws.
  */
@@ -94,7 +95,9 @@ function readWindows(io: RegistryIo, say: (line: string) => void): string[] {
       return [];
     }
     const entry = r.data.trim();
-    return validEntry(entry, true) ? [entry] : [];
+    if (validEntry(entry, true)) return [entry];
+    say(`client registry ${where} ignored: the value is not a local path to claude-rc.exe`);
+    return [];
   } catch (e) {
     say(`client registry ${where} ignored: cannot read it (${(e as Error).message})`);
     return [];

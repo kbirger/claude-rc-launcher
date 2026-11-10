@@ -1,6 +1,6 @@
 # Client registry: design addendum
 
-Status: approved by the user in chat. Date: 2026-11-09. Extends `2026-11-09-web-version-check-design.md`.
+Status: Windows parts superseded by `2026-11-09-windows-layout-design.md` (the registry file becomes an HKLM registry value). The Linux parts stay. Approved by the user in chat. Date: 2026-11-09. Extends `2026-11-09-web-version-check-design.md`.
 
 ## Intent
 

@@ -170,7 +170,8 @@ exists (`bun run build:win` makes it). `-Binary <file>` and `-Release v1.2.3` ch
 The installer puts everything under one parent folder, `C:\Program Files\claude-rc` (`-InstallDir` changes it):
 
 - `bin\claude-rc.exe` is the command-line client. The folder `bin` is on the machine `PATH`. Open a new terminal to use
-  `claude-rc`. Only administrators can write there.
+  `claude-rc`. The installer sets an explicit ACL on `bin`: only `SYSTEM` and Administrators can write there, whatever
+  `-InstallDir` is.
 - `service\` holds the node binary, WinSW and a small launcher script. The service account gets Modify rights on this
   folder only, so it cannot replace a program on the `PATH`.
 
@@ -189,10 +190,13 @@ The service starts when `config.toml` has no placeholders left and has at least 
 `-OpenFirewall` adds an inbound rule for the port in `config.toml`, for Private and Domain networks only.
 
 **Older installs.** Earlier versions used `C:\Program Files\claude-rc-launcher` for the node and
-`C:\Program Files\claude-rc` for the client. If you run the installer again without `-InstallDir`, the service stays in
-`C:\Program Files\claude-rc-launcher` (it gets the same Modify grant there), because moving a running service needs an
-uninstall and an install. The client goes to the new `bin` folder. The installer deletes the old
-`C:\Program Files\claude-rc\claude-rc.exe`, takes `C:\Program Files\claude-rc` off the `PATH` and adds
+`C:\Program Files\claude-rc` for the client. If the service is registered in
+`C:\Program Files\claude-rc-launcher` and you run the installer again without `-InstallDir`, the service stays there
+(it gets the same Modify grant there), because moving a running service needs an uninstall and an install. The installer
+stops with an error if the service runs from another folder than the one it would use. After `-Uninstall`, a new install
+uses the new layout, even if old files remain. The client goes to the new `bin` folder. The installer deletes the old
+`C:\Program Files\claude-rc\claude-rc.exe`, takes `C:\Program Files\claude-rc` off the `PATH` (a custom `-InstallDir` leaves the `PATH` unless it holds the old
+client) and adds
 `C:\Program Files\claude-rc\bin`. The old registry folder `C:\ProgramData\claude-rc-registry` is no longer used. You can
 delete it.
 
@@ -222,9 +226,10 @@ after three tries, about 20 seconds in all, and writes the reason to `logs\updat
 again with `install.ps1` also works. The service account needs write access to the install folder for this. The script
 gives it Modify rights there. The service already runs as that account, so this does not give it more power.
 
-**Remove.** `.\install.ps1 -Uninstall` removes the service, the firewall rule and both `PATH` entries. It keeps the files,
-the registry value `HKLM\SOFTWARE\claude-rc`, the config and the certificate, and it prints what it kept. The password of the account and the recovery actions are set when the service is registered. To change
-them, uninstall and run the script again.
+**Remove.** `.\install.ps1 -Uninstall` removes the service, the firewall rule and the `PATH` entries. It keeps the
+files, the registry value `HKLM\SOFTWARE\claude-rc`, the config and the certificate, and it prints what it kept. The
+password of the account and the recovery actions are set when the service is registered. To change them, uninstall and
+run the script again.
 
 ### Print the version
 
