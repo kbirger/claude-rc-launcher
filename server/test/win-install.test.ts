@@ -275,10 +275,14 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     const old = join(dir, "claude-rc-launcher");
     const r = await run(["-InstallDir", old]);
     expect(r.code).toBe(0);
-    const acl = (await ps(`icacls '${join(old, "bin")}'`)).out;
-    expect(acl).not.toMatch(/\(M\)/);
-    expect(acl).toContain("(F)");
-    expect((await ps(`icacls '${join(old, "service")}'`)).out).toMatch(/\(M\)/);
+    // The service account here is the account that runs the test. Which rights it shows depends on the machine (a CI
+    // runner already has full control through the temp folder), so check only whether it has an entry of its own.
+    const who = (await ps("[Security.Principal.WindowsIdentity]::GetCurrent().Name")).out;
+    const entry = new RegExp(`${who.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`, "i");
+    const bin = (await ps(`icacls '${join(old, "bin")}'`)).out;
+    expect(bin).not.toMatch(entry);
+    expect(bin).toContain("(F)");
+    expect((await ps(`icacls '${join(old, "service")}'`)).out).toMatch(entry);
   });
 
   test("a client path with a space is stored whole", async () => {
