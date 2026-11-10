@@ -208,17 +208,12 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
   };
   const clientValue = async () => (await ps(`(Get-ItemProperty -LiteralPath '${clientKey}' -ErrorAction SilentlyContinue).Client`)).out;
   const pathValue = async () => (await ps(`(Get-Item -LiteralPath '${pathKey}').GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)`)).out;
-  const run = async (extra: string[], opts: { installDir?: boolean; env?: Record<string, string> } = {}) => {
+  // Every run names -InstallDir. A run without it would use the REAL Program Files (an env override did not take effect on Windows).
+  const run = async (extra: string[], opts: { env?: Record<string, string> } = {}) => {
     const args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", bin, "-WinSW", winsw, "-ClientBinary", client,
       "-DataDir", join(dir, "data"), "-ClientRegistryKey", clientKey, "-PathRegistryKey", pathKey, ...extra];
-    if (opts.installDir !== false && !extra.includes("-InstallDir")) args.push("-InstallDir", join(dir, "app"));
-    // Windows names are case-insensitive: drop the inherited name, or the real ProgramFiles can win over the override.
-    const env: Record<string, string | undefined> = { ...process.env };
-    for (const [k, v] of Object.entries(opts.env ?? {})) {
-      for (const have of Object.keys(env)) if (have.toLowerCase() === k.toLowerCase()) delete env[have];
-      env[k] = v;
-    }
-    const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env });
+    if (!extra.includes("-InstallDir")) args.push("-InstallDir", join(dir, "app"));
+    const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...opts.env } });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     return { out, err, code };
   };
@@ -268,14 +263,6 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
     expect(existsSync(join(dir, "app", "service"))).toBe(false);
     expect(await clientValue()).toBe(join(dir, "app", "bin", "claude-rc.exe"));
     expect(await pathValue()).toContain(join(dir, "app", "bin"));
-  });
-
-  test("the default parent folder leaves the PATH even when the old client is already gone", async () => {
-    const pf = join(dir, "pf");
-    const def = join(pf, "claude-rc");
-    await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${def}' -Type ExpandString`);
-    expect((await run(["-ClientOnly"], { installDir: false, env: { ProgramFiles: pf } })).code).toBe(0);
-    expect(await pathValue()).toBe(`C:\\Windows;${join(def, "bin")}`);
   });
 
   test("a custom -InstallDir stays on the PATH when there is no old client", async () => {
