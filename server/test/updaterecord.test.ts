@@ -198,6 +198,20 @@ describe("UpdateRecord setIf and markStaleRunning", () => {
   });
 });
 
+/** Repeats `check` until it passes or two seconds are over: the writes are asynchronous and a fixed wait fails on a slow runner. */
+async function eventually(check: () => void, ms = 2000): Promise<void> {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      check();
+      return;
+    } catch (e) {
+      if (Date.now() > end) throw e;
+      await Bun.sleep(10);
+    }
+  }
+}
+
 describe("stepWriter", () => {
   test("writes step and a detail cut to 200 characters while running, and nothing otherwise", async () => {
     const { stepWriter } = await import("../src/hubmain");
@@ -209,15 +223,18 @@ describe("stepWriter", () => {
     await r.set(entry({ host: "nas" }));
     write("nas", { step: "installing-client", client: "x".repeat(300) });
     write("nas", { step: "installing", detail: "d" });
-    await Bun.sleep(30);
-    expect(r.list()[0]).toEqual(entry({ host: "nas", step: "installing", stepDetail: "d" }));
+    await eventually(() => {
+      expect(r.list()[0]).toEqual(entry({ host: "nas", step: "installing", stepDetail: "d" }));
+    });
     write("nas", { step: "restarting" });
-    await Bun.sleep(30);
-    expect(r.list()[0]!.stepDetail).toBeUndefined();
+    await eventually(() => {
+      expect(r.list()[0]!.stepDetail).toBeUndefined();
+    });
     await r.set(entry({ host: "nas", status: "failed" }));
     write("nas", { step: "failed" });
-    await Bun.sleep(30);
-    expect(r.list()[0]).toEqual(entry({ host: "nas", status: "failed" }));
+    await eventually(() => {
+      expect(r.list()[0]).toEqual(entry({ host: "nas", status: "failed" }));
+    });
   });
   test("a new run with another startedAt is not overwritten by a step of the old run", async () => {
     const { stepWriter } = await import("../src/hubmain");
@@ -230,8 +247,9 @@ describe("stepWriter", () => {
       return realSetIf(next, pred);
     };
     stepWriter(r)("nas", { step: "installing" });
-    await Bun.sleep(30);
-    expect(r.list()[0]).toEqual(entry({ host: "nas", startedAt: "2026-11-10T11:00:00.000Z", startedBy: "bob" }));
+    await eventually(() => {
+      expect(r.list()[0]).toEqual(entry({ host: "nas", startedAt: "2026-11-10T11:00:00.000Z", startedBy: "bob" }));
+    });
   });
   test("a step that repeats the current step and detail does not write", async () => {
     const { stepWriter } = await import("../src/hubmain");
@@ -249,15 +267,17 @@ describe("stepWriter", () => {
     expect(writes).toBe(1);
     write("nas", { step: "installing", detail: "e" });
     write("nas", { step: "restarting" });
-    await Bun.sleep(30);
-    expect(writes).toBe(3);
+    await eventually(() => {
+      expect(writes).toBe(3);
+    });
   });
   test("a client detail is cut to 200 characters", async () => {
     const { stepWriter } = await import("../src/hubmain");
     const r = await UpdateRecord.load({ stateDir: dir });
     await r.set(entry({ host: "nas" }));
     stepWriter(r)("nas", { step: "installing-client", client: "x".repeat(300) });
-    await Bun.sleep(30);
-    expect(r.list()[0]!.stepDetail).toHaveLength(200);
+    await eventually(() => {
+      expect(r.list()[0]!.stepDetail).toHaveLength(200);
+    });
   });
 });
