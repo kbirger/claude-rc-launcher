@@ -22,6 +22,36 @@ const entry = (o: Partial<UpdateEntry> = {}): UpdateEntry => ({
 });
 
 describe("UpdateRecord", () => {
+  test("step and stepDetail round-trip while running, reach listeners, and a final status drops them", async () => {
+    const r = await UpdateRecord.load({ stateDir: dir });
+    const seen: UpdateEntry[] = [];
+    r.onChange((e) => seen.push(e));
+    await r.set(entry({ host: "nas", step: "installing", stepDetail: "claude-rc 1.1.0" }));
+    expect(seen[0]).toMatchObject({ step: "installing", stepDetail: "claude-rc 1.1.0" });
+    expect((await UpdateRecord.load({ stateDir: dir })).list()).toEqual([entry({ host: "nas", step: "installing", stepDetail: "claude-rc 1.1.0" })]);
+    await r.set(entry({ host: "nas", status: "updated", step: "installing", stepDetail: "x" }));
+    expect(seen[1]!.step).toBeUndefined();
+    expect(r.list()[0]).toEqual(entry({ host: "nas", status: "updated" }));
+    expect(await readFile(path.join(dir, "updates.json"), "utf8")).not.toContain("step");
+    await r.setIf(entry({ host: "b", status: "failed", step: "failed" }), () => true);
+    expect(r.list().find((e) => e.host === "b")!.step).toBeUndefined();
+  });
+
+  test("valid and clean accept step fields on a running entry and drop them on a final one when loading", async () => {
+    await writeFile(path.join(dir, "updates.json"), JSON.stringify({ updates: [entry({ host: "a", step: "verifying", stepDetail: "d" }), { ...entry({ host: "b", status: "failed" }), step: "failed" }, { ...entry({ host: "c" }), step: 5 }] }));
+    const r = await UpdateRecord.load({ stateDir: dir });
+    expect(r.list()).toEqual([entry({ host: "a", step: "verifying", stepDetail: "d" }), entry({ host: "b", status: "failed" })]);
+  });
+
+  test("markStaleRunning and reconcileHub drop the step", async () => {
+    const r = await UpdateRecord.load({ stateDir: dir });
+    await r.set(entry({ host: "nas", step: "restarting" }));
+    await r.set(entry({ host: "local", step: "restarting" }));
+    await r.markStaleRunning();
+    await r.reconcileHub("0.9.0");
+    expect(r.list().every((e) => e.step === undefined && e.status !== "running")).toBe(true);
+  });
+
   test("a missing file loads as an empty list", async () => {
     const r = await UpdateRecord.load({ stateDir: dir });
     expect(r.list()).toEqual([]);
@@ -165,5 +195,34 @@ describe("UpdateRecord setIf and markStaleRunning", () => {
     r.onChange(() => n++);
     await r.markStaleRunning();
     expect(n).toBe(0);
+  });
+});
+
+describe("stepWriter", () => {
+  test("writes step and a detail cut to 200 characters while running, and nothing otherwise", async () => {
+    const { stepWriter } = await import("../src/hubmain");
+    const r = await UpdateRecord.load({ stateDir: dir });
+    const write = stepWriter(r);
+    write("nas", { step: "installing" });
+    await r.set(entry({ host: "nas" }));
+    write("nas", { step: "installing-client", client: "x".repeat(300) });
+    write("nas", { step: "installing", detail: "d" });
+    await Bun.sleep(30);
+    expect(r.list()[0]).toEqual(entry({ host: "nas", step: "installing", stepDetail: "d" }));
+    write("nas", { step: "restarting" });
+    await Bun.sleep(30);
+    expect(r.list()[0]!.stepDetail).toBeUndefined();
+    await r.set(entry({ host: "nas", status: "failed" }));
+    write("nas", { step: "failed" });
+    await Bun.sleep(30);
+    expect(r.list()[0]).toEqual(entry({ host: "nas", status: "failed" }));
+  });
+  test("a client detail is cut to 200 characters", async () => {
+    const { stepWriter } = await import("../src/hubmain");
+    const r = await UpdateRecord.load({ stateDir: dir });
+    await r.set(entry({ host: "nas" }));
+    stepWriter(r)("nas", { step: "installing-client", client: "x".repeat(300) });
+    await Bun.sleep(30);
+    expect(r.list()[0]!.stepDetail).toHaveLength(200);
   });
 });

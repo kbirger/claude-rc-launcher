@@ -5,11 +5,15 @@ import path from "node:path";
 import { UpdateRecord } from "../src/updaterecord";
 import { createUpdateTracker, UNKNOWN_REASON } from "../src/updatetracker";
 
-const setup = async (probe: (h: string) => Promise<string | undefined>) => {
+const fakePresence = () => {
+  const subs = new Set<(p: any) => void>();
+  return { onChange: (fn: (p: any) => void) => (subs.add(fn), () => void subs.delete(fn)), emit: (p: any) => subs.forEach((f) => f(p)), count: () => subs.size };
+};
+const setup = async (probe: (h: string) => Promise<string | undefined>, presence?: ReturnType<typeof fakePresence>, hold = false) => {
   const record = await UpdateRecord.load({ stateDir: mkdtempSync(path.join(os.tmpdir(), "rc-trk-")) });
   const sleeps: number[] = [];
   const clock = { t: Date.parse("2026-11-09T10:00:00.000Z") };
-  const tracker = createUpdateTracker({ record, hubVersion: "1.0.0", probe, now: () => new Date(clock.t), sleep: async (ms) => void (sleeps.push(ms), (clock.t += ms)) });
+  const tracker = createUpdateTracker({ record, hubVersion: "1.0.0", probe, ...(presence ? { presence } : {}), now: () => new Date(clock.t), sleep: hold ? () => new Promise<void>(() => {}) : async (ms) => void (sleeps.push(ms), (clock.t += ms)) });
   const entry = (h: string) => record.list().find((e) => e.host === h)!;
   return { record, tracker, sleeps, entry, clock };
 };
@@ -104,5 +108,42 @@ describe("update tracker", () => {
     expect(await t.tracker.begin("nas", "bob", "1.0.0")).toBe(true);
     await settled();
     expect(t.entry("nas")).toMatchObject({ startedBy: "bob", status: "running" });
+  });
+  describe("presence shortcut", () => {
+    test("an online event with the target version writes updated at once and the poll ends", async () => {
+      const presence = fakePresence();
+      let probes = 0;
+      const t = await setup(async () => (probes++, undefined), presence, true);
+      await t.tracker.begin("nas", "kir", "1.0.0");
+      await t.tracker.finish("nas", rep("restarting") as any);
+      presence.emit({ host: "nas", status: "online", version: "v1.1.0", at: "x" });
+      await settled();
+      expect(t.entry("nas")).toMatchObject({ status: "updated", to: "1.1.0" });
+      expect(t.entry("nas").finishedAt).toBeDefined();
+      expect(probes).toBe(0);
+      expect(presence.count()).toBe(0);
+    });
+    test("an old version, another host or another status does not settle", async () => {
+      const presence = fakePresence();
+      const t = await setup(async () => undefined, presence, true);
+      await t.tracker.begin("nas", "kir", "1.0.0");
+      await t.tracker.begin("box", "kir", "1.0.0");
+      await t.tracker.finish("nas", rep("restarting") as any);
+      presence.emit({ host: "nas", status: "online", version: "1.0.0", at: "x" });
+      presence.emit({ host: "nas", status: "restarting", version: "1.1.0", at: "x" });
+      presence.emit({ host: "box", status: "online", version: "1.1.0", at: "x" });
+      expect(t.entry("nas").status).toBe("running");
+      expect(t.entry("box").status).toBe("running");
+      await settled();
+    });
+    test("without presence events the poll still settles, and a presence object changes nothing for it", async () => {
+      const presence = fakePresence();
+      const t = await setup(async () => "1.1.0", presence);
+      await t.tracker.begin("nas", "kir", "1.0.0");
+      await t.tracker.finish("nas", rep("restarting") as any);
+      await settled();
+      expect(t.entry("nas")).toMatchObject({ status: "updated", to: "1.1.0" });
+      expect(presence.count()).toBe(0);
+    });
   });
 });

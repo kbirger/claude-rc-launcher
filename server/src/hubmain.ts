@@ -15,6 +15,9 @@ import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates, type ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { staticHandler } from "./static";
+import { createNodeWatchers, type Presence } from "./nodewatcher";
+import { UpdateLog } from "./updatelog";
+import type { UpdateHooks } from "./updateevents";
 import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
@@ -53,6 +56,21 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
   };
 }
 
+type StepEvent = Parameters<NonNullable<UpdateHooks["onStep"]>>[0];
+
+/** Writes a step into the entry of a host while that entry runs; a settled or missing entry is left alone. `stepDetail` is `client` or `detail`, cut to 200 characters. */
+export function stepWriter(record: UpdateRecord): (host: string, e: StepEvent) => void {
+  return (host, e) => {
+    const detail = (e.client ?? e.detail)?.slice(0, 200);
+    const base = record.list().find((x) => x.host === host);
+    if (base?.status !== "running") return;
+    const { stepDetail: _drop, ...rest } = base;
+    void record
+      .setIf({ ...rest, step: e.step, ...(detail !== undefined ? { stepDetail: detail } : {}) }, (cur) => cur?.status === "running")
+      .catch((err) => console.error(`cannot record the update step of ${host}: ${err instanceof Error ? err.message : String(err)}`));
+  };
+}
+
 export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port: number; stop(): void }> {
   if (cfg.mode !== "hub") throw new Error("startHub needs mode = hub");
   const hubKey = await loadOrCreateHubKey(cfg.stateDir);
@@ -73,7 +91,17 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const updateEnv = realUpdateEnv(cfg);
-  const update = deps.update ?? createServiceUpdater(updateEnv);
+  const updateLog = new UpdateLog();
+  // Written once the record is loaded; the hooks of the hub's own updater only run after the server starts.
+  let writeStep: (host: string, e: StepEvent) => void = () => {};
+  const localHooks: UpdateHooks = {
+    onStep: (e) => {
+      if (e.step === "downloading") updateLog.clear("local");
+      writeStep("local", e);
+    },
+    onLog: (line) => updateLog.add("local", line),
+  };
+  const update = deps.update ?? createServiceUpdater(updateEnv, localHooks);
   const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
   const latest = createLatestRelease({ fetch: globalThis.fetch });
@@ -83,12 +111,43 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   // A hub update that restarted this process is settled before the first request.
   await record.reconcileHub(VERSION);
   await record.markStaleRunning();
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, updates: record, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  writeStep = stepWriter(record);
+  const presenceSubs = new Set<(p: Presence) => void>();
+  const watchers = createNodeWatchers({
+    registry: hosts,
+    log: updateLog,
+    onPresence: (p) => {
+      for (const fn of [...presenceSubs]) {
+        try {
+          fn(p);
+        } catch {
+          // a broken subscriber must not stop the others
+        }
+      }
+    },
+    onStep: writeStep,
+  });
+  const presence = {
+    list: () => watchers.presence(),
+    onChange: (fn: (p: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
+  };
+  // The restarting state of a node ends at once when its update entry settles without a new version.
+  const offRecord = record.onChange((e) => {
+    if (e.host !== "local" && (e.status === "unknown" || e.status === "rolled back")) watchers.endRestarting(e.host);
+  });
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, updates: record, updateLog, presence, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);
   const listed = hosts.list();
   if (listed.length) console.log(`hosts: ${listed.map((e) => `${e.host.id} (${e.host.url})`).join(", ")}`);
   if (cli) console.log("cli login: enabled");
-  return { port: server.port!, stop: () => void server.stop(true) };
+  return {
+    port: server.port!,
+    stop: () => {
+      offRecord();
+      watchers.stop();
+      void server.stop(true);
+    },
+  };
 }
