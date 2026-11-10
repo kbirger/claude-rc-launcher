@@ -66,7 +66,8 @@ The hub runs one watcher for each host in the registry. Each watcher keeps one s
 
 - When the hub starts, a watcher starts for every host. When the CLI adds a host, a watcher starts for it. When a host is removed, its watcher stops and drops its state.
 - When the stream connects, the node is `online`. The version comes from the snapshot. The watcher publishes a presence event.
-- When the stream ends or fails, the node is `offline`. If the last step that the watcher saw was `restarting`, the node is `restarting` instead. The reason is the failure class.
+- When the stream ends or fails, the watcher maps the failure class to a presence status, with the same split as the host list in `hosts.ts`. The classes `unreachable` and `timeout`, and a stream that ends, give `offline`. The classes `rejected our credentials`, `certificate mismatch` and `bad response` give `error`. The reason is the failure class.
+- If the last step that the watcher saw was `restarting`, a drop gives `restarting` instead of `offline`. After 90 seconds (the window of the update tracker) without a new connection, the status becomes `offline`. It also becomes `offline` at once when the update entry of the host settles as `unknown` or `rolled back`. This rule holds for every `restarting` step, including one from an update that the hub did not start. This is the author's call.
 - After a drop, the watcher reconnects after 1, 2, 5, 10 and 30 seconds, and then every 30 seconds. Each wait gets up to 20 percent random jitter. This keeps many nodes that return together from connecting in the same moment. A successful connection resets the wait.
 - When a stream sends nothing for 45 seconds (three keepalives), the watcher aborts it and treats it as dropped. A half-open TCP connection does not close by itself.
 - When a node answers `unsupported`, the node is an old node. The watcher records `streams: false` for the host and publishes no presence events for it. It tries again every 10 minutes. This is the normal state of a fleet in which the hub was updated before its nodes. The watcher must not log an error each time.
@@ -76,13 +77,13 @@ The hub's own instance, `local`, has no watcher. Its update is settled as it is 
 
 ### 4. The record and the browser stream
 
-`UpdateEntry` gets one optional field, `step?: string`. It holds the node's step name. The hub folds `client` and `detail` into a short text, for example `installing-client: C:\Program Files\claude-rc\claude-rc.exe`. The record keeps `step` only while `status` is `running`. When the status becomes final, the hub removes `step`.
+`UpdateEntry` gets two optional fields. The field `step` holds the bare step name from the node. The field `stepDetail` holds the `client` path or the `detail` text of that step, cut to 200 characters. The page builds the text it shows from the two fields. The record keeps both fields only while `status` is `running`. When the status becomes final, the hub removes them. This is the author's call.
 
 `UpdateRecord.set` already sends each change to every listener. So the existing `update` event on the hub's `GET /api/events` carries `step` to every tab. The stream code does not change.
 
 Presence is new. It is not saved to disk. After a hub restart, the hub rebuilds it from the streams. The hub's `GET /api/events` gets two new events:
 
-- `presence-snapshot` follows the `snapshot` event. Its data is a list of `{ host, status: "online" | "offline" | "restarting", version?, reason? }`.
+- `presence-snapshot` follows the `snapshot` event. Its data is a list of `{ host, status: "online" | "offline" | "restarting" | "error", version?, reason?, at }`, where `at` is an ISO time.
 - `presence` is sent once for each change. Its data has the same fields as one list item above.
 
 The data of `snapshot` keeps its present shape, the list of update entries. So an old page keeps working during an upgrade. This is the author's call.
@@ -90,12 +91,16 @@ The data of `snapshot` keeps its present shape, the list of update entries. So a
 ### 5. The page
 
 - `connectEvents` (`web/src/lib/events.ts`) handles `presence-snapshot` and `presence`. It patches `status` and `version` of the matching host in the `["hosts"]` query data. It does not refetch the list. When `version` changes, it also invalidates `["hosts"]`, because the staleness flags depend on the version.
-- While an entry is `running`, the update banner and the host row show `entry.step` next to the existing text, for example "updating: installing". If `step` is missing (an old node or an old hub), the page works as it does today.
+- The host list gets one new status value, `restarting`. The order of authority is simple: the last event wins, and a fresh host list replaces every status. A presence event that arrives after a list fetch changes the status again. This is the author's call.
+- Today every `update` event invalidates `["hosts"]`. After this change, an `update` event invalidates it only when the `status` of the entry changed, or when the entry is new. An event that changes only `step` or `stepDetail` does not refetch the list. A test covers this.
+- While an entry is `running`, the update banner and the host row show the text built from `step` and `stepDetail` next to the existing text, for example "updating: installing". If `step` is missing (an old node or an old hub), the page works as it does today. The page styles `failed` apart from the other steps.
 - A host with the presence status `restarting` shows "restarting". It does not show "offline".
 
 ### 6. The update tracker
 
 The tracker keeps its polling as the fallback. This is the author's call. It gets one addition. When a presence event for a host in the `running` state reports `online` with the target version, the tracker writes `updated` at once. It does not wait for the next poll. The poll still settles every other result (`rolled back` and `unknown`).
+
+When the tracker writes any final status for a host, it also calls `retryNow(host)` on the watcher of that host. A watcher that waits to retry an old node then connects at once. So a node that the hub just updated to a version with the stream gets presence and steps at once, and does not wait up to 10 minutes. This is the author's call.
 
 ## What the builder decides
 
@@ -127,4 +132,5 @@ The tracker keeps its polling as the fallback. This is the author's call. It get
 No open point blocks the plan. The author made two choices without the user. The user can change them:
 
 - The host list keeps probing every node. Presence only adds to it.
-- The hub retries an old node every 10 minutes. A node accepts at most 8 connections.
+- The hub retries an old node every 10 minutes, and sooner after an update of that node. A node accepts at most 8 connections.
+- The rules for `restarting`, the status order of authority and the shape of `step` and `stepDetail` are in sections 3, 4 and 5. The builder check raised them, and the author settled them.
