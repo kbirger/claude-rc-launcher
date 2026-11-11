@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import X from "@lucide/svelte/icons/x";
+  import X from "@tabler/icons-svelte/icons/x";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
   import type { UpdateEntry } from "./api";
