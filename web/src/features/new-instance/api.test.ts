@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { browse, getNode, listUsers, mkdir } from "./api";
 
 const realFetch = globalThis.fetch;
@@ -26,7 +26,7 @@ test("host ids are URL-encoded in every fs path", async () => {
   await browse("a/b", "/x y");
   stub(201, {});
   await mkdir("a/b", "/p", "n");
-  for (const c of calls) expect(c.url).toStartWith("/api/hosts/a%2Fb/");
+  for (const c of calls) expect(c.url.startsWith("/api/hosts/a%2Fb/")).toBe(true);
   expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/fs?path=%2Fx%20y");
 });
 

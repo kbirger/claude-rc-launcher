@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import type { HostInfo } from "./api";
 import { selectionAfter } from "./selection";
 

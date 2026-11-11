@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { cloneStart, cloneStatus, githubLoginStart, githubLoginStatus, listRepos } from "./api";
 
 const realFetch = globalThis.fetch;

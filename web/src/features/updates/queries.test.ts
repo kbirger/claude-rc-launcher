@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { latestQuery, logsQuery, updatesQuery } from "./queries";
 
 test("each query is fresh for five minutes and refetches on focus", () => {

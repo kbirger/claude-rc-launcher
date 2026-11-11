@@ -21,7 +21,7 @@ jobs:
         working-directory: web
       - run: bun run typecheck
       - run: bun run --cwd web check
-      - run: bun test
+      - run: bun run test
       - run: bun run build
 
   # The Windows node: its PowerShell scripts (installer, launcher) only run on Windows, and the build must work there.

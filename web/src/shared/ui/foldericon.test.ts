@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { iconKind } from "./foldericon";
 
 test("iconKind maps a missing or unknown kind to folder", () => {

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { QueryClient } from "@tanstack/svelte-query";
 import { STALE_MS } from "../../shared/query";
 import { browseQuery, mkdirMutation, nodeQuery, usersQuery } from "./queries";

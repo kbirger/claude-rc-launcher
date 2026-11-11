@@ -1245,7 +1245,7 @@ Only [Bun](https://bun.sh) is needed (version pinned in `.bun-version`).
 
 ```sh
 ./install.sh                    # or: bun install && (cd web && bun install)
-bun test                        # server + web tests
+bun run test                   # server + cli (bun test) and web (vitest)
 bun run typecheck               # tsc --noEmit
 bun run --cwd web check         # svelte-check
 bun run dev                     # backend with watch

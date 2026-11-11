@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import type { UpdateEntry } from "./api";
 import type { HostInfo } from "../hosts";
 import { followsBottom, hostOptionLabel, outputSummary, panelOpenByDefault, showsFinishedPanel, stepIsError, stepText } from "./updateoutput";

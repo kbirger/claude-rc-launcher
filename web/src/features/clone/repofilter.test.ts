@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { filterGroups } from "./repofilter";
 import type { RepoGroup } from "./api";
 

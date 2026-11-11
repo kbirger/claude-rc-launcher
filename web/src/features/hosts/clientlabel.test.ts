@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { clientLabel } from "./clientlabel";
 
 test("shows the client version", () => expect(clientLabel({ clientVersion: "0.8.4" })).toBe("0.8.4"));

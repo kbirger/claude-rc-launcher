@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test } from "vitest";
 import { ApiError } from "../../shared/http";
 import {
   CLONE_POLL_MS,

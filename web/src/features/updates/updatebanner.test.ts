@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import type { HostInfo } from "../hosts";
 import type { UpdateEntry } from "./api";
 import { bannerKey, bannerModel, isRunning, mergeCallErrors, pruneCallErrors } from "./updatebanner";

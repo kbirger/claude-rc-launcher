@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { busyReason, reloadDecision, windowsNames } from "./updatewarn";
 
 const now = new Date("2026-11-10T12:00:00Z");
