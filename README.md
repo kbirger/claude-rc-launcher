@@ -533,6 +533,31 @@ If `gh` keeps its token in a desktop keyring, the node cannot read the token. Th
 - If the node restarts during a clone, the client reports that it lost track of the clone. The partial folder stays on
   disk. Remove that folder before you clone the repo again.
 
+## Session files
+
+You can look at the files of a session from your phone. On an instance card, choose "Sessions". The page lists the
+sessions of that instance. Open one to see two tabs. "Touched" lists the files that Claude changed. "Folder" lets
+you browse the session folder.
+
+The list shows every session that Claude Code recorded for the instance folder. It includes work-tree sessions that
+Claude Code files under `.claude/worktrees`. It also includes sessions that you started yourself in that folder.
+Remote Control sessions cannot be told apart from other sessions, so the list does not try.
+
+"Touched" lists files that Claude wrote or edited with its file tools. Files that a command created do not appear.
+Use the "Folder" tab to find those files.
+
+- The node reads files as its own service account. It can read only what that account can read.
+- The node serves only files inside a session folder. On each request it finds the folder again from the transcript.
+- The node reads transcripts from `<home>/.claude/projects` of the instance user. Claude Code deletes old transcripts
+  after its cleanup period, so an old session disappears from the list.
+- A text file shows as plain text, up to 512 KB. Any other file, and any larger file, is a download.
+- A download is a stream. The hub passes the bytes on and never holds a whole file in memory.
+
+The first version has no work trees that no session owns. It has no markdown or code formatting and no editing.
+
+If a node runs an older version without this feature, the web UI hides the "Sessions" button for its instances. Update
+the node to see the button.
+
 ## Multiple hosts
 
 ```
