@@ -59,7 +59,7 @@ export const showHidden = (param: string | null | undefined, path: string): bool
 /**
  * Rows of the Touched list, in the order the node sends them (written files first, newest first). `rel` is set for a
  * file inside the session folder. `link` is the query that opens the file: `file` (relative) for those, `abs` for every
- * other row. A file that was not written (the call was denied, failed or got no result) has no link.
+ * other row. A file that was not written (`confirmed: false`: the call was denied, failed or got no result) has no link.
  */
 export function touchedRows(
   files: readonly TouchedFile[],
@@ -67,7 +67,8 @@ export function touchedRows(
 ): { file: TouchedFile; rel: string | undefined; link: { file: string } | { abs: string } | undefined }[] {
   return files.map((file) => {
     const rel = file.inside ? relativeTo(root, file.path) : undefined;
-    const link = !file.confirmed ? undefined : rel !== undefined ? { file: rel } : { abs: file.path };
+    // Only an explicit false hides the link: an older node sends no `confirmed`, and the node is the gate either way.
+    const link = file.confirmed === false ? undefined : rel !== undefined ? { file: rel } : { abs: file.path };
     return { file, rel, link };
   });
 }

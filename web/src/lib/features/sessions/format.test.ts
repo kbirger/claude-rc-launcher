@@ -134,6 +134,11 @@ test("touchedRows gives no link to a file that was not written (denied, failed o
   expect(rows.map((r) => [r.rel, r.link])).toEqual([["src/a.ts", undefined], [undefined, undefined]]);
 });
 
+test("touchedRows keeps the link when an older node sends no confirmed field (the node is the gate)", () => {
+  const rows = touchedRows([{ path: "/r/a.ts", inside: true, tool: "edit", at: "" }], "/r");
+  expect(rows[0]!.link).toEqual({ file: "a.ts" });
+});
+
 test("touchedRows links every written row: inside files by relative path, the rest by abs", () => {
   const rows = touchedRows(
     [
