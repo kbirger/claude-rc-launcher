@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import LogOut from "@lucide/svelte/icons/log-out";
+  import Logo from "./shared/ui/Logo.svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { meQuery } from "./features/auth";
   import { connectEvents } from "./realtime/events";
@@ -122,13 +124,13 @@
 </script>
 
 <header>
-  <h1><img class="logo" src="/favicon.svg" alt="" /><span class="name">Claude RC</span></h1>
+  <h1><Logo /><span class="name">Claude RC</span></h1>
   {#if hosts.length > 1}
     <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
   <span class="user"><span class="uname">{meQ.data?.name ?? ""}</span></span>
   <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>
+    <LogOut size={22} aria-hidden="true" />
   </a>
 </header>
 {#if reloadBar}
@@ -173,7 +175,6 @@
   .reload { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); border-left: 3px solid var(--warn); }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
   h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; gap: 2px; font-size: 0.7rem; line-height: 1.1; margin: 0; flex: none; }
-  .logo { flex: 1 1 0; min-height: 0; width: auto; aspect-ratio: 1; object-fit: contain; border-radius: 6px; }
   .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted); font-size: 0.9rem; }
   .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--accent); }

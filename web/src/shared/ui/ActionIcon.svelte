@@ -1,20 +1,15 @@
 <script lang="ts">
+  import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import CloudDownload from "@lucide/svelte/icons/cloud-download";
+  import FolderPlus from "@lucide/svelte/icons/folder-plus";
+
   export type ActionIconName = "up" | "new-folder" | "github";
 
   let { name }: { name: ActionIconName } = $props();
 
-  // Icons on a 16x16 grid. Up and new folder are drawn with strokes. The GitHub mark is a filled shape (Octicons, MIT).
-  const paths: Record<ActionIconName, string> = {
-    up: "M8 13.5V3M3.5 7.5 8 3l4.5 4.5",
-    "new-folder": "M1.5 3.5h4l1.25 1.5h7.75v7.5h-13ZM8 7.25v3.5M6.25 9h3.5",
-    github:
-      "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z",
-  };
-  const filled = $derived(name === "github");
+  // Lucide has no brand marks, so the GitHub clone action uses a download glyph; its button text names GitHub.
+  const icons = { up: ArrowUp, "new-folder": FolderPlus, github: CloudDownload };
+  const Icon = $derived(icons[name]);
 </script>
 
-<svg viewBox="0 0 16 16" width="1.25em" height="1.25em" fill={filled ? "currentColor" : "none"} stroke={filled ? "none" : "currentColor"} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d={paths[name]} /></svg>
-
-<style>
-  svg { display: block; }
-</style>
+<Icon size="1.25em" strokeWidth={1.5} aria-hidden="true" />

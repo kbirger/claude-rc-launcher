@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import X from "@lucide/svelte/icons/x";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
   import type { UpdateEntry } from "./api";
@@ -96,7 +97,7 @@
         </li>
       {/each}
     </ul>
-    <button class="dismiss" aria-label="Dismiss" onclick={() => (dismissed = key)}>Dismiss</button>
+    <button class="dismiss" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={20} aria-hidden="true" /></button>
   </section>
 {/if}
 
@@ -105,5 +106,6 @@
   ul { flex: 1; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; }
   li.warn { border-left: 3px solid var(--warn); padding-left: 8px; }
-  .dismiss { flex: none; }
+  .dismiss { flex: none; min-width: 44px; min-height: 44px; border: none; background: transparent; color: var(--muted, inherit); padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .dismiss:hover { color: inherit; }
 </style>
