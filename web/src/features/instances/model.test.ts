@@ -1,19 +1,22 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
 import { inRoot } from "../../../test/effect-root.svelte";
 import { createInstancesModel } from "./model.svelte";
 
 const inst = (id: string, path = `/p/${id}`) => ({ id, path, name: id, state: "active", startedAt: null });
-const wait = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+// Moves the fake clock in small steps (TanStack batches its notifications on a timer) and runs the Svelte effects
+// after each step, so the fetch answers and the cache updates land.
 async function settle() {
-  for (let i = 0; i < 5; i++) { await wait(10); flushSync(); }
+  for (let i = 0; i < 5; i++) { await vi.advanceTimersByTimeAsync(10); flushSync(); }
 }
 
 type Api = { list: any[]; listFails: boolean; stopFails: string | null; stops: string[] };
 let api: Api;
 const realFetch = globalThis.fetch;
 beforeEach(() => {
+  // Only the timers are fake: Svelte's effect flush and the fetch promises need real microtasks.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   api = { list: [inst("a"), inst("b")], listFails: false, stopFails: null, stops: [] };
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     if (init.method === "DELETE") {
@@ -27,7 +30,10 @@ beforeEach(() => {
       : new Response(JSON.stringify(api.list), { status: 200 });
   }) as any;
 });
-afterEach(() => { globalThis.fetch = realFetch; });
+afterEach(() => {
+  vi.useRealTimers();
+  globalThis.fetch = realFetch;
+});
 
 function mount(startError = "") {
   const client = new QueryClient();

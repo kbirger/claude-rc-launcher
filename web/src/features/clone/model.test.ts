@@ -59,6 +59,7 @@ async function tick(ms = 0) {
   flushSync();
 }
 
+// The spec rule "a job keeps the host it started on" holds by construction: the model reads its host once, so no test switches it.
 function mount() {
   const client = new QueryClient();
   const props = { parent: "/home/dev", user: "dev" as string | undefined };
