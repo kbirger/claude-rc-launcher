@@ -192,6 +192,34 @@ describe("listIn", () => {
       await rm(join(root, "sub", "pipe"));
     }
   }, 1000);
+  test.skipIf(!linux)("listIn refuses a folder swapped for a link that leaves the root after the check", async () => {
+    const toDirLink = async () => {
+      await rename(join(root, "sub"), join(root, "sub.old"));
+      await symlink(outside, join(root, "sub"));
+    };
+    const before = await fdCount();
+    try {
+      expect(await status(listIn(root, "sub", false, { beforeOpen: toDirLink }))).toBe(403);
+      expect(await fdsReach(before)).toBe(before);
+    } finally {
+      await rm(join(root, "sub"), { force: true });
+      await rename(join(root, "sub.old"), join(root, "sub"));
+    }
+  });
+  test.skipIf(!linux)("listIn refuses a parent folder swapped for a link that leaves the root after the check", async () => {
+    const toDirLink = async () => {
+      await rename(join(root, "sub"), join(root, "sub.old"));
+      await mkdir(join(outside, "deep"), { recursive: true });
+      await symlink(outside, join(root, "sub"));
+    };
+    try {
+      expect(await status(listIn(root, "sub/deep", false, { beforeOpen: toDirLink }))).toBe(403);
+    } finally {
+      await rm(join(root, "sub"), { force: true });
+      await rename(join(root, "sub.old"), join(root, "sub"));
+      await rm(join(outside, "deep"), { recursive: true, force: true });
+    }
+  });
   test.skipIf(win)("listIn omits links that leave the root and follows links inside it", async () => {
     await symlink(join(outside, "secret.txt"), join(root, "sub", "out-link"));
     await symlink(join(root, "sub", "deep"), join(root, "sub", "in-dir"));
@@ -428,6 +456,24 @@ describe("openDownload", () => {
     } finally {
       await rm(join(root, "swap.txt.old"), { force: true });
       await rm(join(root, "swap.txt"), { force: true });
+    }
+  });
+  test.skipIf(win)("openDownload refuses a path that leads to another place after the open, even for the same file inside the root", async () => {
+    // Same file (a hard link), still inside the root: only the realpath check after the open sees the change.
+    await mkdir(join(root, "other"));
+    await writeFile(join(root, "sub", "hl2.txt"), "shared");
+    await link(join(root, "sub", "hl2.txt"), join(root, "other", "hl2.txt"));
+    const toDirLink = async () => {
+      await rename(join(root, "sub"), join(root, "sub.old"));
+      await symlink(join(root, "other"), join(root, "sub"));
+    };
+    try {
+      expect(await status(openDownload(root, "sub/hl2.txt", { beforeOpen: toDirLink }))).toBe(403);
+    } finally {
+      await rm(join(root, "sub"), { force: true });
+      await rename(join(root, "sub.old"), join(root, "sub"));
+      await rm(join(root, "sub", "hl2.txt"));
+      await rm(join(root, "other"), { recursive: true });
     }
   });
   test.skipIf(!linux)("openDownload refuses a handle opened through a path outside the root, even for the same file", async () => {

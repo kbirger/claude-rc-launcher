@@ -76,7 +76,11 @@ export async function resolveIn(root: string, rel: string): Promise<string> {
   return resolveParts(await realRoot(root), parts);
 }
 
-function sameFile(a: { dev: number; ino: number }, b: { dev: number; ino: number }): boolean {
+type Ident = { dev: bigint; ino: bigint };
+
+/** Same dev and ino, compared as bigints. On Windows an ino of 0 means the identity is unknown, so it is not refused there. */
+function sameFile(a: Ident, b: Ident): boolean {
+  if (a.ino === 0n || b.ino === 0n) return win && a.ino === b.ino && a.dev === b.dev;
   return a.dev === b.dev && a.ino === b.ino;
 }
 
@@ -87,7 +91,7 @@ async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promis
   const real = await resolveParts(top, parts);
   let pre;
   try {
-    pre = await stat(real);
+    pre = await stat(real, { bigint: true });
   } catch (e) {
     throw notFoundOr(e, new PathError(400, "path not accessible"));
   }
@@ -104,9 +108,25 @@ async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promis
     throw notFoundOr(e, new PathError(400, "cannot open file"));
   }
   try {
-    const st = await handle.stat();
+    const st = await handle.stat({ bigint: true });
     if (!st.isFile()) throw new PathError(400, "not a file");
     if (!sameFile(st, pre)) throw new PathError(403, "path outside the session folder");
+    // The path must still lead to the same place and the same file once the handle is open (the only check on
+    // Windows, where there is no /proc and an ino can be 0).
+    let again: string;
+    try {
+      again = await realpath(join(top, ...parts));
+    } catch {
+      throw new PathError(403, "path outside the session folder");
+    }
+    if (again !== real) throw new PathError(403, "path outside the session folder");
+    let now;
+    try {
+      now = await stat(again, { bigint: true });
+    } catch {
+      throw new PathError(403, "path outside the session folder");
+    }
+    if (!sameFile(now, st)) throw new PathError(403, "path outside the session folder");
     if (process.platform === "linux") {
       let opened: string;
       try {
@@ -116,7 +136,7 @@ async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promis
       }
       if (!within(opened, top)) throw new PathError(403, "path outside the session folder");
     }
-    return { handle, name: parts[parts.length - 1], size: st.size };
+    return { handle, name: parts[parts.length - 1], size: Number(st.size) };
   } catch (e) {
     await handle.close().catch(() => {});
     throw e;
@@ -135,40 +155,108 @@ function kindOf(st: { isDirectory(): boolean; isFile(): boolean }): Entry["kind"
   return st.isDirectory() ? "dir" : st.isFile() ? "file" : "other";
 }
 
+/** Reads the names of a folder and the stat of each entry. Links that leave the root or dangle are left out. */
+type Lister = { names: string[]; entry(name: string): Promise<{ isDirectory(): boolean; isFile(): boolean; size: number; mtime: Date } | undefined>; close(): Promise<void> };
+
+/** By path: off Linux, where there is no /proc/self/fd. */
+function pathLister(dir: string, top: string, names: string[]): Lister {
+  return {
+    names,
+    async entry(name) {
+      const full = join(dir, name);
+      let st = await lstat(full);
+      if (st.isSymbolicLink()) {
+        if (!within(await realpath(full), top)) return undefined;
+        st = await stat(full);
+      }
+      return st;
+    },
+    close: async () => {},
+  };
+}
+
+/** On Linux: open the folder without following a link, prove where the handle is, and read through the handle. */
+async function fdLister(dir: string, top: string): Promise<Lister> {
+  let h: FileHandle;
+  try {
+    h = await open(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // The folder became a symlink after the check: Linux gives ELOOP, or ENOTDIR when O_DIRECTORY sees the link.
+    if (code === "ELOOP") throw new PathError(403, "path outside the session folder");
+    if (code === "ENOTDIR" && (await lstat(dir).then((st) => st.isSymbolicLink(), () => false))) {
+      throw new PathError(403, "path outside the session folder");
+    }
+    throw notFoundOr(e, new PathError(400, "cannot read directory"));
+  }
+  try {
+    const fdDir = `/proc/self/fd/${h.fd}`;
+    let opened: string;
+    try {
+      opened = await readlink(fdDir);
+    } catch {
+      throw new PathError(403, "cannot verify the opened folder");
+    }
+    if (!within(opened, top)) throw new PathError(403, "path outside the session folder");
+    let names: string[];
+    try {
+      names = await readdir(fdDir);
+    } catch (e) {
+      throw notFoundOr(e, new PathError(400, "cannot read directory"));
+    }
+    return {
+      names,
+      async entry(name) {
+        const full = join(fdDir, name);
+        const st = await lstat(full);
+        if (!st.isSymbolicLink()) return st;
+        const real = await realpath(full);
+        if (!within(real, top)) return undefined;
+        return lstat(real);
+      },
+      close: () => h.close().catch(() => {}),
+    };
+  } catch (e) {
+    await h.close().catch(() => {});
+    throw e;
+  }
+}
+
 /** Lists a folder inside the root. Never opens a file. Links that leave the root or dangle are left out. */
-export async function listIn(root: string, rel: string, showHidden: boolean): Promise<Listing> {
+export async function listIn(root: string, rel: string, showHidden: boolean, hooks?: OpenHooks): Promise<Listing> {
   const parts = segments(rel);
   // Hidden means a dot name at any segment, so a hidden folder is not listed unless hidden names are shown.
   if (!showHidden && parts.some((p) => p.startsWith("."))) throw new PathError(404, "path not found");
   const top = await realRoot(root);
   const dir = await resolveParts(top, parts);
-  let names;
+  let lister: Lister;
   try {
     if (!(await stat(dir)).isDirectory()) throw new PathError(400, "not a directory");
-    names = await readdir(dir);
+    await hooks?.beforeOpen?.(dir);
+    lister = process.platform === "linux" ? await fdLister(dir, top) : pathLister(dir, top, await readdir(dir));
   } catch (e) {
     if (e instanceof PathError) throw e;
     throw notFoundOr(e, new PathError(400, "cannot read directory"));
   }
   const entries: Entry[] = [];
-  await mapLimit(
-    names.filter((n) => showHidden || !n.startsWith(".")),
-    16,
-    async (name) => {
-      const full = join(dir, name);
-      try {
-        let st = await lstat(full);
-        if (st.isSymbolicLink()) {
-          if (!within(await realpath(full), top)) return;
-          st = await stat(full);
+  try {
+    await mapLimit(
+      lister.names.filter((n) => showHidden || !n.startsWith(".")),
+      16,
+      async (name) => {
+        try {
+          const st = await lister.entry(name);
+          if (!st) return;
+          const kind = kindOf(st);
+          entries.push(kind === "file" ? { name, kind, size: st.size, mtime: st.mtime.toISOString() } : { name, kind, mtime: st.mtime.toISOString() });
+        } catch {
+          // gone, dangling, or unreadable: leave it out
         }
-        const kind = kindOf(st);
-        entries.push(kind === "file" ? { name, kind, size: st.size, mtime: st.mtime.toISOString() } : { name, kind, mtime: st.mtime.toISOString() });
-      } catch {
-        // gone, dangling, or unreadable: leave it out
-      }
-    },
-  );
+      },
+    );
+  } finally {
+    await lister.close();
+  }
   entries.sort((a, b) => {
     const da = a.kind === "dir" ? 0 : 1;
     const db = b.kind === "dir" ? 0 : 1;
