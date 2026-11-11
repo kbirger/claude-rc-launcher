@@ -1,4 +1,5 @@
 // Small helpers for the session screens. They only use values the API gave.
+import type { TouchedFile } from "./api";
 
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 
@@ -47,4 +48,9 @@ export function sessionsHref(q: Record<string, string | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v) p.set(k, v);
   return `/sessions?${p}`;
+}
+
+/** Rows of the Touched list, in the order the node sends them (newest first). `rel` is set for a file that can be opened. */
+export function touchedRows(files: readonly TouchedFile[], root: string): { file: TouchedFile; rel: string | undefined }[] {
+  return files.map((file) => ({ file, rel: file.inside ? relativeTo(root, file.path) : undefined }));
 }

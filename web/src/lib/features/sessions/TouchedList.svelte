@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import { cn } from "#lib/utils.js";
-  import { ago, lastSegments, relativeTo, sessionsHref } from "./format";
+  import { ago, lastSegments, sessionsHref, touchedRows } from "./format";
   import { touchedQuery } from "./queries";
 
   let { host, instance, session, root, now }: { host: string; instance: string; session: string; root: string; now: number } = $props();
@@ -18,8 +18,7 @@
   <p class="text-muted-foreground">Claude has not written or edited a file in this session.</p>
 {:else}
   <ul class="m-0 list-none rounded-lg border bg-card p-0">
-    {#each [...q.data].reverse() as f (f.path)}
-      {@const rel = f.inside ? relativeTo(root, f.path) : undefined}
+    {#each touchedRows(q.data, root) as { file: f, rel } (f.path)}
       <li>
         {#if rel}
           <a class={cn(row, "no-underline")} href={sessionsHref({ host, instance, session, view: "touched", file: rel })}>

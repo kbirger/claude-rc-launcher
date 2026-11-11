@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionsHref, worktreeName } from "./format";
+import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionsHref, touchedRows, worktreeName } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -61,4 +61,10 @@ test("relativeTo stays case-sensitive for a POSIX root", () => {
 
 test("worktreeName handles a Windows root", () => {
   expect(worktreeName("C:\\r\\p\\.claude\\worktrees\\feat-x")).toBe("feat-x");
+});
+
+test("touchedRows keeps the node order, newest first", () => {
+  const f = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at });
+  const rows = touchedRows([f("/r/new.ts", "2026-11-11T12:00:00Z"), f("/r/mid.ts", "2026-11-11T11:00:00Z"), f("/r/old.ts", "2026-11-11T10:00:00Z")], "/r");
+  expect(rows.map((r) => r.rel)).toEqual(["new.ts", "mid.ts", "old.ts"]);
 });
