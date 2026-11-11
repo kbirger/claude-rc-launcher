@@ -179,7 +179,14 @@ export class InstanceService implements Instances {
     }
     const managed = parseManaged(content);
     if (!managed) throw new HttpError(404, "instance not found");
-    const t = await this.target(parseUnitUser(content) ?? undefined);
+    let t: Target;
+    try {
+      t = await this.target(parseUnitUser(content) ?? undefined);
+    } catch (e) {
+      // The unit names a user that no longer exists (or that this host can no longer switch to).
+      if (e instanceof HttpError && e.status === 400) throw new HttpError(404, "instance user not found");
+      throw e;
+    }
     return { path: managed.path, home: t.runAs.home };
   }
 
