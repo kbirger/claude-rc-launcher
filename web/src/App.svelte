@@ -127,7 +127,9 @@
     <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
   <span class="user">{meQ.data?.name ?? ""}</span>
-  <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"}>Logout</a>
+  <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>
+  </a>
 </header>
 {#if reloadBar}
   <section class="reload" role="status">
@@ -174,7 +176,7 @@
   .logo { border-radius: 6px; }
   header .user { margin-left: auto; min-width: 0; }
   .user { color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .logout { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; color: var(--accent); }
+  .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--accent); }
   main { max-width: 720px; margin: 0 auto; padding: 16px; }
   .new { width: 100%; margin-bottom: 16px; }
   @media (max-width: 480px) {
