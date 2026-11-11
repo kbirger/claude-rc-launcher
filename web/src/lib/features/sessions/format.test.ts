@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionsHref, touchedRows, worktreeName } from "./format";
+import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -67,4 +67,18 @@ test("touchedRows keeps the node order, newest first", () => {
   const f = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at });
   const rows = touchedRows([f("/r/new.ts", "2026-11-11T12:00:00Z"), f("/r/mid.ts", "2026-11-11T11:00:00Z"), f("/r/old.ts", "2026-11-11T10:00:00Z")], "/r");
   expect(rows.map((r) => r.rel)).toEqual(["new.ts", "mid.ts", "old.ts"]);
+});
+
+test("sessionsHref carries hidden=1 and drops a false hidden", () => {
+  expect(sessionsHref({ session: "s", view: "folder", path: "src", hidden: true })).toBe("/sessions?session=s&view=folder&path=src&hidden=1");
+  expect(sessionsHref({ session: "s", view: "folder", hidden: false })).toBe("/sessions?session=s&view=folder");
+});
+
+test("showHidden reads hidden=1 and turns on for a path through a dot name", () => {
+  expect(showHidden("1", "")).toBe(true);
+  expect(showHidden(null, "src/a")).toBe(false);
+  expect(showHidden("0", "src")).toBe(false);
+  expect(showHidden(null, ".github/workflows")).toBe(true);
+  expect(showHidden(undefined, "src/.cache")).toBe(true);
+  expect(showHidden(null, "src\\.cache")).toBe(true);
 });

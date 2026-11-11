@@ -43,12 +43,18 @@ const WT = "/.claude/worktrees/";
 export const worktreeName = (root: string): string | undefined =>
   fwd(root).includes(WT) ? fwd(root).split("/").filter(Boolean).at(-1) : undefined;
 
-/** Link to the sessions page. Empty values are left out. */
-export function sessionsHref(q: Record<string, string | undefined>): string {
+/** Link to the sessions page. Empty and false values are left out; `true` becomes "1" (as in `hidden=1`). */
+export function sessionsHref(q: Record<string, string | boolean | undefined>): string {
   const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(q)) if (v) p.set(k, v);
+  for (const [k, v] of Object.entries(q)) if (v) p.set(k, v === true ? "1" : v);
   return `/sessions?${p}`;
 }
+
+/** True when a segment of the folder path is a dot name: that folder can only be listed with hidden names shown. */
+export const inHiddenPath = (path: string): boolean => fwd(path).split("/").some((s) => s.startsWith("."));
+
+/** Whether the folder view shows dot names: `hidden=1` in the address, or a path that goes through a dot name. */
+export const showHidden = (param: string | null | undefined, path: string): boolean => param === "1" || inHiddenPath(path);
 
 /** Rows of the Touched list, in the order the node sends them (newest first). `rel` is set for a file that can be opened. */
 export function touchedRows(files: readonly TouchedFile[], root: string): { file: TouchedFile; rel: string | undefined }[] {

@@ -1,15 +1,19 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { createQuery } from "@tanstack/svelte-query";
   import { cn } from "#lib/utils.js";
   import { crumbs } from "./crumbs";
-  import { ago, humanSize, joinPath, sessionsHref } from "./format";
+  import { ago, humanSize, inHiddenPath, joinPath, sessionsHref } from "./format";
   import { filesQuery } from "./queries";
 
-  let { host, instance, session, path, now }: { host: string; instance: string; session: string; path: string; now: number } = $props();
+  type Props = { host: string; instance: string; session: string; path: string; hidden: boolean; now: number };
+  let { host, instance, session, path, hidden, now }: Props = $props();
 
-  let hidden = $state(false);
   const q = createQuery(() => filesQuery(host, instance, session, path, hidden));
-  const link = (p: string, file?: string) => sessionsHref({ host, instance, session, view: "folder", path: p, file });
+  // `hidden` lives in the address, so it survives opening a folder or a file and going back.
+  const link = (p: string, file?: string, h = hidden) => sessionsHref({ host, instance, session, view: "folder", path: p, hidden: h, file });
+  // A path through a dot name can only be listed with hidden names shown.
+  const forced = $derived(inHiddenPath(path));
   const row = "flex min-h-11 flex-col justify-center border-b px-3 py-1.5 last:border-b-0";
 </script>
 
@@ -19,7 +23,15 @@
     <a href={link(c.path)} class="inline-flex min-h-11 items-center px-1.5">{c.name}</a>
   {/each}
 </nav>
-<label class="mb-2 flex min-h-11 items-center gap-2"><input type="checkbox" bind:checked={hidden} />Show hidden</label>
+<label class="mb-2 inline-flex min-h-11 items-center gap-2 whitespace-nowrap">
+  <input
+    type="checkbox"
+    class="m-0 size-4 min-h-0 shrink-0 p-0"
+    checked={hidden}
+    disabled={forced}
+    onchange={(e) => goto(link(path, undefined, e.currentTarget.checked), { replace: true, reset: false })}
+  />Show hidden
+</label>
 
 {#if q.isPending}
   <p class="text-muted-foreground">Loading folder...</p>

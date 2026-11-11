@@ -8,12 +8,13 @@
   import { ago, sessionsHref, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
 
-  type Props = { host: string; instance: string; session: string; view: "touched" | "folder"; path: string; file: string; now: number };
-  let { host, instance, session, view, path, file, now }: Props = $props();
+  type Props = { host: string; instance: string; session: string; view: "touched" | "folder"; path: string; hidden: boolean; file: string; now: number };
+  let { host, instance, session, view, path, hidden, file, now }: Props = $props();
 
   const q = createQuery(() => sessionsQuery(host, instance));
   const s = $derived(q.data?.find((x) => x.id === session));
-  const href = (v: "touched" | "folder", extra: { path?: string; file?: string } = {}) => sessionsHref({ host, instance, session, view: v, ...extra });
+  const href = (v: "touched" | "folder", extra: { path?: string; file?: string } = {}) =>
+    sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
   const tab = (v: "touched" | "folder") => (view === v ? "default" : "outline");
 </script>
 
@@ -41,7 +42,7 @@
     {:else if !s}
       <p class="error">Session not found.</p>
     {:else if view === "folder"}
-      <FileBrowser {host} {instance} {session} {path} {now} />
+      <FileBrowser {host} {instance} {session} {path} {hidden} {now} />
     {:else}
       <TouchedList {host} {instance} {session} root={s.root} {now} />
     {/if}
