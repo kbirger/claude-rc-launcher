@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import LogOut from "@tabler/icons-svelte/icons/logout";
+  import Github from "@tabler/icons-svelte/icons/brand-github-filled";
   import Logo from "./shared/ui/Logo.svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { meQuery } from "./features/auth";
@@ -12,6 +13,7 @@
   import { createStartFlow } from "./startflow.svelte";
 
   const HOST_KEY = "claude-rc-host";
+  const REPO_URL = "https://github.com/kbirger/claude-rc-launcher";
 
   // sessionStorage can be missing or throw (private windows, blocked storage); the UI must work without it.
   function remembered(): string {
@@ -130,6 +132,11 @@
   {#key flow.selected}
     <UpdateHistory host={flow.selected} />
   {/key}
+  <footer>
+    <a href={REPO_URL} target="_blank" rel="noopener noreferrer" aria-label="Claude RC Launcher on GitHub" title="Claude RC Launcher on GitHub">
+      <Github size={22} aria-hidden="true" />
+    </a>
+  </footer>
 </div>
 {#if flow.showNew}
   {#key flow.selected}
@@ -152,6 +159,9 @@
   .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted); font-size: 0.9rem; }
   .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--accent); }
+  footer { display: flex; justify-content: center; }
+  footer a { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; color: var(--muted); }
+  footer a:hover { color: var(--accent); }
   .new { width: 100%; margin-bottom: 16px; }
   @media (max-width: 480px) {
     .name { display: none; }
