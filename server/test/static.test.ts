@@ -18,6 +18,7 @@ beforeAll(() => {
   const files = new Map([
     ["/index.html", { path: join(dir, "index.html"), type: "text/html; charset=utf-8" }],
     ["/assets/app-abc.js", { path: join(dir, "assets", "app-abc.js"), type: "text/javascript; charset=utf-8" }],
+    ["/_app/immutable/entry/app.abc.js", { path: join(dir, "assets", "app-abc.js"), type: "text/javascript; charset=utf-8" }],
     ["/assets/app-abc.css", { path: join(dir, "assets", "app-abc.css"), type: "text/css; charset=utf-8" }],
     ["/favicon.svg", { path: join(dir, "favicon.svg"), type: "image/svg+xml" }],
   ]);
@@ -35,6 +36,11 @@ describe("staticHandler", () => {
     expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect(await r.text()).toBe("console.log(1)");
     expect((await app.request("/assets/app-abc.css")).headers.get("content-type")).toContain("text/css");
+  });
+  test("SvelteKit immutable files are cached for a year", async () => {
+    const r = await app.request("/_app/immutable/entry/app.abc.js");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   });
   test("index.html and / are no-cache", async () => {
     for (const p of ["/", "/index.html"]) {

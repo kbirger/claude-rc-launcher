@@ -1,0 +1,4 @@
+# A bare `bun test` at the root runs the server and CLI tests only. The web tests run under vitest
+# (`bun run --cwd web test`, part of `bun run test`), because they compile the Svelte models as the build does.
+[test]
+pathIgnorePatterns = ["web/**"]
