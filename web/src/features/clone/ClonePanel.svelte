@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, untrack } from "svelte";
+  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
-  import { cloneStart, cloneStatus, githubLoginStart, githubLoginStatus, listRepos, type RepoGroup } from "./api";
   import { filterGroups } from "./repofilter";
-  import { startPolling } from "./poll";
+  import { cloneJobQuery, cloneStartMutation, githubLoginStartMutation, isCloneDone, isLoginDone, loginJobQuery, reposQuery } from "./queries";
 
   let { host, parent, user, oncloned, onclose, onbusy }: {
     host: string;
@@ -15,12 +15,9 @@
     onbusy?: (busy: boolean) => void;
   } = $props();
 
+  const client = useQueryClient();
   let repo = $state("");
   let query = $state("");
-  let groups = $state<RepoGroup[]>([]);
-  let listLoading = $state(true);
-  let listError = $state("");
-  let needLogin = $state(false);
   let cloning = $state(false);
   // Every change of `cloning` goes through here, so the parent hears it at once (an $effect would run later).
   function setCloning(v: boolean) {
@@ -31,36 +28,60 @@
   // The login code is short-lived and shown once. It is kept in memory only.
   let login = $state<{ code: string; url: string } | null>(null);
   let loginError = $state("");
-  let destroyed = false;
   let signingIn = $state(false);
-  let stopClone: (() => void) | undefined;
-  let stopLogin: (() => void) | undefined;
+  // A job keeps the host it started on. It is cleared once its result is handled, which also stops its query.
+  let cloneJob = $state<{ host: string; id: string } | null>(null);
+  let loginJob = $state<{ host: string; id: string } | null>(null);
 
+  const reposQ = createQuery(() => reposQuery(host, user));
+  const cloneM = createMutation(() => cloneStartMutation(host));
+  const loginM = createMutation(() => githubLoginStartMutation(host));
+  const cloneQ = createQuery(() => ({ ...cloneJobQuery(cloneJob?.host ?? host, cloneJob?.id ?? ""), enabled: cloneJob !== null }));
+  const loginQ = createQuery(() => ({ ...loginJobQuery(loginJob?.host ?? host, loginJob?.id ?? ""), enabled: loginJob !== null }));
+
+  const needLogin = $derived(reposQ.error instanceof ApiError && reposQ.error.status === 409 && reposQ.error.body?.code === "github-login-required");
+  const listError = $derived(!reposQ.isError || needLogin ? "" : reposQ.error instanceof ApiError ? reposQ.error.message : "Failed to load repos");
+  const groups = $derived(reposQ.isError ? [] : (reposQ.data?.groups ?? []));
+  const listLoading = $derived(reposQ.isPending);
   const shown = $derived(filterGroups(groups, query));
 
-  async function load() {
-    listLoading = true;
-    listError = "";
-    needLogin = false;
-    try {
-      const r = await listRepos(host, user);
-      if (destroyed) return;
-      groups = r.groups;
-    } catch (e) {
-      if (destroyed) return;
-      groups = [];
-      if (e instanceof ApiError && e.status === 409 && e.body?.code === "github-login-required") needLogin = true;
-      else listError = e instanceof ApiError ? e.message : "Failed to load repos";
-    } finally {
-      if (!destroyed) listLoading = false;
-    }
-  }
-  onMount(load);
   onDestroy(() => {
-    destroyed = true;
-    stopClone?.();
-    stopLogin?.();
     if (cloning) onbusy?.(false);
+  });
+
+  // Handle the end of a clone job once: clearing cloneJob makes the next run return early.
+  $effect(() => {
+    if (!cloneJob) return;
+    const failed = cloneQ.isError;
+    const s = cloneQ.data;
+    if (!failed && !(cloneQ.isSuccess && isCloneDone(s))) return;
+    untrack(() => {
+      cloneJob = null;
+      setCloning(false);
+      if (failed) cloneError = "Lost track of the clone. Check the folder before trying again.";
+      else if (s!.state === "done") {
+        if (s!.path) oncloned(s!.path);
+        else cloneError = "The server did not return the folder path.";
+      } else cloneError = s!.error || "Clone failed";
+    });
+  });
+
+  // Handle the end of a sign-in once, in the same way.
+  $effect(() => {
+    if (!loginJob) return;
+    const failed = loginQ.isError;
+    const s = loginQ.data;
+    if (!failed && !(loginQ.isSuccess && isLoginDone(s))) return;
+    untrack(() => {
+      const jobHost = loginJob!.host;
+      loginJob = null;
+      login = null;
+      signingIn = false;
+      if (failed) loginError = "Lost track of the sign-in. Try again.";
+      // A reset (not only an invalidate) drops the 409, so the list shows "Loading repos..." while it reloads.
+      else if (s!.state === "done") client.resetQueries({ queryKey: reposQuery(jobHost, user).queryKey });
+      else loginError = s!.error || "Sign-in failed";
+    });
   });
 
   function pick(name: string) {
@@ -76,28 +97,10 @@
     if (!repo.trim() || cloning) return;
     setCloning(true);
     cloneError = "";
+    const jobHost = host;
     try {
-      const { id } = await cloneStart(host, repo.trim(), parent, user);
-      if (destroyed) return;
-      stopClone?.();
-      stopClone = startPolling({
-        fetch: () => cloneStatus(host, id),
-        interval: 2000,
-        maxFailures: 5,
-        onResult: (s) => {
-          if (s.state === "running") return false;
-          setCloning(false);
-          if (s.state === "done") {
-            if (s.path) oncloned(s.path);
-            else cloneError = "The server did not return the folder path.";
-          } else cloneError = s.error || "Clone failed";
-          return true;
-        },
-        onGiveUp: () => {
-          setCloning(false);
-          cloneError = "Lost track of the clone. Check the folder before trying again.";
-        },
-      });
+      const { id } = await cloneM.mutateAsync({ repo: repo.trim(), parent, user });
+      cloneJob = { host: jobHost, id };
     } catch (e) {
       setCloning(false);
       cloneError = e instanceof ApiError ? e.message : "Failed to clone";
@@ -108,29 +111,11 @@
     if (signingIn) return;
     signingIn = true;
     loginError = "";
+    const jobHost = host;
     try {
-      const r = await githubLoginStart(host, user);
-      if (destroyed) return;
+      const r = await loginM.mutateAsync({ user });
       login = { code: r.code, url: r.url };
-      stopLogin?.();
-      stopLogin = startPolling({
-        fetch: () => githubLoginStatus(host, r.id),
-        interval: 3000,
-        maxFailures: 5,
-        onResult: (s) => {
-          if (s.state === "pending") return false;
-          login = null;
-          signingIn = false;
-          if (s.state === "done") load();
-          else loginError = s.error || "Sign-in failed";
-          return true;
-        },
-        onGiveUp: () => {
-          login = null;
-          signingIn = false;
-          loginError = "Lost track of the sign-in. Try again.";
-        },
-      });
+      loginJob = { host: jobHost, id: r.id };
     } catch (e) {
       signingIn = false;
       loginError = e instanceof ApiError ? e.message : "Failed to start sign-in";
