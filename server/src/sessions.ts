@@ -185,7 +185,7 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
   return out;
 }
 
-const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:"];
+const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:", "[Request interrupted"];
 
 /** The text of a real user prompt, or undefined for meta records, command echoes and system messages. */
 function promptText(r: Record<string, any>): string | undefined {
@@ -202,11 +202,15 @@ function promptText(r: Record<string, any>): string | undefined {
 function tidy(raw: string | undefined): string | undefined {
   const t = (raw ?? "").replace(/\s+/g, " ").trim();
   if (t.length === 0) return undefined;
-  return t.length > NAME_MAX ? t.slice(0, NAME_MAX).trimEnd() + "..." : t;
+  // Cut on code points, not UTF-16 units, so that an emoji is never split in half.
+  const points = Array.from(t);
+  return points.length > NAME_MAX ? points.slice(0, NAME_MAX).join("").trimEnd() + "..." : t;
 }
 
 type Titles = { custom?: string; ai?: string; agent?: string };
+const TITLE_KINDS = ['"custom-title"', '"ai-title"', '"agent-name"'];
 
+/** A title that is empty once whitespace is collapsed is ignored on purpose, so the next kind of name is used. */
 function takeTitle(t: Titles, r: Record<string, any>): void {
   if (r.type === "custom-title" && typeof r.customTitle === "string" && tidy(r.customTitle)) t.custom = r.customTitle;
   else if (r.type === "ai-title" && typeof r.aiTitle === "string" && tidy(r.aiTitle)) t.ai = r.aiTitle;
@@ -234,6 +238,8 @@ async function readName(fs: TranscriptFs, file: string): Promise<string | undefi
   }
   try {
     for (const line of (await fs.tail?.(file, NAME_WINDOW)) ?? []) {
+      // Most tail lines are tool calls and results: skip them before the costly parse.
+      if (!TITLE_KINDS.some((k) => line.includes(k))) continue;
       const r = parse(line);
       if (r) takeTitle(tail, r);
     }
@@ -251,20 +257,35 @@ async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<str
   return name;
 }
 
+/** At most this many transcripts are read for names at once, so that a big folder stays under the open-file limit. */
+const NAME_READS = 8;
+
+/** `fn` over `items` with at most `limit` running at once. Results keep the order of `items`. */
+async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 /** List the sessions of the folder, newest first. Nothing marks Remote Control sessions with certainty, so all are listed. */
 export async function listSessions(o: { home: string; path: string; fs?: TranscriptFs; names?: NameCache }): Promise<Session[]> {
   const fs = o.fs ?? defaultFs;
   const found = await scan({ home: o.home, path: o.path, fs });
-  const sessions = await Promise.all(
-    found.map(async (f): Promise<Session> => {
-      const lastActiveAt = new Date(f.mtimeMs).toISOString();
-      const s: Session = { id: f.id, root: f.root, startedAt: f.startedAt ?? lastActiveAt, lastActiveAt };
-      const name = await nameOf(fs, f, o.names ?? defaultNames);
-      if (name) s.name = name;
-      if (f.branch) s.branch = f.branch;
-      return s;
-    }),
-  );
+  const sessions = await mapLimit(found, NAME_READS, async (f): Promise<Session> => {
+    const lastActiveAt = new Date(f.mtimeMs).toISOString();
+    const s: Session = { id: f.id, root: f.root, startedAt: f.startedAt ?? lastActiveAt, lastActiveAt };
+    const name = await nameOf(fs, f, o.names ?? defaultNames);
+    if (name) s.name = name;
+    if (f.branch) s.branch = f.branch;
+    return s;
+  });
   return sessions.sort((a, b) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0));
 }
 

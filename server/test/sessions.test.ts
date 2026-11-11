@@ -251,6 +251,58 @@ describe("session names", () => {
     expect(await nameOf([prompt("  fix \n\t  the   bug  ")])).toBe("fix the bug");
   });
 
+  test("the cut counts code points, so an emoji at the cut is never split", async () => {
+    expect(await nameOf([prompt("a".repeat(79) + "😀" + "b")])).toBe("a".repeat(79) + "😀...");
+    expect(await nameOf([prompt("😀".repeat(80))])).toBe("😀".repeat(80));
+    expect(await nameOf([prompt("😀".repeat(81))])).toBe("😀".repeat(80) + "...");
+  });
+
+  test("an interrupted-request message is not the first prompt", async () => {
+    expect(await nameOf([prompt("[Request interrupted by user]"), prompt([{ type: "text", text: "[Request interrupted by user for tool use]" }]), prompt("the real one")])).toBe("the real one");
+  });
+
+  test("an empty customTitle is ignored, so the next kind of name is used", async () => {
+    expect(await nameOf([prompt("hi"), title("aiTitle", "ai name"), title("customTitle", "  ")])).toBe("ai name");
+  });
+
+  test("the tail parses only the lines that can hold a title", async () => {
+    const tail = [...Array.from({ length: 200 }, () => tool("Bash", { command: "ls" }, T)), title("customTitle", "late")];
+    const orig = JSON.parse;
+    let calls = 0;
+    JSON.parse = ((...a: Parameters<typeof JSON.parse>) => (calls++, orig(...a))) as typeof JSON.parse;
+    let name: string | undefined;
+    try {
+      name = await nameOf([prompt("hi")], tail);
+    } finally {
+      JSON.parse = orig;
+    }
+    expect(name).toBe("late");
+    expect(calls).toBeLessThan(20);
+  });
+
+  test("names are read at most 8 at a time and stay with their session", async () => {
+    const files: Files = {};
+    const ids = Array.from({ length: 30 }, (_, i) => `${String(i).padStart(8, "0")}-1111-1111-1111-111111111111`);
+    ids.forEach((id, i) => (files[`${proj("-work-proj")}/${id}.jsonl`] = { mtimeMs: 1000 + i, lines: [user(PATH), prompt(`name ${i}`)] }));
+    const base = fakeFs(files);
+    let now = 0;
+    let max = 0;
+    const fs: TranscriptFs = {
+      ...base,
+      async tail(p, b) {
+        now++;
+        max = Math.max(max, now);
+        await new Promise((r) => setTimeout(r, 2));
+        now--;
+        return base.tail!(p, b);
+      },
+    };
+    const out = await listSessions({ home: HOME, path: PATH, fs, names: newNameCache() });
+    expect(max).toBeLessThanOrEqual(8);
+    expect(max).toBeGreaterThan(1);
+    expect(out.map((s) => [s.id, s.name])).toEqual(ids.map((id, i) => [id, `name ${i}`]).reverse());
+  });
+
   test("no name when nothing usable", async () => {
     const out = await listSessions({ home: HOME, path: PATH, fs: fakeFs({ [F1]: { lines: [user(PATH), prompt("<system-reminder>x"), prompt("   ")] } }), names: newNameCache() });
     expect("name" in out[0]).toBe(false);
@@ -298,6 +350,39 @@ describe("transcripts read from disk", () => {
       lines.push(title("customTitle", "late title"));
       await writeFile(join(dir, `${ID1}.jsonl`), lines.join("\n") + "\n");
       expect((await listSessions({ home, path, names: newNameCache() }))[0].name).toBe("late title");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty transcript is not listed", async () => {
+    const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+    try {
+      const dir = join(home, ".claude", "projects", encodeProjectDir(PATH));
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${ID1}.jsonl`), "");
+      expect(await listSessions({ home, path: PATH, names: newNameCache() })).toEqual([]);
+      expect(await touchedFiles({ home, path: PATH, sessionId: ID1, root: PATH })).toEqual([]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a multi-byte character cut at the start of the last 256 KB does not spoil the title", async () => {
+    const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+    try {
+      const dir = join(home, ".claude", "projects", encodeProjectDir(PATH));
+      await mkdir(dir, { recursive: true });
+      const head = [user(PATH), prompt("early")].join("\n") + "\n";
+      const end = title("customTitle", "fin é😀") + "\n";
+      // A line of 4-byte characters that crosses the tail start at every byte offset in turn.
+      for (let shift = 0; shift < 4; shift++) {
+        const filler = rec({ type: "x", pad: "😀".repeat(70 * 1024) + "a".repeat(shift) }) + "\n";
+        const body = head + filler + rec({ type: "y", pad: "é".repeat(100 * 1024) }) + "\n" + end;
+        await writeFile(join(dir, `${ID1}.jsonl`), body);
+        expect(Buffer.byteLength(body)).toBeGreaterThan(256 * 1024);
+        expect((await listSessions({ home, path: PATH, names: newNameCache() }))[0].name).toBe("fin é😀");
+      }
     } finally {
       await rm(home, { recursive: true, force: true });
     }
