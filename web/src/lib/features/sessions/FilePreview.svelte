@@ -2,13 +2,15 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { Button } from "#lib/components/ui/button/index.js";
   import { downloadUrl } from "./api";
-  import { humanSize } from "./format";
+  import { baseName, humanSize } from "./format";
   import { previewQuery } from "./queries";
 
-  let { host, instance, session, file, back }: { host: string; instance: string; session: string; file: string; back: string } = $props();
+  // `abs`: `file` is the absolute path of a touched file outside the session folder.
+  type Props = { host: string; instance: string; session: string; file: string; abs?: boolean; back: string };
+  let { host, instance, session, file, abs = false, back }: Props = $props();
 
-  const q = createQuery(() => previewQuery(host, instance, session, file));
-  const name = $derived(file.split("/").at(-1) ?? file);
+  const q = createQuery(() => previewQuery(host, instance, session, file, abs));
+  const name = $derived(baseName(file));
 </script>
 
 <div class="grid gap-3">
@@ -21,6 +23,10 @@
     {@const p = q.data}
     <div class="grid gap-1">
       <div class="font-semibold [overflow-wrap:anywhere]">{p.name}</div>
+      {#if abs}
+        <div class="text-sm text-muted-foreground [overflow-wrap:anywhere]">{file}</div>
+        <div class="text-sm text-muted-foreground">outside the session folder</div>
+      {/if}
       <div class="text-muted-foreground">{humanSize(p.size)}</div>
     </div>
     {#if p.kind === "text"}
@@ -31,6 +37,6 @@
     {:else}
       <p class="text-muted-foreground">This file is not text, so it has no preview.</p>
     {/if}
-    <Button size="touch" href={downloadUrl(host, instance, session, file)} download={name}>Download</Button>
+    <Button size="touch" href={downloadUrl(host, instance, session, file, { abs })} download={name}>Download</Button>
   {/if}
 </div>

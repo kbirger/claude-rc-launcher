@@ -112,3 +112,26 @@ test("sessionDetail lists id, age and a real branch only", () => {
   expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", "2h ago"]);
   expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", "2h ago"]);
 });
+
+test("sessionsHref encodes an abs value so it comes back unchanged", () => {
+  for (const abs of ["/home/u/a b#c?d%e&f+g é.txt", "C:\\Users\\u\\ü.txt", "/x/%2e%2e/y"]) {
+    const href = sessionsHref({ host: "h", instance: "i", session: "s", view: "touched", abs });
+    expect(href.startsWith("/sessions?")).toBe(true);
+    expect(href).not.toContain("#");
+    expect(new URL(href, "https://hub.example").origin).toBe("https://hub.example");
+    expect(new URL(href, "https://hub.example").searchParams.get("abs")).toBe(abs);
+  }
+});
+
+test("touchedRows links every row: inside files by relative path, the rest by abs", () => {
+  const rows = touchedRows(
+    [
+      { path: "/r/src/a.ts", inside: true, tool: "edit", at: "" },
+      { path: "/home/u/notes.md", inside: false, tool: "write", at: "" },
+      { path: "/r", inside: true, tool: "write", at: "" },
+    ],
+    "/r",
+  );
+  expect(rows.map((r) => r.link)).toEqual([{ file: "src/a.ts" }, { abs: "/home/u/notes.md" }, { abs: "/r" }]);
+  expect(rows[1]!.rel).toBeUndefined();
+});

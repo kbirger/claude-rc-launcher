@@ -84,3 +84,28 @@ test("a literal + in a name stays a + through listFiles, getPreview and download
   for (const c of calls) expect(new URL(c.url, "http://x").searchParams.get("path")).toBe(name);
   expect(new URL(downloadUrl("h", "i", SID, name), "http://x").searchParams.get("path")).toBe(name);
 });
+
+test("getPreview and downloadUrl send abs instead of path for a touched file outside the folder", async () => {
+  stub(200, {});
+  const abs = "/home/u/a b#c?d%e&f+g é.txt";
+  await getPreview("h", "i", SID, abs, { abs: true });
+  const q = new URL(calls[0]!.url, "http://x").searchParams;
+  expect(q.get("abs")).toBe(abs);
+  expect(q.has("path")).toBe(false);
+  expect(calls[0]!.url.startsWith(`/api/hosts/h/instances/i/sessions/${SID}/file?abs=`)).toBe(true);
+  const u = downloadUrl("h", "i", SID, abs, { abs: true });
+  expect(u).toBe(`/api/hosts/h/instances/i/sessions/${SID}/download?abs=${encodeURIComponent(abs)}`);
+  expect(u).not.toContain("#");
+  const d = new URL(u, "http://x").searchParams;
+  expect(d.get("abs")).toBe(abs);
+  expect(d.has("path")).toBe(false);
+  const w = "C:\\Users\\u\\naïve.txt";
+  expect(new URL(downloadUrl("h", "i", SID, w, { abs: true }), "http://x").searchParams.get("abs")).toBe(w);
+});
+
+test("getPreview and downloadUrl keep path by default", async () => {
+  stub(200, {});
+  await getPreview("h", "i", SID, "a.txt", {});
+  expect(new URL(calls[0]!.url, "http://x").searchParams.get("path")).toBe("a.txt");
+  expect(downloadUrl("h", "i", SID, "a.txt", { abs: false })).toBe(`/api/hosts/h/instances/i/sessions/${SID}/download?path=a.txt`);
+});

@@ -37,3 +37,8 @@ test("preview is read once on each open", () => {
   expect(q.retry).toBe(false);
   expect(q.refetchOnWindowFocus).toBe(false);
 });
+
+test("a preview by abs has its own key", () => {
+  expect(previewQuery("h", "i", "s", "/p", true).queryKey).toEqual(["session-preview", "h", "i", "s", "abs", "/p"]);
+  expect(previewQuery("h", "i", "s", "/p").queryKey).not.toEqual(previewQuery("h", "i", "s", "/p", true).queryKey);
+});

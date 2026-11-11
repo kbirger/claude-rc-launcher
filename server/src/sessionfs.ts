@@ -14,9 +14,11 @@ export type Preview = { name: string; size: number; kind: "text" | "binary"; tex
 export type Download = { name: string; size: number; stream: ReadableStream<Uint8Array>; close(): void };
 /**
  * `beforeOpen` is a test seam that runs between the path check and the open. `exactRoot` requires the root to be a
- * real path already (as sessionapi checked it): a root that became a link since then is 404.
+ * real path already (as sessionapi checked it): a root that became a link since then is 404. `exactPath` refuses a
+ * path that goes through any link below the root, even one that stays inside it (a touched file outside the session
+ * folder: its parent is the root, and a link would name a file that is not on the touched list).
  */
-export type OpenHooks = { beforeOpen?: (real: string) => Promise<void>; exactRoot?: boolean };
+export type OpenHooks = { beforeOpen?: (real: string) => Promise<void>; exactRoot?: boolean; exactPath?: boolean };
 
 export const PREVIEW_LIMIT = 512 * 1024;
 /** The hub reads at most 1 MB of a JSON answer, so a preview stays below this many bytes once encoded. */
@@ -94,6 +96,7 @@ async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promis
   const parts = segments(rel);
   const top = await realRoot(root, hooks?.exactRoot);
   const real = await resolveParts(top, parts);
+  if (hooks?.exactPath && real !== join(top, ...parts)) throw new PathError(403, "path outside the session folder");
   let pre;
   try {
     pre = await stat(real, { bigint: true });

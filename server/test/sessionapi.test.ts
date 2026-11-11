@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -300,5 +300,237 @@ describe("file and download", () => {
     await new Promise((res) => setTimeout(res, 20));
     expect(closed).toBeGreaterThan(0);
     expect(cancelled).toBe(1);
+  });
+});
+
+describe("touched files outside the session folder (abs)", () => {
+  // The only gate for a file outside the root is exact membership in the session's touched list.
+  let out: string;
+  const touchedLine = (tool: string, p: string) =>
+    JSON.stringify({ type: "assistant", timestamp: "2026-11-11T10:01:00Z", message: { content: [{ type: "tool_use", name: tool, input: tool === "NotebookEdit" ? { notebook_path: p } : { file_path: p } }] } });
+  /** One session at `root` whose transcript touched `paths` (Write each). */
+  function withTouched(paths: string[]): TranscriptFs {
+    const first = JSON.stringify({ type: "user", cwd: root, timestamp: "2026-11-11T10:00:00Z" });
+    return {
+      readdir: async () => [`${SID}.jsonl`],
+      stat: async () => ({ mtimeMs: 1000 }),
+      lines: async function* () {
+        yield first;
+        for (const p of paths) yield touchedLine("Write", p);
+      },
+    };
+  }
+  function app(paths: string[], deps: Partial<Parameters<typeof sessionApi>[0]> = {}) {
+    const inst = { claudeHome: async () => ({ path: root, home: "/home/x" }) } as unknown as Instances;
+    const a = new Hono();
+    a.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: withTouched(paths), ...deps }));
+    a.onError(onError);
+    return a;
+  }
+  const q = (abs: string) => `abs=${encodeURIComponent(abs)}`;
+  const both = async (a: Hono, query: string) => {
+    const f = await get(a, `/${SID}/file?${query}`);
+    const d = await get(a, `/${SID}/download?${query}`);
+    return { f, d, fBody: await f.text(), dBody: await d.text() };
+  };
+
+  beforeEach(async () => {
+    out = join(dir, "outside");
+    await mkdir(out);
+    await writeFile(join(out, "t.txt"), "touched outside");
+    await writeFile(join(out, "sibling.txt"), "secret sibling");
+  });
+
+  test("a touched path outside the root is previewed and downloaded byte for byte", async () => {
+    const bytes = new Uint8Array([0, 1, 2, 255, 10, 13, 0x80, 0x7f]);
+    await writeFile(join(out, "b.bin"), bytes);
+    const a = app([join(out, "t.txt"), join(out, "b.bin")]);
+    const f = await get(a, `/${SID}/file?${q(join(out, "t.txt"))}`);
+    expect(f.status).toBe(200);
+    expect(f.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await f.json()).toMatchObject({ name: "t.txt", kind: "text", text: "touched outside" });
+    const d = await get(a, `/${SID}/download?${q(join(out, "b.bin"))}`);
+    expect(d.status).toBe(200);
+    expect(d.headers.get("content-type")).toBe("application/octet-stream");
+    expect(d.headers.get("content-disposition")).toBe(`attachment; filename="b.bin"; filename*=UTF-8''b.bin`);
+    expect(d.headers.get("content-length")).toBe(String(bytes.length));
+    expect(new Uint8Array(await d.arrayBuffer())).toEqual(bytes);
+  });
+
+  test("a touched path inside the root is also served by abs", async () => {
+    const r = await get(app([join(root, "a.txt")]), `/${SID}/file?${q(join(root, "a.txt"))}`);
+    expect(await r.json()).toMatchObject({ text: "hello" });
+  });
+
+  test("a path that is not on the touched list is 404 for preview and download", async () => {
+    const a = app([join(out, "t.txt")]);
+    for (const p of ["/etc/hostname", "/etc/passwd", join(out, "sibling.txt"), out, join(out, "t.txt.bak"), join(root, "a.txt"), "/"]) {
+      const { f, d, fBody, dBody } = await both(a, q(p));
+      expect(f.status).toBe(404);
+      expect(d.status).toBe(404);
+      expect(JSON.parse(fBody)).toEqual({ error: "file was not touched by this session" });
+      expect(JSON.parse(dBody)).toEqual({ error: "file was not touched by this session" });
+    }
+  });
+
+  test("the not-touched answer is the same for a file that exists and one that does not", async () => {
+    const a = app([join(out, "t.txt")]);
+    const x = await both(a, q("/etc/hostname"));
+    const y = await both(a, q("/nonexistent-dir-xyz/nope"));
+    expect([x.f.status, x.d.status]).toEqual([y.f.status, y.d.status]);
+    expect(x.fBody).toBe(y.fBody);
+    expect(x.dBody).toBe(y.dBody);
+    expect([...x.f.headers.entries()]).toEqual([...y.f.headers.entries()]);
+  });
+
+  test("an empty touched list serves nothing", async () => {
+    const { f, d } = await both(app([]), q(join(out, "t.txt")));
+    expect(f.status).toBe(404);
+    expect(d.status).toBe(404);
+  });
+
+  test("abs with .. segments is allowed only when it resolves exactly to a touched path", async () => {
+    const a = app([join(out, "t.txt")]);
+    const ok = await get(a, `/${SID}/download?${q(`${out}/../outside/./t.txt`)}`);
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toBe("touched outside");
+    const ok2 = await get(a, `/${SID}/file?${q(`/${out}//t.txt`)}`);
+    expect(ok2.status).toBe(200);
+    await ok2.arrayBuffer();
+    for (const p of [`${out}/../outside/sibling.txt`, `${out}/t.txt/../sibling.txt`, `${root}/../outside/sibling.txt`]) {
+      const { f, d } = await both(a, q(p));
+      expect(f.status).toBe(404);
+      expect(d.status).toBe(404);
+    }
+  });
+
+  test("encoding tricks do not reach an untouched file", async () => {
+    const a = app([join(out, "t.txt")]);
+    // Double-encoded dots stay literal names.
+    for (const query of [`abs=${encodeURIComponent(`${out}/%2e%2e/outside/sibling.txt`)}`, `abs=${out}/%252e%252e/sibling.txt`]) {
+      const { f, d } = await both(a, query);
+      expect(f.status).toBe(404);
+      expect(d.status).toBe(404);
+    }
+    // Case differs: a different file on Linux.
+    if (process.platform === "linux") {
+      const { f, d } = await both(a, q(join(out, "T.txt")));
+      expect(f.status).toBe(404);
+      expect(d.status).toBe(404);
+    }
+  });
+
+  test("a repeated abs uses only the first value, which is checked", async () => {
+    const a = app([join(out, "t.txt")]);
+    const r = await get(a, `/${SID}/download?${q(join(out, "sibling.txt"))}&${q(join(out, "t.txt"))}`);
+    expect(r.status).toBe(404);
+    expect(await r.text()).not.toContain("secret");
+  });
+
+  test("a touched path whose final name is a symlink is refused, even to a sibling", async () => {
+    await symlink(join(out, "sibling.txt"), join(out, "link-sib.txt"));
+    await symlink("/etc/hostname", join(out, "link-etc.txt"));
+    const a = app([join(out, "link-sib.txt"), join(out, "link-etc.txt")]);
+    for (const n of ["link-sib.txt", "link-etc.txt"]) {
+      const { f, d, fBody, dBody } = await both(a, q(join(out, n)));
+      expect([403, 404]).toContain(f.status);
+      expect([403, 404]).toContain(d.status);
+      expect(fBody + dBody).not.toContain("secret sibling");
+    }
+  });
+
+  test("a touched path whose parent folder is a symlink is refused", async () => {
+    // The parent was a real folder when Claude wrote the file, then became a link to a folder with a same-named secret.
+    const elsewhere = join(dir, "elsewhere");
+    await mkdir(elsewhere);
+    await writeFile(join(elsewhere, "t.txt"), "secret elsewhere");
+    const linked = join(dir, "linked");
+    await symlink(elsewhere, linked);
+    const a = app([join(linked, "t.txt")]);
+    const { f, d, fBody, dBody } = await both(a, q(join(linked, "t.txt")));
+    expect([403, 404]).toContain(f.status);
+    expect([403, 404]).toContain(d.status);
+    expect(fBody + dBody).not.toContain("secret elsewhere");
+  });
+
+  test("a parent folder swapped for a symlink between the check and the open is refused", async () => {
+    const elsewhere = join(dir, "elsewhere");
+    await mkdir(elsewhere);
+    await writeFile(join(elsewhere, "t.txt"), "secret elsewhere");
+    const swap = async () => {
+      await rename(out, out + ".old");
+      await symlink(elsewhere, out);
+    };
+    const restore = async () => {
+      await rm(out, { force: true });
+      await rename(out + ".old", out);
+    };
+    const mod = await import("../src/sessionfs");
+    const a = app([join(out, "t.txt")], {
+      openDownload: (r, rel, hooks) => mod.openDownload(r, rel, { ...hooks, beforeOpen: swap }),
+      previewIn: (r, rel, hooks) => mod.previewIn(r, rel, { ...hooks, beforeOpen: swap }),
+    });
+    const d = await get(a, `/${SID}/download?${q(join(out, "t.txt"))}`);
+    expect([403, 404]).toContain(d.status);
+    expect(await d.text()).not.toContain("secret");
+    await restore();
+    const f = await get(a, `/${SID}/file?${q(join(out, "t.txt"))}`);
+    expect([403, 404]).toContain(f.status);
+    expect(await f.text()).not.toContain("secret");
+    await restore();
+  });
+
+  test("a final name swapped for a symlink to a sibling between the check and the open is refused", async () => {
+    const toLink = async (real: string) => {
+      await rename(real, real + ".old");
+      await symlink(join(out, "sibling.txt"), real);
+    };
+    const mod = await import("../src/sessionfs");
+    const a = app([join(out, "t.txt")], { openDownload: (r, rel, hooks) => mod.openDownload(r, rel, { ...hooks, beforeOpen: toLink }) });
+    const d = await get(a, `/${SID}/download?${q(join(out, "t.txt"))}`);
+    expect([403, 404]).toContain(d.status);
+    expect(await d.text()).not.toContain("secret");
+  });
+
+  test("a touched path that was deleted, or whose folder is gone, is 404", async () => {
+    const a = app([join(out, "t.txt"), join(dir, "gone", "x.txt")]);
+    await rm(join(out, "t.txt"));
+    for (const p of [join(out, "t.txt"), join(dir, "gone", "x.txt")]) {
+      const { f, d } = await both(a, q(p));
+      expect(f.status).toBe(404);
+      expect(d.status).toBe(404);
+    }
+  });
+
+  test("a touched folder is not a file", async () => {
+    const { f, d } = await both(app([out]), q(out));
+    expect(f.status).toBe(400);
+    expect(d.status).toBe(400);
+  });
+
+  test("bad requests are 400: both, neither, relative, empty, NUL, control, too long", async () => {
+    const a = app([join(out, "t.txt")]);
+    const bad = [
+      `path=a.txt&${q(join(out, "t.txt"))}`,
+      `path=&${q(join(out, "t.txt"))}`,
+      "",
+      "abs=",
+      q("outside/t.txt"),
+      q("../outside/t.txt"),
+      q(`${out}/t\u0000.txt`),
+      q(`${out}/t\n.txt`),
+      q("/" + "a".repeat(4096)),
+    ];
+    for (const query of bad) {
+      const { f, d } = await both(a, query);
+      expect([query, f.status]).toEqual([query, 400]);
+      expect([query, d.status]).toEqual([query, 400]);
+    }
+  });
+
+  test("files (the folder browser) refuses abs with 400", async () => {
+    const r = await get(app([out]), `/${SID}/files?${q(out)}`);
+    expect(r.status).toBe(400);
+    await r.arrayBuffer();
   });
 });

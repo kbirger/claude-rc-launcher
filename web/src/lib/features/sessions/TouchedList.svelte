@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import { cn } from "#lib/utils.js";
-  import { ago, lastSegments, sessionsHref, touchedRows } from "./format";
+  import { ago, sessionsHref, touchedRows } from "./format";
   import { touchedQuery } from "./queries";
 
   let { host, instance, session, root, now }: { host: string; instance: string; session: string; root: string; now: number } = $props();
@@ -18,19 +18,16 @@
   <p class="text-muted-foreground">Claude has not written or edited a file in this session.</p>
 {:else}
   <ul class="m-0 list-none rounded-lg border bg-card p-0">
-    {#each touchedRows(q.data, root) as { file: f, rel } (f.path)}
+    {#each touchedRows(q.data, root) as { file: f, rel, link } (f.path)}
       <li>
-        {#if rel}
-          <a class={cn(row, "no-underline")} href={sessionsHref({ host, instance, session, view: "touched", file: rel })}>
+        <a class={cn(row, "no-underline")} href={sessionsHref({ host, instance, session, view: "touched", ...link })}>
+          {#if rel}
             <span class="truncate">{rel}</span>
-            <span class="text-xs text-muted-foreground">{f.tool} · {ago(f.at, now)}</span>
-          </a>
-        {:else}
-          <div class={cn(row, "opacity-50")} role="link" aria-disabled="true">
-            <span class="truncate">{lastSegments(f.path)}</span>
-            <span class="text-xs text-muted-foreground">{f.inside ? "cannot be opened from here" : "outside the session folder"}</span>
-          </div>
-        {/if}
+          {:else}
+            <span class="[overflow-wrap:anywhere]">{f.path}</span>
+          {/if}
+          <span class="text-xs text-muted-foreground">{f.inside ? "" : "outside the session folder · "}{f.tool} · {ago(f.at, now)}</span>
+        </a>
       </li>
     {/each}
   </ul>

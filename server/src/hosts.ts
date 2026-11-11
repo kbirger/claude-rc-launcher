@@ -285,6 +285,15 @@ export function hostsApi(o: {
     if (p.length > MAX_PATH_QUERY || p.includes("\0")) throw new HttpError(400, "invalid path");
     return p;
   };
+  /** The file a file or download request names: exactly one of `path` and `abs`, each checked like `path`. */
+  const fileQuery = (c: Context): { path: string } | { abs: string } => {
+    const abs = c.req.query("abs");
+    if (abs === undefined) return { path: pathQuery(c, true)! };
+    if (c.req.query("path") !== undefined) throw new HttpError(400, "give path or abs, not both");
+    // Only the node knows its own path rules (it may be Windows), so absoluteness is checked there.
+    if (abs.length > MAX_PATH_QUERY || abs.includes("\0")) throw new HttpError(400, "invalid path");
+    return { abs };
+  };
   const sessionsBase = (c: Context) => `/api/instances/${instanceId(c)}/sessions`;
 
   remote.get("/instances/:id/sessions", forwardJson((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
@@ -293,6 +302,7 @@ export function hostsApi(o: {
     "/instances/:id/sessions/:sid/files",
     forwardJson((c, k) => {
       const base = `${sessionsBase(c)}/${sessionId(c)}/files`;
+      if (c.req.query("abs") !== undefined) throw new HttpError(400, "abs is not accepted here");
       const p = pathQuery(c);
       const query = { ...(p !== undefined ? { path: p } : {}), ...(c.req.query("hidden") === "1" ? { hidden: "1" } : {}) };
       return k.call("GET", base, { ...(Object.keys(query).length ? { query } : {}), timeoutMs: requestTimeoutMs });
@@ -302,17 +312,17 @@ export function hostsApi(o: {
     "/instances/:id/sessions/:sid/file",
     forwardJson((c, k) => {
       const base = `${sessionsBase(c)}/${sessionId(c)}/file`;
-      const p = pathQuery(c);
-      return k.call("GET", base, { ...(p !== undefined ? { query: { path: p } } : {}), timeoutMs: requestTimeoutMs });
+      return k.call("GET", base, { query: fileQuery(c), timeoutMs: requestTimeoutMs });
     }),
   );
   remote.get("/instances/:id/sessions/:sid/download", async (c) => {
     const { id, client } = clientOf(c);
     const base = `${sessionsBase(c)}/${sessionId(c)}/download`;
-    const p = pathQuery(c, true)!;
+    const query = fileQuery(c);
+    const named = "abs" in query ? query.abs : query.path;
     if (!client.download) return c.json({ error: "downloads are not available for this host" }, 501);
     try {
-      const r = await client.download(base, { query: { path: p }, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
+      const r = await client.download(base, { query, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
       if (r.status !== 200) {
         const text = await readSmall(r.body, MAX_ERROR_BODY);
         // Only an error status passes; a 204 or a 3xx from the node is not an answer the browser can use.
@@ -327,7 +337,7 @@ export function hostsApi(o: {
       }
       // Every header but the length is built here: a node never chooses how the browser treats the bytes.
       const length = r.headers.get("content-length");
-      const headers = downloadHeaders(lastSegment(p), length !== null && /^\d+$/.test(length) ? length : undefined);
+      const headers = downloadHeaders(lastSegment(named), length !== null && /^\d+$/.test(length) ? length : undefined);
       return new Response(r.body, { status: 200, headers });
     } catch (e) {
       if (e instanceof HostError) return c.json({ error: e.message, host: id }, 502);

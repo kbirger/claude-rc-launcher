@@ -21,7 +21,7 @@
 {:else}
   {#key `${host}|${instance}`}
     {#if session}
-      <SessionView {host} {instance} {session} {view} {path} {hidden} file={p.get("file") ?? ""} {now} />
+      <SessionView {host} {instance} {session} {view} {path} {hidden} file={p.get("file") ?? ""} abs={p.get("abs") ?? ""} {now} />
     {:else}
       <SessionList {host} {instance} {now} />
     {/if}

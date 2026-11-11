@@ -164,3 +164,58 @@ describe("hub download", () => {
     expect(logs.join("\n")).not.toContain("secret.txt");
   });
 });
+
+describe("hub abs for touched files outside the session folder", () => {
+  const nodeRes = (body: BodyInit | null, h: Record<string, string> = {}, status = 200) => ({ status, headers: new Headers(h), body: body === null ? null : new Response(body).body });
+
+  test("file forwards abs alone and validates it", async () => {
+    const calls: any[] = [];
+    const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 200, body: {} })) as any });
+    const abs = "/home/u/notes/a b#?%&+é.txt";
+    expect((await app.request(`${base}/${SID}/file?abs=${encodeURIComponent(abs)}`)).status).toBe(200);
+    expect(calls[0][1]).toBe(`/api/instances/${ID}/sessions/${SID}/file`);
+    expect(calls[0][2].query).toEqual({ abs });
+    // A Windows path passes the hub: only the node knows its own path rules.
+    await app.request(`${base}/${SID}/file?abs=${encodeURIComponent("C:\\Users\\u\\a.txt")}`);
+    expect(calls[1][2].query).toEqual({ abs: "C:\\Users\\u\\a.txt" });
+    const n = calls.length;
+    for (const q of [`abs=a%00b`, `abs=${"a".repeat(4097)}`, `abs=%2Fa&path=b`, ``]) {
+      expect([q, (await app.request(`${base}/${SID}/file?${q}`)).status]).toEqual([q, 400]);
+    }
+    expect(calls.length).toBe(n);
+  });
+
+  test("files does not forward abs", async () => {
+    const calls: any[] = [];
+    const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 200, body: {} })) as any });
+    expect((await app.request(`${base}/${SID}/files?abs=%2Fetc`)).status).toBe(400);
+    expect(calls.length).toBe(0);
+  });
+
+  test("download forwards abs, names it from its last segment and keeps the hub headers", async () => {
+    const got: any[] = [];
+    const app = build({ download: async (p: string, o: any) => (got.push([p, o]), nodeRes("<b>hi</b>", { "content-type": "text/html", "content-length": "9", "content-disposition": "inline; filename=evil.html" })) });
+    const res = await app.request(`${base}/${SID}/download?abs=${encodeURIComponent("/home/u/out/naïve.html")}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<b>hi</b>");
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-disposition")).toBe(`attachment; filename="na_ve.html"; filename*=UTF-8''na%C3%AFve.html`);
+    expect(got[0][0]).toBe(`/api/instances/${ID}/sessions/${SID}/download`);
+    expect(got[0][1].query).toEqual({ abs: "/home/u/out/naïve.html" });
+    const w = await app.request(`${base}/${SID}/download?abs=${encodeURIComponent("C:\\Users\\u\\report final.pdf")}`);
+    expect(w.headers.get("content-disposition")).toBe(`attachment; filename="report final.pdf"; filename*=UTF-8''report%20final.pdf`);
+    expect(got[1][1].query).toEqual({ abs: "C:\\Users\\u\\report final.pdf" });
+    await w.text();
+  });
+
+  test("download refuses abs with path, a NUL, or too long, without calling the node", async () => {
+    let called = 0;
+    const app = build({ download: async () => (called++, nodeRes("x")) });
+    for (const q of [`abs=%2Fa&path=a`, `abs=a%00b`, `abs=${"a".repeat(4097)}`, ``]) {
+      expect([q, (await app.request(`${base}/${SID}/download?${q}`)).status]).toEqual([q, 400]);
+    }
+    expect(called).toBe(0);
+  });
+});

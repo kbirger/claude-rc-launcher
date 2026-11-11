@@ -5,7 +5,7 @@ export function dispositionFor(name: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
-/** The last name of a relative path, split on `/` and `\`. "download" when there is none. */
+/** The last name of a path (relative or absolute), split on `/` and `\`. "download" when there is none. */
 export function lastSegment(path: string): string {
   const parts = path.split(/[\\/]/).filter((s) => s !== "" && s !== "." && s !== "..");
   return parts[parts.length - 1] ?? "download";

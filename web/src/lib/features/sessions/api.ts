@@ -22,12 +22,16 @@ export const listFiles = (host: string, instance: string, session: string, path:
   return request<Listing>("GET", `${sessionBase(host, instance, session)}/files${qs ? `?${qs}` : ""}`);
 };
 
-export const getPreview = (host: string, instance: string, session: string, path: string) =>
-  request<Preview>("GET", `${sessionBase(host, instance, session)}/file?${new URLSearchParams({ path })}`);
+/** `abs: true`: `path` is the absolute path of a touched file (it may be outside the session folder). */
+export type FileOpts = { abs?: boolean };
+const fileKey = (o: FileOpts) => (o.abs ? "abs" : "path");
+
+export const getPreview = (host: string, instance: string, session: string, path: string, o: FileOpts = {}) =>
+  request<Preview>("GET", `${sessionBase(host, instance, session)}/file?${new URLSearchParams({ [fileKey(o)]: path })}`);
 
 /** A plain link: the browser sends its login cookie with it. */
-export const downloadUrl = (host: string, instance: string, session: string, path: string) =>
-  `${sessionBase(host, instance, session)}/download?path=${encodeURIComponent(path)}`;
+export const downloadUrl = (host: string, instance: string, session: string, path: string, o: FileOpts = {}) =>
+  `${sessionBase(host, instance, session)}/download?${fileKey(o)}=${encodeURIComponent(path)}`;
 
 /** True when the node has no session files feature (404 or 501). */
 export const isUnsupported = (e: unknown): boolean => e instanceof ApiError && (e.status === 404 || e.status === 501);

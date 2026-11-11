@@ -9,8 +9,9 @@
   import { ago, sessionsHref, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
 
-  type Props = { host: string; instance: string; session: string; view: "touched" | "folder"; path: string; hidden: boolean; file: string; now: number };
-  let { host, instance, session, view, path, hidden, file, now }: Props = $props();
+  // `abs`: a touched file opened by its absolute path (it may be outside the session folder). It wins over `file`.
+  type Props = { host: string; instance: string; session: string; view: "touched" | "folder"; path: string; hidden: boolean; file: string; abs?: string; now: number };
+  let { host, instance, session, view, path, hidden, file, abs = "", now }: Props = $props();
 
   const q = createQuery(() => sessionsQuery(host, instance));
   const s = $derived(q.data?.find((x) => x.id === session));
@@ -31,7 +32,9 @@
     </div>
   {/if}
 
-  {#if file}
+  {#if abs}
+    <FilePreview {host} {instance} {session} file={abs} abs back={href("touched")} />
+  {:else if file}
     <FilePreview {host} {instance} {session} {file} back={view === "folder" ? href("folder", { path }) : href("touched")} />
   {:else}
     <div class="flex gap-2">

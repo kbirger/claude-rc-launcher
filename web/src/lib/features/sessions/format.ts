@@ -56,10 +56,22 @@ export const inHiddenPath = (path: string): boolean => fwd(path).split("/").some
 /** Whether the folder view shows dot names: `hidden=1` in the address, or a path that goes through a dot name. */
 export const showHidden = (param: string | null | undefined, path: string): boolean => param === "1" || inHiddenPath(path);
 
-/** Rows of the Touched list, in the order the node sends them (newest first). `rel` is set for a file that can be opened. */
-export function touchedRows(files: readonly TouchedFile[], root: string): { file: TouchedFile; rel: string | undefined }[] {
-  return files.map((file) => ({ file, rel: file.inside ? relativeTo(root, file.path) : undefined }));
+/**
+ * Rows of the Touched list, in the order the node sends them (newest first). `rel` is set for a file inside the
+ * session folder. `link` is the query that opens the file: `file` (relative) for those, `abs` for every other row.
+ */
+export function touchedRows(
+  files: readonly TouchedFile[],
+  root: string,
+): { file: TouchedFile; rel: string | undefined; link: { file: string } | { abs: string } }[] {
+  return files.map((file) => {
+    const rel = file.inside ? relativeTo(root, file.path) : undefined;
+    return { file, rel, link: rel !== undefined ? { file: rel } : { abs: file.path } };
+  });
 }
+
+/** The last name of a path, split on "/" and "\\". */
+export const baseName = (path: string): string => fwd(path).split("/").filter(Boolean).at(-1) ?? path;
 
 /** The session name, or undefined when it has none (the list then shows a placeholder). */
 export const sessionTitle = (s: Session): string | undefined => s.name || undefined;
