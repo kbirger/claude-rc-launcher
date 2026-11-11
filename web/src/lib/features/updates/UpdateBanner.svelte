@@ -19,7 +19,8 @@
 
   // The short form (default) is the notice on the other pages: the buttons lead to the Updates page, where `full` shows
   // the whole panel with the version table and the buttons run the update. `start` runs the update that the short form asked for.
-  let { hosts, updates, latestError, full = false, start, onstarted }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; full?: boolean; start?: "hub" | "nodes"; onstarted?: () => void } = $props();
+  // `onrun` replaces the update call (the temporary mock on the Updates page uses it so that no real update runs).
+  let { hosts, updates, latestError, full = false, start, onstarted, onrun }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; full?: boolean; start?: "hub" | "nodes"; onstarted?: () => void; onrun?: (id: string, release?: string) => void } = $props();
   let dismissed = $state("");
 
   const client = useQueryClient();
@@ -48,6 +49,7 @@
   const actionable = $derived(items.some((i) => i.kind !== "latest-unknown" && i.kind !== "hub-local-build" && i.kind !== "updating"));
 
   async function run(id: string, release?: string) {
+    if (onrun) return onrun(id, release);
     const name = nameOf(id);
     try {
       await update.mutateAsync({ host: id, release });
