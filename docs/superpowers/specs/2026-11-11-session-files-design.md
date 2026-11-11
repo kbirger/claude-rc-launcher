@@ -35,7 +35,7 @@ The user works from a phone, in the Claude app. Claude writes a file on a node, 
 
 ## Anti-goals
 
-- A path outside the session root must never be served. A symlink that points outside must never be followed out.
+- A path outside the session root must never be served. A symlink that points outside must never be followed out. The one exception is a file that is exactly on the session's touched list (see "Decisions made with the user").
 - A previewed or downloaded file must never run as a page on the hub's origin. A file named `x.html` must show as text or download. It must not render.
 - The whole file must never sit in memory on the hub or the node. A one-gigabyte download must not raise memory use by a gigabyte.
 - One user's sessions must never show in another instance. An instance sees only the sessions of its own project and its own user.
@@ -45,6 +45,7 @@ The user works from a phone, in the Claude app. Claude writes a file on a node, 
 - Files live on the nodes. The browser talks to the hub. The hub calls each node over pinned HTTPS with a signed request, and its current node client reads whole responses up to 1 MB. The file path needs a streaming route from the node through the hub to the browser. The signature must cover the exact request, as it does today.
 - Reuse the node's folder-browser path checks (`resolveWithinRoots` and the symlink rules in `server/src/fsapi.ts`). Do not write new, weaker checks.
 - The feature must work on Linux and Windows nodes. If a node cannot support it, for example an older node without the new routes, the web app hides the feature for that node. The trusted-folders design uses the same rule.
+- The touched list comes from the transcript. Anyone who can write the transcript can add a file to it. The instance user writes the transcript, so that user can make the node serve any file that the service account can read, one exact path at a time. The user accepted this tradeoff.
 - Keep the current stack and style: Bun, TypeScript, Hono, Svelte 5, TanStack Query, Tailwind and shadcn components. The web app keeps its model layer and its folder rules. Update the README and the tests. Write documents in plain English, as the rest of the repository does.
 
 ## Decisions made with the user
@@ -56,12 +57,14 @@ The user works from a phone, in the Claude app. Claude writes a file on a node, 
 - Work trees come second. If the session ran in a work tree, the session root is that work tree.
 - File access is only from session folders.
 - The node reads transcripts and files as its own service account. It does not drop to the instance user. The path check against the session root is the only gate. The root comes from the node's own transcript lookup.
+- A file that a session touched can be previewed and downloaded even when it is outside the session root. Touched means written or edited with Write, Edit, MultiEdit or NotebookEdit. The request names the file by its absolute path. The node serves it only when that path is exactly on the session's touched list. Any other path outside the root is refused with "file was not touched by this session". The answer is the same whether or not the file exists. The folder browser never accepts an absolute path.
+- A touched file outside the root is opened with its parent folder as the root. The parent folder and the file name must not be links. The open checks of the session folder apply to it as well.
 
 ## My calls, not agreed with the user
 
 - The text-preview size limit is 512 KB. A larger text file shows its size and a download button, and the preview shows only the first 512 KB with a note.
 - If a file has no zero byte in its first 8 KB and decodes as UTF-8, it counts as text. Anything else shows its name, size, type guess, and a download button.
-- "Files Claude touched" comes from the paths in write and edit tool calls. A file outside the session root appears in the list but is marked and cannot be opened.
+- "Files Claude touched" comes from the paths in write and edit tool calls. A file outside the session root appears in the list with a note. It can be opened (see "Decisions made with the user").
 - The folder browser hides names that start with a dot. A toggle shows them, as the existing folder picker does.
 - The session root is the first `cwd` the transcript records. A later `cwd` inside the root does not change it.
 - Text previews send `Content-Type: text/plain; charset=utf-8` and `X-Content-Type-Options: nosniff`. Downloads send `Content-Disposition: attachment` and `application/octet-stream`.

@@ -547,8 +547,12 @@ Remote Control sessions cannot be told apart from other sessions, so the list do
 Use the "Folder" tab to find those files.
 
 - The node reads files as its own service account. It can read only what that account can read.
-- The node serves only files inside a session folder. On each request it finds the folder again from the transcript.
+- The node serves files inside a session folder. On each request it finds the folder again from the transcript.
   The real place of that folder must be inside the instance folder. If a link leads it out, the node refuses it.
+- A touched file outside the session folder can also be opened. The node serves it only if its path is exactly on
+  that session's touched list. It refuses any other file outside the folder. It also refuses the file if its name or
+  its parent folder is a link. The touched list comes from the transcript, so anyone who can write the transcript can
+  add a file to it.
 - The node reads transcripts from `<home>/.claude/projects` of the instance user. Claude Code deletes old transcripts
   after its cleanup period, so an old session disappears from the list.
 - A text file shows as plain text. A larger text file shows its first 512 KB and a download button. Any other file
