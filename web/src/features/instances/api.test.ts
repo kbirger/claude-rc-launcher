@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { getLogs, listInstances, startInstance, stopInstance } from "./api";
 
 const realFetch = globalThis.fetch;
@@ -47,7 +47,7 @@ test("host ids are URL-encoded in every instance path", async () => {
   await stopInstance("a/b", "abc");
   stub(200, { log: "" });
   await getLogs("a/b", "abc");
-  for (const c of calls) expect(c.url).toStartWith("/api/hosts/a%2Fb/");
+  for (const c of calls) expect(c.url.startsWith("/api/hosts/a%2Fb/")).toBe(true);
 });
 
 test("startInstance sends user and addTrust only when set", async () => {

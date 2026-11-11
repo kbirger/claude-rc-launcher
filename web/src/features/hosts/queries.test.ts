@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { STALE_MS } from "../../shared/query";
 import { hostsQuery } from "./queries";
 

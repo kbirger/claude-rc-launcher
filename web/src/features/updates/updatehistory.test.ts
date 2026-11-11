@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { historyTitle, linesSummary } from "./updatehistory";
 import { pollWhileRunning, historyQuery } from "./queries";
 

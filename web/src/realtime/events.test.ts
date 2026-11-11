@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { QueryClient } from "@tanstack/svelte-query";
 import { connectEvents } from "./events";
 import type { UpdateEntry } from "../features/updates";

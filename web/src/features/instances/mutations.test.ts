@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { startInstanceMutation } from "./mutations";
 
 test("the start mutation key holds the host", () => {

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { instanceLogsQuery, instancesQuery } from "./queries";
 
 test("instance list polls every 5 seconds and stays fresh for 2 seconds", () => {

@@ -8,7 +8,8 @@
   import { HostPicker, HubVersionLine, hostsQuery, selectionAfter, type HostInfo } from "./features/hosts";
   import { UpdateBanner, UpdateHistory, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "./features/updates";
   import { InstanceList, startInstanceMutation, type StartArgs } from "./features/instances";
-  import { NewDialog, startErrorAction, type TrustPrompt } from "./features/new-instance";
+  import { NewDialog, startErrorAction } from "./features/new-instance";
+  import { createStartFlow } from "./startflow.svelte";
 
   const HOST_KEY = "claude-rc-host";
 
@@ -32,42 +33,23 @@
   const latestQ = createQuery(latestQuery);
   const updatesQ = createQuery(updatesQuery);
   const hosts = $derived<HostInfo[]>(hostsQ.data ?? [{ id: "local", name: "local", status: "ok" }]);
-  let selected = $state(remembered());
+  const flow = createStartFlow(remembered());
   let now = $state(new Date());
-  let showNew = $state(false);
-  // Set when a start got a 428 "untrusted": the dialog opens again at that folder with the trust question.
-  let newInitial = $state<{ path: string; user?: string; name?: string; trust: TrustPrompt } | undefined>();
-  let startError = $state("");
-  // NewDialog reads `initial` once. A 428 that comes while the dialog is open bumps this to remount it with the newest prompt.
-  let dialogGen = $state(0);
 
   // The start lives here, not in the dialog, so it outlives the dialog. The callbacks sit on the options, not on mutate():
   // each start keeps the options (and so the host) it was built with, even when another start or a host switch follows.
   const startM = createMutation(() => {
-    const host = selected;
+    const host = flow.selected;
     return {
       ...startInstanceMutation(host),
       // Awaited by the mutation, so the pending row stays until the list has the new instance.
       onSuccess: () => client.invalidateQueries({ queryKey: ["instances", host] }),
-      onError: (e: unknown, a: StartArgs) => {
-        // A failed start belongs to its host: say nothing once the user is on another one.
-        if (host !== selected) return;
-        const act = startErrorAction(e, { path: a.path, user: a.user ?? "" });
-        if (act.kind === "trust") {
-          // This prompt replaces the one in the open dialog: say that the displaced folder still needs trust.
-          if (showNew && newInitial && newInitial.path !== a.path) startError = `Trust needed for ${newInitial.path}`;
-          newInitial = { path: a.path, user: a.user, name: a.name, trust: act.prompt };
-          showNew = true;
-          dialogGen++;
-        } else startError = act.message;
-      },
+      onError: (e: unknown, a: StartArgs) => flow.startFailed(host, startErrorAction(e, { path: a.path, user: a.user ?? "" }), a),
     };
   });
 
   function startNew(a: StartArgs) {
-    showNew = false;
-    newInitial = undefined;
-    startError = "";
+    flow.startNew();
     startM.mutate(a);
   }
 
@@ -84,7 +66,7 @@
       return;
     }
     const last = Number(sessionStorage.getItem("claude-rc:reload") ?? 0);
-    const d = reloadDecision({ loaded: loadedVersion, current, dialogOpen: showNew, lastReloadAt: last, now: Date.now() });
+    const d = reloadDecision({ loaded: loadedVersion, current, dialogOpen: flow.showNew, lastReloadAt: last, now: Date.now() });
     if (d === "bar") reloadBar = true;
     if (d === "reload") {
       console.info(`[claude-rc] the hub runs ${current}, this page was loaded from ${loadedVersion}: reloading`);
@@ -92,25 +74,17 @@
       location.reload();
     }
   });
-  const selectedBusy = $derived(busyReason(hosts.find((h) => h.id === selected), lastEntry(updatesQ.data ?? [], selected), now));
+  const selectedBusy = $derived(busyReason(hosts.find((h) => h.id === flow.selected), lastEntry(updatesQ.data ?? [], flow.selected), now));
 
   // A remembered or previously selected host that is gone falls back to local. One that is restarting or offline stays.
   $effect(() => {
     if (!hostsQ.data) return;
-    const next = selectionAfter(hostsQ.data, selected);
-    if (next !== selected) {
-      selected = next;
-      newInitial = undefined;
-      startError = "";
-    }
+    flow.fallback(selectionAfter(hostsQ.data, flow.selected));
   });
 
   function select(id: string) {
-    selected = id;
+    flow.select(id);
     remember(id);
-    showNew = false;
-    newInitial = undefined;
-    startError = "";
   }
 
   onMount(() => {
@@ -126,7 +100,7 @@
 <header>
   <h1><Logo /><span class="name">Claude RC</span></h1>
   {#if hosts.length > 1}
-    <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} {now} onselect={select} />
+    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
   <span class="user"><span class="uname">{meQ.data?.name ?? ""}</span></span>
   <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
@@ -141,32 +115,29 @@
     </section>
   {/if}
   <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
-  {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], selected))}
-    {#key selected}
-      <div class="finished"><UpdateOutput host={selected} open={false} /></div>
+  {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
+    {#key flow.selected}
+      <div class="finished"><UpdateOutput host={flow.selected} open={false} /></div>
     {/key}
   {/if}
   <main>
     <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
-    <button class="primary new" onclick={() => { newInitial = undefined; showNew = true; }}>+ New</button>
-    {#key selected}
-      <InstanceList host={selected} {startError} />
+    <button class="primary new" onclick={() => flow.openNew()}>+ New</button>
+    {#key flow.selected}
+      <InstanceList host={flow.selected} startError={flow.startError} />
     {/key}
   </main>
-  {#key selected}
-    <UpdateHistory host={selected} />
+  {#key flow.selected}
+    <UpdateHistory host={flow.selected} />
   {/key}
 </div>
-{#if showNew}
-  {#key `${selected}\n${dialogGen}`}
+{#if flow.showNew}
+  {#key flow.selected}
     <NewDialog
-      host={selected}
+      host={flow.selected}
       busyReason={selectedBusy}
-      initial={newInitial}
-      onclose={() => {
-        showNew = false;
-        newInitial = undefined;
-      }}
+      initial={flow.newInitial}
+      onclose={() => flow.closeNew()}
       onstart={startNew}
     />
   {/key}

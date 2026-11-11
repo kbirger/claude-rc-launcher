@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { getMe } from "./api";
 import { meQuery } from "./queries";
 
