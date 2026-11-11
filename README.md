@@ -548,12 +548,15 @@ Use the "Folder" tab to find those files.
 
 - The node reads files as its own service account. It can read only what that account can read.
 - The node serves only files inside a session folder. On each request it finds the folder again from the transcript.
+  The real place of that folder must be inside the instance folder. If a link leads it out, the node refuses it.
 - The node reads transcripts from `<home>/.claude/projects` of the instance user. Claude Code deletes old transcripts
   after its cleanup period, so an old session disappears from the list.
-- A text file shows as plain text, up to 512 KB. Any other file, and any larger file, is a download.
+- A text file shows as plain text. A larger text file shows its first 512 KB and a download button. Any other file
+  is a download.
 - A download is a stream. The hub passes the bytes on and never holds a whole file in memory.
 
-The first version has no work trees that no session owns. It has no markdown or code formatting and no editing.
+The first version shows only the work trees that belong to a session. It has no markdown or code formatting and no
+editing. Session files are not yet verified on Windows nodes.
 
 If a node runs an older version without this feature, the web UI hides the "Sessions" button for its instances. Update
 the node to see the button.
