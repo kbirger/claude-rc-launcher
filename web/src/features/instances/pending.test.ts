@@ -18,7 +18,7 @@ test("mergePending", () => {
   expect(withStart[0]).toMatchObject({ name: "dir", pending: "starting" });
   expect(withStart[0].instance).toBeUndefined();
 
-  const stopping = mergePending(list, [], ["b"]);
+  const stopping = mergePending(list, [], [{ id: "b", kind: "stopping" }]);
   expect(stopping.map((r) => r.pending)).toEqual([undefined, "stopping"]);
   expect(stopping[1].instance).toBe(list[1]);
 
