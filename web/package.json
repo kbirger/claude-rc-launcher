@@ -23,7 +23,7 @@
     "vitest": "^5.1.0"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.71.0",
+    "@tabler/icons-svelte": "^3.51.0",
     "@tanstack/svelte-query": "^6.4.1"
   }
 }

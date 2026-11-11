@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import LogOut from "@lucide/svelte/icons/log-out";
+  import LogOut from "@tabler/icons-svelte/icons/logout";
   import Logo from "./shared/ui/Logo.svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { meQuery } from "./features/auth";

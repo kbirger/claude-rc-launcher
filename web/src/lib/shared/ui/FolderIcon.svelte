@@ -1,13 +1,12 @@
 <script lang="ts">
-  import Folder from "@lucide/svelte/icons/folder";
-  import FolderGit from "@lucide/svelte/icons/folder-git";
-  import FolderGit2 from "@lucide/svelte/icons/folder-git-2";
+  import Folder from "@tabler/icons-svelte/icons/folder-filled";
+  import Git from "@tabler/icons-svelte/icons/brand-git";
+  import Github from "@tabler/icons-svelte/icons/brand-github-filled";
   import type { IconKind } from "./foldericon";
 
   let { kind }: { kind: IconKind } = $props();
 
-  // Lucide has no brand marks: a GitHub repository gets the second Git folder variant.
-  const icons = { folder: Folder, git: FolderGit, github: FolderGit2 };
+  const icons = { folder: Folder, git: Git, github: Github };
   const titles: Record<IconKind, string | undefined> = { folder: undefined, git: "Git repository", github: "GitHub repository" };
   const Icon = $derived(icons[kind]);
 </script>
