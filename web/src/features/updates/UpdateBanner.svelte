@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { useQueryClient } from "@tanstack/svelte-query";
+  import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
-  import { updateHost, type UpdateEntry } from "./api";
+  import type { UpdateEntry } from "./api";
+  import { updateHostMutation } from "./mutations";
   import type { HostInfo } from "../hosts";
   import UpdateOutput from "./UpdateOutput.svelte";
   import { panelOpenByDefault } from "./updateoutput";
@@ -12,6 +13,7 @@
   let { hosts, updates, latestError }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean } = $props();
 
   const client = useQueryClient();
+  const update = createMutation(() => updateHostMutation(client));
   let busy = $state(false);
   // Errors of update calls made from this page, by host name; they stay until the next call for that host succeeds.
   let callErrors = $state<Record<string, CallError>>({});
@@ -35,15 +37,12 @@
   async function run(id: string, release?: string) {
     const name = nameOf(id);
     try {
-      await updateHost(id, release);
+      await update.mutateAsync({ host: id, release });
       delete callErrors[name];
     } catch (e) {
       // The hub answers 202 and then restarts: a lost connection right after the hub call is expected.
       if (id === "local" && !(e instanceof ApiError)) delete callErrors[name];
       else callErrors[name] = { error: e instanceof Error ? e.message : String(e), at: Date.now() };
-    } finally {
-      void client.invalidateQueries({ queryKey: ["hosts"] });
-      void client.invalidateQueries({ queryKey: ["updates"] });
     }
   }
 

@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { useQueryClient } from "@tanstack/svelte-query";
+  import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
-  import { hostOptionLabel, isRunning, lastEntry, stepIsError, stepText, updateHost, type UpdateEntry } from "../updates";
+  import { hostOptionLabel, isRunning, lastEntry, stepIsError, stepText, updateHostMutation, type UpdateEntry } from "../updates";
   import type { HostInfo } from "./api";
   import { clientLabel } from "./clientlabel";
 
   let { hosts, selected, onselect, updates = [], now = new Date() }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date } = $props();
 
   const client = useQueryClient();
+  const updateM = createMutation(() => updateHostMutation(client));
   let busy = $state(false);
   let error = $state("");
 
@@ -31,13 +32,11 @@
     busy = true;
     error = "";
     try {
-      await updateHost(current.id, current.target);
+      await updateM.mutateAsync({ host: current.id, release: current.target });
     } catch (e) {
       error = e instanceof ApiError || e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
-      void client.invalidateQueries({ queryKey: ["hosts"] });
-      void client.invalidateQueries({ queryKey: ["updates"] });
     }
   }
 </script>

@@ -1,5 +1,6 @@
 export type { LogLine, UpdateEntry } from "./api";
 export { updateHost } from "./api";
+export { updateHostMutation } from "./mutations";
 export { HISTORY_KEY, LATEST_KEY, LOGS_KEY, UPDATES_KEY, latestQuery, updatesQuery } from "./queries";
 export { isRunning, lastEntry } from "./updatebanner";
 export { hostOptionLabel, showsFinishedPanel, stepIsError, stepText } from "./updateoutput";

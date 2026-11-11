@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { getMe, type Me } from "./features/auth";
+  import { meQuery } from "./features/auth";
   import { connectEvents } from "./realtime/events";
   import { HostPicker, HubVersionLine, hostsQuery, selectionAfter, type HostInfo } from "./features/hosts";
   import { UpdateBanner, UpdateHistory, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "./features/updates";
@@ -24,8 +24,8 @@
     } catch {}
   }
 
-  let me = $state<Me | null>(null);
   const client = useQueryClient();
+  const meQ = createQuery(meQuery);
   const hostsQ = createQuery(hostsQuery);
   const latestQ = createQuery(latestQuery);
   const updatesQ = createQuery(updatesQuery);
@@ -71,7 +71,6 @@
   }
 
   onMount(() => {
-    getMe().then((m) => (me = m)).catch(() => {});
     const t = setInterval(() => (now = new Date()), 30_000);
     const stop = connectEvents({ client });
     return () => {
@@ -86,8 +85,8 @@
   {#if hosts.length > 1}
     <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
-  <span class="user">{me?.name ?? ""}</span>
-  <a class="logout" href={me?.logoutUrl ?? "/auth/logout"}>Logout</a>
+  <span class="user">{meQ.data?.name ?? ""}</span>
+  <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"}>Logout</a>
 </header>
 {#if reloadBar}
   <section class="reload" role="status">
