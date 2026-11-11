@@ -64,19 +64,26 @@ export function createNewDialogModel(opts: {
   // A new `initial` after creation is a late prompt: a 428 came while the dialog was open. It shows its trust question,
   // keeps the typed name, the acknowledgment and the clone view. Outside the clone view, the folder and the user move
   // to the prompt's. In the clone view they stay (a move would empty the listing and close the view); the prompt
-  // shows once the view closes. A value that goes away (undefined) changes nothing.
+  // shows once the view closes. They also stay while the folder of a finished clone loads. A value that goes away
+  // (undefined) changes nothing.
   let applied = init;
+  // Counts the late prompts, so cloned() can tell whether one came after the clone view opened.
+  let latePrompts = 0;
+  let promptsAtCloneOpen = 0;
+  // True from the end of a clone until the listing of its folder has loaded.
+  let loadingCloned = false;
   $effect(() => {
     const next = opts.initial();
     if (next === applied) return;
     applied = next;
     if (!next) return;
     untrack(() => {
-      if (!cloning) {
+      if (!cloning && !loadingCloned) {
         go(next.path);
         userPick = next.user;
       }
       trustPrompt = next.trust;
+      latePrompts++;
       if (!name.trim()) name = next.name ?? "";
     });
   });
@@ -145,14 +152,22 @@ export function createNewDialogModel(opts: {
     async cloned(p: string) {
       // The user of the clone. A change of the selector while the listing loads must not change the start.
       const u = chosenUser;
+      // A late prompt that came while the clone view was open stays: the dialog enters `p` but does not start it, and
+      // the user picks "Trust and start" or "Start here".
+      const late = latePrompts !== promptsAtCloneOpen ? trustPrompt : null;
       cloning = false;
       go(p);
+      if (late) trustPrompt = late;
+      loadingCloned = true;
       try {
         const l = await client.fetchQuery(browseQuery(host, p, u));
-        // Start only when the listing is the new folder; a trust question then comes back for it.
-        if (l.path === p) startWith(false, l, u);
+        // Start only when the listing is the new folder, the dialog is still there, and no late prompt came;
+        // a trust question then comes back for `p`.
+        if (l.path === p && path === p && latePrompts === promptsAtCloneOpen) startWith(false, l, u);
       } catch {
         // The browse error shows from the query.
+      } finally {
+        loadingCloned = false;
       }
     },
 
@@ -165,6 +180,7 @@ export function createNewDialogModel(opts: {
     },
 
     openClone() {
+      promptsAtCloneOpen = latePrompts;
       cloning = true;
       creating = false;
     },

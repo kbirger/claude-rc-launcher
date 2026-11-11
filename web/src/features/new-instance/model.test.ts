@@ -405,9 +405,7 @@ describe("new dialog model", () => {
     expect(m.model.path).toBe(`${HOME}/b`);
   });
 
-  // Pins today's result, which the brief does not settle: a clone that ends well enters and starts its folder, and the
-  // late prompt goes (App then clears the outcome too). See the task 6 report.
-  test("a late prompt during a clone that then succeeds is dropped and the cloned folder starts", async () => {
+  test("a late prompt during the clone view survives a clone that succeeds, and nothing starts", async () => {
     const m = mount();
     m.model.go(`${HOME}/b`);
     await tick();
@@ -417,8 +415,67 @@ describe("new dialog model", () => {
     await tick();
     m.model.setCloneBusy(false);
     await m.model.cloned(`${HOME}/b/app`);
+    await tick();
+    expect(m.started).toEqual([]);
+    expect(m.model.trustPrompt).toEqual(trust(`${HOME}/a`));
+    expect(m.model.path).toBe(`${HOME}/b/app`);
+    expect(m.model.listing?.path).toBe(`${HOME}/b/app`);
+    expect(m.model.cloning).toBe(false);
+    // The user chooses: the prompt's folder, or the cloned one.
+    m.model.start(true);
+    m.model.start();
+    expect(m.started).toEqual([
+      { path: `${HOME}/a`, name: undefined, user: "dev", addTrust: true },
+      { path: `${HOME}/b/app`, name: undefined, user: "dev", addTrust: false },
+    ]);
+  });
+
+  test("a late prompt while the new folder loads survives, the dialog stays in that folder, and nothing starts", async () => {
+    const m = mount();
+    m.model.go(`${HOME}/b`);
+    await tick();
+    m.model.openClone();
+    const g = gate();
+    api.fs = async (path) => {
+      await g.p;
+      return res(listing(path));
+    };
+    const done = m.model.cloned(`${HOME}/b/app`);
+    m.props.initial = { path: `${HOME}/a`, user: "alice", trust: trust(`${HOME}/a`, "alice") };
+    await tick();
+    expect(m.model.path).toBe(`${HOME}/b/app`);
+    expect(m.model.trustPrompt).toEqual(trust(`${HOME}/a`, "alice"));
+    g.open();
+    await done;
+    await tick();
+    expect(m.started).toEqual([]);
+    expect(m.model.path).toBe(`${HOME}/b/app`);
+    expect(m.model.user).toBe("dev");
+    expect(m.model.trustPrompt).toEqual(trust(`${HOME}/a`, "alice"));
+  });
+
+  test("a prompt from before the clone view opened does not stop the start of the cloned folder", async () => {
+    const m = mount({ initial: { path: `${HOME}/b`, trust: trust(`${HOME}/b`) } });
+    await tick();
+    m.model.openClone();
+    await m.model.cloned(`${HOME}/b/app`);
     expect(m.started).toEqual([{ path: `${HOME}/b/app`, name: undefined, user: "dev", addTrust: false }]);
-    expect(m.model.trustPrompt).toBeNull();
+  });
+
+  test("cloned does not start when the user left the new folder while it loaded", async () => {
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    const g = gate();
+    api.fs = async (path) => {
+      await g.p;
+      return res(listing(path));
+    };
+    const done = m.model.cloned(`${HOME}/app`);
+    m.model.go(HOME);
+    g.open();
+    await done;
+    expect(m.started).toEqual([]);
   });
 
   test("a late prompt while the clone view is open with no clone running keeps the view and the folder", async () => {
