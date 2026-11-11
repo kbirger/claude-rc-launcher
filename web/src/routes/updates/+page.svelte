@@ -23,7 +23,10 @@
   const updates = $derived(mock?.updates ?? shell.updates);
 
   const names = $derived(Object.fromEntries(shell.hosts.map((h) => [h.id, h.name])));
-  const updating = $derived(bannerModel({ hosts, updates, latestError: shell.latestError, now: shell.now }).some((i) => i.kind === "updating"));
+  const items = $derived(bannerModel({ hosts, updates, latestError: shell.latestError, now: shell.now }));
+  const updating = $derived(items.some((i) => i.kind === "updating"));
+  // The crab gives up for as long as the banner reports a failed update.
+  const failed = $derived(!updating && items.some((i) => i.kind === "failed"));
   // An update that finished well in the last 30 seconds is worth a celebration.
   const celebrating = $derived(!updating && updates.some((e) => e.status === "updated" && e.finishedAt !== undefined && shell.now.getTime() - Date.parse(e.finishedAt) <= 30_000));
   // The notice on the other pages sends `?start=hub` or `?start=nodes`. Read it once. After the update has started,
@@ -34,7 +37,7 @@
 
 {#if mockable}<UpdateMockPanel value={mock?.name ?? null} onpick={pick} />{/if}
 
-<div class="mb-2 flex justify-center"><UpdateMascot active={updating} celebrate={celebrating} /></div>
+<div class="mb-2 flex justify-center"><UpdateMascot active={updating} celebrate={celebrating} {failed} /></div>
 
 <UpdateBanner
   full

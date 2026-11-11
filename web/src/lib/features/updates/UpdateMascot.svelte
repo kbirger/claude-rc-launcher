@@ -4,7 +4,9 @@
   // The pixel crab from animation.html. It floats while nothing happens, bounces once when an update starts, then
   // twirls around its vertical axis until the update ends, and settles facing front again. When `celebrate` turns on
   // (an update just finished well) it throws its claws up, hops and sprays confetti.
-  let { active = false, celebrate = false }: { active?: boolean; celebrate?: boolean } = $props();
+  // When an update fails (`failed`), the crab settles on its legs, sags and fades to the error colour; it stays that
+  // way until the next update starts or `failed` turns off.
+  let { active = false, celebrate = false, failed = false }: { active?: boolean; celebrate?: boolean; failed?: boolean } = $props();
 
   type Phase = "float" | "bounce" | "spin" | "settle" | "celebrate";
   const BOUNCE_S = 1.65;
@@ -36,6 +38,9 @@
       if (v === "#") cells.push({ x, y, eye: y === 1 && (x === 5 || x === 10), claw: y >= 3 && y <= 5 && (x < 4 || x > 11), leg: y >= 9, seed: x * 127.1 + y * 311.7 });
     }),
   );
+  // The sprite is extruded into a block of this many layers. The eyes are only on the front layer (the last one).
+  const LAYERS = 7;
+  const voxels = cells.flatMap((q) => Array.from({ length: LAYERS }, (_, layer) => ({ ...q, layer, eye: q.eye && layer === LAYERS - 1, seed: q.seed + layer * 17.3 })));
 
   let canvas: HTMLCanvasElement;
   let phase: Phase = "float";
@@ -46,6 +51,7 @@
   let settleTarget = 0;
   let wasActive = false;
   let wasCelebrate = false;
+  let sag = 0; // how far the crab has given up, 0 to 1: it eases toward 1 after a failure
   let celebratePending = false; // the crab is busy (bouncing or slowing down): celebrate when it is back to float
   let confettiSpawned = false;
   type Piece = { x: number; y: number; vx: number; vy: number; rot: number; spin: number; size: number; life: number; age: number; color: string };
@@ -128,7 +134,8 @@
     ctx.clearRect(0, 0, cw, ch);
 
     const style = getComputedStyle(canvas);
-    const body = style.getPropertyValue("--primary").trim() || "#e97050";
+    const primary = style.getPropertyValue("--primary").trim() || "#e97050";
+    const danger = style.getPropertyValue("--destructive").trim() || "#c62828";
     const eye = style.getPropertyValue("--background").trim() || "#080808";
 
     // The canvas has room around the crab (1.5 times its size) for the confetti.
@@ -139,6 +146,11 @@
     let ax = 0;
     let raise = 0; // how far the claws are up, 0 to 1
     let spinning = false;
+    // A failed update lets it sag, but only once it faces front and rests.
+    const sagTarget = failed && !active && phase === "float" ? 1 : 0;
+    sag = still ? sagTarget : sag + (sagTarget - sag) * (1 - Math.exp(-3 * dt));
+    if (sag < 0.001) sag = 0;
+    const body = sag > 0 ? `color-mix(in srgb, ${danger} ${Math.round(sag * 100)}%, ${primary})` : primary;
     const smooth = (v: number) => {
       const t = Math.min(1, Math.max(0, v));
       return t * t * (3 - 2 * t);
@@ -197,30 +209,44 @@
       }
     }
     if (phase === "float") {
-      jump = Math.sin(time * 1.2) * 0.09 * p;
-      ax = Math.sin(time * 0.8) * 0.035 * p;
+      // A crab that has given up stops floating.
+      jump = Math.sin(time * 1.2) * 0.09 * p * (1 - sag);
+      ax = Math.sin(time * 0.8) * 0.035 * p * (1 - sag);
     }
     // The twirl turns around the vertical axis; while it floats the crab only sways a little.
-    const ay = spinning ? angle : phase === "float" ? Math.sin(time * 0.7) * 0.035 * p : 0;
+    const ay = spinning ? angle : phase === "float" ? Math.sin(time * 0.7) * 0.035 * p * (1 - sag) : 0;
 
     const originX = cw / 2;
     const originY = ch / 2 - jump * cell;
-    const depth = 7.5 * cell;
+    // The camera is far enough away that no block, even at the edge of a twirl, gets behind it.
+    const depth = 28 * cell;
+    // The farthest a block gets from the centre (half the width plus half the depth), for the shading.
+    const reach = 11 * cell;
     const c = Math.cos(ax);
     const s = Math.sin(ax);
     const cy = Math.cos(ay);
     const sy2 = Math.sin(ay);
-    const rendered: { q: (typeof cells)[number]; x: number; y: number; size: number; z: number }[] = [];
+    const rendered: { q: (typeof voxels)[number]; x: number; y: number; size: number; z: number }[] = [];
 
-    for (const q of cells) {
+    for (const q of voxels) {
       let x = (q.x - 7.5) * cell;
       let y = (q.y - 5.5) * cell;
+      const z0 = (q.layer - (LAYERS - 1) / 2) * cell;
       let dx = 0;
       let dy = 0;
       const n = Math.sin(time * 1.5 + q.seed * 0.11) * 0.5 + Math.cos(time * 0.85 + q.seed * 0.07) * 0.3 + Math.sin(time * 2.2 + q.seed * 0.03) * 0.2;
       if (phase === "float") {
-        dx = n * 0.1 * p * cell;
-        dy = Math.cos(time * 1.3 + q.seed * 0.09) * 0.09 * p * cell;
+        dx = n * 0.1 * p * cell * (1 - sag);
+        dy = Math.cos(time * 1.3 + q.seed * 0.09) * 0.09 * p * cell * (1 - sag);
+      }
+      if (sag > 0) {
+        // The body sinks onto the legs (the bottom row stays on the floor), the claws droop and the eyes drop.
+        dy += sag * 0.8 * cell * (q.leg ? (11 - q.y) / 2 : 1);
+        if (q.claw) {
+          dy += sag * 1.4 * cell;
+          dx += (q.x < 8 ? -1 : 1) * sag * 0.3 * cell;
+        }
+        if (q.eye) dy += sag * 0.9 * cell;
       }
       if (phase === "bounce") {
         if (q.claw) dx += (q.x < 8 ? -1 : 1) * Math.sin(time * 4.1) * 0.16 * p * cell;
@@ -242,20 +268,27 @@
       }
       x = (x + dx) * sx;
       y = (y + dy) * sy;
-      const rx = cy * x;
-      const rz = -sy2 * x;
+      const rx = cy * x + sy2 * z0;
+      const rz = -sy2 * x + cy * z0;
       const ry = c * y - s * rz;
       const rz2 = s * y + c * rz;
       const persp = depth / (depth - rz2);
       rendered.push({ q, x: originX + rx * persp, y: originY + ry * persp, size: cell * 0.945 * persp, z: rz2 });
     }
 
-    // Back-facing pixels first.
+    // Far blocks first. The farther a block is, the darker it is, so the depth shows.
     rendered.sort((a, b) => a.z - b.z);
     for (const r of rendered) {
       ctx.globalAlpha = r.q.eye ? 1 : still ? 1 : 0.94 + 0.06 * Math.sin(time * 1.2 + r.q.seed);
       ctx.fillStyle = r.q.eye ? eye : body;
       ctx.fillRect(r.x - r.size / 2, r.y - r.size / 2, r.size, r.size);
+      // 0 for the front layer of a crab that faces front, growing with the distance behind it.
+      const far = 1 - Math.min(1, Math.max(0, (r.z + reach) / (reach + ((LAYERS - 1) / 2) * cell)));
+      if (!r.q.eye && far > 0.02) {
+        ctx.globalAlpha = far * 0.45;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(r.x - r.size / 2, r.y - r.size / 2, r.size, r.size);
+      }
     }
 
     // Confetti in front of the crab: it flies up and out, falls, and fades.
