@@ -3,6 +3,7 @@
   import Home from "@tabler/icons-svelte/icons/home";
   import Server from "@tabler/icons-svelte/icons/server";
   import History from "@tabler/icons-svelte/icons/history";
+  import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Github from "@tabler/icons-svelte/icons/brand-github-filled";
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
@@ -17,6 +18,7 @@
   const items = [
     { href: "/", label: "Instances", icon: Home },
     { href: "/nodes", label: "Nodes", icon: Server },
+    { href: "/updates", label: "Updates", icon: ArrowUp },
     { href: "/history", label: "Update history", icon: History },
   ];
 </script>

@@ -5,7 +5,7 @@
   import { ApiError } from "../../shared/http";
   import { hostOptionLabel, isRunning, lastEntry, stepIsError, stepText, updateHostMutation, type UpdateEntry } from "../updates";
   import type { HostInfo } from "./api";
-  import { versionsText } from "./nodeline";
+  import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
 
   let { hosts, selected, onselect, updates = [], now = new Date() }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date } = $props();
 
@@ -17,8 +17,8 @@
   const label = (h: HostInfo) => {
     const other = hostOptionLabel(h);
     if (other) return other;
-    const versions = ` (${versionsText(h)})`;
-    return `${h.name}${versions}${h.stale ? " - out of date" : ""}`;
+    // The version as the machine reports it, with the branch and commit of a local build.
+    return `${h.name} · ${h.version ?? "unknown"}`;
   };
 
   const current = $derived(hosts.find((h) => h.id === selected));
@@ -45,11 +45,19 @@
 <div class="picker">
   <Select.Root type="single" value={selected} onValueChange={(v) => { error = ""; onselect(v); }}>
     <Select.Trigger class="w-full min-w-0 data-[size=default]:h-11" aria-label="Host">
-      <span class="truncate">{current ? label(current) : selected}</span>
+      <span class="flex min-w-0 items-center gap-1.5">
+        <span class="truncate">{current ? label(current) : selected}</span>
+        {#if current?.stale}<ArrowUp size={16} class="shrink-0 text-primary" aria-label="Update available" />{/if}
+      </span>
     </Select.Trigger>
     <Select.Content>
       {#each hosts as h (h.id)}
-        <Select.Item value={h.id} label={label(h)} disabled={h.status !== "ok"}>{label(h)}</Select.Item>
+        <Select.Item value={h.id} label={label(h)} disabled={h.status !== "ok"}>
+          <span class="flex items-center gap-1.5">
+            <span class="[overflow-wrap:anywhere]">{label(h)}</span>
+            {#if h.stale}<ArrowUp size={16} class="shrink-0 text-primary" aria-label="Update available" />{/if}
+          </span>
+        </Select.Item>
       {/each}
     </Select.Content>
   </Select.Root>

@@ -13,7 +13,7 @@
 
 <ul class="m-0 grid list-none gap-3 p-0" aria-label="Nodes">
   {#each hosts as h (h.id)}
-    <li>
+    <li id="node-{h.id}" class="scroll-mt-4">
       <Card.Root size="sm" class={cn("gap-2", h.id === selected && "ring-primary")}>
         <Card.Header>
           <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{h.name}</Card.Title>

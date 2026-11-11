@@ -6,7 +6,7 @@ import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import type { LatestRelease } from "./latest";
-import { isKnownVersion, isStale, normalizeVersion, stalestVersion } from "./versions";
+import { isStale, normalizeVersion, releaseOf, stalestVersion } from "./versions";
 import { VERSION } from "./version";
 import type { User } from "./userauth";
 import type { UpdateRecord } from "./updaterecord";
@@ -85,7 +85,8 @@ export function hostsApi(o: {
     // The host list never waits on GitHub: it reads what is cached and refreshes in the background.
     const cachedLatest = o.latest?.peek();
     if (o.latest && (!cachedLatest || Date.now() - Date.parse(cachedLatest.checkedAt) > LATEST_MAX_AGE_MS)) void o.latest.get().catch(() => {});
-    const hubTarget = isKnownVersion(hubVersion) ? hubVersion : undefined;
+    // A node can only install a release, so a local-build hub is the target through the release it is based on.
+    const hubTarget = releaseOf(hubVersion);
     const rest = await Promise.all(
       o.registry.list().map(async ({ host: h, client, source }): Promise<HostInfo> => {
         try {
@@ -115,7 +116,7 @@ export function hostsApi(o: {
       console.error(`local client version failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     const latestVersion = cachedLatest ? normalizeVersion(cachedLatest.version) : undefined;
-    const localTarget = isKnownVersion(latestVersion) ? latestVersion : undefined;
+    const localTarget = releaseOf(latestVersion);
     return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...(localNoClient ? { noClient: true as const } : {}), ...(localPlatform ? { platform: localPlatform } : {}), ...staleness(localTarget, hubVersion, localClient) } satisfies HostInfo, ...rest]);
   });
 

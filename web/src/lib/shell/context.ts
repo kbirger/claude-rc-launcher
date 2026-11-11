@@ -12,6 +12,8 @@ export type Shell = {
   readonly user: string;
   readonly logoutUrl: string;
   select(id: string): void;
+  /** True when the check for the latest release failed. */
+  readonly latestError: boolean;
 };
 
 const KEY = Symbol("shell");

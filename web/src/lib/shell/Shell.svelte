@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import type { Snippet } from "svelte";
+  import { page } from "$app/state";
   import Logo from "../shared/ui/Logo.svelte";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
@@ -101,6 +102,7 @@
     get user() { return meQ.data?.name ?? ""; },
     get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
     select,
+    get latestError() { return latestQ.isError; },
   });
 
   onMount(() => {
@@ -130,7 +132,10 @@
       <Button size="touch" onclick={() => location.reload()}>Reload</Button>
     </section>
   {/if}
-  <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+  <!-- The Updates page shows the whole panel itself. -->
+  {#if page.url.pathname !== "/updates"}
+    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+  {/if}
   {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
     {#key flow.selected}
       <div class="finished"><UpdateOutput host={flow.selected} open={false} /></div>

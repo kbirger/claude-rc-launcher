@@ -12,6 +12,18 @@ export function isKnownVersion(v: string | undefined): v is string {
   return v !== undefined && KNOWN.test(v);
 }
 
+const LOCAL_BUILD = /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\+[0-9A-Za-z.-]+$/;
+
+/**
+ * The release a version is, or is based on. A release (`X.Y.Z`, optionally `-prerelease`) is its own release. A local build
+ * (`X.Y.Z+branch.sha`, the last tag plus build metadata) is based on its tag, and the build metadata does not count in
+ * a comparison (semantic versioning ignores it). `dev` and anything else has none.
+ */
+export function releaseOf(v: string | undefined): string | undefined {
+  if (v === undefined) return undefined;
+  return KNOWN.test(v) ? v : LOCAL_BUILD.exec(v)?.[1];
+}
+
 /** Compares one pre-release identifier list; numbers sort below text. */
 function comparePre(a: string, b: string): number {
   const pa = a.split(".");
@@ -48,17 +60,20 @@ export function compareVersions(a: string, b: string): number {
   return comparePre(ma[4], mb[4]);
 }
 
-/** True only when both versions are known and `current` is lower. */
+/** True only when both versions have a release (see `releaseOf`) and the release of `current` is lower. */
 export function isStale(current: string | undefined, target: string | undefined): boolean {
-  return isKnownVersion(current) && isKnownVersion(target) && compareVersions(current, target) < 0;
+  const c = releaseOf(current);
+  const t = releaseOf(target);
+  return c !== undefined && t !== undefined && compareVersions(c, t) < 0;
 }
 
-/** The lowest known version, or undefined if none is known. */
+/** The version with the lowest release, as it was given (a local build stays a local build), or undefined if none has a release. */
 export function stalestVersion(versions: (string | undefined)[]): string | undefined {
   let lowest: string | undefined;
   for (const v of versions) {
-    if (!isKnownVersion(v)) continue;
-    if (lowest === undefined || compareVersions(v, lowest) < 0) lowest = v;
+    const r = releaseOf(v);
+    if (v === undefined || r === undefined) continue;
+    if (lowest === undefined || compareVersions(r, releaseOf(lowest)!) < 0) lowest = v;
   }
   return lowest;
 }

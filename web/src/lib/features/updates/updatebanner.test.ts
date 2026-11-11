@@ -29,9 +29,12 @@ test("node-update is hidden only while the hub update is running", () => {
 });
 
 test("an unknown hub version gives hub-local-build and no node-update", () => {
-  for (const version of ["dev", "1.2.0+abc"]) {
-    expect(model([hub({ version }), node()])).toEqual([{ kind: "hub-local-build" }]);
-  }
+  expect(model([hub({ version: "dev" }), node()])).toEqual([{ kind: "hub-local-build" }]);
+});
+
+test("a local-build hub is compared by its release, so it gets no hub-local-build notice", () => {
+  expect(model([hub({ version: "1.2.0+abc" }), node()])).toEqual([]);
+  expect(model([hub({ version: "1.2.0+abc", stale: true, target: "1.3.0" })]).map((i) => i.kind)).toEqual(["hub-update"]);
 });
 
 test("a node that failed with 404 gives by-hand", () => {
