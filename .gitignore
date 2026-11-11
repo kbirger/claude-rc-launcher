@@ -3,3 +3,5 @@ web/dist
 dist
 .superpowers
 server/src/embedded.ts
+
+.svelte-kit

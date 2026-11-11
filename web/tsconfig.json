@@ -1,15 +1,6 @@
 {
-  "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "types": ["svelte", "vite/client"]
-  },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"],
-  "exclude": ["src/**/*.test.ts"]
+  "extends": "$app/tsconfig",
+  "compilerOptions": { "paths": { "#lib/*": ["./src/lib/*"] } },
+  "include": ["src", "*.ts"],
+  "exclude": ["src/service-worker", "src/**/*.test.ts"]
 }

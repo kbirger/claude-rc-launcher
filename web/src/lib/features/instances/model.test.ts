@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
-import { inRoot } from "../../../test/effect-root.svelte";
+import { inRoot } from "../../../../test/effect-root.svelte";
 import { createInstancesModel } from "./model.svelte";
 
 const inst = (id: string, path = `/p/${id}`) => ({ id, path, name: id, state: "active", startedAt: null });
