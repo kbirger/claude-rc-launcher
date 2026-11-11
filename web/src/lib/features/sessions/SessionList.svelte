@@ -29,7 +29,7 @@
             <Card.Content class="grid gap-1">
               {@const title = sessionTitle(s)}
               <div class="flex items-start gap-2">
-                <span class="line-clamp-2 min-w-0 flex-1 break-words font-semibold {title ? '' : 'font-normal text-muted-foreground'}">{title ?? "Untitled session"}</span>
+                <span class="line-clamp-2 min-w-0 flex-1 break-words {title ? 'font-semibold' : 'font-normal text-muted-foreground'}">{title ?? "Untitled session"}</span>
                 {#if wt}<Badge variant="outline">work tree</Badge>{/if}
               </div>
               <div class="flex flex-wrap gap-x-2 text-muted-foreground">
