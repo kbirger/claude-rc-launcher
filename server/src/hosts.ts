@@ -13,6 +13,25 @@ import type { UpdateRecord } from "./updaterecord";
 import type { UpdateTracker } from "./updatetracker";
 import type { UpdateReport } from "./serviceupdate";
 
+/** Reads at most `max` bytes of a small body and cancels the rest. */
+async function readSmall(body: ReadableStream<Uint8Array> | null, max: number): Promise<string> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      break;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** The oldest known version among the `clients` of a node's `/node` body, or undefined. */
 function clientVersionOf(body: unknown): string | undefined {
   if (!isObject(body) || !Array.isArray(body.clients)) return undefined;
@@ -52,6 +71,11 @@ export const REPOS_TIMEOUT_MS = 120_000;
 export const LOGIN_START_TIMEOUT_MS = 20_000;
 
 const ID_RE = /^[0-9a-f]{12}$/;
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MAX_PATH_QUERY = 4096;
+/** The most of an error body the hub reads from a node that refuses a download. */
+const MAX_ERROR_BODY = 64 * 1024;
+const DOWNLOAD_HEADERS = ["content-type", "content-length", "content-disposition", "x-content-type-options"];
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
@@ -123,6 +147,12 @@ export function hostsApi(o: {
   // Audit every state-changing request, local or remote.
   app.use("/:host/*", async (c, next) => {
     await next();
+    // A download is logged with its status only, never the file name.
+    if (c.req.method === "GET" && /\/instances\/[^/]+\/sessions\/[^/]+\/download$/.test(new URL(c.req.url).pathname)) {
+      const u = c.get("user" as never) as User | undefined;
+      const hostId = /\/hosts\/([^/]+)/.exec(new URL(c.req.url).pathname)?.[1] ?? "unknown";
+      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} GET download ${c.res.status}`);
+    }
     if (isWrite(c.req.method)) {
       const u = c.get("user" as never) as User | undefined;
       const pathname = new URL(c.req.url).pathname;
@@ -233,6 +263,71 @@ export function hostsApi(o: {
       return k.call("POST", "/api/fs/mkdir", { json, timeoutMs: requestTimeoutMs });
     }),
   );
+  const sessionId = (c: Context) => {
+    const sid = c.req.param("sid") ?? "";
+    if (!SESSION_ID_RE.test(sid)) throw new HttpError(400, "invalid session id");
+    return sid;
+  };
+  /** A `path` query: at most 4096 characters, no NUL. Undefined when absent. */
+  const pathQuery = (c: Context, required = false) => {
+    const p = c.req.query("path");
+    if (p === undefined) {
+      if (required) throw new HttpError(400, "path is required");
+      return undefined;
+    }
+    if (p.length > MAX_PATH_QUERY || p.includes("\0")) throw new HttpError(400, "invalid path");
+    return p;
+  };
+  const sessionsBase = (c: Context) => `/api/instances/${instanceId(c)}/sessions`;
+
+  remote.get("/instances/:id/sessions", forward((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions/:sid/touched", forward((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/touched`, { timeoutMs: requestTimeoutMs })));
+  remote.get(
+    "/instances/:id/sessions/:sid/files",
+    forward((c, k) => {
+      const base = `${sessionsBase(c)}/${sessionId(c)}/files`;
+      const p = pathQuery(c);
+      const query = { ...(p !== undefined ? { path: p } : {}), ...(c.req.query("hidden") === "1" ? { hidden: "1" } : {}) };
+      return k.call("GET", base, { ...(Object.keys(query).length ? { query } : {}), timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get(
+    "/instances/:id/sessions/:sid/file",
+    forward((c, k) => {
+      const base = `${sessionsBase(c)}/${sessionId(c)}/file`;
+      const p = pathQuery(c);
+      return k.call("GET", base, { ...(p !== undefined ? { query: { path: p } } : {}), timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get("/instances/:id/sessions/:sid/download", async (c) => {
+    const { id, client } = clientOf(c);
+    const base = `${sessionsBase(c)}/${sessionId(c)}/download`;
+    const p = pathQuery(c, true)!;
+    if (!client.download) return c.json({ error: "downloads are not available for this host" }, 501);
+    try {
+      const r = await client.download(base, { query: { path: p, ...(c.req.query("inline") === "1" ? { inline: "1" } : {}) }, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
+      if (r.status !== 200) {
+        const text = await readSmall(r.body, MAX_ERROR_BODY);
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = { error: "download failed" };
+        }
+        return c.json(json, r.status as 400);
+      }
+      const headers = new Headers();
+      for (const name of DOWNLOAD_HEADERS) {
+        const v = r.headers.get(name);
+        if (v !== null) headers.set(name, v);
+      }
+      return new Response(r.body, { status: 200, headers });
+    } catch (e) {
+      if (e instanceof HostError) return c.json({ error: e.message, host: id }, 502);
+      throw e;
+    }
+  });
+
   remote.get("/node", forward((_c, k) => k.call("GET", "/api/node", { timeoutMs: requestTimeoutMs })));
   remote.post(
     "/update",
