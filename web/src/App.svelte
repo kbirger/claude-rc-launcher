@@ -133,28 +133,30 @@
     <LogOut size={22} aria-hidden="true" />
   </a>
 </header>
-{#if reloadBar}
-  <section class="reload" role="status">
-    <span>The hub was updated. Reload to get the new page.</span>
-    <button class="primary" onclick={() => location.reload()}>Reload</button>
-  </section>
-{/if}
-<UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
-{#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], selected))}
+<div class="column">
+  {#if reloadBar}
+    <section class="reload" role="status">
+      <span>The hub was updated. Reload to get the new page.</span>
+      <button class="primary" onclick={() => location.reload()}>Reload</button>
+    </section>
+  {/if}
+  <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+  {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], selected))}
+    {#key selected}
+      <div class="finished"><UpdateOutput host={selected} open={false} /></div>
+    {/key}
+  {/if}
+  <main>
+    <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
+    <button class="primary new" onclick={() => { newInitial = undefined; showNew = true; }}>+ New</button>
+    {#key selected}
+      <InstanceList host={selected} {startError} />
+    {/key}
+  </main>
   {#key selected}
-    <div class="finished"><UpdateOutput host={selected} open={false} /></div>
+    <UpdateHistory host={selected} />
   {/key}
-{/if}
-{#key selected}
-  <UpdateHistory host={selected} />
-{/key}
-<main>
-  <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
-  <button class="primary new" onclick={() => { newInitial = undefined; showNew = true; }}>+ New</button>
-  {#key selected}
-    <InstanceList host={selected} {startError} />
-  {/key}
-</main>
+</div>
 {#if showNew}
   {#key `${selected}\n${dialogGen}`}
     <NewDialog
@@ -171,14 +173,14 @@
 {/if}
 
 <style>
-  .finished { padding: 4px 16px; }
-  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); border-left: 3px solid var(--warn); }
+  /* One column for everything under the header (the header spans the full width). */
+  .column { max-width: 720px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
   h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; gap: 2px; font-size: 0.7rem; line-height: 1.1; margin: 0; flex: none; }
   .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted); font-size: 0.9rem; }
   .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--accent); }
-  main { max-width: 720px; margin: 0 auto; padding: 16px; }
   .new { width: 100%; margin-bottom: 16px; }
   @media (max-width: 480px) {
     .name { display: none; }

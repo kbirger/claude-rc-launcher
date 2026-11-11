@@ -11,7 +11,7 @@
 </script>
 
 <details class="history" bind:open>
-  <summary>History</summary>
+  <summary>Update history</summary>
   {#if historyQ.isError}
     <p class="muted">The history is not available.</p>
   {:else if items.length === 0}
@@ -34,7 +34,7 @@
 </details>
 
 <style>
-  .history { padding: 4px 16px; }
+  .history { padding: 0 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
   summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
   ul { list-style: none; margin: 0; padding: 0; }
   .muted { color: var(--muted); margin: 0 0 8px; }
