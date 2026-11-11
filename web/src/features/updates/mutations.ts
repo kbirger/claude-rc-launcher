@@ -9,6 +9,9 @@ export const updateHostMutation = (client: QueryClient) => ({
   mutationKey: ["update-host"] as const,
   mutationFn: ({ host, release }: { host: string; release?: string }) => updateHost(host, release),
   // After the call, however it ended, the host list and the update record are stale.
-  onSettled: () =>
-    Promise.all([client.invalidateQueries({ queryKey: HOSTS_KEY }), client.invalidateQueries({ queryKey: UPDATES_KEY })]),
+  // Not awaited: the caller's busy state must not wait for the refetches.
+  onSettled: () => {
+    void client.invalidateQueries({ queryKey: HOSTS_KEY });
+    void client.invalidateQueries({ queryKey: UPDATES_KEY });
+  },
 });
