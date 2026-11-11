@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { trustStartArgs, type TrustPrompt } from "./trustprompt";
-  import ClonePanel from "../clone/ClonePanel.svelte";
+  import { ClonePanel } from "../clone";
   import ActionIcon from "../../shared/ui/ActionIcon.svelte";
   import FolderIcon from "../../shared/ui/FolderIcon.svelte";
   import { iconKind } from "../../shared/ui/foldericon";
-  import { ApiError, browse, getNode, listUsers, mkdir, startInstance, type DirListing, type UsersInfo } from "../../shared/api";
+  import { ApiError } from "../../shared/http";
+  import { startInstance } from "../instances";
+  import { browse, getNode, listUsers, mkdir, type DirListing, type UsersInfo } from "./api";
 
   let { host, onclose, onstarted, busyReason }: { host: string; onclose: () => void; onstarted: () => void; busyReason?: string } = $props();
 

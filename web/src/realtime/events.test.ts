@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/svelte-query";
 import { connectEvents } from "./events";
-import type { UpdateEntry } from "../shared/api";
+import type { UpdateEntry } from "../features/updates";
 
 class FakeES {
   static all: FakeES[] = [];

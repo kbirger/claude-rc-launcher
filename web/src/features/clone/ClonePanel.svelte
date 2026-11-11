@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { ApiError, cloneStart, cloneStatus, githubLoginStart, githubLoginStatus, listRepos, type RepoGroup } from "../../shared/api";
+  import { ApiError } from "../../shared/http";
+  import { cloneStart, cloneStatus, githubLoginStart, githubLoginStatus, listRepos, type RepoGroup } from "./api";
   import { filterGroups } from "./repofilter";
   import { startPolling } from "./poll";
 

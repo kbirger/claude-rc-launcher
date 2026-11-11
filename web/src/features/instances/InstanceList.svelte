@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ApiError, getLogs, listInstances, stopInstance, type Instance } from "../../shared/api";
+  import { ApiError } from "../../shared/http";
+  import { getLogs, listInstances, stopInstance, type Instance } from "./api";
 
   let { host, refreshKey = 0 }: { host: string; refreshKey?: number } = $props();
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { logsQuery } from "../../shared/queries";
+  import { logsQuery } from "./queries";
   import { followsBottom, outputSummary } from "./updateoutput";
 
   // `open` is only the start state: a running update opens the panel, a finished one leaves it closed.

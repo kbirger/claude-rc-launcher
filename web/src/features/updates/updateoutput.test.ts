@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { UpdateEntry } from "../../shared/api";
-import type { HostInfo } from "../../shared/api";
+import type { UpdateEntry } from "./api";
+import type { HostInfo } from "../hosts";
 import { followsBottom, hostOptionLabel, outputSummary, panelOpenByDefault, showsFinishedPanel, stepIsError, stepText } from "./updateoutput";
 
 const e = (o: Partial<UpdateEntry> = {}): UpdateEntry => ({ host: "n1", startedAt: "t", startedBy: "u", from: "1.0.0", status: "running", ...o });

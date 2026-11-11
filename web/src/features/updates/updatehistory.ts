@@ -1,4 +1,4 @@
-import type { HistoryItem } from "../../shared/api";
+import type { HistoryItem } from "./api";
 
 const when = (iso: string): string => {
   const t = Date.parse(iso);

@@ -1,4 +1,4 @@
-import type { HostInfo } from "../../shared/api";
+import type { HostInfo } from "./api";
 
 // One wording for the client of a machine, shared by the host picker and the hub line.
 // The components print a present version themselves, with their own "client " prefix and the local build

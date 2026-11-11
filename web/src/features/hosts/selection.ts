@@ -1,4 +1,4 @@
-import type { HostInfo } from "../../shared/api";
+import type { HostInfo } from "./api";
 
 /**
  * The host to show after the host list changed. A selected host stays, whatever its status: presence events turn it

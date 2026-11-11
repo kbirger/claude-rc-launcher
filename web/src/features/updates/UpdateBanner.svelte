@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
-  import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "../../shared/api";
+  import { ApiError } from "../../shared/http";
+  import { updateHost, type UpdateEntry } from "./api";
+  import type { HostInfo } from "../hosts";
   import UpdateOutput from "./UpdateOutput.svelte";
   import { panelOpenByDefault } from "./updateoutput";
   import { windowsNames } from "./updatewarn";

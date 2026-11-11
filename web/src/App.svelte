@@ -1,20 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { getMe, type HostInfo, type Me } from "./shared/api";
+  import { getMe, type Me } from "./features/auth";
   import { connectEvents } from "./realtime/events";
-  import { selectionAfter } from "./features/hosts/selection";
-  import UpdateOutput from "./features/updates/UpdateOutput.svelte";
-  import { lastEntry } from "./features/updates/updatebanner";
-  import { showsFinishedPanel } from "./features/updates/updateoutput";
-  import { hostsQuery, latestQuery, updatesQuery } from "./shared/queries";
-  import HubVersionLine from "./features/hosts/HubVersionLine.svelte";
-  import { busyReason, reloadDecision } from "./features/updates/updatewarn";
-  import UpdateHistory from "./features/updates/UpdateHistory.svelte";
-  import UpdateBanner from "./features/updates/UpdateBanner.svelte";
-  import HostPicker from "./features/hosts/HostPicker.svelte";
-  import InstanceList from "./features/instances/InstanceList.svelte";
-  import NewDialog from "./features/new-instance/NewDialog.svelte";
+  import { HostPicker, HubVersionLine, hostsQuery, selectionAfter, type HostInfo } from "./features/hosts";
+  import { UpdateBanner, UpdateHistory, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "./features/updates";
+  import { InstanceList } from "./features/instances";
+  import { NewDialog } from "./features/new-instance";
 
   const HOST_KEY = "claude-rc-host";
 

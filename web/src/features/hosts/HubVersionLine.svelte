@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { HostInfo } from "../../shared/api";
+  import type { HostInfo } from "./api";
   import { clientLabel } from "./clientlabel";
 
   let { hub }: { hub?: HostInfo } = $props();

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import type { HostInfo, UpdateEntry } from "../../shared/api";
+import type { HostInfo } from "../hosts";
+import type { UpdateEntry } from "./api";
 import { bannerKey, bannerModel, isRunning, mergeCallErrors, pruneCallErrors } from "./updatebanner";
 
 const now = new Date("2026-11-09T12:00:00Z");

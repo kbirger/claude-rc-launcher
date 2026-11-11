@@ -1,4 +1,5 @@
-import type { HostInfo, UpdateEntry } from "../../shared/api";
+import type { HostInfo } from "../hosts";
+import type { UpdateEntry } from "./api";
 import { stepText } from "./updateoutput";
 
 export type BannerItem =

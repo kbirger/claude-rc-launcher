@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { HostInfo } from "../../shared/api";
+import type { HostInfo } from "./api";
 import { selectionAfter } from "./selection";
 
 const hosts = (status: HostInfo["status"]): HostInfo[] => [
