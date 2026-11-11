@@ -77,7 +77,7 @@
 
   function changeUser(e: Event) {
     userPick = (e.currentTarget as HTMLSelectElement).value;
-    go(listing && listing.path ? listing.path : undefined);
+    go(path);
   }
 
   function createFolder() {
