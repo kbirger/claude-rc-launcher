@@ -181,6 +181,7 @@
   .new { width: 100%; margin-bottom: 16px; }
   @media (max-width: 480px) {
     .name { display: none; }
+    h1 { min-width: 44px; }
   }
   @media (max-width: 480px) {
     .user { display: none; }
