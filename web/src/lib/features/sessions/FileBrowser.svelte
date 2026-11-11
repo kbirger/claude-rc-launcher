@@ -14,13 +14,15 @@
   const link = (p: string, file?: string, h = hidden) => sessionsHref({ host, instance, session, view: "folder", path: p, hidden: h, file });
   // A path through a dot name can only be listed with hidden names shown.
   const forced = $derived(inHiddenPath(path));
+  // The last crumb is the folder on screen; its path is the cleaned form of `path`.
+  const crumbPath = $derived(crumbs(path).at(-1)?.path);
   const row = "flex min-h-11 flex-col justify-center border-b px-3 py-1.5 last:border-b-0";
 </script>
 
 <nav class="mb-2 flex flex-wrap items-center" aria-label="Folder">
   {#each crumbs(path) as c, i (c.path)}
     {#if i > 1}<span class="text-muted-foreground">/</span>{/if}
-    <a href={link(c.path)} class="inline-flex min-h-11 items-center px-1.5">{c.name}</a>
+    <a href={link(c.path)} class="inline-flex min-h-11 items-center px-1.5" aria-current={c.path === crumbPath ? "page" : undefined}>{c.name}</a>
   {/each}
 </nav>
 <label class="mb-2 inline-flex min-h-11 items-center gap-2 whitespace-nowrap">
@@ -44,7 +46,7 @@
     {#each q.data.entries as e (e.name)}
       <li>
         {#if e.kind === "other"}
-          <div class={cn(row, "opacity-50")} aria-disabled="true">
+          <div class={cn(row, "opacity-50")} role="link" aria-disabled="true">
             <span class="truncate">{e.name}</span>
             <span class="text-xs text-muted-foreground">not a regular file</span>
           </div>

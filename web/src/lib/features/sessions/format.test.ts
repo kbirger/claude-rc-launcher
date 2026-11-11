@@ -82,3 +82,19 @@ test("showHidden reads hidden=1 and turns on for a path through a dot name", () 
   expect(showHidden(undefined, "src/.cache")).toBe(true);
   expect(showHidden(null, "src\\.cache")).toBe(true);
 });
+
+test("lastSegments accepts Windows separators", () => {
+  expect(lastSegments("C:\\r\\p\\src\\a.ts")).toBe("src/a.ts");
+});
+
+test("sessionsHref encodes awkward values so they come back unchanged", () => {
+  const vals = { path: "a b/#?%&+.txt", file: "javascript:alert(1)", host: "//evil.example", instance: "i d" };
+  const href = sessionsHref(vals);
+  expect(href.startsWith("/sessions?")).toBe(true);
+  // Stays a same-origin path: never a protocol or a protocol-relative URL.
+  expect(new URL(href, "https://hub.example").origin).toBe("https://hub.example");
+  const q = new URL(href, "https://hub.example").searchParams;
+  for (const [k, v] of Object.entries(vals)) expect(q.get(k)).toBe(v);
+  expect(href).not.toContain("#");
+  expect(href).toContain("%2B");
+});

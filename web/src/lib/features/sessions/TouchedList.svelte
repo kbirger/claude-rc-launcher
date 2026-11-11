@@ -26,9 +26,9 @@
             <span class="text-xs text-muted-foreground">{f.tool} · {ago(f.at, now)}</span>
           </a>
         {:else}
-          <div class={cn(row, "opacity-50")} aria-disabled="true">
+          <div class={cn(row, "opacity-50")} role="link" aria-disabled="true">
             <span class="truncate">{lastSegments(f.path)}</span>
-            <span class="text-xs text-muted-foreground">outside the session folder</span>
+            <span class="text-xs text-muted-foreground">{f.inside ? "cannot be opened from here" : "outside the session folder"}</span>
           </div>
         {/if}
       </li>

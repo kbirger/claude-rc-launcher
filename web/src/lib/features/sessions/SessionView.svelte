@@ -5,6 +5,7 @@
   import FileBrowser from "./FileBrowser.svelte";
   import FilePreview from "./FilePreview.svelte";
   import TouchedList from "./TouchedList.svelte";
+  import { isUnsupported } from "./api";
   import { ago, sessionsHref, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
 
@@ -34,11 +35,15 @@
     <FilePreview {host} {instance} {session} {file} back={view === "folder" ? href("folder", { path }) : href("touched")} />
   {:else}
     <div class="flex gap-2">
-      <Button class="flex-1" size="touch" variant={tab("touched")} href={href("touched")}>Touched</Button>
-      <Button class="flex-1" size="touch" variant={tab("folder")} href={href("folder")}>Folder</Button>
+      <Button class="flex-1" size="touch" variant={tab("touched")} href={href("touched")} aria-current={view === "touched" ? "page" : undefined}>Touched</Button>
+      <Button class="flex-1" size="touch" variant={tab("folder")} href={href("folder")} aria-current={view === "folder" ? "page" : undefined}>Folder</Button>
     </div>
     {#if q.isPending}
       <p class="text-muted-foreground">Loading session...</p>
+    {:else if isUnsupported(q.error)}
+      <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
+    {:else if q.error}
+      <p class="error">Could not load the session: {q.error.message}</p>
     {:else if !s}
       <p class="error">Session not found.</p>
     {:else if view === "folder"}

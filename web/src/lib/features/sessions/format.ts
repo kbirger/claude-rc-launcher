@@ -15,8 +15,8 @@ export function relativeTo(root: string, path: string): string | undefined {
   return same && p.length > r.length ? p.slice(r.length) : undefined;
 }
 
-/** The last two segments of a path, for a short label. */
-export const lastSegments = (path: string): string => path.split("/").filter(Boolean).slice(-2).join("/");
+/** The last two segments of a path, for a short label. Accepts "\\" like `relativeTo`. */
+export const lastSegments = (path: string): string => fwd(path).split("/").filter(Boolean).slice(-2).join("/");
 
 export const joinPath = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name);
 
