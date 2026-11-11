@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { encodeProjectDir, listSessions, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
+import { encodeProjectDir, findSession, listSessions, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
 
 const HOME = "/h";
 const PATH = "/work/proj";
@@ -94,6 +94,12 @@ describe("sessions", () => {
     const out = await listSessions({ home: HOME, path: PATH, fs });
     expect(out.map((s) => s.root)).toEqual([wt]);
     expect(await sessionRootOf({ home: HOME, path: PATH, sessionId: ID1, fs })).toBe(wt);
+    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: wt, worktree: true });
+  });
+
+  test("findSession marks a main folder session as not a work tree", async () => {
+    const fs = fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user("/work/proj/src")] } });
+    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: "/work/proj/src", worktree: false });
   });
 
   test("listSessions drops a sibling folder session whose first cwd is outside the work trees folder", async () => {

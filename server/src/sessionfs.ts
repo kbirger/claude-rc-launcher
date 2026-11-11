@@ -1,10 +1,11 @@
 import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath, stat, type FileHandle } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { PathError, within } from "./paths";
 
-// Files inside a session root, for preview and download. The node runs as root and serves any signed-in hub
-// user, so the only gate is that a path stays inside the root. Every file is opened by its checked real path
+// Files inside a session root, for preview and download. The node runs as its service account and serves any
+// signed-in hub user, so the gate here is that a path stays inside the root. The caller (sessionapi rootOf) checks
+// that the root itself is inside the instance folder and hands over its real path. Every file is opened by its checked real path
 // without following a final symlink and without blocking, and the open handle must be the file that was checked.
 
 export type Entry = { name: string; kind: "dir" | "file" | "other"; size?: number; mtime: string };
@@ -45,11 +46,15 @@ function notFoundOr(e: unknown, fallback: PathError): PathError {
 }
 
 async function realRoot(root: string): Promise<string> {
+  let top: string;
   try {
-    return await realpath(resolve(root));
+    top = await realpath(resolve(root));
   } catch (e) {
     throw notFoundOr(e, new PathError(400, "session folder not accessible"));
   }
+  // A root swapped for a link to the filesystem root after the caller's check.
+  if (dirname(top) === top) throw new PathError(404, "session folder not found");
+  return top;
 }
 
 async function resolveParts(real: string, parts: string[]): Promise<string> {

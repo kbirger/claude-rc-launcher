@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -103,6 +103,123 @@ describe("files", () => {
     const r = await get(build(), `/${SID}/touched`);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([]);
+  });
+});
+
+describe("a session root reached through a symlink", () => {
+  // The instance user writes the transcript, so its cwd is not trusted: only the real place of the folder counts.
+  const all = (app: Hono, sid = SID) => Promise.all([
+    get(app, `/${sid}/files`),
+    get(app, `/${sid}/files?path=etc`),
+    get(app, `/${sid}/file?path=${encodeURIComponent("etc/hostname")}`),
+    get(app, `/${sid}/download?path=${encodeURIComponent("etc/hostname")}`),
+  ]);
+  const refused = async (app: Hono, sid = SID) => {
+    for (const r of await all(app, sid)) {
+      expect([403, 404]).toContain(r.status);
+      await r.arrayBuffer();
+    }
+  };
+
+  test("a cwd at a link to / is refused for list, file and download", async () => {
+    await symlink("/", join(root, "link"));
+    await refused(build({ roots: { [SID]: join(root, "link") } }));
+  });
+  test("a cwd below a link to / is refused", async () => {
+    await symlink("/", join(root, "link"));
+    await refused(build({ roots: { [SID]: join(root, "link", "etc") } }));
+    const r = await get(build({ roots: { [SID]: join(root, "link", "etc") } }), `/${SID}/file?path=hostname`);
+    expect([403, 404]).toContain(r.status);
+  });
+  test("a cwd at a link to a folder outside the instance is refused", async () => {
+    const out = join(dir, "outside");
+    await mkdir(join(out, "etc"), { recursive: true });
+    await writeFile(join(out, "etc", "hostname"), "secret");
+    await symlink(out, join(root, "link"));
+    await refused(build({ roots: { [SID]: join(root, "link") } }));
+  });
+  test("a cwd with .. segments that leaves the instance folder is refused", async () => {
+    await mkdir(join(dir, "outside", "etc"), { recursive: true });
+    await writeFile(join(dir, "outside", "etc", "hostname"), "secret");
+    await refused(build({ roots: { [SID]: join(root, "..", "outside") } }));
+    await refused(build({ roots: { [SID]: `${root}/..` } }));
+  });
+  test("a cwd of link/.. stays at the instance folder, not the link target's parent", async () => {
+    await mkdir(join(dir, "outside", "inner"), { recursive: true });
+    await writeFile(join(dir, "outside", "leak.txt"), "secret");
+    await symlink(join(dir, "outside", "inner"), join(root, "link"));
+    const app = build({ roots: { [SID]: `${root}/link/..` } });
+    const r = await get(app, `/${SID}/files`);
+    expect(r.status).toBe(200);
+    const names = ((await r.json()) as { entries: { name: string }[] }).entries.map((e) => e.name);
+    expect(names).toContain("a.txt");
+    expect(names).not.toContain("leak.txt");
+    expect([403, 404]).toContain((await get(app, `/${SID}/file?path=leak.txt`)).status);
+  });
+  test("a work tree folder that is a link to / is refused", async () => {
+    await mkdir(join(root, ".claude", "worktrees"), { recursive: true });
+    await symlink("/", join(root, ".claude", "worktrees", "x"));
+    await refused(build({ roots: { [SID]: join(root, ".claude", "worktrees", "x") } }));
+  });
+  test("a worktrees folder that is a link to / is refused", async () => {
+    await mkdir(join(root, ".claude"), { recursive: true });
+    await symlink("/", join(root, ".claude", "worktrees"));
+    await refused(build({ roots: { [SID]: join(root, ".claude", "worktrees", "etc") } }));
+  });
+  test("an instance folder replaced by a link is refused", async () => {
+    const real = join(dir, "real");
+    await mkdir(join(real, "etc"), { recursive: true });
+    await writeFile(join(real, "etc", "hostname"), "secret");
+    const linked = join(dir, "linked");
+    await symlink(real, linked);
+    await refused(build({ roots: { [SID]: linked }, path: linked }));
+    await rm(linked);
+    await symlink("/", linked);
+    await refused(build({ roots: { [SID]: linked }, path: linked }));
+  });
+  test("a cwd at a link that resolves inside the instance folder still works", async () => {
+    await mkdir(join(root, "sub"));
+    await writeFile(join(root, "sub", "in.txt"), "inside");
+    await symlink(join(root, "sub"), join(root, "link"));
+    const app = build({ roots: { [SID]: join(root, "link") } });
+    const l = await get(app, `/${SID}/files`);
+    expect(l.status).toBe(200);
+    expect(((await l.json()) as { entries: { name: string }[] }).entries.map((e) => e.name)).toEqual(["in.txt"]);
+    const f = await get(app, `/${SID}/file?path=in.txt`);
+    expect(await f.json()).toMatchObject({ text: "inside" });
+    const d = await get(app, `/${SID}/download?path=in.txt`);
+    expect(await d.text()).toBe("inside");
+  });
+  test("a work tree session whose folder links out of the work trees folder is refused", async () => {
+    // Filed under the work tree transcript folder, so it must stay inside <path>/.claude/worktrees.
+    const wtDir = `${root.replace(/[^a-zA-Z0-9]/g, "-")}--claude-worktrees-x`;
+    const line = (cwd: string) => JSON.stringify({ type: "user", cwd, timestamp: "2026-11-11T10:00:00Z" });
+    const mk = (cwd: string): TranscriptFs => ({
+      readdir: async (d) => (d.endsWith("projects") ? [wtDir] : d.endsWith(wtDir) ? [`${SID}.jsonl`] : []),
+      stat: async () => ({ mtimeMs: 1000 }),
+      lines: async function* () { yield line(cwd); },
+    });
+    const wt = join(root, ".claude", "worktrees", "x");
+    await mkdir(join(root, ".claude", "worktrees"), { recursive: true });
+    await mkdir(join(root, "sub"));
+    await writeFile(join(root, "sub", "s.txt"), "s");
+    await symlink(join(root, "sub"), wt);
+    const app = new Hono();
+    const inst = { claudeHome: async () => ({ path: root, home: "/home/x" }) } as unknown as Instances;
+    app.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: mk(wt) }));
+    app.onError(onError);
+    expect([403, 404]).toContain((await get(app, `/${SID}/download?path=s.txt`)).status);
+    await rm(wt);
+    await mkdir(wt);
+    await writeFile(join(wt, "w.txt"), "w");
+    expect(await (await get(app, `/${SID}/download?path=w.txt`)).text()).toBe("w");
+  });
+  test("a real work tree inside the instance folder works", async () => {
+    const wt = join(root, ".claude", "worktrees", "x");
+    await mkdir(wt, { recursive: true });
+    await writeFile(join(wt, "w.txt"), "wt");
+    const app = build({ roots: { [SID]: wt } });
+    expect(await (await get(app, `/${SID}/download?path=w.txt`)).text()).toBe("wt");
   });
 });
 

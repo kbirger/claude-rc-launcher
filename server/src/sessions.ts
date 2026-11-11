@@ -66,24 +66,24 @@ function parse(line: string): Record<string, any> | undefined {
   }
 }
 
-type Found = { id: string; file: string; mtimeMs: number; root: string; branch?: string; startedAt?: string };
+type Found = { id: string; file: string; mtimeMs: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
 
 /** Find every transcript for `path`: the main folder and the work tree folders. Keep a session only when its first cwd fits. */
 async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: string }): Promise<Found[]> {
   const base = join(o.home, ".claude", "projects");
   const enc = encodeProjectDir(o.path);
-  const dirs: { dir: string; allowed: string }[] = [{ dir: join(base, enc), allowed: o.path }];
+  const dirs: { dir: string; allowed: string; worktree: boolean }[] = [{ dir: join(base, enc), allowed: o.path, worktree: false }];
   try {
     for (const name of await o.fs.readdir(base)) {
       if (name.startsWith(enc + WORKTREE_MARK)) {
-        dirs.push({ dir: join(base, name), allowed: join(o.path, ".claude", "worktrees") });
+        dirs.push({ dir: join(base, name), allowed: join(o.path, ".claude", "worktrees"), worktree: true });
       }
     }
   } catch {
     // no projects folder
   }
   const out: Found[] = [];
-  for (const { dir, allowed } of dirs) {
+  for (const { dir, allowed, worktree } of dirs) {
     let names: string[];
     try {
       names = await o.fs.readdir(dir);
@@ -122,6 +122,7 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
         file,
         mtimeMs,
         root,
+        worktree,
         branch: typeof first.gitBranch === "string" && first.gitBranch ? first.gitBranch : undefined,
         startedAt: typeof first.timestamp === "string" ? first.timestamp : undefined,
       });
@@ -142,15 +143,20 @@ export async function listSessions(o: { home: string; path: string; fs?: Transcr
   return sessions.sort((a, b) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0));
 }
 
-export async function sessionRootOf(o: {
-  home: string;
-  path: string;
-  sessionId: string;
-  fs?: TranscriptFs;
-}): Promise<string | undefined> {
+type SessionQuery = { home: string; path: string; sessionId: string; fs?: TranscriptFs };
+
+/**
+ * The lexical session folder (the resolved first cwd) and whether the session came from a work tree folder.
+ * Lexical only: the caller must check the real place of `root` before it reads files there.
+ */
+export async function findSession(o: SessionQuery): Promise<{ root: string; worktree: boolean } | undefined> {
   if (!SESSION_ID.test(o.sessionId)) return undefined;
   const found = await scan({ home: o.home, path: o.path, fs: o.fs ?? defaultFs, only: o.sessionId });
-  return found[0]?.root;
+  return found[0] ? { root: found[0].root, worktree: found[0].worktree } : undefined;
+}
+
+export async function sessionRootOf(o: SessionQuery): Promise<string | undefined> {
+  return (await findSession(o))?.root;
 }
 
 /**

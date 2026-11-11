@@ -137,6 +137,16 @@ describe("resolveIn", () => {
       await rm(join(base, "root-link"));
     }
   });
+  test.skipIf(win)("a root that is a link to the filesystem root is 404", async () => {
+    await symlink("/", join(base, "slash-link"));
+    try {
+      expect(await status(listIn(join(base, "slash-link"), "etc", false))).toBe(404);
+      expect(await status(previewIn(join(base, "slash-link"), "etc/hostname"))).toBe(404);
+      expect(await status(openDownload(join(base, "slash-link"), "etc/hostname"))).toBe(404);
+    } finally {
+      await rm(join(base, "slash-link"));
+    }
+  });
 });
 
 describe("listIn", () => {

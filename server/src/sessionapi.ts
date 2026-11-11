@@ -1,9 +1,9 @@
-import { stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { HttpError, type Instances } from "./instances";
-import { PathError } from "./paths";
-import { listSessions, sessionRootOf, touchedFiles, type TranscriptFs } from "./sessions";
+import { PathError, within } from "./paths";
+import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./sessions";
 import { listIn, openDownload as openDownloadDefault, previewIn } from "./sessionfs";
 
 const ID_RE = /^[0-9a-f]{12}$/;
@@ -36,15 +36,38 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     return instances.claudeHome(id);
   }
 
-  /** The session folder, found again from the transcript on every request. */
-  async function rootOf(c: Context): Promise<{ h: { path: string; home: string }; sessionId: string; root: string }> {
+  /**
+   * The session folder, found again from the transcript on every request. The instance user writes the transcript,
+   * so its cwd is only a hint: `real` is where the folder really is, and it must sit inside the real instance folder
+   * (and inside the real work trees folder for a work tree session). `root` is the lexical cwd, for the transcript;
+   * file functions get `real`.
+   */
+  async function rootOf(c: Context): Promise<{ h: { path: string; home: string }; sessionId: string; root: string; real: string }> {
     const h = await home(c);
     const sessionId = c.req.param("sid") ?? "";
     if (!SESSION_ID.test(sessionId)) throw new HttpError(400, "invalid session id");
-    const root = await sessionRootOf({ ...h, sessionId, ...(fs ? { fs } : {}) });
-    if (!root) throw new HttpError(404, "session not found");
+    const found = await findSession({ ...h, sessionId, ...(fs ? { fs } : {}) });
+    if (!found) throw new HttpError(404, "session not found");
+    const { root, worktree } = found;
     if (dirname(root) === root) throw new HttpError(404, "session not found");
-    return { h, sessionId, root };
+    const real = await realOrMissing(root);
+    // The instance path was stored as a real path, so a different real path means the folder or a parent became a link.
+    const instance = resolve(h.path);
+    const realInstance = await realOrMissing(instance);
+    if (!(within(realInstance, instance) && within(instance, realInstance))) throw new HttpError(404, "session folder not found");
+    if (!within(real, realInstance)) throw new HttpError(404, "session folder not found");
+    if (worktree && !within(real, await realOrMissing(join(instance, ".claude", "worktrees")))) throw new HttpError(404, "session folder not found");
+    if (dirname(real) === real) throw new HttpError(404, "session not found");
+    return { h, sessionId, root, real };
+  }
+
+  /** Real path of `p`. A missing or unreadable folder (ENOENT, ENOTDIR, EACCES, ELOOP) is 404. */
+  async function realOrMissing(p: string): Promise<string> {
+    try {
+      return await realpath(p);
+    } catch {
+      throw new HttpError(404, "session folder not found");
+    }
   }
 
   /** A session folder that is gone is a 404, not a server error. */
@@ -65,20 +88,20 @@ export function sessionApi(deps: SessionApiDeps): Hono {
   });
 
   r.get("/:sid/files", async (c) => {
-    const { root } = await rootOf(c);
-    return c.json(await inRoot(root, () => listIn(root, c.req.query("path") ?? "", c.req.query("hidden") === "1")));
+    const { real } = await rootOf(c);
+    return c.json(await inRoot(real, () => listIn(real, c.req.query("path") ?? "", c.req.query("hidden") === "1")));
   });
 
   r.get("/:sid/file", async (c) => {
-    const { root } = await rootOf(c);
-    const p = await inRoot(root, () => previewIn(root, c.req.query("path") ?? ""));
+    const { real } = await rootOf(c);
+    const p = await inRoot(real, () => previewIn(real, c.req.query("path") ?? ""));
     c.header("X-Content-Type-Options", "nosniff");
     return c.json(p);
   });
 
   r.get("/:sid/download", async (c) => {
-    const { root } = await rootOf(c);
-    const d = await inRoot(root, () => open(root, c.req.query("path") ?? ""));
+    const { real } = await rootOf(c);
+    const d = await inRoot(real, () => open(real, c.req.query("path") ?? ""));
     try {
       const inline = c.req.query("inline") === "1";
       const headers = new Headers({
