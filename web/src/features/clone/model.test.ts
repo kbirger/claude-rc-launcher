@@ -1,6 +1,6 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
-import { QueryClient, environmentManager } from "@tanstack/svelte-query";
+import { QueryClient } from "@tanstack/svelte-query";
 import { inRoot } from "../../../test/effect-root.svelte";
 import { createCloneModel } from "./model.svelte";
 
@@ -19,12 +19,6 @@ type Api = {
 };
 let api: Api;
 const next = (list: (() => Response)[]) => (list.length > 1 ? list.shift()! : list[0])();
-
-// TanStack sees no `window` here and treats the run as a server, which turns off refetchInterval. The jobs poll, so
-// the tests run as a browser would.
-const wasServer = environmentManager.isServer();
-beforeAll(() => environmentManager.setIsServer(() => false));
-afterAll(() => environmentManager.setIsServer(() => wasServer));
 
 const realFetch = globalThis.fetch;
 beforeEach(() => {

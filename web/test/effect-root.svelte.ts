@@ -7,3 +7,9 @@ export function inRoot<T>(fn: () => T): { value: T; dispose: () => void } {
   });
   return { value, dispose };
 }
+
+// A deeply reactive copy of `o`, so a test can change what a model reads through a getter and its effects rerun.
+export function reactive<T extends object>(o: T): T {
+  const s = $state(o);
+  return s;
+}

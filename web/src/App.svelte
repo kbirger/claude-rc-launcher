@@ -132,7 +132,7 @@
   {/key}
 </div>
 {#if flow.showNew}
-  {#key `${flow.selected}\n${flow.dialogGen}`}
+  {#key flow.selected}
     <NewDialog
       host={flow.selected}
       busyReason={selectedBusy}

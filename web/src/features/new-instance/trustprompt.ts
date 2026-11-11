@@ -1,6 +1,8 @@
 import { ApiError } from "../../shared/http";
 
 export type TrustPrompt = { path: string; user: string };
+// What the dialog opens with after a 428: the folder, user and name of that start, and its trust question.
+export type NewInitial = { path: string; user?: string; name?: string; trust: TrustPrompt };
 
 // What to send to startInstance. A trust start must use exactly the folder and user the prompt named,
 // whatever the dialog shows now, so it needs no listing. A plain start uses the current folder and the chosen user.

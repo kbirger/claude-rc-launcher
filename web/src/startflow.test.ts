@@ -13,27 +13,40 @@ describe("start flow", () => {
     expect(f.startError).toBe("");
   });
 
-  test("a 428 reopens the dialog at that folder with the prompt and remounts it", () => {
+  test("a 428 reopens the dialog at that folder with the prompt", () => {
     const f = createStartFlow("local");
     f.startFailed("local", trust("/a"), { path: "/a", name: "n", user: "kir" });
     expect(f.showNew).toBe(true);
     expect(f.newInitial).toEqual({ path: "/a", user: "kir", name: "n", trust: { path: "/a", user: "kir" } });
-    expect(f.dialogGen).toBe(1);
+  });
+
+  test("a 428 when the dialog is closed opens it and sets no startError", () => {
+    const f = createStartFlow("local");
+    f.startFailed("local", trust("/a"), { path: "/a" });
+    f.closeNew();
+    f.startFailed("local", trust("/b"), { path: "/b" });
+    expect(f.showNew).toBe(true);
+    expect(f.newInitial?.path).toBe("/b");
+    expect(f.startError).toBe("");
   });
 
   test("a 428 for another folder while the dialog shows a prompt names the displaced folder", () => {
     const f = createStartFlow("local");
     f.startFailed("local", trust("/a"), { path: "/a" });
+    const first = f.newInitial;
     f.startFailed("local", trust("/b"), { path: "/b" });
     expect(f.newInitial?.path).toBe("/b");
+    expect(f.newInitial).not.toBe(first);
     expect(f.startError).toBe("Trust needed for /a");
-    expect(f.dialogGen).toBe(2);
   });
 
-  test("a second 428 for the same folder names nothing", () => {
+  test("a second 428 for the same folder names nothing and hands in a new object", () => {
     const f = createStartFlow("local");
     f.startFailed("local", trust("/a"), { path: "/a" });
+    const first = f.newInitial;
     f.startFailed("local", trust("/a"), { path: "/a" });
+    expect(f.newInitial).toEqual(first);
+    expect(f.newInitial).not.toBe(first);
     expect(f.startError).toBe("");
   });
 
@@ -54,6 +67,14 @@ describe("start flow", () => {
     expect(f.selected).toBe("win");
     expect(f.showNew).toBe(false);
     expect(f.newInitial).toBeUndefined();
+  });
+
+  test("picking a host also clears startError", () => {
+    const f = createStartFlow("local");
+    f.startFailed("local", { kind: "error", message: "boom" }, { path: "/a" });
+    expect(f.startError).toBe("boom");
+    f.select("win");
+    expect(f.startError).toBe("");
   });
 
   test("a fallback clears the outcome but leaves an open dialog open", () => {

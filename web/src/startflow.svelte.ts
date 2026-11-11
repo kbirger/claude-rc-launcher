@@ -1,7 +1,6 @@
 import type { StartArgs } from "./features/instances";
-import type { TrustPrompt } from "./features/new-instance";
+import type { NewInitial, TrustPrompt } from "./features/new-instance";
 
-export type NewInitial = { path: string; user?: string; name?: string; trust: TrustPrompt };
 // What startErrorAction decided about a failed start.
 export type StartFailure = { kind: "trust"; prompt: TrustPrompt } | { kind: "error"; message: string };
 
@@ -10,11 +9,10 @@ export type StartFailure = { kind: "trust"; prompt: TrustPrompt } | { kind: "err
 export function createStartFlow(initialHost: string) {
   let selected = $state(initialHost);
   let showNew = $state(false);
-  // Set when a start got a 428 "untrusted": the dialog opens again at that folder with the trust question.
+  // Set when a start got a 428 "untrusted": the dialog opens again at that folder with the trust question. Each 428 sets
+  // a new object, and an open dialog shows the new prompt without a remount.
   let newInitial = $state<NewInitial | undefined>();
   let startError = $state("");
-  // NewDialog reads `initial` once. A 428 that comes while the dialog is open bumps this to remount it with the newest prompt.
-  let dialogGen = $state(0);
 
   function clearOutcome() {
     newInitial = undefined;
@@ -26,7 +24,6 @@ export function createStartFlow(initialHost: string) {
     get showNew() { return showNew; },
     get newInitial() { return newInitial; },
     get startError() { return startError; },
-    get dialogGen() { return dialogGen; },
 
     /** The user picked a host. */
     select(id: string) {
@@ -64,7 +61,6 @@ export function createStartFlow(initialHost: string) {
       if (showNew && newInitial && newInitial.path !== a.path) startError = `Trust needed for ${newInitial.path}`;
       newInitial = { path: a.path, user: a.user, name: a.name, trust: failure.prompt };
       showNew = true;
-      dialogGen++;
     },
   };
 }
