@@ -1,18 +1,41 @@
 import { createReadStream } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { open, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { within } from "./paths";
 
-export type Session = { id: string; root: string; branch?: string; startedAt: string; lastActiveAt: string };
+export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string };
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string };
 export type TranscriptFs = {
   readdir(dir: string): Promise<string[]>;
-  stat(p: string): Promise<{ mtimeMs: number }>;
+  stat(p: string): Promise<{ mtimeMs: number; size?: number }>;
   lines(p: string): AsyncIterable<string>;
+  /** The complete lines in the last `bytes` bytes of the file (the first, partial line is dropped). Optional: without it only the head is read. */
+  tail?(p: string, bytes: number): Promise<string[]>;
 };
+
+export type NameCache = {
+  get(file: string): { size: number | undefined; mtimeMs: number; name: string | undefined } | undefined;
+  set(file: string, v: { size: number | undefined; mtimeMs: number; name: string | undefined }): void;
+};
+
+/** A bounded map: when full, the oldest entry goes. */
+export function newNameCache(max = 2000): NameCache {
+  const m = new Map<string, { size: number | undefined; mtimeMs: number; name: string | undefined }>();
+  return {
+    get: (f) => m.get(f),
+    set(f, v) {
+      m.delete(f);
+      m.set(f, v);
+      while (m.size > max) m.delete(m.keys().next().value as string);
+    },
+  };
+}
+const defaultNames = newNameCache();
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_LINE = 1024 * 1024;
+const NAME_WINDOW = 256 * 1024;
+const NAME_MAX = 80;
 const WORKTREE_MARK = "--claude-worktrees-";
 
 /** Stream a file line by line. A line over 1 MB is dropped without being kept in memory. */
@@ -45,10 +68,35 @@ async function* streamLines(p: string): AsyncIterable<string> {
   if (!skipping && size > 0) yield Buffer.concat(parts).toString("utf8");
 }
 
+/** The complete lines in the last `bytes` bytes. A positional read: the rest of the file stays unread. */
+async function tailLines(p: string, bytes: number): Promise<string[]> {
+  const fh = await open(p, "r");
+  try {
+    const size = (await fh.stat()).size;
+    const n = Math.min(size, bytes);
+    const buf = Buffer.alloc(n);
+    let got = 0;
+    while (got < n) {
+      const r = await fh.read(buf, got, n - got, size - n + got);
+      if (r.bytesRead === 0) break;
+      got += r.bytesRead;
+    }
+    let text = buf.subarray(0, got);
+    if (size > n) {
+      const nl = text.indexOf(0x0a);
+      text = nl === -1 ? text.subarray(got) : text.subarray(nl + 1);
+    }
+    return text.toString("utf8").split("\n");
+  } finally {
+    await fh.close();
+  }
+}
+
 const defaultFs: TranscriptFs = {
   readdir: (dir) => readdir(dir),
   stat: (p) => stat(p),
   lines: streamLines,
+  tail: tailLines,
 };
 
 /** The folder name Claude Code uses under `projects/`: every non-alphanumeric character becomes a dash. */
@@ -66,7 +114,7 @@ function parse(line: string): Record<string, any> | undefined {
   }
 }
 
-type Found = { id: string; file: string; mtimeMs: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
+type Found = { id: string; file: string; mtimeMs: number; size?: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
 
 /** Find every transcript for `path`: the main folder and the work tree folders. Keep a session only when its first cwd fits. */
 async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: string }): Promise<Found[]> {
@@ -96,8 +144,11 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
       if (!SESSION_ID.test(id) || (o.only && id !== o.only)) continue;
       const file = join(dir, name);
       let mtimeMs: number;
+      let size: number | undefined;
       try {
-        mtimeMs = (await o.fs.stat(file)).mtimeMs;
+        const st = await o.fs.stat(file);
+        mtimeMs = st.mtimeMs;
+        size = st.size;
       } catch {
         continue;
       }
@@ -122,6 +173,7 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
         id,
         file,
         mtimeMs,
+        size,
         root,
         worktree,
         branch: typeof first.gitBranch === "string" && first.gitBranch ? first.gitBranch : undefined,
@@ -132,15 +184,86 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
   return out;
 }
 
+const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:"];
+
+/** The text of a real user prompt, or undefined for meta records, command echoes and system messages. */
+function promptText(r: Record<string, any>): string | undefined {
+  if (r.type !== "user" || r.isMeta === true) return undefined;
+  const c = r.message?.content;
+  let text: unknown = c;
+  if (Array.isArray(c)) text = c.find((b) => b && b.type === "text" && typeof b.text === "string")?.text;
+  if (typeof text !== "string") return undefined;
+  const t = text.trim();
+  if (t.length === 0 || NOT_PROMPT.some((p) => t.startsWith(p))) return undefined;
+  return t;
+}
+
+function tidy(raw: string | undefined): string | undefined {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (t.length === 0) return undefined;
+  return t.length > NAME_MAX ? t.slice(0, NAME_MAX).trimEnd() + "..." : t;
+}
+
+type Titles = { custom?: string; ai?: string; agent?: string };
+
+function takeTitle(t: Titles, r: Record<string, any>): void {
+  if (r.type === "custom-title" && typeof r.customTitle === "string" && tidy(r.customTitle)) t.custom = r.customTitle;
+  else if (r.type === "ai-title" && typeof r.aiTitle === "string" && tidy(r.aiTitle)) t.ai = r.aiTitle;
+  else if (r.type === "agent-name" && typeof r.agentName === "string" && tidy(r.agentName)) t.agent = r.agentName;
+}
+
+/** Read the head (to the first real prompt, at most 256 KB) and the tail (last 256 KB). Tail titles beat head titles of the same kind. */
+async function readName(fs: TranscriptFs, file: string): Promise<string | undefined> {
+  const head: Titles = {};
+  const tail: Titles = {};
+  let first: string | undefined;
+  try {
+    let bytes = 0;
+    for await (const line of fs.lines(file)) {
+      bytes += line.length + 1;
+      const r = parse(line);
+      if (r) {
+        takeTitle(head, r);
+        first = promptText(r);
+      }
+      if (first !== undefined || bytes > NAME_WINDOW) break;
+    }
+  } catch {
+    // keep what was found
+  }
+  try {
+    for (const line of (await fs.tail?.(file, NAME_WINDOW)) ?? []) {
+      const r = parse(line);
+      if (r) takeTitle(tail, r);
+    }
+  } catch {
+    // keep what was found
+  }
+  return tidy(tail.custom ?? head.custom ?? tail.ai ?? head.ai ?? tail.agent ?? head.agent ?? first);
+}
+
+async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<string | undefined> {
+  const hit = cache.get(f.file);
+  if (hit && hit.size === f.size && hit.mtimeMs === f.mtimeMs) return hit.name;
+  const name = await readName(fs, f.file);
+  cache.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, name });
+  return name;
+}
+
 /** List the sessions of the folder, newest first. Nothing marks Remote Control sessions with certainty, so all are listed. */
-export async function listSessions(o: { home: string; path: string; fs?: TranscriptFs }): Promise<Session[]> {
-  const found = await scan({ home: o.home, path: o.path, fs: o.fs ?? defaultFs });
-  const sessions = found.map((f): Session => {
-    const lastActiveAt = new Date(f.mtimeMs).toISOString();
-    const s: Session = { id: f.id, root: f.root, startedAt: f.startedAt ?? lastActiveAt, lastActiveAt };
-    if (f.branch) s.branch = f.branch;
-    return s;
-  });
+export async function listSessions(o: { home: string; path: string; fs?: TranscriptFs; names?: NameCache }): Promise<Session[]> {
+  const fs = o.fs ?? defaultFs;
+  const found = await scan({ home: o.home, path: o.path, fs });
+  const sessions = await Promise.all(
+    found.map(async (f): Promise<Session> => {
+      const lastActiveAt = new Date(f.mtimeMs).toISOString();
+      const s: Session = { id: f.id, root: f.root, startedAt: f.startedAt ?? lastActiveAt, lastActiveAt };
+      const name = await nameOf(fs, f, o.names ?? defaultNames);
+      if (name) s.name = name;
+      if (f.branch) s.branch = f.branch;
+      return s;
+    }),
+  );
   return sessions.sort((a, b) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0));
 }
 

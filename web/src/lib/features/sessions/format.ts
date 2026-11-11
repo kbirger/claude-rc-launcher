@@ -1,5 +1,5 @@
 // Small helpers for the session screens. They only use values the API gave.
-import type { TouchedFile } from "./api";
+import type { Session, TouchedFile } from "./api";
 
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 
@@ -59,4 +59,14 @@ export const showHidden = (param: string | null | undefined, path: string): bool
 /** Rows of the Touched list, in the order the node sends them (newest first). `rel` is set for a file that can be opened. */
 export function touchedRows(files: readonly TouchedFile[], root: string): { file: TouchedFile; rel: string | undefined }[] {
   return files.map((file) => ({ file, rel: file.inside ? relativeTo(root, file.path) : undefined }));
+}
+
+/** The session name, or undefined when it has none (the list then shows a placeholder). */
+export const sessionTitle = (s: Session): string | undefined => s.name || undefined;
+
+/** Detail parts of a session row: short id, last active time, and the branch unless it is unset or a detached "HEAD". */
+export function sessionDetail(s: Session, now: number): string[] {
+  const out = [s.id.slice(0, 8), ago(s.lastActiveAt, now)];
+  if (s.branch && s.branch !== "HEAD") out.push(s.branch);
+  return out;
 }

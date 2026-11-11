@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeProjectDir, findSession, listSessions, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
+import { encodeProjectDir, findSession, listSessions, newNameCache, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
 
 const HOME = "/h";
 const PATH = "/work/proj";
@@ -10,10 +10,14 @@ const ID1 = "11111111-1111-1111-1111-111111111111";
 const ID2 = "22222222-2222-2222-2222-222222222222";
 const proj = (name: string) => `/h/.claude/projects/${name}`;
 
-type Files = Record<string, { mtimeMs?: number; lines: string[] }>;
+type Files = Record<string, { mtimeMs?: number; size?: number; lines: string[]; tail?: string[] }>;
 
-function fakeFs(files: Files): TranscriptFs {
+function fakeFs(files: Files, calls?: { lines: number; tail: number }): TranscriptFs {
   return {
+    async tail(p) {
+      if (calls) calls.tail++;
+      return files[p]?.tail ?? files[p]?.lines ?? [];
+    },
     async readdir(dir) {
       const prefix = dir.endsWith("/") ? dir : dir + "/";
       const names = new Set<string>();
@@ -26,9 +30,10 @@ function fakeFs(files: Files): TranscriptFs {
     async stat(p) {
       const f = files[p];
       if (!f) throw new Error("ENOENT");
-      return { mtimeMs: f.mtimeMs ?? 1000 };
+      return { mtimeMs: f.mtimeMs ?? 1000, size: f.size };
     },
     async *lines(p) {
+      if (calls) calls.lines++;
       for (const l of files[p]?.lines ?? []) yield l;
     },
   };
@@ -197,7 +202,91 @@ describe("sessions", () => {
   });
 });
 
+const F1 = `${proj("-work-proj")}/${ID1}.jsonl`;
+const title = (k: string, v: string) => rec({ type: k === "customTitle" ? "custom-title" : k === "aiTitle" ? "ai-title" : "agent-name", [k]: v, sessionId: ID1 });
+const prompt = (content: unknown, extra: object = {}) => rec({ type: "user", message: { content }, ...extra });
+const nameOf = async (lines: string[], tail?: string[], mtimeMs = 1000) =>
+  (await listSessions({ home: HOME, path: PATH, fs: fakeFs({ [F1]: { mtimeMs, lines: [user(PATH), ...lines], tail } }), names: newNameCache() }))[0].name;
+
+describe("session names", () => {
+  test("custom-title beats ai-title beats agent-name beats the first prompt", async () => {
+    const p = prompt("hello");
+    expect(await nameOf([p, title("agentName", "A"), title("aiTitle", "B"), title("customTitle", "C")])).toBe("C");
+    expect(await nameOf([p, title("agentName", "A"), title("aiTitle", "B")])).toBe("B");
+    expect(await nameOf([p, title("agentName", "A")])).toBe("A");
+    expect(await nameOf([p])).toBe("hello");
+  });
+
+  test("the last customTitle wins", async () => {
+    expect(await nameOf([title("customTitle", "one"), title("customTitle", "two")])).toBe("two");
+  });
+
+  test("command, caveat and system-reminder messages are skipped", async () => {
+    const skipped = ["<command-name>/x</command-name>", "<local-command-stdout>x", "<system-reminder>x", "<command-message>x", "Caveat: x"].map((c) => prompt(c));
+    expect(await nameOf([...skipped, prompt("real one", { isMeta: true }), prompt("the real prompt")])).toBe("the real prompt");
+  });
+
+  test("array content uses the first text block", async () => {
+    expect(await nameOf([prompt([{ type: "image" }, { type: "text", text: "from blocks" }, { type: "text", text: "no" }])])).toBe("from blocks");
+  });
+
+  test("a long prompt is cut at 80 characters with dots and whitespace is collapsed", async () => {
+    expect(await nameOf([prompt("a".repeat(200))])).toBe("a".repeat(80) + "...");
+    expect(await nameOf([prompt("  fix \n\t  the   bug  ")])).toBe("fix the bug");
+  });
+
+  test("no name when nothing usable", async () => {
+    const out = await listSessions({ home: HOME, path: PATH, fs: fakeFs({ [F1]: { lines: [user(PATH), prompt("<system-reminder>x"), prompt("   ")] } }), names: newNameCache() });
+    expect("name" in out[0]).toBe(false);
+  });
+
+  test("a title found only in the tail is used and beats one in the head", async () => {
+    expect(await nameOf([prompt("hi")], [title("customTitle", "tail name")])).toBe("tail name");
+    expect(await nameOf([title("customTitle", "old")], [title("customTitle", "new")])).toBe("new");
+  });
+
+  test("the cache avoids a second read until size or mtime change", async () => {
+    const calls = { lines: 0, tail: 0 };
+    const files: Files = { [F1]: { mtimeMs: 5, size: 10, lines: [user(PATH), prompt("first")] } };
+    const fs = fakeFs(files, calls);
+    const names = newNameCache();
+    const run = () => listSessions({ home: HOME, path: PATH, fs, names });
+    expect((await run())[0].name).toBe("first");
+    const after = { ...calls };
+    expect((await run())[0].name).toBe("first");
+    expect(calls.tail).toBe(after.tail);
+    files[F1] = { mtimeMs: 5, size: 11, lines: [user(PATH), prompt("second")] };
+    expect((await run())[0].name).toBe("second");
+    files[F1] = { mtimeMs: 6, size: 11, lines: [user(PATH), prompt("third")] };
+    expect((await run())[0].name).toBe("third");
+  });
+
+  test("the cache is bounded", () => {
+    const c = newNameCache(2);
+    for (const k of ["a", "b", "c"]) c.set(k, { size: 1, mtimeMs: 1, name: k });
+    expect(c.get("a")).toBeUndefined();
+    expect(c.get("c")?.name).toBe("c");
+  });
+});
+
 describe("transcripts read from disk", () => {
+  test("a transcript over 256 KB gets the title from its last bytes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+    try {
+      const path = "/work/proj";
+      const dir = join(home, ".claude", "projects", encodeProjectDir(path));
+      await mkdir(dir, { recursive: true });
+      const pad = tool("Write", { file_path: "/work/proj/p.txt", pad: "x".repeat(1000) }, "2026-01-01T00:00:01.000Z");
+      const lines = [user(path), prompt("early prompt")];
+      for (let i = 0; i < 600; i++) lines.push(pad);
+      lines.push(title("customTitle", "late title"));
+      await writeFile(join(dir, `${ID1}.jsonl`), lines.join("\n") + "\n");
+      expect((await listSessions({ home, path, names: newNameCache() }))[0].name).toBe("late title");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("a line over 1 MB is dropped and a line cut across read chunks is kept whole", async () => {
     const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
     try {

@@ -3,7 +3,7 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
   import * as Card from "#lib/components/ui/card/index.js";
   import { isUnsupported } from "./api";
-  import { ago, sessionsHref, worktreeName } from "./format";
+  import { sessionDetail, sessionsHref, sessionTitle, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
 
   let { host, instance, now }: { host: string; instance: string; now: number } = $props();
@@ -27,13 +27,15 @@
         <a href={sessionsHref({ host, instance, session: s.id })} class="block min-h-11 no-underline">
           <Card.Root size="sm" class="gap-1">
             <Card.Content class="grid gap-1">
-              <div class="flex items-center gap-2">
-                <span class="min-w-0 flex-1 truncate font-semibold">{s.branch ?? "no branch"}</span>
+              {@const title = sessionTitle(s)}
+              <div class="flex items-start gap-2">
+                <span class="line-clamp-2 min-w-0 flex-1 break-words font-semibold {title ? '' : 'font-normal text-muted-foreground'}">{title ?? "Untitled session"}</span>
                 {#if wt}<Badge variant="outline">work tree</Badge>{/if}
               </div>
-              <div class="flex gap-2 text-muted-foreground">
-                <span class="font-mono">{s.id.slice(0, 8)}</span>
-                <span>{ago(s.lastActiveAt, now)}</span>
+              <div class="flex flex-wrap gap-x-2 text-muted-foreground">
+                {#each sessionDetail(s, now) as part, i (i)}
+                  <span class={i === 0 ? "font-mono" : "min-w-0 truncate"}>{part}</span>
+                {/each}
                 {#if wt}<span class="min-w-0 truncate">{wt}</span>{/if}
               </div>
             </Card.Content>

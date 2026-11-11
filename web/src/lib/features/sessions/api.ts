@@ -1,6 +1,6 @@
 import { ApiError, hostUrl, request } from "../../shared/http";
 
-export type Session = { id: string; root: string; branch?: string; startedAt: string; lastActiveAt: string };
+export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string };
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string };
 export type Entry = { name: string; kind: "dir" | "file" | "other"; size?: number; mtime: string };
 export type Listing = { path: string; parent: string | null; entries: Entry[] };

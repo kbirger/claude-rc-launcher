@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
+import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -97,4 +97,18 @@ test("sessionsHref encodes awkward values so they come back unchanged", () => {
   for (const [k, v] of Object.entries(vals)) expect(q.get(k)).toBe(v);
   expect(href).not.toContain("#");
   expect(href).toContain("%2B");
+});
+
+const sess = { id: "abcdef1234567890", root: "/r", startedAt: "", lastActiveAt: "2026-01-01T00:00:00Z" };
+const NOW = Date.parse("2026-01-01T02:00:00Z");
+
+test("sessionTitle gives the name or a placeholder", () => {
+  expect(sessionTitle({ ...sess, name: "Fix bug" })).toBe("Fix bug");
+  expect(sessionTitle(sess)).toBeUndefined();
+});
+
+test("sessionDetail lists id, age and a real branch only", () => {
+  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual(["abcdef12", "2h ago", "main"]);
+  expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", "2h ago"]);
+  expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", "2h ago"]);
 });
