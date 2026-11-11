@@ -1,9 +1,17 @@
 // Small helpers for the session screens. They only use values the API gave.
 
-/** The part of `path` below `root`, or undefined for the root itself or a path outside it. */
+const fwd = (p: string): string => p.replace(/\\/g, "/");
+
+/** The part of `path` below `root`, with "/" separators, or undefined for the root itself or a path outside it.
+ *  Both sides may use "\\" (a Windows node). A drive path compares without case, and the result keeps the real case. */
 export function relativeTo(root: string, path: string): string | undefined {
-  const r = root.endsWith("/") ? root : `${root}/`;
-  return path.startsWith(r) && path.length > r.length ? path.slice(r.length) : undefined;
+  const p = fwd(path);
+  let r = fwd(root);
+  if (!r.endsWith("/")) r += "/";
+  const win = /^[A-Za-z]:/.test(r);
+  const head = p.slice(0, r.length);
+  const same = win ? head.toLowerCase() === r.toLowerCase() : head === r;
+  return same && p.length > r.length ? p.slice(r.length) : undefined;
 }
 
 /** The last two segments of a path, for a short label. */
@@ -32,7 +40,7 @@ export function ago(iso: string, now: number): string {
 const WT = "/.claude/worktrees/";
 /** The work tree folder name when the session root is a work tree. */
 export const worktreeName = (root: string): string | undefined =>
-  root.includes(WT) ? root.split("/").filter(Boolean).at(-1) : undefined;
+  fwd(root).includes(WT) ? fwd(root).split("/").filter(Boolean).at(-1) : undefined;
 
 /** Link to the sessions page. Empty values are left out. */
 export function sessionsHref(q: Record<string, string | undefined>): string {

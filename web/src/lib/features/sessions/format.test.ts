@@ -45,3 +45,20 @@ test("worktreeName gives the last segment of a work tree root", () => {
 test("sessionsHref leaves empty values out", () => {
   expect(sessionsHref({ host: "h", instance: "i", session: undefined, path: "" })).toBe("/sessions?host=h&instance=i");
 });
+
+test("relativeTo handles Windows paths", () => {
+  expect(relativeTo("C:\\r\\p", "C:\\r\\p\\src\\a.ts")).toBe("src/a.ts");
+  expect(relativeTo("c:\\R\\p", "C:\\r\\P\\a.ts")).toBe("a.ts");
+  expect(relativeTo("C:\\", "C:\\a.ts")).toBe("a.ts");
+  expect(relativeTo("C:\\r\\p", "C:\\r\\p")).toBeUndefined();
+  expect(relativeTo("C:\\r\\p", "C:\\r\\pq\\a.ts")).toBeUndefined();
+  expect(relativeTo("C:\\r\\p", "D:\\r\\p\\a.ts")).toBeUndefined();
+});
+
+test("relativeTo stays case-sensitive for a POSIX root", () => {
+  expect(relativeTo("/r/P", "/r/p/a.ts")).toBeUndefined();
+});
+
+test("worktreeName handles a Windows root", () => {
+  expect(worktreeName("C:\\r\\p\\.claude\\worktrees\\feat-x")).toBe("feat-x");
+});
