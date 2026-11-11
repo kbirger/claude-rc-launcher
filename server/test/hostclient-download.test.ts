@@ -75,3 +75,46 @@ describe("HostClient.download", () => {
     expect(r.body).toBeNull();
   });
 });
+
+describe("HostClient.download details", () => {
+  test("asks for identity encoding", async () => {
+    let init: any;
+    await mk(async (_u: URL, i: any) => ((init = i), new Response("x"))).download!("/p");
+    expect(init.headers["accept-encoding"]).toBe("identity");
+  });
+
+  test("a fetch error after the caller aborted is thrown without a log line", async () => {
+    const logs: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => void logs.push(a);
+    try {
+      const ctl = new AbortController();
+      const f = (_u: URL, init: any) => new Promise<Response>((_res, rej) => {
+        const no = () => rej(new DOMException("aborted", "AbortError"));
+        if (init.signal.aborted) no();
+        else init.signal.addEventListener("abort", no);
+      });
+      const p = mk(f).download!("/p", { signal: ctl.signal });
+      ctl.abort();
+      expect(await reason(p)).toBe("timeout");
+      expect(logs).toEqual([]);
+      // Without an abort, a failure is still logged.
+      await reason(mk(async () => { throw Object.assign(new Error("x"), { code: "ECONNREFUSED" }); }).download!("/p"));
+      expect(logs.length).toBe(1);
+    } finally {
+      console.error = orig;
+    }
+  });
+
+  test("signs exactly the path and query that is fetched, for an awkward path", async () => {
+    for (const name of ["a b#?%&é.txt", "c++ +x.txt", "dir/ü&=;.md"]) {
+      const signed: string[] = [];
+      let fetched: URL | undefined;
+      const auth = async (req: { pathAndQuery: string }) => (signed.push(req.pathAndQuery), "Bearer s");
+      const c = createHostClient(host, auth as never, { fetch: (async (u: URL) => ((fetched = u), new Response("x"))) as unknown as typeof fetch });
+      await c.download!(`/api/instances/0123456789ab/sessions/11111111-2222-3333-4444-555555555555/download`, { query: { path: name } });
+      expect(signed).toEqual([fetched!.pathname + fetched!.search]);
+      expect(fetched!.searchParams.get("path")).toBe(name);
+    }
+  });
+});

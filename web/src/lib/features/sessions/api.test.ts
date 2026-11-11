@@ -75,3 +75,12 @@ test("isUnsupported is true for 404 and 501 api errors only", () => {
   expect(isUnsupported(new Error("404"))).toBe(false);
   expect(isUnsupported(null)).toBe(false);
 });
+
+test("a literal + in a name stays a + through listFiles, getPreview and downloadUrl", async () => {
+  stub(200, {});
+  const name = "c++ +x.txt";
+  await listFiles("h", "i", SID, name, false);
+  await getPreview("h", "i", SID, name);
+  for (const c of calls) expect(new URL(c.url, "http://x").searchParams.get("path")).toBe(name);
+  expect(new URL(downloadUrl("h", "i", SID, name), "http://x").searchParams.get("path")).toBe(name);
+});

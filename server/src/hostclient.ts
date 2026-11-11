@@ -158,7 +158,8 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
     async download(path, opts = {}) {
       const url = new URL(path, host.url);
       for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
-      const headers: Record<string, string> = {};
+      // identity: the bytes and Content-Length stay as the node sent them, with no decoding on the way.
+      const headers: Record<string, string> = { "accept-encoding": "identity" };
       try {
         headers.authorization = await authorize({ method: "GET", pathAndQuery: url.pathname + url.search, body: "" });
       } catch (e) {
@@ -180,6 +181,8 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
         } as RequestInit);
       } catch (e) {
         opts.signal?.removeEventListener("abort", onAbort);
+        // The caller went away: not a node failure, so nothing is logged.
+        if (opts.signal?.aborted) throw new HostError(host.id, classify(e));
         return fail(classify(e), e);
       } finally {
         clearTimeout(timer);
