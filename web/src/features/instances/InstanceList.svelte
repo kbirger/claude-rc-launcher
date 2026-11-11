@@ -24,22 +24,33 @@
   });
   let open = $state<Record<string, true>>({});
 
-  const rows = $derived(mergePending(listQ.data ?? [], starting, stopping));
+  const rows = $derived(mergePending(
+    listQ.data ?? [],
+    starting,
+    stopping.map((id) => ({ id, kind: "stopping" as const })),
+  ));
   // Reading dataUpdatedAt makes the uptimes recompute (with a fresh Date.now()) on each list refresh.
   const now = $derived.by(() => (listQ.dataUpdatedAt, Date.now()));
-  // A failed stop's message stays until the next successful list refresh after it, or the next stop.
-  let stopErrorListAt = 0;
-  $effect(() => {
-    if (stopM.isError) stopErrorListAt = untrack(() => listQ.dataUpdatedAt);
+  // Every failed stop keeps its own message: the mutation cache holds them all, whatever observer started the stop.
+  const stopFailures = useMutationState({
+    filters: { mutationKey: ["instances", untrack(() => host), "stop"], status: "error" },
+    select: (m) => ({ key: m.mutationId, message: m.state.error instanceof ApiError ? m.state.error.message : "Failed to stop" }),
   });
+  // A message stays until the next successful list refresh after it, or the next stop. The value is the list time at the
+  // error (-1: hidden). Failures that are already in the cache at mount are old, so they start hidden.
+  const shownAt = new Map<number, number>(untrack(() => stopFailures.map((f) => [f.key, -1] as [number, number])));
+  let hideTick = $state(0);
   $effect(() => {
-    const at = listQ.dataUpdatedAt;
-    if (untrack(() => stopM.isError) && at > stopErrorListAt) stopM.reset();
+    for (const f of stopFailures) if (!shownAt.has(f.key)) shownAt.set(f.key, untrack(() => listQ.dataUpdatedAt));
+  });
+  const stopErrors = $derived.by(() => {
+    void hideTick;
+    return stopFailures.filter((f) => listQ.dataUpdatedAt <= (shownAt.get(f.key) ?? Infinity)).map((f) => f.message);
   });
   const errors = $derived(
     [
       listQ.isError ? (listQ.error instanceof ApiError ? listQ.error.message : "Failed to load instances") : "",
-      stopM.isError ? (stopM.error instanceof ApiError ? stopM.error.message : "Failed to stop") : "",
+      ...stopErrors,
       startError,
     ].filter(Boolean),
   );
@@ -61,6 +72,8 @@
 
   function stop(i: Instance) {
     if (!confirm(`Stop ${i.name}?`)) return;
+    for (const f of stopFailures) shownAt.set(f.key, -1);
+    hideTick++;
     stopM.mutate(i.id);
   }
 
