@@ -122,7 +122,7 @@
 </script>
 
 <header>
-  <h1>Claude RC</h1>
+  <h1><img class="logo" src="/favicon.svg" alt="" width="28" height="28" />Claude RC</h1>
   {#if hosts.length > 1}
     <HostPicker {hosts} {selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
@@ -170,7 +170,8 @@
   .finished { padding: 4px 16px; }
   .reload { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); border-left: 3px solid var(--warn); }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
-  h1 { font-size: 1.1rem; margin: 0; flex: 1; }
+  h1 { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; margin: 0; flex: 1; }
+  .logo { border-radius: 6px; }
   .user { color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .logout { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; color: var(--accent); }
   main { max-width: 720px; margin: 0 auto; padding: 16px; }
