@@ -41,7 +41,7 @@
 
   const needLogin = $derived(reposQ.error instanceof ApiError && reposQ.error.status === 409 && reposQ.error.body?.code === "github-login-required");
   const listError = $derived(!reposQ.isError || needLogin ? "" : reposQ.error instanceof ApiError ? reposQ.error.message : "Failed to load repos");
-  const groups = $derived(reposQ.isError ? [] : (reposQ.data?.groups ?? []));
+  const groups = $derived(reposQ.data?.groups ?? []);
   const listLoading = $derived(reposQ.isPending);
   const shown = $derived(filterGroups(groups, query));
 
