@@ -221,6 +221,13 @@ export function hostsApi(o: {
       throw e;
     }
   };
+  /** Like `forward`, for routes that answer JSON only: 200 and 400 to 599 pass, any other node status is a 502. */
+  const forwardJson = (fn: (c: Context, client: HostClient) => Promise<{ status: number; body: unknown }>) =>
+    forward(async (c, k) => {
+      const r = await fn(c, k);
+      if (r.status === 200 || (r.status >= 400 && r.status <= 599)) return r;
+      return { status: 502, body: { error: "bad response", host: clientOf(c).id } };
+    });
   const instanceId = (c: Context) => {
     const id = c.req.param("id") ?? "";
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
@@ -280,11 +287,11 @@ export function hostsApi(o: {
   };
   const sessionsBase = (c: Context) => `/api/instances/${instanceId(c)}/sessions`;
 
-  remote.get("/instances/:id/sessions", forward((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
-  remote.get("/instances/:id/sessions/:sid/touched", forward((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/touched`, { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions", forwardJson((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions/:sid/touched", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/touched`, { timeoutMs: requestTimeoutMs })));
   remote.get(
     "/instances/:id/sessions/:sid/files",
-    forward((c, k) => {
+    forwardJson((c, k) => {
       const base = `${sessionsBase(c)}/${sessionId(c)}/files`;
       const p = pathQuery(c);
       const query = { ...(p !== undefined ? { path: p } : {}), ...(c.req.query("hidden") === "1" ? { hidden: "1" } : {}) };
@@ -293,7 +300,7 @@ export function hostsApi(o: {
   );
   remote.get(
     "/instances/:id/sessions/:sid/file",
-    forward((c, k) => {
+    forwardJson((c, k) => {
       const base = `${sessionsBase(c)}/${sessionId(c)}/file`;
       const p = pathQuery(c);
       return k.call("GET", base, { ...(p !== undefined ? { query: { path: p } } : {}), timeoutMs: requestTimeoutMs });
@@ -308,6 +315,8 @@ export function hostsApi(o: {
       const r = await client.download(base, { query: { path: p }, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
       if (r.status !== 200) {
         const text = await readSmall(r.body, MAX_ERROR_BODY);
+        // Only an error status passes; a 204 or a 3xx from the node is not an answer the browser can use.
+        if (r.status < 400 || r.status > 599) return c.json({ error: "bad response", host: id }, 502);
         let json: unknown;
         try {
           json = JSON.parse(text);

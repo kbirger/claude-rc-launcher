@@ -45,6 +45,20 @@ describe("hub session JSON routes", () => {
     expect(r.status).toBe(502);
     expect(await r.json()).toEqual({ error: "host nas: unreachable", host: "nas" });
   });
+  test("a node 204 or 201 on a JSON route is a 502, a node 4xx or 5xx passes", async () => {
+    for (const status of [204, 201, 302]) {
+      const app = build({ call: async () => ({ status, body: status === 204 ? null : { x: 1 } }) });
+      for (const p of ["", `/${SID}/touched`, `/${SID}/files`, `/${SID}/file?path=a`]) {
+        const r = await app.request(`${base}${p}`);
+        expect(r.status).toBe(502);
+        expect(await r.json()).toEqual({ error: "bad response", host: "nas" });
+      }
+    }
+    const app = build({ call: async () => ({ status: 403, body: { error: "path outside the session folder" } }) });
+    const r = await app.request(`${base}/${SID}/files?path=x`);
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({ error: "path outside the session folder" });
+  });
   test("/local session routes are reachable through hostsApi", async () => {
     const local = new Hono();
     local.get("/instances/:id/sessions", (c) => c.json([{ id: c.req.param("id") }]));
@@ -116,6 +130,15 @@ describe("hub download", () => {
     const res = await app.request(`${base}/${SID}/download?path=a`);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "file not found" });
+  });
+
+  test("a node 204 or 302 on download is a 502", async () => {
+    for (const status of [204, 302, 201]) {
+      const app = build({ download: async () => nodeRes(null, {}, status) });
+      const res = await app.request(`${base}/${SID}/download?path=a`);
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ error: "bad response", host: "nas" });
+    }
   });
 
   test("a HostError gives 502; no download method gives 501", async () => {
