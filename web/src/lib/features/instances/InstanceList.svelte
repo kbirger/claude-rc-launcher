@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "#lib/components/ui/button/index.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import InstanceLogs from "./InstanceLogs.svelte";
@@ -60,8 +61,8 @@
         {#if i.user}<div class="muted">{i.user}</div>{/if}
         <div class="muted">{uptime(i.state, i.startedAt)}</div>
         <div class="actions">
-          <button disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</button>
-          <button class="danger" disabled={!!r.pending} onclick={() => stop(i)}>Stop</button>
+          <Button variant="outline" size="touch" disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</Button>
+          <Button variant="destructive" size="touch" disabled={!!r.pending} onclick={() => stop(i)}>Stop</Button>
         </div>
         {#if i.id in open}<InstanceLogs {host} id={i.id} />{/if}
       {/if}

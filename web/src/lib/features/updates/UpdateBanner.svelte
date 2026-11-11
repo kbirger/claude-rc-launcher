@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "#lib/components/ui/button/index.js";
   import { onMount } from "svelte";
   import X from "@tabler/icons-svelte/icons/x-filled";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
@@ -73,13 +74,13 @@
         <li class:warn={item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating"}>
           {#if item.kind === "hub-update"}
             <span>The hub is out of date. Latest release: {item.target}.</span>
-            <button class="primary" disabled={busy} onclick={updateHub}>Update hub</button>
+            <Button size="touch" disabled={busy} onclick={updateHub}>Update hub</Button>
           {:else if item.kind === "updating"}
             <span>Updating {item.name}{item.step ? `: ${item.step}` : "..."}</span>
             <UpdateOutput host={item.host} open={panelOpenByDefault(lastEntry(updates, item.host))} />
           {:else if item.kind === "node-update"}
             <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.{#if windowsNames(item.hosts, hosts).length} The update restarts the sessions on {windowsNames(item.hosts, hosts).join(", ")}.{/if}</span>
-            <button class="primary" disabled={busy} onclick={() => updateNodes(item.hosts)}>Update all nodes</button>
+            <Button size="touch" disabled={busy} onclick={() => updateNodes(item.hosts)}>Update all nodes</Button>
           {:else if item.kind === "hub-local-build"}
             <span class="muted">The hub runs a local build. Its version cannot be compared.</span>
           {:else if item.kind === "by-hand"}
@@ -97,7 +98,7 @@
         </li>
       {/each}
     </ul>
-    <button class="dismiss" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={20} aria-hidden="true" /></button>
+    <Button variant="ghost" size="icon-touch" class="text-muted-foreground" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={20} aria-hidden="true" /></Button>
   </section>
 {/if}
 
@@ -106,6 +107,4 @@
   ul { flex: 1; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; }
   li.warn { border-left: 3px solid var(--warn); padding-left: 8px; }
-  .dismiss { flex: none; min-width: 44px; min-height: 44px; border: none; background: transparent; color: var(--muted-foreground, inherit); padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-  .dismiss:hover { color: inherit; }
 </style>

@@ -3,8 +3,8 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 
-/* The dark palettes are picked by the system setting (and by ?theme=ayu / ?theme=tokyonight in src/app.css). */
-@custom-variant dark (@media (prefers-color-scheme: dark));
+/* The dark palettes apply when <html> has the "dark" class (see src/lib/shared/theme.ts and the script in src/app.html). */
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* shadcn token names. The palette itself (--background, --foreground, --card, --primary, --border, ...) lives in
    src/app.css, one block per theme. The tokens below that the palette does not name are derived from it, so every

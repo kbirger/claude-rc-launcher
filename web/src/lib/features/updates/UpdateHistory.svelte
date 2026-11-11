@@ -3,9 +3,10 @@
   import { historyQuery } from "./queries";
   import { historyTitle, linesSummary } from "./updatehistory";
 
-  let { host }: { host: string } = $props();
+  let { host, startOpen = false }: { host: string; startOpen?: boolean } = $props();
 
-  let open = $state(false);
+  // svelte-ignore state_referenced_locally: only the first value matters, the section is open or closed from then on
+  let open = $state(startOpen);
   const historyQ = createQuery(() => ({ ...historyQuery(), enabled: open }));
   const items = $derived(historyQ.data?.[host] ?? []);
 </script>

@@ -4,14 +4,15 @@
   import "./layout.css";
   import "../app.css";
   import { createQueryClient } from "#lib/shared/query";
-  import { applyTheme } from "#lib/shared/theme";
+  import { initAppearance } from "#lib/shared/theme.svelte";
+  import Shell from "#lib/shell/Shell.svelte";
 
   let { children }: { children: Snippet } = $props();
 
-  applyTheme();
+  initAppearance();
   const client = createQueryClient();
 </script>
 
 <QueryClientProvider {client}>
-  {@render children()}
+  <Shell>{@render children()}</Shell>
 </QueryClientProvider>

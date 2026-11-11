@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "#lib/components/ui/button/index.js";
   import { onDestroy, untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { createCloneModel } from "./model.svelte";
@@ -34,14 +35,14 @@
 <div class="panel">
   <div class="top">
     <strong>Clone repo</strong>
-    <button disabled={model.cloning} onclick={onclose}>Back</button>
+    <Button variant="outline" size="touch" disabled={model.cloning} onclick={onclose}>Back</Button>
   </div>
   <form onsubmit={(e) => { e.preventDefault(); model.clone(); }}>
     <label class="lbl" for="clone-repo">Repository</label>
     <input id="clone-repo" placeholder="owner/repo or GitHub link" bind:value={model.repo} disabled={model.cloning} />
-    <button class="primary into" type="submit" disabled={!model.repo.trim() || model.cloning}>
+    <Button size="touch" class="h-auto min-h-11 py-2 whitespace-normal [overflow-wrap:anywhere]" type="submit" disabled={!model.repo.trim() || model.cloning}>
       {#if model.cloning}Cloning...{:else}Clone into {parent}{/if}
-    </button>
+    </Button>
   </form>
   {#if model.cloneError}<p class="error" role="status">{model.cloneError}</p>{/if}
 
@@ -56,7 +57,7 @@
         <p class="muted">Waiting for you to finish...</p>
       {:else}
         <p class="muted">Sign in to GitHub to list your repos. A pasted link works without it.</p>
-        <button class="primary" disabled={model.signingIn} onclick={() => model.signIn()}>Sign in to GitHub</button>
+        <Button size="touch" disabled={model.signingIn} onclick={() => model.signIn()}>Sign in to GitHub</Button>
       {/if}
       {#if model.loginError}<p class="error" role="status">{model.loginError}</p>{/if}
     </div>
@@ -89,7 +90,6 @@
   .top { display: flex; justify-content: space-between; align-items: center; }
   form { display: grid; gap: 8px; }
   .lbl { font-size: 0.85rem; color: var(--muted-foreground); }
-  .into { overflow-wrap: anywhere; height: auto; padding: 8px 16px; }
   .error, .note { margin: 0; overflow-wrap: anywhere; }
   .note { font-size: 0.85rem; }
   .login { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); display: grid; gap: 4px; }
