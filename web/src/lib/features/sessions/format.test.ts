@@ -64,7 +64,7 @@ test("worktreeName handles a Windows root", () => {
 });
 
 test("touchedRows keeps the node order, newest first", () => {
-  const f = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at });
+  const f = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at, confirmed: true });
   const rows = touchedRows([f("/r/new.ts", "2026-11-11T12:00:00Z"), f("/r/mid.ts", "2026-11-11T11:00:00Z"), f("/r/old.ts", "2026-11-11T10:00:00Z")], "/r");
   expect(rows.map((r) => r.rel)).toEqual(["new.ts", "mid.ts", "old.ts"]);
 });
@@ -123,12 +123,23 @@ test("sessionsHref encodes an abs value so it comes back unchanged", () => {
   }
 });
 
-test("touchedRows links every row: inside files by relative path, the rest by abs", () => {
+test("touchedRows gives no link to a file that was not written (denied, failed or no result)", () => {
   const rows = touchedRows(
     [
-      { path: "/r/src/a.ts", inside: true, tool: "edit", at: "" },
-      { path: "/home/u/notes.md", inside: false, tool: "write", at: "" },
-      { path: "/r", inside: true, tool: "write", at: "" },
+      { path: "/r/src/a.ts", inside: true, tool: "edit", at: "", confirmed: false },
+      { path: "/home/u/.ssh/id_rsa", inside: false, tool: "edit", at: "", confirmed: false },
+    ],
+    "/r",
+  );
+  expect(rows.map((r) => [r.rel, r.link])).toEqual([["src/a.ts", undefined], [undefined, undefined]]);
+});
+
+test("touchedRows links every written row: inside files by relative path, the rest by abs", () => {
+  const rows = touchedRows(
+    [
+      { path: "/r/src/a.ts", inside: true, tool: "edit", at: "", confirmed: true },
+      { path: "/home/u/notes.md", inside: false, tool: "write", at: "", confirmed: true },
+      { path: "/r", inside: true, tool: "write", at: "", confirmed: true },
     ],
     "/r",
   );

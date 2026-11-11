@@ -20,14 +20,25 @@
   <ul class="m-0 list-none rounded-lg border bg-card p-0">
     {#each touchedRows(q.data, root) as { file: f, rel, link } (f.path)}
       <li>
-        <a class={cn(row, "no-underline")} href={sessionsHref({ host, instance, session, view: "touched", ...link })}>
-          {#if rel}
-            <span class="truncate">{rel}</span>
-          {:else}
-            <span class="[overflow-wrap:anywhere]">{f.path}</span>
-          {/if}
-          <span class="text-xs text-muted-foreground">{f.inside ? "" : "outside the session folder · "}{f.tool} · {ago(f.at, now)}</span>
-        </a>
+        {#if link}
+          <a class={cn(row, "no-underline")} href={sessionsHref({ host, instance, session, view: "touched", ...link })}>
+            {#if rel}
+              <span class="truncate">{rel}</span>
+            {:else}
+              <span class="[overflow-wrap:anywhere]">{f.path}</span>
+            {/if}
+            <span class="text-xs text-muted-foreground">{f.inside ? "" : "outside the session folder · "}{f.tool} · {ago(f.at, now)}</span>
+          </a>
+        {:else}
+          <div class={cn(row, "text-muted-foreground")}>
+            {#if rel}
+              <span class="truncate">{rel}</span>
+            {:else}
+              <span class="[overflow-wrap:anywhere]">{f.path}</span>
+            {/if}
+            <span class="text-xs">not written · {f.inside ? "" : "outside the session folder · "}{f.tool} · {ago(f.at, now)}</span>
+          </div>
+        {/if}
       </li>
     {/each}
   </ul>

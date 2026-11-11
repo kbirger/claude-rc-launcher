@@ -306,24 +306,32 @@ describe("file and download", () => {
 describe("touched files outside the session folder (abs)", () => {
   // The only gate for a file outside the root is exact membership in the session's touched list.
   let out: string;
-  const touchedLine = (tool: string, p: string) =>
-    JSON.stringify({ type: "assistant", timestamp: "2026-11-11T10:01:00Z", message: { content: [{ type: "tool_use", name: tool, input: tool === "NotebookEdit" ? { notebook_path: p } : { file_path: p } }] } });
-  /** One session at `root` whose transcript touched `paths` (Write each). */
-  function withTouched(paths: string[]): TranscriptFs {
+  let n = 0;
+  const useLine = (tool: string, p: string, id: string) =>
+    JSON.stringify({ type: "assistant", timestamp: "2026-11-11T10:01:00Z", message: { content: [{ type: "tool_use", id, name: tool, input: tool === "NotebookEdit" ? { notebook_path: p } : { file_path: p } }] } });
+  const resultLine = (id: string, extra: object = {}) =>
+    JSON.stringify({ type: "user", timestamp: "2026-11-11T10:01:01Z", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok", ...extra }] } });
+  /** One session at `root` whose transcript wrote `paths` (a Write each, with a successful result), then `extra` lines. */
+  function withTouched(paths: string[], extra: string[] = []): TranscriptFs {
     const first = JSON.stringify({ type: "user", cwd: root, timestamp: "2026-11-11T10:00:00Z" });
     return {
       readdir: async () => [`${SID}.jsonl`],
       stat: async () => ({ mtimeMs: 1000 }),
       lines: async function* () {
         yield first;
-        for (const p of paths) yield touchedLine("Write", p);
+        for (const p of paths) {
+          const id = `toolu_${++n}`;
+          yield useLine("Write", p, id);
+          yield resultLine(id);
+        }
+        yield* extra;
       },
     };
   }
-  function app(paths: string[], deps: Partial<Parameters<typeof sessionApi>[0]> = {}) {
+  function app(paths: string[], deps: Partial<Parameters<typeof sessionApi>[0]> = {}, extra: string[] = []) {
     const inst = { claudeHome: async () => ({ path: root, home: "/home/x" }) } as unknown as Instances;
     const a = new Hono();
-    a.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: withTouched(paths), ...deps }));
+    a.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: withTouched(paths, extra), ...deps }));
     a.onError(onError);
     return a;
   }
@@ -355,6 +363,33 @@ describe("touched files outside the session folder (abs)", () => {
     expect(d.headers.get("content-disposition")).toBe(`attachment; filename="b.bin"; filename*=UTF-8''b.bin`);
     expect(d.headers.get("content-length")).toBe(String(bytes.length));
     expect(new Uint8Array(await d.arrayBuffer())).toEqual(bytes);
+  });
+
+  test("a Write or Edit that was denied, failed or got no result is listed but never served", async () => {
+    const t = join(out, "t.txt");
+    const cases: Record<string, string[]> = {
+      denied: [useLine("Edit", t, "d1"), resultLine("d1", { is_error: true, content: "Permission for this action was denied" })],
+      failed: [useLine("Write", t, "e1"), resultLine("e1", { is_error: true })],
+      "no result": [useLine("Write", t, "n1")],
+      "result for another id": [useLine("Write", t, "a1"), resultLine("a2")],
+      "result before its use": [resultLine("o1"), useLine("Write", t, "o1")],
+      "result in a request copy": [useLine("Write", t, "b1"), JSON.stringify({ type: "api-request-blob", message: { content: [{ type: "tool_result", tool_use_id: "b1" }] } })],
+      "duplicate id": [useLine("Write", join(out, "sibling.txt"), "x1"), useLine("Write", t, "x1"), resultLine("x1")],
+    };
+    for (const [name, lines] of Object.entries(cases)) {
+      const a = app([], {}, lines);
+      const listed = (await (await get(a, `/${SID}/touched`)).json()) as { path: string; confirmed: boolean }[];
+      expect({ name, listed: listed.find((f) => f.path === t)?.confirmed }).toEqual({ name, listed: false });
+      const { f, d } = await both(a, q(t));
+      expect({ name, f: f.status, d: d.status }).toEqual({ name, f: 404, d: 404 });
+    }
+  });
+
+  test("a later failed call to a written path keeps it served", async () => {
+    const t = join(out, "t.txt");
+    const a = app([t], {}, [useLine("Edit", t, "late"), resultLine("late", { is_error: true })]);
+    const { f, d, dBody } = await both(a, q(t));
+    expect([f.status, d.status, dBody]).toEqual([200, 200, "touched outside"]);
   });
 
   test("a touched path inside the root is also served by abs", async () => {

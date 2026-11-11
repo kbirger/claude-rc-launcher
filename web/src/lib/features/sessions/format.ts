@@ -57,16 +57,18 @@ export const inHiddenPath = (path: string): boolean => fwd(path).split("/").some
 export const showHidden = (param: string | null | undefined, path: string): boolean => param === "1" || inHiddenPath(path);
 
 /**
- * Rows of the Touched list, in the order the node sends them (newest first). `rel` is set for a file inside the
- * session folder. `link` is the query that opens the file: `file` (relative) for those, `abs` for every other row.
+ * Rows of the Touched list, in the order the node sends them (written files first, newest first). `rel` is set for a
+ * file inside the session folder. `link` is the query that opens the file: `file` (relative) for those, `abs` for every
+ * other row. A file that was not written (the call was denied, failed or got no result) has no link.
  */
 export function touchedRows(
   files: readonly TouchedFile[],
   root: string,
-): { file: TouchedFile; rel: string | undefined; link: { file: string } | { abs: string } }[] {
+): { file: TouchedFile; rel: string | undefined; link: { file: string } | { abs: string } | undefined }[] {
   return files.map((file) => {
     const rel = file.inside ? relativeTo(root, file.path) : undefined;
-    return { file, rel, link: rel !== undefined ? { file: rel } : { abs: file.path } };
+    const link = !file.confirmed ? undefined : rel !== undefined ? { file: rel } : { abs: file.path };
+    return { file, rel, link };
   });
 }
 

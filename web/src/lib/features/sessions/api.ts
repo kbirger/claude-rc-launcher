@@ -1,7 +1,8 @@
 import { ApiError, hostUrl, request } from "../../shared/http";
 
 export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string };
-export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string };
+/** `confirmed`: the write succeeded. Only a confirmed file can be opened. A denied, failed or unanswered call is not. */
+export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
 export type Entry = { name: string; kind: "dir" | "file" | "other"; size?: number; mtime: string };
 export type Listing = { path: string; parent: string | null; entries: Entry[] };
 export type Preview = { name: string; size: number; kind: "text" | "binary"; text?: string; truncated?: boolean };

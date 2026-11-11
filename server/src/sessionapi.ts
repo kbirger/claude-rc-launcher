@@ -114,7 +114,8 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     const key = (p: string) => (win ? p.toLowerCase() : p);
     // The same lexical root as /touched, so the list matches what the browser was shown.
     const touched = await touchedFiles({ ...h, sessionId, root, ...(fs ? { fs } : {}) });
-    const hit = touched.find((f) => key(f.path) === key(want));
+    // Only a confirmed write counts: a denied or failed call to a path wrote nothing there.
+    const hit = touched.filter((f) => f.confirmed === true).find((f) => key(f.path) === key(want));
     if (!hit) throw new HttpError(404, "file was not touched by this session");
     // The list entry, never the request text.
     const file = resolve(hit.path);

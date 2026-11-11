@@ -4,7 +4,8 @@ import { isAbsolute, join, resolve } from "node:path";
 import { within } from "./paths";
 
 export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string };
-export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string };
+/** `confirmed`: the tool call has a result without an error, so the file was really written. */
+export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
 export type TranscriptFs = {
   readdir(dir: string): Promise<string[]>;
   stat(p: string): Promise<{ mtimeMs: number; size?: number }>;
@@ -283,9 +284,31 @@ export async function sessionRootOf(o: SessionQuery): Promise<string | undefined
   return (await findSession(o))?.root;
 }
 
+const PENDING_MAX = 1000;
+const TOUCHED_MAX = 10000;
+
+/** Sets `k` last in `m` (newest), and drops the oldest entries over `max`. */
+function putNewest<K, V>(m: Map<K, V>, k: K, v: V, max: number): void {
+  m.delete(k);
+  m.set(k, v);
+  while (m.size > max) m.delete(m.keys().next().value as K);
+}
+
+type Use = { path: string; inside: boolean; tool: "write" | "edit"; at: string };
+
 /**
  * Files Claude wrote or edited with Write, Edit, MultiEdit and NotebookEdit.
  * This is a lower bound: files that Claude made through Bash (redirects, cp, mv, sed -i) leave no trace here.
+ *
+ * A path is `confirmed` only when a tool_use in an `assistant` record has a tool_result with the same id in a later
+ * `user` record, and that result has no `is_error` or `is_error: false`. A call that was denied, failed, was
+ * interrupted or is still running wrote nothing, so it is not confirmed. Only confirmed paths may be served.
+ * Fail closed everywhere: a use without a string id, two uses with the same id, a result before its use, a result
+ * from any other record type, and a use dropped from the full pending list (1000, oldest first) never confirm.
+ * A path that was confirmed once stays confirmed. A later failed call does not change its time, tool or place.
+ *
+ * The answer lists the confirmed paths first, newest first, then the unconfirmed ones (each path once), newest first,
+ * so that the Touched list can still show what Claude tried. Each list keeps at most 10000 paths.
  */
 export async function touchedFiles(o: {
   home: string;
@@ -293,31 +316,58 @@ export async function touchedFiles(o: {
   sessionId: string;
   root: string;
   fs?: TranscriptFs;
+  /** The transcript that rootOf found. Without it the session is looked up again. */
+  file?: string;
 }): Promise<TouchedFile[]> {
   if (!SESSION_ID.test(o.sessionId)) return [];
   const fs = o.fs ?? defaultFs;
-  const found = await scan({ home: o.home, path: o.path, fs, only: o.sessionId });
-  if (!found[0]) return [];
+  const file = o.file ?? (await scan({ home: o.home, path: o.path, fs, only: o.sessionId }))[0]?.file;
+  if (!file) return [];
   const root = resolve(o.root);
-  const seen = new Map<string, TouchedFile>();
+  // tool_use id -> the call, or null when the id was seen twice (no result may confirm it then).
+  const pending = new Map<string, Use | null>();
+  // Ids whose result was read: a later use with the same id is ignored.
+  const answered = new Map<string, true>();
+  const confirmed = new Map<string, Use>();
+  const tried = new Map<string, Use>();
   try {
-    for await (const line of fs.lines(found[0].file)) {
+    for await (const line of fs.lines(file)) {
       const r = parse(line);
-      const content = r?.type === "assistant" ? r.message?.content : undefined;
+      const content = r?.message?.content;
       if (!Array.isArray(content)) continue;
+      if (r?.type === "user") {
+        for (const block of content) {
+          if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+          const id: string = block.tool_use_id;
+          if (!pending.has(id)) continue;
+          const u = pending.get(id);
+          pending.delete(id);
+          putNewest(answered, id, true, TOUCHED_MAX);
+          if (!u || (block.is_error !== undefined && block.is_error !== false)) continue;
+          putNewest(confirmed, u.path, u, TOUCHED_MAX);
+          tried.delete(u.path);
+        }
+        continue;
+      }
+      if (r?.type !== "assistant") continue;
       for (const block of content) {
         if (block?.type !== "tool_use" || !block.input || typeof block.input !== "object") continue;
         const name: string = block.name;
         const raw = name === "NotebookEdit" ? block.input.notebook_path : name === "Write" || name === "Edit" || name === "MultiEdit" ? block.input.file_path : undefined;
         if (typeof raw !== "string" || raw.length === 0) continue;
         const p = resolve(root, raw);
-        const at = typeof r?.timestamp === "string" ? r.timestamp : "";
-        seen.delete(p); // later call moves the path to the end
-        seen.set(p, { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at });
+        const at = typeof r.timestamp === "string" ? r.timestamp : "";
+        const u: Use = { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at };
+        if (!confirmed.has(p)) putNewest(tried, p, u, TOUCHED_MAX);
+        const id = block.id;
+        if (typeof id !== "string" || answered.has(id)) continue;
+        if (pending.has(id)) pending.set(id, null);
+        else putNewest(pending, id, u, PENDING_MAX);
       }
     }
   } catch {
     // The transcript vanished or could not be read further: keep what was found.
   }
-  return [...seen.values()].reverse();
+  const list = (m: Map<string, Use>, c: boolean) => [...m.values()].reverse().map((u): TouchedFile => ({ ...u, confirmed: c }));
+  return [...list(confirmed, true), ...list(tried, false)];
 }
