@@ -9,6 +9,12 @@
     --accent: #8a7dff; --accent-text: #111; --danger: #ff6b6b; --ok: #4cd37b; --warn: #ffb74d;
   }
 }
+/* Opt-in Ayu Dark palette: open the page with ?theme=ayu (remembered), ?theme=default to go back. */
+:root[data-theme="ayu"] {
+  --bg: #0d1017; --surface: #141821; --text: #bebcb5; --muted: #8a949f; --border: #2d3443;
+  --accent: #e6b450; --accent-text: #1f1500; --danger: #f07178; --ok: #aad94c; --warn: #ffb454;
+  color-scheme: dark;
+}
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; }
 button, input { font: inherit; color: inherit; }
