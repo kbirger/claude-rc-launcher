@@ -1,0 +1,10 @@
+/* Tailwind entry point (same place and role as Arcane's src/routes/layout.css).
+   Arcane starts with `@import 'tailwindcss'`. That also loads Tailwind's reset (preflight), which would restyle the
+   current pages, so the pieces load separately and the reset is left out. Add it back when the UI moves to Tailwind. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "shadcn-svelte/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));

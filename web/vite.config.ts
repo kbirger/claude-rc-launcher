@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
+import tailwindcss from "@tailwindcss/vite";
 import { kitConfig } from "./kit.config.ts";
 
 export default defineConfig({
-  plugins: [sveltekit(kitConfig)],
+  plugins: [tailwindcss(), sveltekit(kitConfig)],
   server: {
     proxy: {
       "/api": "http://localhost:8080",
