@@ -1,19 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import LogOut from "@tabler/icons-svelte/icons/logout";
-  import Github from "@tabler/icons-svelte/icons/brand-github-filled";
-  import Logo from "./shared/ui/Logo.svelte";
+  import type { Snippet } from "svelte";
+  import { page } from "$app/state";
+  import Logo from "../shared/ui/Logo.svelte";
+  import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { meQuery } from "./features/auth";
-  import { connectEvents } from "./realtime/events";
-  import { HostPicker, HubVersionLine, hostsQuery, selectionAfter, type HostInfo } from "./features/hosts";
-  import { UpdateBanner, UpdateHistory, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "./features/updates";
-  import { InstanceList, startInstanceMutation, type StartArgs } from "./features/instances";
-  import { NewDialog, startErrorAction } from "./features/new-instance";
-  import { createStartFlow } from "./startflow.svelte";
+  import { meQuery } from "../features/auth";
+  import { connectEvents } from "../realtime/events";
+  import { HostPicker, hostsQuery, selectionAfter, type HostInfo } from "../features/hosts";
+  import { UpdateBanner, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "../features/updates";
+  import { startInstanceMutation, type StartArgs } from "../features/instances";
+  import { NewDialog, startErrorAction } from "../features/new-instance";
+  import { createStartFlow } from "../startflow.svelte";
+  import BottomNav from "./BottomNav.svelte";
+  import { setShell } from "./context";
 
   const HOST_KEY = "claude-rc-host";
-  const REPO_URL = "https://github.com/kbirger/claude-rc-launcher";
 
   // sessionStorage can be missing or throw (private windows, blocked storage); the UI must work without it.
   function remembered(): string {
@@ -28,6 +31,8 @@
       sessionStorage.setItem(HOST_KEY, id);
     } catch {}
   }
+
+  let { children }: { children: Snippet } = $props();
 
   const client = useQueryClient();
   const meQ = createQuery(meQuery);
@@ -89,6 +94,17 @@
     remember(id);
   }
 
+  setShell({
+    flow,
+    get hosts() { return hosts; },
+    get updates() { return updatesQ.data ?? []; },
+    get now() { return now; },
+    get user() { return meQ.data?.name ?? ""; },
+    get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
+    select,
+    get latestError() { return latestQ.isError; },
+  });
+
   onMount(() => {
     const t = setInterval(() => (now = new Date()), 30_000);
     const stop = connectEvents({ client });
@@ -113,31 +129,23 @@
   {#if reloadBar}
     <section class="reload" role="status">
       <span>The hub was updated. Reload to get the new page.</span>
-      <button class="primary" onclick={() => location.reload()}>Reload</button>
+      <Button size="touch" onclick={() => location.reload()}>Reload</Button>
     </section>
   {/if}
-  <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+  <!-- The Updates page shows the whole panel itself. -->
+  {#if page.url.pathname !== "/updates"}
+    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+  {/if}
   {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
     {#key flow.selected}
       <div class="finished"><UpdateOutput host={flow.selected} open={false} /></div>
     {/key}
   {/if}
   <main>
-    <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
-    <button class="primary new" onclick={() => flow.openNew()}>+ New</button>
-    {#key flow.selected}
-      <InstanceList host={flow.selected} startError={flow.startError} />
-    {/key}
+    {@render children()}
   </main>
-  {#key flow.selected}
-    <UpdateHistory host={flow.selected} />
-  {/key}
-  <footer>
-    <a href={REPO_URL} target="_blank" rel="noopener noreferrer" aria-label="Claude RC Launcher on GitHub" title="Claude RC Launcher on GitHub">
-      <Github size={22} aria-hidden="true" />
-    </a>
-  </footer>
 </div>
+<BottomNav />
 {#if flow.showNew}
   {#key flow.selected}
     <NewDialog
@@ -152,17 +160,13 @@
 
 <style>
   /* One column for everything under the header (the header spans the full width). */
-  .column { max-width: 720px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .column { max-width: 720px; margin: 0 auto; padding: 16px 16px calc(6.5rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
   h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; gap: 2px; font-size: 0.7rem; line-height: 1.1; margin: 0; flex: none; }
-  .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted); font-size: 0.9rem; }
+  .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted-foreground); font-size: 0.9rem; }
   .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--accent); }
-  footer { display: flex; justify-content: center; }
-  footer a { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; color: var(--muted); }
-  footer a:hover { color: var(--accent); }
-  .new { width: 100%; margin-bottom: 16px; }
+  .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--primary); }
   @media (max-width: 480px) {
     .name { display: none; }
     h1 { min-width: 44px; }

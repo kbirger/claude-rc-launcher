@@ -1,36 +1,38 @@
 :root {
-  --bg: #f6f6f8; --surface: #fff; --text: #1b1b1f; --muted: #6b6b76; --border: #d9d9e0;
-  --accent: #5b4bdb; --accent-text: #fff; --danger: #c62828; --ok: #1b7f3b; --warn: #b26a00;
-  color-scheme: light dark;
+  --background: #f6f6f8; --card: #fff; --foreground: #1b1b1f; --muted-foreground: #6b6b76; --border: #d9d9e0;
+  --primary: #5b4bdb; --primary-foreground: #fff; --destructive: #c62828; --ok: #1b7f3b; --warn: #b26a00;
+  color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #121216; --surface: #1d1d23; --text: #ececf1; --muted: #9a9aa6; --border: #34343e;
-    --accent: #8a7dff; --accent-text: #111; --danger: #ff6b6b; --ok: #4cd37b; --warn: #ffb74d;
-  }
+:root.dark {
+  color-scheme: dark;
+  --background: #121216; --card: #1d1d23; --foreground: #ececf1; --muted-foreground: #9a9aa6; --border: #34343e;
+  --primary: #8a7dff; --primary-foreground: #111; --destructive: #ff6b6b; --ok: #4cd37b; --warn: #ffb74d;
 }
 /* Opt-in Ayu Dark palette: open the page with ?theme=ayu (remembered), ?theme=default to go back. */
 :root[data-theme="ayu"] {
-  --bg: #0d1017; --surface: #141821; --text: #bebcb5; --muted: #8a949f; --border: #2d3443;
-  --accent: #e6b450; --accent-text: #1f1500; --danger: #f07178; --ok: #aad94c; --warn: #ffb454;
+  --background: #0d1017; --card: #141821; --foreground: #bebcb5; --muted-foreground: #8a949f; --border: #2d3443;
+  --primary: #e6b450; --primary-foreground: #1f1500; --destructive: #f07178; --ok: #aad94c; --warn: #ffb454;
   color-scheme: dark;
 }
 /* Opt-in Tokyo Night palette: open the page with ?theme=tokyonight (remembered). */
 :root[data-theme="tokyonight"] {
-  --bg: #1a1b26; --surface: #1f2335; --text: #c0caf5; --muted: #9aa5ce; --border: #414868;
-  --accent: #7aa2f7; --accent-text: #1a1b26; --danger: #f7768e; --ok: #9ece6a; --warn: #e0af68;
+  --background: #1a1b26; --card: #1f2335; --foreground: #c0caf5; --muted-foreground: #9aa5ce; --border: #414868;
+  --primary: #7aa2f7; --primary-foreground: #1a1b26; --destructive: #f7768e; --ok: #9ece6a; --warn: #e0af68;
   color-scheme: dark;
 }
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; }
-button, input { font: inherit; color: inherit; }
-button {
-  min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--border); background: var(--surface);
+/* In the base layer so Tailwind utilities and the shadcn components (which are layered) win over these element rules. */
+@layer base {
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--background); color: var(--foreground); font: 16px/1.4 system-ui, sans-serif; }
+  button, input { font: inherit; color: inherit; }
+  button {
+    min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card);
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  button.danger { color: var(--destructive); border-color: var(--destructive); }
+  input { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); width: 100%; }
+  .error { color: var(--destructive); margin: 8px 0; }
+  .muted { color: var(--muted-foreground); }
 }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
-button.danger { color: var(--danger); border-color: var(--danger); }
-input { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); width: 100%; }
-.error { color: var(--danger); margin: 8px 0; }
-.muted { color: var(--muted); }

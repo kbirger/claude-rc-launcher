@@ -1,5 +1,6 @@
 import type { HostInfo } from "../hosts";
 import type { UpdateEntry } from "./api";
+import { releaseOf } from "../../shared/version";
 import { stepText } from "./updateoutput";
 
 export type BannerItem =
@@ -23,7 +24,8 @@ export const lastEntry = (updates: UpdateEntry[], id: string) => [...updates].re
 // A running entry older than 10 minutes counts as dead (the server lets a new update replace it).
 export const isRunning = (e: UpdateEntry | undefined, now: Date) => e?.status === "running" && now.getTime() - Date.parse(e.startedAt) <= RUNNING_MAX_MS;
 
-const unknownVersion = (v?: string) => v === "dev" || (v !== undefined && v.includes("+"));
+// A local build (`0.12.4+branch.sha`) is compared by the release it is based on. Only `dev` and the like cannot be compared.
+const unknownVersion = (v?: string) => v !== undefined && releaseOf(v) === undefined;
 
 export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; now: Date }): BannerItem[] {
   const now = o.now;

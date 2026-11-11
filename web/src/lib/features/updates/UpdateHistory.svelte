@@ -3,9 +3,10 @@
   import { historyQuery } from "./queries";
   import { historyTitle, linesSummary } from "./updatehistory";
 
-  let { host }: { host: string } = $props();
+  let { host, startOpen = false }: { host: string; startOpen?: boolean } = $props();
 
-  let open = $state(false);
+  // svelte-ignore state_referenced_locally: only the first value matters, the section is open or closed from then on
+  let open = $state(startOpen);
   const historyQ = createQuery(() => ({ ...historyQuery(), enabled: open }));
   const items = $derived(historyQ.data?.[host] ?? []);
 </script>
@@ -34,9 +35,9 @@
 </details>
 
 <style>
-  .history { padding: 0 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
-  summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
+  .history { padding: 0 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+  summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted-foreground); }
   ul { list-style: none; margin: 0; padding: 0; }
-  .muted { color: var(--muted); margin: 0 0 8px; }
-  pre { margin: 0 0 8px; max-height: 12rem; overflow: auto; padding: 8px; font-size: 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+  .muted { color: var(--muted-foreground); margin: 0 0 8px; }
+  pre { margin: 0 0 8px; max-height: 12rem; overflow: auto; padding: 8px; font-size: 0.8rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
 </style>

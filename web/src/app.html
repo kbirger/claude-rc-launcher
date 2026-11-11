@@ -2,8 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
+    <script>
+      // Runs before the page paints, so a saved palette or dark mode does not flash the default. Same rules as src/lib/shared/theme.ts.
+      try {
+        var q = new URLSearchParams(location.search).get("theme");
+        var t = q === "default" ? null : q === "ayu" || q === "tokyonight" ? q : localStorage.getItem("theme");
+        var m = localStorage.getItem("mode");
+        var r = document.documentElement;
+        if (t === "ayu" || t === "tokyonight") r.dataset.theme = t;
+        else t = null;
+        if (t || m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches)) r.classList.add("dark");
+      } catch (e) {}
+    </script>
     <title>Claude RC Launcher</title>
     %sveltekit.head%
   </head>
