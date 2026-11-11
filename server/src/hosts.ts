@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { Config } from "./config";
+import { downloadHeaders, lastSegment } from "./disposition";
 import { HostError, type HostClient, type HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
@@ -75,7 +76,6 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const MAX_PATH_QUERY = 4096;
 /** The most of an error body the hub reads from a node that refuses a download. */
 const MAX_ERROR_BODY = 64 * 1024;
-const DOWNLOAD_HEADERS = ["content-type", "content-length", "content-disposition", "x-content-type-options"];
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
@@ -305,7 +305,7 @@ export function hostsApi(o: {
     const p = pathQuery(c, true)!;
     if (!client.download) return c.json({ error: "downloads are not available for this host" }, 501);
     try {
-      const r = await client.download(base, { query: { path: p, ...(c.req.query("inline") === "1" ? { inline: "1" } : {}) }, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
+      const r = await client.download(base, { query: { path: p }, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
       if (r.status !== 200) {
         const text = await readSmall(r.body, MAX_ERROR_BODY);
         let json: unknown;
@@ -316,11 +316,9 @@ export function hostsApi(o: {
         }
         return c.json(json, r.status as 400);
       }
-      const headers = new Headers();
-      for (const name of DOWNLOAD_HEADERS) {
-        const v = r.headers.get(name);
-        if (v !== null) headers.set(name, v);
-      }
+      // Every header but the length is built here: a node never chooses how the browser treats the bytes.
+      const length = r.headers.get("content-length");
+      const headers = downloadHeaders(lastSegment(p), length !== null && /^\d+$/.test(length) ? length : undefined);
       return new Response(r.body, { status: 200, headers });
     } catch (e) {
       if (e instanceof HostError) return c.json({ error: e.message, host: id }, 502);

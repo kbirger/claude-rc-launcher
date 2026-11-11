@@ -1,6 +1,7 @@
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
+import { downloadHeaders } from "./disposition";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
 import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./sessions";
@@ -15,13 +16,6 @@ export type SessionApiDeps = {
   /** Replaces the file opener (tests). */
   openDownload?: typeof openDownloadDefault;
 };
-
-/** Header value for a download name: a plain ASCII fallback plus the exact UTF-8 name. */
-function dispositionFor(name: string): string {
-  const ascii = name.replace(/[\r\n"\\]/g, "").replace(/[^\x20-\x7e]/g, "_");
-  const utf8 = encodeURIComponent(name).replace(/['()*]/g, (ch) => "%" + ch.charCodeAt(0).toString(16).toUpperCase());
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
-}
 
 /** Routes for the sessions of one instance. Mount at `/instances/:id/sessions`. */
 export function sessionApi(deps: SessionApiDeps): Hono {
@@ -103,13 +97,7 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     const { real } = await rootOf(c);
     const d = await inRoot(real, () => open(real, c.req.query("path") ?? ""));
     try {
-      const inline = c.req.query("inline") === "1";
-      const headers = new Headers({
-        "Content-Length": String(d.size),
-        "X-Content-Type-Options": "nosniff",
-        "Content-Type": inline ? "text/plain; charset=utf-8" : "application/octet-stream",
-        "Content-Disposition": inline ? "inline" : dispositionFor(d.name),
-      });
+      const headers = downloadHeaders(d.name, d.size);
       const onAbort = () => {
         d.close();
         d.stream.cancel().catch(() => {});

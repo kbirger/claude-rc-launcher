@@ -246,11 +246,12 @@ describe("file and download", () => {
     expect(cd).toMatch(/filename="[\x20-\x7e]*"/);
     await r.arrayBuffer();
   });
-  test("download with inline=1 is text/plain, nosniff, inline", async () => {
+  test("download ignores inline=1: still octet-stream, nosniff, sandboxed, attachment", async () => {
     const r = await get(build(), `/${SID}/download?path=a.txt&inline=1`);
-    expect(r.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(r.headers.get("content-type")).toBe("application/octet-stream");
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(r.headers.get("content-disposition")).toBe("inline");
+    expect(r.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(r.headers.get("content-disposition")).toBe(`attachment; filename="a.txt"; filename*=UTF-8''a.txt`);
     expect(await r.text()).toBe("hello");
   });
   test("GET download stops reading when the request aborts", async () => {

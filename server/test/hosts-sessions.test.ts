@@ -72,22 +72,32 @@ describe("hub download", () => {
     expect(sent).toBe(total);
   });
 
-  test("forwards only the allow-listed headers and passes query + signal", async () => {
+  test("builds the download headers itself and passes only content-length, query and signal", async () => {
     let got: any;
     const app = build({
-      download: async (p: string, o: any) => ((got = [p, o]), nodeRes("hi", { "content-type": "text/plain", "content-length": "2", "content-disposition": "inline", "x-content-type-options": "nosniff", "set-cookie": "a=b", "x-secret": "1", server: "node" })),
+      download: async (p: string, o: any) => ((got = [p, o]), nodeRes("hi", { "content-type": "text/html", "content-length": "2", "content-disposition": "inline", "x-content-type-options": "nosniff", "set-cookie": "a=b", "x-secret": "1", server: "node" })),
     });
-    const res = await app.request(`${base}/${SID}/download?path=a%20b&inline=1`);
+    const res = await app.request(`${base}/${SID}/download?path=${encodeURIComponent("dir/a b.html")}&inline=1`);
     expect(await res.text()).toBe("hi");
-    expect(res.headers.get("content-type")).toBe("text/plain");
-    expect(res.headers.get("content-length")).toBe("2");
-    expect(res.headers.get("content-disposition")).toBe("inline");
+    // A node's text/html plus inline disposition must never reach the browser.
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toBe(`attachment; filename="a b.html"; filename*=UTF-8''a%20b.html`);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(res.headers.get("content-length")).toBe("2");
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(res.headers.get("x-secret")).toBeNull();
+    expect(res.headers.get("server")).toBeNull();
     expect(got[0]).toBe(`/api/instances/${ID}/sessions/${SID}/download`);
-    expect(got[1].query).toEqual({ path: "a b", inline: "1" });
+    expect(got[1].query).toEqual({ path: "dir/a b.html" });
     expect(got[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("names the download from the last segment of the requested path, not from the node", async () => {
+    const app = build({ download: async () => nodeRes("x", { "content-disposition": `attachment; filename="evil.exe"` }) });
+    const res = await app.request(`${base}/${SID}/download?path=${encodeURIComponent("a/b/naïve.txt")}`);
+    expect(res.headers.get("content-disposition")).toBe(`attachment; filename="na_ve.txt"; filename*=UTF-8''na%C3%AFve.txt`);
+    await res.text();
   });
 
   test("cancelling the browser request aborts the signal given to the node call", async () => {
