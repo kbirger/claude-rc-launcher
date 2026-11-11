@@ -257,6 +257,10 @@ export class WinInstances implements Instances {
     return e;
   }
 
+  async claudeHome(id: string): Promise<{ path: string; home: string }> {
+    return { path: this.requireEntry(id).path, home: this.o.serviceHome };
+  }
+
   async stop(id: string): Promise<void> {
     if (this.inflight.has(id)) throw new HttpError(409, "operation in progress");
     const e = this.requireEntry(id);

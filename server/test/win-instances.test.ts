@@ -494,3 +494,16 @@ describe("restricted sessions", () => {
     expect(JSON.parse(await readFile(stateFile(), "utf8")).instances).toHaveLength(1);
   });
 });
+
+describe("claudeHome", () => {
+  test("returns the entry path and the service home", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    expect(await s.claudeHome(inst.id)).toEqual({ path: P1, home: "C:\\Users\\svc" });
+  });
+  test("an unknown or bad id is 404", async () => {
+    const s = make();
+    expect(await status(s.claudeHome("0123456789ab"))).toBe(404);
+    expect(await status(s.claudeHome("x"))).toBe(404);
+  });
+});

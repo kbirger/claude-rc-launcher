@@ -524,3 +524,21 @@ describe("identityFor", () => {
   });
 });
 
+
+describe("claudeHome", () => {
+  test("returns the instance folder and the home of the default user", async () => {
+    const id = await seed("/srv/a", "alpha");
+    const h = await svc().claudeHome(id);
+    expect(h.path).toBe("/srv/a");
+    expect(h.home).toBe("/root");
+  });
+  test("returns the home of the run-as user from User=", async () => {
+    await svc().start({ path: "/srv/a", user: "alice" });
+    const [inst] = await svc().list();
+    expect(await svc().claudeHome(inst!.id)).toEqual({ path: "/srv/a", home: "/home/alice" });
+  });
+  test("an unknown or bad id is 404", async () => {
+    expect(await status(svc().claudeHome("0123456789ab"))).toBe(404);
+    expect(await status(svc().claudeHome("../x"))).toBe(404);
+  });
+});

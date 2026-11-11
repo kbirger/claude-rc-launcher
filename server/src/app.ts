@@ -21,6 +21,7 @@ import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
+import { sessionApi } from "./sessionapi";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -153,6 +154,8 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       return c.json(await cloner.loginStatus(id));
     });
   }
+
+  r.route("/instances/:id/sessions", sessionApi({ instances }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;
