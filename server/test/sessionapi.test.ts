@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { link, mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -390,6 +391,63 @@ describe("touched files outside the session folder (abs)", () => {
     const a = app([t], {}, [useLine("Edit", t, "late"), resultLine("late", { is_error: true })]);
     const { f, d, dBody } = await both(a, q(t));
     expect([f.status, d.status, dBody]).toEqual([200, 200, "touched outside"]);
+  });
+
+  test("an abs under /proc, /sys or /dev is 404 even when written", async () => {
+    const paths = ["/proc/version", "/proc/self/status", "/sys/kernel/mm/transparent_hugepage/enabled", "/dev/null", "/dev/zero"].filter((p) => existsSync(p));
+    expect(paths.length).toBeGreaterThan(1);
+    const a = app(paths);
+    for (const p of paths) {
+      const { f, d } = await both(a, q(p));
+      expect({ p, f: f.status, d: d.status }).toEqual({ p, f: 404, d: 404 });
+    }
+  });
+
+  test("an abs inside a refused state folder is 404, also when the folder is reached through a link", async () => {
+    const t = join(out, "t.txt");
+    for (const dirs of [[out], [`${out}/`], [join(dir, "state-link")]]) {
+      await rm(join(dir, "state-link"), { force: true });
+      await symlink(out, join(dir, "state-link"));
+      const { f, d } = await both(app([t], { refuseDirs: dirs }), q(t));
+      expect({ dirs, f: f.status, d: d.status }).toEqual({ dirs, f: 404, d: 404 });
+    }
+    expect((await get(app([t], { refuseDirs: [join(dir, "missing")] }), `/${SID}/file?${q(t)}`)).status).toBe(200);
+  });
+
+  test("an abs that has a second hard link is 404", async () => {
+    const t = join(out, "t.txt");
+    await link(t, join(out, "t2.txt"));
+    const { f, d } = await both(app([t, join(out, "t2.txt")]), q(join(out, "t2.txt")));
+    expect([f.status, d.status]).toEqual([404, 404]);
+    expect((await get(app([t]), `/${SID}/file?${q(t)}`)).status).toBe(404);
+  });
+
+  test("on Windows a UNC or device abs is 404 and never opened, a drive path matches without regard to case", async () => {
+    const calls: [string, string][] = [];
+    const previewIn = (async (r: string, n: string) => (calls.push([r, n]), { name: n, size: 0, kind: "text", text: "" })) as never;
+    const listed = ["\\\\srv\\share\\a.txt", "//srv/share/b.txt", "\\\\?\\C:\\c.txt", "\\\\.\\C:\\d.txt", "C:\\Users\\U\\T.txt"];
+    const a = app(listed, { platform: "win32", previewIn });
+    const touched = (await (await get(a, `/${SID}/touched`)).json()) as { path: string }[];
+    expect(touched.map((t) => t.path)).toEqual(["C:\\Users\\U\\T.txt"]);
+    for (const p of listed.slice(0, 4)) expect({ p, s: (await get(a, `/${SID}/file?${q(p)}`)).status }).toEqual({ p, s: 404 });
+    expect(calls).toEqual([]);
+    expect((await get(a, `/${SID}/file?${q("c:\\users\\u\\t.TXT")}`)).status).toBe(200);
+    expect(calls).toEqual([["C:\\Users\\U", "T.txt"]]);
+  });
+
+  test("touched and the abs gate read the transcript that rootOf found, without a second scan", async () => {
+    let readdirs = 0;
+    const fs = withTouched([join(out, "t.txt")]);
+    const counted = { ...fs, readdir: async (d: string) => (readdirs++, fs.readdir(d)) };
+    const a = app([], { fs: counted });
+    await get(a, `/${SID}/files`);
+    const one = readdirs;
+    readdirs = 0;
+    expect((await get(a, `/${SID}/touched`)).status).toBe(200);
+    expect(readdirs).toBe(one);
+    readdirs = 0;
+    expect((await get(a, `/${SID}/file?${q(join(out, "t.txt"))}`)).status).toBe(200);
+    expect(readdirs).toBe(one);
   });
 
   test("a touched path inside the root is also served by abs", async () => {

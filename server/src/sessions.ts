@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
-import { within } from "./paths";
+import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { absRefused, within } from "./paths";
 
 export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string };
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
@@ -274,10 +274,10 @@ type SessionQuery = { home: string; path: string; sessionId: string; fs?: Transc
  * The lexical session folder (the resolved first cwd) and whether the session came from a work tree folder.
  * Lexical only: the caller must check the real place of `root` before it reads files there.
  */
-export async function findSession(o: SessionQuery): Promise<{ root: string; worktree: boolean } | undefined> {
+export async function findSession(o: SessionQuery): Promise<{ root: string; worktree: boolean; file: string } | undefined> {
   if (!SESSION_ID.test(o.sessionId)) return undefined;
   const found = await scan({ home: o.home, path: o.path, fs: o.fs ?? defaultFs, only: o.sessionId });
-  return found[0] ? { root: found[0].root, worktree: found[0].worktree } : undefined;
+  return found[0] ? { root: found[0].root, worktree: found[0].worktree, file: found[0].file } : undefined;
 }
 
 export async function sessionRootOf(o: SessionQuery): Promise<string | undefined> {
@@ -316,14 +316,18 @@ export async function touchedFiles(o: {
   sessionId: string;
   root: string;
   fs?: TranscriptFs;
-  /** The transcript that rootOf found. Without it the session is looked up again. */
+  /** The transcript that findSession found. Without it the session is looked up again. */
   file?: string;
+  /** Path rules to use (tests). On Windows a path that is not a drive-letter path (UNC, device) is left out. */
+  platform?: NodeJS.Platform;
 }): Promise<TouchedFile[]> {
   if (!SESSION_ID.test(o.sessionId)) return [];
   const fs = o.fs ?? defaultFs;
   const file = o.file ?? (await scan({ home: o.home, path: o.path, fs, only: o.sessionId }))[0]?.file;
   if (!file) return [];
-  const root = resolve(o.root);
+  const platform = o.platform ?? process.platform;
+  const P = platform === "win32" ? win32 : posix;
+  const root = P.resolve(o.root);
   // tool_use id -> the call, or null when the id was seen twice (no result may confirm it then).
   const pending = new Map<string, Use | null>();
   // Ids whose result was read: a later use with the same id is ignored.
@@ -355,7 +359,8 @@ export async function touchedFiles(o: {
         const name: string = block.name;
         const raw = name === "NotebookEdit" ? block.input.notebook_path : name === "Write" || name === "Edit" || name === "MultiEdit" ? block.input.file_path : undefined;
         if (typeof raw !== "string" || raw.length === 0) continue;
-        const p = resolve(root, raw);
+        const p = P.resolve(root, raw);
+        if (platform === "win32" && absRefused(p, { platform })) continue;
         const at = typeof r.timestamp === "string" ? r.timestamp : "";
         const u: Use = { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at };
         if (!confirmed.has(p)) putNewest(tried, p, u, TOUCHED_MAX);

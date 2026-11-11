@@ -1,9 +1,9 @@
 import { realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { Hono, type Context } from "hono";
 import { downloadHeaders } from "./disposition";
 import { HttpError, type Instances } from "./instances";
-import { PathError, within } from "./paths";
+import { absRefused, PathError, within } from "./paths";
 import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./sessions";
 import { listIn, openDownload as openDownloadDefault, previewIn as previewInDefault, type OpenHooks } from "./sessionfs";
 
@@ -16,7 +16,6 @@ const EXACT_FILE = { exactRoot: true, exactPath: true } as const;
 const MAX_ABS = 4096;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
-const win = process.platform === "win32";
 
 export type SessionApiDeps = {
   instances: Instances;
@@ -24,6 +23,10 @@ export type SessionApiDeps = {
   /** Replace the file opener and the preview reader (tests). */
   openDownload?: typeof openDownloadDefault;
   previewIn?: typeof previewInDefault;
+  /** The node's own state folders: an `abs` there is never served. */
+  refuseDirs?: readonly string[];
+  /** Path rules for `abs` (tests). Defaults to the platform of the node. */
+  platform?: NodeJS.Platform;
 };
 
 /** Which file a file or download request names: `path` (relative to the session folder) or `abs` (a touched file). */
@@ -34,6 +37,9 @@ export function sessionApi(deps: SessionApiDeps): Hono {
   const { instances, fs } = deps;
   const open = deps.openDownload ?? openDownloadDefault;
   const preview = deps.previewIn ?? previewInDefault;
+  const platform = deps.platform ?? process.platform;
+  const win = platform === "win32";
+  const P = win ? win32Path : posix;
   const r = new Hono();
 
   async function home(c: Context): Promise<{ path: string; home: string }> {
@@ -49,13 +55,13 @@ export function sessionApi(deps: SessionApiDeps): Hono {
    * (and inside the real work trees folder for a work tree session). `root` is the lexical cwd, for the transcript;
    * file functions get `real`.
    */
-  async function rootOf(c: Context): Promise<{ h: { path: string; home: string }; sessionId: string; root: string; real: string }> {
+  async function rootOf(c: Context): Promise<{ h: { path: string; home: string }; sessionId: string; root: string; real: string; file: string }> {
     const h = await home(c);
     const sessionId = c.req.param("sid") ?? "";
     if (!SESSION_ID.test(sessionId)) throw new HttpError(400, "invalid session id");
     const found = await findSession({ ...h, sessionId, ...(fs ? { fs } : {}) });
     if (!found) throw new HttpError(404, "session not found");
-    const { root, worktree } = found;
+    const { root, worktree, file } = found;
     if (dirname(root) === root) throw new HttpError(404, "session not found");
     const real = await realOrMissing(root);
     // The instance path was stored as a real path, so a different real path means the folder or a parent became a link.
@@ -65,7 +71,7 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     if (!within(real, realInstance)) throw new HttpError(404, "session folder not found");
     if (worktree && !within(real, await realOrMissing(join(instance, ".claude", "worktrees")))) throw new HttpError(404, "session folder not found");
     if (dirname(real) === real) throw new HttpError(404, "session not found");
-    return { h, sessionId, root, real };
+    return { h, sessionId, root, real, file };
   }
 
   /** Real path of `p`. A missing or unreadable folder (ENOENT, ENOTDIR, EACCES, ELOOP) is 404. */
@@ -97,7 +103,7 @@ export function sessionApi(deps: SessionApiDeps): Hono {
       return { path };
     }
     if (abs.length > MAX_ABS || CONTROL.test(abs)) throw new HttpError(400, "invalid path");
-    if (!isAbsolute(abs)) throw new HttpError(400, "abs must be an absolute path");
+    if (!P.isAbsolute(abs)) throw new HttpError(400, "abs must be an absolute path");
     return { abs };
   }
 
@@ -108,25 +114,35 @@ export function sessionApi(deps: SessionApiDeps): Hono {
    */
   async function onTarget<T>(c: Context, fn: (root: string, rel: string, hooks: OpenHooks) => Promise<T>): Promise<T> {
     const t = targetOf(c);
-    const { h, sessionId, root, real } = await rootOf(c);
+    const { h, sessionId, root, real, file } = await rootOf(c);
     if ("path" in t) return inRoot(real, () => fn(real, t.path, EXACT));
-    const want = resolve(t.abs);
+    const want = P.resolve(t.abs);
     const key = (p: string) => (win ? p.toLowerCase() : p);
-    // The same lexical root as /touched, so the list matches what the browser was shown.
-    const touched = await touchedFiles({ ...h, sessionId, root, ...(fs ? { fs } : {}) });
+    const dirs = await refused();
+    // Never served, even when written: UNC and device paths on Windows, /proc, /sys, /dev, the node's state folders.
+    if (absRefused(t.abs, { platform, dirs }) || absRefused(want, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
+    // The same lexical root and transcript as /touched, so the list matches what the browser was shown.
+    const touched = await touchedFiles({ ...h, sessionId, root, file, platform, ...(fs ? { fs } : {}) });
     // Only a confirmed write counts: a denied or failed call to a path wrote nothing there.
     const hit = touched.filter((f) => f.confirmed === true).find((f) => key(f.path) === key(want));
-    if (!hit) throw new HttpError(404, "file was not touched by this session");
+    if (!hit || absRefused(hit.path, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
     // The list entry, never the request text.
-    const file = resolve(hit.path);
-    return fn(dirname(file), basename(file), EXACT_FILE);
+    const entry = P.resolve(hit.path);
+    return fn(P.dirname(entry), P.basename(entry), EXACT_FILE);
+  }
+
+  /** The state folders, as given and as real paths (a state folder reached through a link). */
+  async function refused(): Promise<string[]> {
+    const given = deps.refuseDirs ?? [];
+    const real = await Promise.all(given.map((d) => realpath(d).catch(() => undefined)));
+    return [...given, ...real.filter((d): d is string => d !== undefined)];
   }
 
   r.get("/", async (c) => c.json(await listSessions({ ...(await home(c)), ...(fs ? { fs } : {}) })));
 
   r.get("/:sid/touched", async (c) => {
-    const { h, sessionId, root } = await rootOf(c);
-    return c.json(await touchedFiles({ ...h, sessionId, root, ...(fs ? { fs } : {}) }));
+    const { h, sessionId, root, file } = await rootOf(c);
+    return c.json(await touchedFiles({ ...h, sessionId, root, file, platform, ...(fs ? { fs } : {}) }));
   });
 
   r.get("/:sid/files", async (c) => {

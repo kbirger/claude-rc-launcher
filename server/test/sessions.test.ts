@@ -118,12 +118,12 @@ describe("sessions", () => {
     const out = await listSessions({ home: HOME, path: PATH, fs });
     expect(out.map((s) => s.root)).toEqual([wt]);
     expect(await sessionRootOf({ home: HOME, path: PATH, sessionId: ID1, fs })).toBe(wt);
-    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: wt, worktree: true });
+    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: wt, worktree: true, file: `${proj("-work-proj--claude-worktrees-feat")}/${ID1}.jsonl` });
   });
 
   test("findSession marks a main folder session as not a work tree", async () => {
     const fs = fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user("/work/proj/src")] } });
-    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: "/work/proj/src", worktree: false });
+    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: "/work/proj/src", worktree: false, file: `${proj("-work-proj")}/${ID1}.jsonl` });
   });
 
   test("listSessions drops a sibling folder session whose first cwd is outside the work trees folder", async () => {
@@ -320,6 +320,23 @@ describe("transcripts read from disk", () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("touchedFiles inputs", () => {
+  test("given the transcript file, touchedFiles reads it and does not scan the folders", async () => {
+    let readdirs = 0;
+    const base = fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...wrote("Write", { file_path: "/work/proj/a" }, T)] } });
+    const fs = { ...base, readdir: async (d: string) => (readdirs++, base.readdir(d)) };
+    const out = await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs, file: `${proj("-work-proj")}/${ID1}.jsonl` });
+    expect(out.map((t) => t.path)).toEqual(["/work/proj/a"]);
+    expect(readdirs).toBe(0);
+  });
+
+  test("on Windows a UNC or device path is left out of the list", async () => {
+    const raws = ["\\\\srv\\share\\a.txt", "//srv/share/b.txt", "\\\\?\\C:\\c.txt", "\\\\.\\pipe\\d", "C:\\Users\\u\\e.txt", "c:/Users/u/f.txt"];
+    const out = await touched(raws.flatMap((r) => wrote("Write", { file_path: r }, T)), { platform: "win32", root: "C:\\work\\proj" });
+    expect(out.map((t) => t.path)).toEqual(["c:\\Users\\u\\f.txt", "C:\\Users\\u\\e.txt"]);
   });
 });
 

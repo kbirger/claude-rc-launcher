@@ -155,7 +155,9 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     });
   }
 
-  r.route("/instances/:id/sessions", sessionApi({ instances }));
+  // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
+  const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
+  r.route("/instances/:id/sessions", sessionApi({ instances, refuseDirs }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;
