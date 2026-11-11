@@ -275,6 +275,12 @@ problems are reported together at startup. Secrets are never inline: each is a `
 (relative to the config file's directory; one trailing newline is trimmed). On Linux a secret file
 that is group- or world-accessible is an error (`chmod 600`). `deploy/config.example.toml` shows every key.
 
+**Run from a checkout.** To run on Linux or Windows without touching `/etc`, put your `config.toml` and its secret
+files in `.local-data/` (Git ignores it). Then run `bun run dev:local` (watch mode) or `bun run start:local`. Both
+pass `--config .local-data/config.toml --local`. `--local` sets the hub's `public_url` to `http://localhost:<port>`
+(the config's `port`), so the OIDC redirect URI is `http://localhost:<port>/auth/callback` whatever `public_url` says.
+Register that redirect URI with your OIDC provider. `--local` is an error on a node.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `hub` | `hub` or `node` (see [Multiple hosts](#multiple-hosts)) |

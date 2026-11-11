@@ -3,3 +3,6 @@ web/dist
 dist
 .superpowers
 server/src/embedded.ts
+
+# Local run: your config.toml and its secret files (see "Run from a checkout" in the README)
+/.local-data/

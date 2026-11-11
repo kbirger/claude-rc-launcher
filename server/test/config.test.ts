@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ConfigError, parseConfig, type Config, type ConfigIo, type OidcUserAuth } from "../src/config";
-import { loadConfigFile, resolveConfigPath } from "../src/configfile";
+import { applyLocal, loadConfigFile, resolveConfigPath } from "../src/configfile";
 
 const oa = (c: Config) => c.userAuth as OidcUserAuth;
 const io: ConfigIo = { readFile: () => "x".repeat(40) };
@@ -234,6 +234,23 @@ describe("resolveConfigPath", () => {
     expect(resolveConfigPath(["bun", "x", "--config", "a.toml"], { CLAUDE_RC_CONFIG: "b.toml" })).toBe("a.toml");
     expect(resolveConfigPath(["bun", "x"], { CLAUDE_RC_CONFIG: "b.toml" })).toBe("b.toml");
     expect(resolveConfigPath(["bun", "x"], {})).toBe("/etc/claude-rc-launcher/config.toml");
+  });
+});
+
+describe("applyLocal", () => {
+  const hub = () => parseConfig({ ...base(), port: 8181 }, io);
+  test("without --local the config is unchanged", () => {
+    const cfg = hub();
+    expect(applyLocal(cfg, ["bun", "x"])).toBe(cfg);
+  });
+  test("--local sets the public URL to http://localhost:<port>", () => {
+    expect(applyLocal(hub(), ["bun", "x", "--local"]).publicUrl).toBe("http://localhost:8181");
+  });
+  test("--local follows the configured port", () => {
+    expect(applyLocal(parseConfig({ ...base(), port: 9000 }, io), ["--local"]).publicUrl).toBe("http://localhost:9000");
+  });
+  test("--local on a node is an error", () => {
+    expect(() => applyLocal({ ...hub(), mode: "node" } as Config, ["--local"])).toThrow(ConfigError);
   });
 });
 

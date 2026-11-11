@@ -12,6 +12,13 @@ export function resolveConfigPath(argv: string[], env: Record<string, string | u
   return env.CLAUDE_RC_CONFIG || defaultPath;
 }
 
+/** `--local`: for running from a checkout. The hub's public URL becomes http://localhost:<port>, whatever `public_url` says. */
+export function applyLocal(cfg: Config, argv: string[]): Config {
+  if (!argv.includes("--local")) return cfg;
+  if (cfg.mode !== "hub") throw new ConfigError(["--local applies to a hub only: a node has no public_url"]);
+  return { ...cfg, publicUrl: `http://localhost:${cfg.port}` };
+}
+
 export function makeIo(dir: string): ConfigIo {
   return {
     readFile(file, kind) {

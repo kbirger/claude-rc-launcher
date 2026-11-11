@@ -7,6 +7,8 @@
     "test": "bun test server web/src ./cli",
     "typecheck": "tsc --noEmit",
     "start": "bun server/src/index.ts",
+    "dev:local": "bun --watch server/src/index.ts --config .local-data/config.toml --local",
+    "start:local": "bun server/src/index.ts --config .local-data/config.toml --local",
     "build:web": "bun run --cwd web build",
     "build:bundle": "bun run build:web && bun scripts/gen-embed.ts",
     "build:cli": "bun build --compile --define \"BUILD_VERSION=\\\"$(bun scripts/version.ts)\\\"\" cli/src/index.ts --outfile dist/claude-rc",

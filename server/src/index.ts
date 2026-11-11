@@ -1,5 +1,5 @@
 import { ConfigError, type Config } from "./config";
-import { loadConfigFile, resolveConfigPath } from "./configfile";
+import { applyLocal, loadConfigFile, resolveConfigPath } from "./configfile";
 import { startHub } from "./hubmain";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
@@ -21,7 +21,7 @@ if (process.argv[2] === "gen-secret") {
 
 let cfg: Config;
 try {
-  cfg = loadConfigFile(resolveConfigPath(process.argv, process.env));
+  cfg = applyLocal(loadConfigFile(resolveConfigPath(process.argv, process.env)), process.argv);
 } catch (e) {
   if (e instanceof ConfigError) {
     console.error(e.message);
