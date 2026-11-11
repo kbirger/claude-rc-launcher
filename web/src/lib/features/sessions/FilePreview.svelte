@@ -25,7 +25,7 @@
     </div>
     {#if p.kind === "text"}
       {#if p.truncated}
-        <p class="text-sm text-warning">Showing the first 512 KB of {humanSize(p.size)}. Download the file for the rest.</p>
+        <p class="text-sm text-warning">Showing only the start of {humanSize(p.size)}. Download the file for the rest.</p>
       {/if}
       <pre class="m-0 overflow-auto rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{p.text ?? ""}</pre>
     {:else}

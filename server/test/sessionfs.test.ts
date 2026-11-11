@@ -246,6 +246,38 @@ describe("previewIn", () => {
       await rm(join(root, "utf.txt"));
     }
   });
+  test("previewIn returns binary for a file of \\x01 bytes, but text with tabs, form feeds and ESC", async () => {
+    await writeFile(join(root, "ctl.dat"), Buffer.alloc(PREVIEW_LIMIT, 0x01));
+    // Under 10 percent odd controls stays text.
+    const few = Buffer.alloc(1000, 0x61);
+    for (let i = 0; i < 90; i++) few[i * 10] = 0x01;
+    await writeFile(join(root, "few.txt"), few);
+    await writeFile(join(root, "esc.txt"), "\t\f\x1b[1mbold\x1b[0m\r\n".repeat(200));
+    try {
+      expect(await previewIn(root, "ctl.dat")).toEqual({ name: "ctl.dat", size: PREVIEW_LIMIT, kind: "binary" });
+      expect((await previewIn(root, "few.txt")).kind).toBe("text");
+      expect((await previewIn(root, "esc.txt")).kind).toBe("text");
+    } finally {
+      await rm(join(root, "ctl.dat"));
+      await rm(join(root, "few.txt"));
+      await rm(join(root, "esc.txt"));
+    }
+  });
+  test("previewIn cuts a file of quotes so that its JSON stays under 900000 bytes", async () => {
+    await writeFile(join(root, "quotes.txt"), '"'.repeat(PREVIEW_LIMIT));
+    try {
+      const p = await previewIn(root, "quotes.txt");
+      expect(p.kind).toBe("text");
+      expect(p.truncated).toBe(true);
+      const bytes = Buffer.byteLength(JSON.stringify(p));
+      expect(bytes).toBeLessThan(900_000);
+      expect(bytes).toBeGreaterThan(899_000);
+      expect(p.text!.length).toBeLessThan(PREVIEW_LIMIT);
+      expect(/^"+$/.test(p.text!)).toBe(true);
+    } finally {
+      await rm(join(root, "quotes.txt"));
+    }
+  });
   test("previewIn returns binary when the first 8 KB has a zero byte", async () => {
     const buf = Buffer.alloc(9000, 0x61);
     buf[8000] = 0;

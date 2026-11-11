@@ -16,6 +16,8 @@ export type Download = { name: string; size: number; stream: ReadableStream<Uint
 export type OpenHooks = { beforeOpen?: (real: string) => Promise<void> };
 
 export const PREVIEW_LIMIT = 512 * 1024;
+/** The hub reads at most 1 MB of a JSON answer, so a preview stays below this many bytes once encoded. */
+export const PREVIEW_JSON_LIMIT = 900_000;
 const SNIFF_BYTES = 8 * 1024;
 const CHUNK = 64 * 1024;
 
@@ -188,7 +190,41 @@ function trimPartialUtf8(b: Uint8Array): Uint8Array {
   return b.length - i < need ? b.subarray(0, i) : b;
 }
 
-/** Reads at most PREVIEW_LIMIT + 1 bytes and returns text when there is no zero byte in the first 8 KB and the bytes are UTF-8. */
+/** True for a C0 control byte that a text file does not normally hold (tab, newline, CR, form feed and ESC are fine). */
+const oddControl = (b: number): boolean => b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d && b !== 0x0c && b !== 0x1b;
+
+/** Binary when the window holds a zero byte, or when more than 10 percent of it is odd control bytes. */
+function looksBinary(win: Uint8Array): boolean {
+  if (win.includes(0)) return true;
+  let odd = 0;
+  for (const b of win) if (oddControl(b)) odd++;
+  return odd * 10 > win.length;
+}
+
+const jsonBytes = (p: Preview): number => Buffer.byteLength(JSON.stringify(p));
+
+/** Cuts the text so that the encoded preview stays under PREVIEW_JSON_LIMIT. Escapes (`"`, controls) can double or sextuple a byte. */
+function fitJson(p: Preview & { text: string }): Preview {
+  if (jsonBytes(p) < PREVIEW_JSON_LIMIT) return p;
+  const text = p.text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (jsonBytes({ ...p, text: text.slice(0, mid), truncated: true }) < PREVIEW_JSON_LIMIT) lo = mid;
+    else hi = mid - 1;
+  }
+  let n = lo;
+  // Never end on the first half of a surrogate pair.
+  const last = n > 0 ? text.charCodeAt(n - 1) : 0;
+  if (n < text.length && last >= 0xd800 && last <= 0xdbff) n--;
+  return { ...p, text: text.slice(0, n), truncated: true };
+}
+
+/**
+ * Reads at most PREVIEW_LIMIT + 1 bytes and returns text when the first 8 KB does not look binary and the bytes are
+ * UTF-8. The text is cut so that the JSON answer fits the hub's limit.
+ */
 export async function previewIn(root: string, rel: string, hooks?: OpenHooks): Promise<Preview> {
   const { handle, name, size } = await openChecked(root, rel, hooks);
   try {
@@ -201,7 +237,7 @@ export async function previewIn(root: string, rel: string, hooks?: OpenHooks): P
     }
     const truncated = n > PREVIEW_LIMIT;
     let body: Uint8Array = buf.subarray(0, Math.min(n, PREVIEW_LIMIT));
-    if (body.subarray(0, SNIFF_BYTES).includes(0)) return { name, size, kind: "binary" };
+    if (looksBinary(body.subarray(0, SNIFF_BYTES))) return { name, size, kind: "binary" };
     if (truncated) body = trimPartialUtf8(body);
     let text: string;
     try {
@@ -209,7 +245,7 @@ export async function previewIn(root: string, rel: string, hooks?: OpenHooks): P
     } catch {
       return { name, size, kind: "binary" };
     }
-    return truncated ? { name, size, kind: "text", text, truncated } : { name, size, kind: "text", text };
+    return fitJson(truncated ? { name, size, kind: "text", text, truncated } : { name, size, kind: "text", text });
   } finally {
     await handle.close().catch(() => {});
   }
