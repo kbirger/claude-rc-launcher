@@ -1,0 +1,4 @@
+# Run tools that start with "#!/usr/bin/env node" on Bun instead of the system Node. This covers `bun run <tool>`, for example
+# `bun run shadcn-svelte add button`. Plain `bunx` ignores it: add --bun there.
+[run]
+bun = true

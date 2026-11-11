@@ -2,3 +2,8 @@
 # (`bun run --cwd web test`, part of `bun run test`), because they compile the Svelte models as the build does.
 [test]
 pathIgnorePatterns = ["web/**"]
+
+# Run tools that start with "#!/usr/bin/env node" on Bun instead of the system Node. This covers `bun run <tool>`, for example
+# `bun run shadcn-svelte add button`. Plain `bunx` ignores it: add --bun there.
+[run]
+bun = true
