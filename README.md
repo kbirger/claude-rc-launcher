@@ -543,16 +543,22 @@ The list shows every session that Claude Code recorded for the instance folder. 
 Claude Code files under `.claude/worktrees`. It also includes sessions that you started yourself in that folder.
 Remote Control sessions cannot be told apart from other sessions, so the list does not try.
 
-"Touched" lists files that Claude wrote or edited with its file tools. Files that a command created do not appear.
-Use the "Folder" tab to find those files.
+"Touched" lists files that Claude wrote or edited with its file tools. A file counts only when the write succeeded.
+If the call was denied, failed or got no answer, the list shows the file as "not written" and does not open it.
+Files that a command created do not appear. Use the "Folder" tab to find those files.
 
 - The node reads files as its own service account. It can read only what that account can read.
 - The node serves files inside a session folder. On each request it finds the folder again from the transcript.
   The real place of that folder must be inside the instance folder. If a link leads it out, the node refuses it.
 - A touched file outside the session folder can also be opened. The node serves it only if its path is exactly on
-  that session's touched list. It refuses any other file outside the folder. It also refuses the file if its name or
-  its parent folder is a link. The touched list comes from the transcript, so anyone who can write the transcript can
-  add a file to it.
+  that session's touched list and the write succeeded. It refuses any other file outside the folder. It also refuses
+  the file if its name or its parent folder is a link. The touched list comes from the transcript, so anyone who can
+  write the transcript can add a file to it.
+- The node never serves a file outside the session folder that has more than one hard link.
+- The node never serves a file outside the session folder under `/proc`, `/sys`, `/dev` or its own state folder.
+  On Windows it serves a file outside the session folder only by a drive-letter path. It refuses a network path
+  (`\\server\share`) and a device path (`\\?\` or `\\.\`), because opening a network path can send the
+  credentials of the service account to that server.
 - The node reads transcripts from `<home>/.claude/projects` of the instance user. Claude Code deletes old transcripts
   after its cleanup period, so an old session disappears from the list.
 - A text file shows as plain text. A larger text file shows its first 512 KB and a download button. Any other file

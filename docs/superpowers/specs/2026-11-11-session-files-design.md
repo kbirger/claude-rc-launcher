@@ -57,14 +57,15 @@ The user works from a phone, in the Claude app. Claude writes a file on a node, 
 - Work trees come second. If the session ran in a work tree, the session root is that work tree.
 - File access is only from session folders.
 - The node reads transcripts and files as its own service account. It does not drop to the instance user. The path check against the session root is the only gate. The root comes from the node's own transcript lookup.
-- A file that a session touched can be previewed and downloaded even when it is outside the session root. Touched means written or edited with Write, Edit, MultiEdit or NotebookEdit. The request names the file by its absolute path. The node serves it only when that path is exactly on the session's touched list. Any other path outside the root is refused with "file was not touched by this session". The answer is the same whether or not the file exists. The folder browser never accepts an absolute path.
+- A file that a session touched can be previewed and downloaded even when it is outside the session root. Touched means written or edited with Write, Edit, MultiEdit or NotebookEdit, and the write succeeded. A write succeeded when its tool call has a result with the same id and no error. A call that was denied, failed or got no result does not count. The list still shows it as "not written", with no link. The request names the file by its absolute path. The node serves it only when that path is exactly on the session's touched list. Any other path outside the root is refused with "file was not touched by this session". The answer is the same whether or not the file exists. The folder browser never accepts an absolute path.
 - A touched file outside the root is opened with its parent folder as the root. The parent folder and the file name must not be links. The open checks of the session folder apply to it as well.
+- A touched file outside the root is refused when it has more than one hard link, or when it is under `/proc`, `/sys`, `/dev` or a state folder of the node. On Windows only a drive-letter path is served. A network (UNC) path or a device path is refused and left out of the touched list. Opening a network path as the service account can send its credentials to that server. Each refusal is a 404, the same as for an untouched file.
 
 ## My calls, not agreed with the user
 
 - The text-preview size limit is 512 KB. A larger text file shows its size and a download button, and the preview shows only the first 512 KB with a note.
 - If a file has no zero byte in its first 8 KB and decodes as UTF-8, it counts as text. Anything else shows its name, size, type guess, and a download button.
-- "Files Claude touched" comes from the paths in write and edit tool calls. A file outside the session root appears in the list with a note. It can be opened (see "Decisions made with the user").
+- "Files Claude touched" comes from the paths in write and edit tool calls. A file outside the session root appears in the list with a note. It can be opened (see "Decisions made with the user"). A call that did not succeed shows as "not written" and cannot be opened.
 - The folder browser hides names that start with a dot. A toggle shows them, as the existing folder picker does.
 - The session root is the first `cwd` the transcript records. A later `cwd` inside the root does not change it.
 - Text previews send `Content-Type: text/plain; charset=utf-8` and `X-Content-Type-Options: nosniff`. Downloads send `Content-Disposition: attachment` and `application/octet-stream`.
