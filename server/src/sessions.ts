@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { within } from "./paths";
 
 export type Session = { id: string; root: string; branch?: string; startedAt: string; lastActiveAt: string };
@@ -113,7 +113,8 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
       } catch {
         continue;
       }
-      if (!first) continue;
+      // A relative cwd would resolve against the node's own working folder.
+      if (!first || !isAbsolute(first.cwd)) continue;
       const root = resolve(first.cwd);
       // The folder name rule is lossy, so check the real cwd.
       if (!within(root, resolve(allowed))) continue;
@@ -176,20 +177,24 @@ export async function touchedFiles(o: {
   if (!found[0]) return [];
   const root = resolve(o.root);
   const seen = new Map<string, TouchedFile>();
-  for await (const line of fs.lines(found[0].file)) {
-    const r = parse(line);
-    const content = r?.type === "assistant" ? r.message?.content : undefined;
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (block?.type !== "tool_use" || !block.input || typeof block.input !== "object") continue;
-      const name: string = block.name;
-      const raw = name === "NotebookEdit" ? block.input.notebook_path : name === "Write" || name === "Edit" || name === "MultiEdit" ? block.input.file_path : undefined;
-      if (typeof raw !== "string" || raw.length === 0) continue;
-      const p = resolve(root, raw);
-      const at = typeof r?.timestamp === "string" ? r.timestamp : "";
-      seen.delete(p); // later call moves the path to the end
-      seen.set(p, { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at });
+  try {
+    for await (const line of fs.lines(found[0].file)) {
+      const r = parse(line);
+      const content = r?.type === "assistant" ? r.message?.content : undefined;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type !== "tool_use" || !block.input || typeof block.input !== "object") continue;
+        const name: string = block.name;
+        const raw = name === "NotebookEdit" ? block.input.notebook_path : name === "Write" || name === "Edit" || name === "MultiEdit" ? block.input.file_path : undefined;
+        if (typeof raw !== "string" || raw.length === 0) continue;
+        const p = resolve(root, raw);
+        const at = typeof r?.timestamp === "string" ? r.timestamp : "";
+        seen.delete(p); // later call moves the path to the end
+        seen.set(p, { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at });
+      }
     }
+  } catch {
+    // The transcript vanished or could not be read further: keep what was found.
   }
   return [...seen.values()].reverse();
 }

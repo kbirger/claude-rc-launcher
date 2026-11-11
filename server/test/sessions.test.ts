@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { encodeProjectDir, findSession, listSessions, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
 
 const HOME = "/h";
@@ -154,5 +157,63 @@ describe("sessions", () => {
     expect(await sessionRootOf({ home: HOME, path: PATH, sessionId: ID2, fs })).toBeUndefined();
     expect(await sessionRootOf({ home: HOME, path: PATH, sessionId: "../../etc/passwd", fs })).toBeUndefined();
     expect(await sessionRootOf({ home: HOME, path: PATH, sessionId: ID1, fs })).toBe(PATH);
+  });
+
+  test("listSessions drops a session whose first cwd is relative", async () => {
+    // Resolved against the node's working folder, "sub" would land inside a path equal to that folder.
+    const here = process.cwd();
+    const fs = fakeFs({ [`${proj(encodeProjectDir(here))}/${ID1}.jsonl`]: { lines: [user("sub")] } });
+    expect(await listSessions({ home: HOME, path: here, fs })).toEqual([]);
+  });
+
+  test("listSessions drops a lookalike work tree folder whose cwd is inside the path but outside .claude/worktrees", async () => {
+    // "/work/proj/.claude-worktrees-x" encodes to the same prefix as a work tree folder.
+    expect(encodeProjectDir("/work/proj/.claude-worktrees-x")).toBe("-work-proj--claude-worktrees-x");
+    const fs = fakeFs({ [`${proj("-work-proj--claude-worktrees-x")}/${ID1}.jsonl`]: { lines: [user("/work/proj/.claude-worktrees-x")] } });
+    expect(await listSessions({ home: HOME, path: PATH, fs })).toEqual([]);
+  });
+
+  test("touchedFiles counts a MultiEdit call", async () => {
+    const fs = fakeFs({
+      [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), tool("MultiEdit", { file_path: "/work/proj/m.ts", edits: [] }, "2026-01-01T00:00:01.000Z")] },
+    });
+    expect(await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs })).toEqual([
+      { path: "/work/proj/m.ts", inside: true, tool: "edit", at: "2026-01-01T00:00:01.000Z" },
+    ]);
+  });
+
+  test("touchedFiles keeps what it found when the transcript read fails half way", async () => {
+    const fs: TranscriptFs = {
+      readdir: async (d) => (d.endsWith("projects") ? [] : [`${ID1}.jsonl`]),
+      stat: async () => ({ mtimeMs: 1 }),
+      async *lines() {
+        yield user(PATH);
+        yield tool("Write", { file_path: "/work/proj/a.txt" }, "2026-01-01T00:00:01.000Z");
+        throw new Error("EIO");
+      },
+    };
+    const out = await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs });
+    expect(out.map((t) => t.path)).toEqual(["/work/proj/a.txt"]);
+  });
+});
+
+describe("transcripts read from disk", () => {
+  test("a line over 1 MB is dropped and a line cut across read chunks is kept whole", async () => {
+    const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+    try {
+      const path = "/work/proj";
+      const dir = join(home, ".claude", "projects", encodeProjectDir(path));
+      await mkdir(dir, { recursive: true });
+      // 200 KB of padding makes the Edit line span several 64 KB read chunks.
+      const long = tool("Edit", { file_path: "/work/proj/long.txt", pad: "x".repeat(200 * 1024) }, "2026-01-01T00:00:02.000Z");
+      const huge = tool("Write", { file_path: "/work/proj/huge.txt", pad: "y".repeat(1024 * 1024 + 10) }, "2026-01-01T00:00:01.000Z");
+      const lines = [user(path), huge, long, tool("Write", { file_path: "/work/proj/after.txt" }, "2026-01-01T00:00:03.000Z")];
+      await writeFile(join(dir, `${ID1}.jsonl`), lines.join("\n") + "\n");
+      expect((await listSessions({ home, path })).map((s) => s.root)).toEqual([path]);
+      const out = await touchedFiles({ home, path, sessionId: ID1, root: path });
+      expect(out.map((t) => t.path)).toEqual(["/work/proj/after.txt", "/work/proj/long.txt"]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
