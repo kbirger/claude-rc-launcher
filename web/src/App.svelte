@@ -33,7 +33,6 @@
   let selected = $state(remembered());
   let now = $state(new Date());
   let showNew = $state(false);
-  let refreshKey = $state(0);
 
   // The page code only changes with a reload. When the hub runs another version than the one that served this page, reload
   // (or ask, while the New dialog is open).
@@ -109,7 +108,7 @@
   <HubVersionLine hub={hosts.find((h) => h.id === "local")} />
   <button class="primary new" onclick={() => (showNew = true)}>+ New</button>
   {#key selected}
-    <InstanceList host={selected} {refreshKey} />
+    <InstanceList host={selected} />
   {/key}
 </main>
 {#if showNew}
@@ -120,7 +119,7 @@
       onclose={() => (showNew = false)}
       onstarted={() => {
         showNew = false;
-        refreshKey++;
+        void client.invalidateQueries({ queryKey: ["instances", selected] });
       }}
     />
   {/key}

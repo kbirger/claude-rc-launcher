@@ -1,49 +1,34 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
+  import { createMutation, createQuery, useMutationState, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
-  import { getLogs, listInstances, stopInstance, type Instance } from "./api";
+  import InstanceLogs from "./InstanceLogs.svelte";
+  import { stopInstanceMutation } from "./mutations";
+  import { mergePending } from "./pending";
+  import { instancesQuery } from "./queries";
+  import type { Instance } from "./api";
 
-  let { host, refreshKey = 0 }: { host: string; refreshKey?: number } = $props();
+  let { host }: { host: string } = $props();
 
-  let instances = $state<Instance[]>([]);
-  let loaded = $state(false);
-  let error = $state("");
-  let logs = $state<Record<string, string>>({});
-  let now = $state(Date.now());
-  let inflight = false;
-  let queued = false;
-
-  async function refresh() {
-    if (inflight) {
-      queued = true; // run once more right after the in-flight request finishes
-      return;
-    }
-    inflight = true;
-    try {
-      instances = await listInstances(host);
-      error = "";
-      loaded = true;
-    } catch (e) {
-      error = e instanceof ApiError ? e.message : "Failed to load instances";
-    } finally {
-      inflight = false;
-      now = Date.now();
-      if (queued) {
-        queued = false;
-        void refresh();
-      }
-    }
-  }
-
-  onMount(() => {
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+  const client = useQueryClient();
+  const listQ = createQuery(() => instancesQuery(host));
+  const stopM = createMutation(() => stopInstanceMutation(host, client));
+  // The filter is read once; App remounts this list (#key) when the host changes.
+  const stopping = useMutationState({
+    filters: { mutationKey: ["instances", untrack(() => host), "stop"], status: "pending" },
+    select: (m) => m.state.variables as string,
   });
+  let open = $state<Record<string, true>>({});
 
-  $effect(() => {
-    void refreshKey;
-    refresh();
-  });
+  const rows = $derived(mergePending(listQ.data ?? [], [], stopping));
+  const now = $derived.by(() => (listQ.dataUpdatedAt, Date.now()));
+  const error = $derived(
+    listQ.isError
+      ? listQ.error instanceof ApiError ? listQ.error.message : "Failed to load instances"
+      : stopM.isError
+        ? stopM.error instanceof ApiError ? stopM.error.message : "Failed to stop"
+        : "",
+  );
 
   function uptime(state: string, startedAt: string | null): string {
     if (state !== "active" || !startedAt) return "—";
@@ -60,50 +45,45 @@
     return state === "active" ? "active" : state === "failed" ? "failed" : "other";
   }
 
-  async function stop(i: Instance) {
+  function stop(i: Instance) {
     if (!confirm(`Stop ${i.name}?`)) return;
-    try {
-      await stopInstance(host, i.id);
-      error = "";
-    } catch (e) {
-      error = e instanceof ApiError ? e.message : "Failed to stop";
-    }
-    await refresh();
+    stopM.mutate(i.id);
   }
 
-  async function toggleLogs(i: Instance) {
-    if (i.id in logs) {
-      const { [i.id]: _, ...rest } = logs;
-      logs = rest;
-      return;
-    }
-    try {
-      logs = { ...logs, [i.id]: await getLogs(host, i.id, 100) };
-    } catch (e) {
-      error = e instanceof ApiError ? e.message : "Failed to load logs";
-    }
+  function toggleLogs(id: string) {
+    if (id in open) {
+      const { [id]: _, ...rest } = open;
+      open = rest;
+    } else open = { ...open, [id]: true };
   }
 </script>
 
 {#if error}<p class="error">{error}</p>{/if}
-{#if loaded && instances.length === 0}
+{#if listQ.isSuccess && rows.length === 0}
   <p class="muted empty">No running instances. Tap New to start one.</p>
 {/if}
 <ul>
-  {#each instances as i (i.id)}
-    <li>
+  {#each rows as r (r.key)}
+    {@const i = r.instance}
+    <li class:pending={r.pending} class:starting={r.pending === "starting"}>
       <div class="row">
-        <strong class="name">{i.name}</strong>
-        <span class="badge {badge(i.state)}">{i.state}</span>
+        <strong class="name">{r.name}</strong>
+        {#if r.pending}
+          <span class="badge other">{r.pending}...</span>
+        {:else if i}
+          <span class="badge {badge(i.state)}">{i.state}</span>
+        {/if}
       </div>
-      <div class="path muted">{i.path}</div>
-      {#if i.user}<div class="muted">{i.user}</div>{/if}
-      <div class="muted">{uptime(i.state, i.startedAt)}</div>
-      <div class="actions">
-        <button onclick={() => toggleLogs(i)}>{i.id in logs ? "Hide logs" : "Logs"}</button>
-        <button class="danger" onclick={() => stop(i)}>Stop</button>
-      </div>
-      {#if i.id in logs}<pre>{logs[i.id]}</pre>{/if}
+      {#if i}
+        <div class="path muted">{i.path}</div>
+        {#if i.user}<div class="muted">{i.user}</div>{/if}
+        <div class="muted">{uptime(i.state, i.startedAt)}</div>
+        <div class="actions">
+          <button disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</button>
+          <button class="danger" disabled={!!r.pending} onclick={() => stop(i)}>Stop</button>
+        </div>
+        {#if i.id in open}<InstanceLogs {host} id={i.id} />{/if}
+      {/if}
     </li>
   {/each}
 </ul>
@@ -119,5 +99,6 @@
   .badge.active { color: var(--ok); }
   .badge.failed { color: var(--danger); }
   .badge.other { color: var(--warn); }
-  pre { max-height: 40vh; overflow: auto; font-size: 0.75rem; background: var(--bg); padding: 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  li.pending { opacity: 0.6; }
+  li.starting { border-style: dashed; }
 </style>
