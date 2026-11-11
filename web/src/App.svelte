@@ -52,6 +52,8 @@
         if (host !== selected) return;
         const act = startErrorAction(e, { path: a.path, user: a.user ?? "" });
         if (act.kind === "trust") {
+          // This prompt replaces the one in the open dialog: say that the displaced folder still needs trust.
+          if (showNew && newInitial && newInitial.path !== a.path) startError = `Trust needed for ${newInitial.path}`;
           newInitial = { path: a.path, user: a.user, name: a.name, trust: act.prompt };
           showNew = true;
           dialogGen++;
