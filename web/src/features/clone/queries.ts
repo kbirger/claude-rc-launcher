@@ -28,6 +28,7 @@ type LoginStatus = Awaited<ReturnType<typeof githubLoginStatus>>;
 
 // gcTime 0: a finished job is never read from the cache again.
 export const cloneJobQuery = (host: string, id: string) => ({
+  // While no job runs, the model passes id "" with enabled false, so ["clone", host, ""] is a placeholder that never fetches.
   queryKey: ["clone", host, id] as const,
   queryFn: () => cloneStatus(host, id),
   gcTime: 0,
