@@ -3,31 +3,45 @@
   import { createMutation, createQuery, useMutationState, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
   import InstanceLogs from "./InstanceLogs.svelte";
-  import { stopInstanceMutation } from "./mutations";
+  import { stopInstanceMutation, type StartArgs } from "./mutations";
   import { mergePending } from "./pending";
   import { instancesQuery } from "./queries";
   import type { Instance } from "./api";
 
-  let { host }: { host: string } = $props();
+  let { host, startError = "" }: { host: string; startError?: string } = $props();
 
   const client = useQueryClient();
   const listQ = createQuery(() => instancesQuery(host));
   const stopM = createMutation(() => stopInstanceMutation(host, client));
-  // The filter is read once; App remounts this list (#key) when the host changes.
+  // The filters are read once; App remounts this list (#key) when the host changes.
   const stopping = useMutationState({
     filters: { mutationKey: ["instances", untrack(() => host), "stop"], status: "pending" },
     select: (m) => m.state.variables as string,
   });
+  const starting = useMutationState({
+    filters: { mutationKey: ["instances", untrack(() => host), "start"], status: "pending" },
+    select: (m) => m.state.variables as StartArgs,
+  });
   let open = $state<Record<string, true>>({});
 
-  const rows = $derived(mergePending(listQ.data ?? [], [], stopping));
+  const rows = $derived(mergePending(listQ.data ?? [], starting, stopping));
+  // Reading dataUpdatedAt makes the uptimes recompute (with a fresh Date.now()) on each list refresh.
   const now = $derived.by(() => (listQ.dataUpdatedAt, Date.now()));
-  const error = $derived(
-    listQ.isError
-      ? listQ.error instanceof ApiError ? listQ.error.message : "Failed to load instances"
-      : stopM.isError
-        ? stopM.error instanceof ApiError ? stopM.error.message : "Failed to stop"
-        : "",
+  // A failed stop's message stays until the next successful list refresh after it, or the next stop.
+  let stopErrorListAt = 0;
+  $effect(() => {
+    if (stopM.isError) stopErrorListAt = untrack(() => listQ.dataUpdatedAt);
+  });
+  $effect(() => {
+    const at = listQ.dataUpdatedAt;
+    if (untrack(() => stopM.isError) && at > stopErrorListAt) stopM.reset();
+  });
+  const errors = $derived(
+    [
+      listQ.isError ? (listQ.error instanceof ApiError ? listQ.error.message : "Failed to load instances") : "",
+      stopM.isError ? (stopM.error instanceof ApiError ? stopM.error.message : "Failed to stop") : "",
+      startError,
+    ].filter(Boolean),
   );
 
   function uptime(state: string, startedAt: string | null): string {
@@ -58,7 +72,7 @@
   }
 </script>
 
-{#if error}<p class="error">{error}</p>{/if}
+{#each errors as e}<p class="error">{e}</p>{/each}
 {#if listQ.isSuccess && rows.length === 0}
   <p class="muted empty">No running instances. Tap New to start one.</p>
 {/if}

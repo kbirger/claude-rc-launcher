@@ -1,35 +1,60 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
+  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { trustStartArgs, type TrustPrompt } from "./trustprompt";
   import { ClonePanel } from "../clone";
   import ActionIcon from "../../shared/ui/ActionIcon.svelte";
   import FolderIcon from "../../shared/ui/FolderIcon.svelte";
   import { iconKind } from "../../shared/ui/foldericon";
   import { ApiError } from "../../shared/http";
-  import { startInstance } from "../instances";
-  import { browse, getNode, listUsers, mkdir, type DirListing, type UsersInfo } from "./api";
+  import type { StartArgs } from "../instances";
+  import type { DirListing } from "./api";
+  import { browseQuery, mkdirMutation, nodeQuery, usersQuery } from "./queries";
 
-  let { host, onclose, onstarted, busyReason }: { host: string; onclose: () => void; onstarted: () => void; busyReason?: string } = $props();
+  let { host, onclose, onstart, busyReason, initial }: {
+    host: string;
+    onclose: () => void;
+    onstart: (a: StartArgs) => void;
+    busyReason?: string;
+    initial?: { path: string; user?: string; name?: string; trust: TrustPrompt };
+  } = $props();
 
-  let listing = $state<DirListing | null>(null);
-  let name = $state("");
-  let error = $state("");
-  let busy = $state(false);
+  // The dialog opens again after a 428 with the folder, user and name of that start, and its trust question.
+  const init = untrack(() => initial);
+  const client = useQueryClient();
+  let path = $state<string | undefined>(init?.path);
+  let name = $state(init?.name ?? "");
   // Set while the machine updates or restarts: a start or a clone can be cut off, so the user must agree first.
   let ack = $state(false);
   const needsAck = $derived(!!busyReason && !ack);
   let creating = $state(false);
   let folderName = $state("");
-  let usersInfo = $state<UsersInfo | null>(null);
-  let user = $state("");
-  let trustPrompt = $state<TrustPrompt | null>(null);
-  let canClone = $state(false);
+  let userPick = $state<string | undefined>(init?.user);
+  let trustPrompt = $state<TrustPrompt | null>(init?.trust ?? null);
   let cloning = $state(false);
   // True while a clone runs (the panel can be open with no clone running). Close is locked then.
   let cloneBusy = $state(false);
-  let reqId = 0;
+
+  // An older node without /users fails this query: then there is no selector.
+  const usersQ = createQuery(() => usersQuery(host));
+  // An old node or an error: no clone button, no message.
+  const nodeQ = createQuery(() => nodeQuery(host));
+  const usersInfo = $derived(usersQ.data?.selectable ? usersQ.data : null);
+  const user = $derived(userPick ?? usersInfo?.default ?? "");
   // Only pass a user when the selector is shown.
-  const chosenUser = $derived(usersInfo?.selectable ? user : undefined);
+  const chosenUser = $derived(usersInfo ? user : undefined);
+  // Wait for the users answer, so the first listing is for the user that a start would use.
+  const browseQ = createQuery(() => ({ ...browseQuery(host, path, chosenUser), enabled: !usersQ.isPending }));
+  const mkdirM = createMutation(() => mkdirMutation(host, client));
+  const listing = $derived<DirListing | null>(browseQ.data ?? null);
+  const canClone = $derived(nodeQ.data?.clone === true);
+  const error = $derived(
+    browseQ.isError
+      ? browseQ.error instanceof ApiError ? browseQ.error.message : "Failed to browse"
+      : mkdirM.isError
+        ? mkdirM.error instanceof ApiError ? mkdirM.error.message : "Failed to create folder"
+        : "",
+  );
 
   const atTop = $derived(!listing || listing.path === "");
   // The panel only makes sense inside a folder.
@@ -44,77 +69,48 @@
     return parts.map((label, idx) => ({ label, path: lead + parts.slice(0, idx + 1).join(sep) }));
   });
 
-  async function go(path?: string) {
-    const id = ++reqId;
-    error = "";
+  function go(p?: string) {
+    path = p;
     trustPrompt = null;
-    try {
-      const l = await browse(host, path, chosenUser);
-      if (id === reqId) listing = l;
-    } catch (e) {
-      if (id !== reqId) return;
-      // Do not keep a listing that belongs to another user or folder: Start would use it.
-      listing = null;
-      error = e instanceof ApiError ? e.message : "Failed to browse";
-    }
+    mkdirM.reset();
   }
-  onMount(async () => {
-    try {
-      const info = await listUsers(host);
-      if (info.selectable) {
-        usersInfo = info;
-        user = info.default;
-      }
-    } catch {
-      // older node without /users: no selector
-    }
-    go();
-    // Old node or an error: no clone button, no message.
-    getNode(host).then((n) => (canClone = n.clone === true)).catch(() => {});
-  });
 
   function changeUser(e: Event) {
-    user = (e.currentTarget as HTMLSelectElement).value;
+    userPick = (e.currentTarget as HTMLSelectElement).value;
     go(listing && listing.path ? listing.path : undefined);
   }
 
-  async function createFolder() {
+  function createFolder() {
     if (!listing || !folderName.trim()) return;
-    error = "";
-    try {
-      const r = await mkdir(host, listing.path, folderName.trim(), chosenUser);
-      creating = false;
-      folderName = "";
-      await go(r.path);
-    } catch (e) {
-      error = e instanceof ApiError ? e.message : "Failed to create folder";
-    }
+    mkdirM.mutate(
+      { parent: listing.path, name: folderName.trim(), user: chosenUser },
+      {
+        onSuccess: (r) => {
+          creating = false;
+          folderName = "";
+          go(r.path);
+        },
+      },
+    );
   }
 
-  async function cloned(path: string) {
+  async function cloned(p: string) {
     cloning = false;
-    await go(path);
-    // Start only when the listing is now the new folder; the trust question then shows for it.
-    if (listing?.path === path) await start();
+    go(p);
+    try {
+      const l = await client.fetchQuery(browseQuery(host, p, chosenUser));
+      // Start only when the listing is the new folder; a trust question then comes back for it.
+      if (l.path === p) start(false, l);
+    } catch {
+      // The browse error shows from the query.
+    }
   }
 
-  async function start(addTrust = false) {
-    if (!listing || atTop || needsAck) return;
-    const a = trustStartArgs(trustPrompt, listing, chosenUser, addTrust);
-    busy = true;
-    error = "";
-    try {
-      await startInstance(host, a.path, name.trim() || undefined, { user: a.user, addTrust: a.addTrust });
-      trustPrompt = null;
-      onstarted();
-    } catch (e) {
-      trustPrompt = null;
-      if (e instanceof ApiError && e.status === 428 && e.body?.code === "untrusted") {
-        trustPrompt = { path: e.body.path ?? listing.path, user: e.body.user ?? chosenUser ?? "" };
-      } else error = e instanceof ApiError ? e.message : "Failed to start";
-    } finally {
-      busy = false;
-    }
+  // Hands the start to App, which closes the dialog and shows a pending row. It does not wait.
+  function start(addTrust = false, l: DirListing | null = listing) {
+    if (!l || l.path === "" || needsAck) return;
+    const a = trustStartArgs(trustPrompt, l, chosenUser, addTrust);
+    onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust });
   }
 </script>
 
@@ -151,7 +147,7 @@
     {#if creating}
       <form class="bar" onsubmit={(e) => { e.preventDefault(); createFolder(); }}>
         <input placeholder="Folder name" bind:value={folderName} />
-        <button class="primary" type="submit">Create</button>
+        <button class="primary" type="submit" disabled={mkdirM.isPending}>Create</button>
       </form>
     {/if}
     {#if cloning && listing}
@@ -170,12 +166,12 @@
         <div class="trust" role="alert">
           <p><code>{trustPrompt.path}</code> is not trusted for <code>{trustPrompt.user}</code>.</p>
           <div class="bar">
-            <button class="primary" disabled={busy || needsAck} onclick={() => start(true)}>Trust and start</button>
-            <button disabled={busy} onclick={() => (trustPrompt = null)}>Cancel</button>
+            <button class="primary" disabled={needsAck} onclick={() => start(true)}>Trust and start</button>
+            <button onclick={() => (trustPrompt = null)}>Cancel</button>
           </div>
         </div>
       {/if}
-      <button class="primary" disabled={atTop || busy || needsAck} onclick={() => start()}>Start here</button>
+      <button class="primary" disabled={atTop || needsAck} onclick={() => start()}>Start here</button>
     </div>
     {/if}
   </div>
