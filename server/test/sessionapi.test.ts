@@ -214,6 +214,31 @@ describe("a session root reached through a symlink", () => {
     await writeFile(join(wt, "w.txt"), "w");
     expect(await (await get(app, `/${SID}/download?path=w.txt`)).text()).toBe("w");
   });
+  test("a session folder swapped for a link between the root check and the read is refused", async () => {
+    const sub = join(root, "sub");
+    await mkdir(sub);
+    await writeFile(join(sub, "s.txt"), "s");
+    const out = join(dir, "outside");
+    await mkdir(out);
+    await writeFile(join(out, "s.txt"), "secret");
+    const inst = { claudeHome: async () => ({ path: root, home: "/home/x" }) } as unknown as Instances;
+    const app = new Hono();
+    // The swap runs after rootOf has checked the real root, as a racing instance user would.
+    const mod = await import("../src/sessionfs");
+    app.route("/instances/:id/sessions", sessionApi({
+      instances: inst,
+      fs: transcripts({ [SID]: sub }),
+      openDownload: async (r, rel, hooks) => {
+        await rm(sub, { recursive: true });
+        await symlink(out, sub);
+        return mod.openDownload(r, rel, hooks);
+      },
+    }));
+    app.onError(onError);
+    const r = await get(app, `/${SID}/download?path=s.txt`);
+    expect([403, 404]).toContain(r.status);
+    expect(await r.text()).not.toContain("secret");
+  });
   test("a real work tree inside the instance folder works", async () => {
     const wt = join(root, ".claude", "worktrees", "x");
     await mkdir(wt, { recursive: true });

@@ -137,6 +137,20 @@ describe("resolveIn", () => {
       await rm(join(base, "root-link"));
     }
   });
+  test.skipIf(win)("with exactRoot, a root that is a link is 404; without it the same root works", async () => {
+    await symlink(root, join(base, "exact-link"));
+    try {
+      const l = join(base, "exact-link");
+      expect(await status(listIn(l, "", false, { exactRoot: true }))).toBe(404);
+      expect(await status(previewIn(l, "a.txt", { exactRoot: true }))).toBe(404);
+      expect(await status(openDownload(l, "a.txt", { exactRoot: true }))).toBe(404);
+      expect((await previewIn(l, "a.txt")).text).toBe("hello");
+      expect((await previewIn(root, "a.txt", { exactRoot: true })).text).toBe("hello");
+      expect((await listIn(root, "", false, { exactRoot: true })).entries.length).toBeGreaterThan(0);
+    } finally {
+      await rm(join(base, "exact-link"));
+    }
+  });
   test.skipIf(win)("a root that is a link to the filesystem root is 404", async () => {
     await symlink("/", join(base, "slash-link"));
     try {

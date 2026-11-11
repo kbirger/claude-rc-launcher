@@ -8,6 +8,8 @@ import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./se
 import { listIn, openDownload as openDownloadDefault, previewIn } from "./sessionfs";
 
 const ID_RE = /^[0-9a-f]{12}$/;
+/** The root handed over is the real path that rootOf checked; a change after the check is refused. */
+const EXACT = { exactRoot: true } as const;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type SessionApiDeps = {
@@ -83,19 +85,19 @@ export function sessionApi(deps: SessionApiDeps): Hono {
 
   r.get("/:sid/files", async (c) => {
     const { real } = await rootOf(c);
-    return c.json(await inRoot(real, () => listIn(real, c.req.query("path") ?? "", c.req.query("hidden") === "1")));
+    return c.json(await inRoot(real, () => listIn(real, c.req.query("path") ?? "", c.req.query("hidden") === "1", EXACT)));
   });
 
   r.get("/:sid/file", async (c) => {
     const { real } = await rootOf(c);
-    const p = await inRoot(real, () => previewIn(real, c.req.query("path") ?? ""));
+    const p = await inRoot(real, () => previewIn(real, c.req.query("path") ?? "", EXACT));
     c.header("X-Content-Type-Options", "nosniff");
     return c.json(p);
   });
 
   r.get("/:sid/download", async (c) => {
     const { real } = await rootOf(c);
-    const d = await inRoot(real, () => open(real, c.req.query("path") ?? ""));
+    const d = await inRoot(real, () => open(real, c.req.query("path") ?? "", EXACT));
     try {
       const headers = downloadHeaders(d.name, d.size);
       const onAbort = () => {

@@ -12,8 +12,11 @@ export type Entry = { name: string; kind: "dir" | "file" | "other"; size?: numbe
 export type Listing = { path: string; parent: string | null; entries: Entry[] };
 export type Preview = { name: string; size: number; kind: "text" | "binary"; text?: string; truncated?: boolean };
 export type Download = { name: string; size: number; stream: ReadableStream<Uint8Array>; close(): void };
-/** Test seam: runs between the path check and the open. */
-export type OpenHooks = { beforeOpen?: (real: string) => Promise<void> };
+/**
+ * `beforeOpen` is a test seam that runs between the path check and the open. `exactRoot` requires the root to be a
+ * real path already (as sessionapi checked it): a root that became a link since then is 404.
+ */
+export type OpenHooks = { beforeOpen?: (real: string) => Promise<void>; exactRoot?: boolean };
 
 export const PREVIEW_LIMIT = 512 * 1024;
 /** The hub reads at most 1 MB of a JSON answer, so a preview stays below this many bytes once encoded. */
@@ -47,7 +50,7 @@ function notFoundOr(e: unknown, fallback: PathError): PathError {
   return fallback;
 }
 
-async function realRoot(root: string): Promise<string> {
+async function realRoot(root: string, exact = false): Promise<string> {
   let top: string;
   try {
     top = await realpath(resolve(root));
@@ -56,6 +59,8 @@ async function realRoot(root: string): Promise<string> {
   }
   // A root swapped for a link to the filesystem root after the caller's check.
   if (dirname(top) === top) throw new PathError(404, "session folder not found");
+  // A root swapped for a link to any other place after the caller's check.
+  if (exact && !(within(top, resolve(root)) && within(resolve(root), top))) throw new PathError(404, "session folder not found");
   return top;
 }
 
@@ -87,7 +92,7 @@ function sameFile(a: Ident, b: Ident): boolean {
 /** Opens a regular file inside the root and proves the handle is the file that was checked. */
 async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promise<{ handle: FileHandle; name: string; size: number }> {
   const parts = segments(rel);
-  const top = await realRoot(root);
+  const top = await realRoot(root, hooks?.exactRoot);
   const real = await resolveParts(top, parts);
   let pre;
   try {
@@ -227,7 +232,7 @@ export async function listIn(root: string, rel: string, showHidden: boolean, hoo
   const parts = segments(rel);
   // Hidden means a dot name at any segment, so a hidden folder is not listed unless hidden names are shown.
   if (!showHidden && parts.some((p) => p.startsWith("."))) throw new PathError(404, "path not found");
-  const top = await realRoot(root);
+  const top = await realRoot(root, hooks?.exactRoot);
   const dir = await resolveParts(top, parts);
   let lister: Lister;
   try {
