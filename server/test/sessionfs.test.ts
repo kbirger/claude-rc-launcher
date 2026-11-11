@@ -508,3 +508,35 @@ describe("openDownload", () => {
     }
   });
 });
+
+describe("hard links for a touched file outside the session folder (exactPath)", () => {
+  // A hard link names the same file under another name, so it could name a file that was never touched.
+  test("a file with a second hard link is 404 by exactPath, and still served by a plain path", async () => {
+    await writeFile(join(outside, "one.txt"), "one");
+    await link(join(outside, "one.txt"), join(outside, "two.txt"));
+    try {
+      for (const name of ["one.txt", "two.txt"]) {
+        expect(await status(previewIn(outside, name, { exactRoot: true, exactPath: true }))).toBe(404);
+        expect(await status(openDownload(outside, name, { exactRoot: true, exactPath: true }))).toBe(404);
+      }
+      expect(await status(previewIn(outside, "one.txt", { exactRoot: true }))).toBe("ok");
+    } finally {
+      await rm(join(outside, "two.txt"));
+      await rm(join(outside, "one.txt"));
+    }
+  });
+
+  test("a hard link made between the check and the open is 404", async () => {
+    await writeFile(join(outside, "race.txt"), "race");
+    try {
+      const hooks = { exactRoot: true, exactPath: true, beforeOpen: async () => link(join(outside, "race.txt"), join(outside, "race2.txt")) };
+      expect(await status(openDownload(outside, "race.txt", hooks))).toBe(404);
+      await rm(join(outside, "race2.txt"));
+      expect(await status(previewIn(outside, "race.txt", hooks))).toBe(404);
+      await rm(join(outside, "race2.txt"));
+      expect(await status(previewIn(outside, "race.txt", { exactRoot: true, exactPath: true }))).toBe("ok");
+    } finally {
+      await rm(join(outside, "race.txt"));
+    }
+  });
+});

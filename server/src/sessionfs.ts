@@ -16,7 +16,8 @@ export type Download = { name: string; size: number; stream: ReadableStream<Uint
  * `beforeOpen` is a test seam that runs between the path check and the open. `exactRoot` requires the root to be a
  * real path already (as sessionapi checked it): a root that became a link since then is 404. `exactPath` refuses a
  * path that goes through any link below the root, even one that stays inside it (a touched file outside the session
- * folder: its parent is the root, and a link would name a file that is not on the touched list).
+ * folder: its parent is the root, and a link would name a file that is not on the touched list). With `exactPath` a
+ * file that has more than one hard link is 404 as well.
  */
 export type OpenHooks = { beforeOpen?: (real: string) => Promise<void>; exactRoot?: boolean; exactPath?: boolean };
 
@@ -104,6 +105,8 @@ async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promis
     throw notFoundOr(e, new PathError(400, "path not accessible"));
   }
   if (!pre.isFile()) throw new PathError(400, "not a file");
+  // A file with a second hard link could be named on the touched list by its other name: 404, like an untouched file.
+  if (hooks?.exactPath && pre.nlink > 1n) throw new PathError(404, "path not found");
   await hooks?.beforeOpen?.(real);
 
   let handle: FileHandle;
@@ -119,6 +122,8 @@ async function openChecked(root: string, rel: string, hooks?: OpenHooks): Promis
     const st = await handle.stat({ bigint: true });
     if (!st.isFile()) throw new PathError(400, "not a file");
     if (!sameFile(st, pre)) throw new PathError(403, "path outside the session folder");
+    // Checked again on the open handle: a link made after the first check.
+    if (hooks?.exactPath && st.nlink > 1n) throw new PathError(404, "path not found");
     // The path must still lead to the same place and the same file once the handle is open (the only check on
     // Windows, where there is no /proc and an ino can be 0).
     let again: string;
