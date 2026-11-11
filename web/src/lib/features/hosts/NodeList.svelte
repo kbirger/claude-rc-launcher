@@ -1,6 +1,9 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import * as Card from "#lib/components/ui/card/index.js";
+  import { cn } from "#lib/utils.js";
   import type { HostInfo } from "./api";
   import { versionsText } from "./nodeline";
 
@@ -10,23 +13,31 @@
 
 <ul class="m-0 grid list-none gap-3 p-0" aria-label="Nodes">
   {#each hosts as h (h.id)}
-    <li class="rounded-xl border bg-card p-3 {h.id === selected ? 'border-primary' : ''}">
-      <div class="flex items-center justify-between gap-2">
-        <span class="font-medium [overflow-wrap:anywhere]">{h.name}</span>
-        <span class="rounded-full border px-2.5 py-0.5 text-xs {h.status === 'ok' ? 'text-success' : h.status === 'restarting' ? 'text-warning' : 'text-destructive'}">{h.status}</span>
-      </div>
-      {#if h.status === "ok"}
-        <div class="mt-1 text-sm text-muted-foreground">{versionsText(h)}</div>
-        {#if h.stale}<div class="text-sm text-warning">Out of date{h.target ? `, latest ${h.target}` : ""}</div>{/if}
-      {:else if h.error}
-        <div class="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">{h.error}</div>
-      {/if}
-      <div class="mt-2 flex flex-wrap gap-2">
-        <Button variant={h.id === selected ? "secondary" : "outline"} size="touch" disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)}>
-          {h.id === selected ? "Active" : "Use this node"}
-        </Button>
-        {@render actions?.(h)}
-      </div>
+    <li>
+      <Card.Root size="sm" class={cn("gap-2", h.id === selected && "ring-primary")}>
+        <Card.Header>
+          <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{h.name}</Card.Title>
+          <Card.Action>
+            <Badge variant={h.status === "ok" || h.status === "restarting" ? "outline" : "destructive"} class={h.status === "ok" ? "text-success" : h.status === "restarting" ? "text-warning" : ""}>{h.status}</Badge>
+          </Card.Action>
+        </Card.Header>
+        <Card.Content class="grid gap-2">
+          {#if h.status === "ok"}
+            <div class="grid gap-0.5">
+              <div class="text-muted-foreground">{versionsText(h)}</div>
+              {#if h.stale}<div class="text-warning">Out of date{h.target ? `, latest ${h.target}` : ""}</div>{/if}
+            </div>
+          {:else if h.error}
+            <div class="text-muted-foreground [overflow-wrap:anywhere]">{h.error}</div>
+          {/if}
+          <div class="flex flex-wrap gap-2">
+            <Button variant={h.id === selected ? "secondary" : "outline"} size="touch" disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)}>
+              {h.id === selected ? "Active" : "Use this node"}
+            </Button>
+            {@render actions?.(h)}
+          </div>
+        </Card.Content>
+      </Card.Root>
     </li>
   {/each}
 </ul>

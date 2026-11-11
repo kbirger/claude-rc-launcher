@@ -1,5 +1,8 @@
 <script lang="ts">
+  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import * as Card from "#lib/components/ui/card/index.js";
+  import { cn } from "#lib/utils.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import InstanceLogs from "./InstanceLogs.svelte";
@@ -44,43 +47,36 @@
 {#if model.loaded && model.rows.length === 0}
   <p class="muted empty">No running instances. Tap New to start one.</p>
 {/if}
-<ul>
+<ul class="m-0 grid list-none gap-3 p-0">
   {#each model.rows as r (r.key)}
     {@const i = r.instance}
-    <li class:pending={r.pending} class:starting={r.pending === "starting"}>
-      <div class="row">
-        <strong class="name">{r.name}</strong>
-        {#if r.pending}
-          <span class="badge other">{r.pending}...</span>
-        {:else if i}
-          <span class="badge {badge(i.state)}">{i.state}</span>
+    <li>
+      <Card.Root size="sm" class={cn("gap-2", r.pending && "opacity-60", r.pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50")}>
+        <Card.Header>
+          <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{r.name}</Card.Title>
+          <Card.Action>
+            {#if r.pending}
+              <Badge variant="outline" class="text-warning">{r.pending}...</Badge>
+            {:else if i}
+              <Badge variant={badge(i.state) === "failed" ? "destructive" : "outline"} class={badge(i.state) === "active" ? "text-success" : badge(i.state) === "other" ? "text-warning" : ""}>{i.state}</Badge>
+            {/if}
+          </Card.Action>
+        </Card.Header>
+        {#if i}
+          <Card.Content class="grid gap-2">
+            <div class="grid gap-0.5 text-muted-foreground">
+              <div class="[overflow-wrap:anywhere]">{i.path}</div>
+              {#if i.user}<div>{i.user}</div>{/if}
+              <div>{uptime(i.state, i.startedAt)}</div>
+            </div>
+            <div class="flex gap-2">
+              <Button variant="outline" size="touch" disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</Button>
+              <Button variant="destructive" size="touch" disabled={!!r.pending} onclick={() => stop(i)}>Stop</Button>
+            </div>
+            {#if i.id in open}<InstanceLogs {host} id={i.id} />{/if}
+          </Card.Content>
         {/if}
-      </div>
-      {#if i}
-        <div class="path muted">{i.path}</div>
-        {#if i.user}<div class="muted">{i.user}</div>{/if}
-        <div class="muted">{uptime(i.state, i.startedAt)}</div>
-        <div class="actions">
-          <Button variant="outline" size="touch" disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</Button>
-          <Button variant="destructive" size="touch" disabled={!!r.pending} onclick={() => stop(i)}>Stop</Button>
-        </div>
-        {#if i.id in open}<InstanceLogs {host} id={i.id} />{/if}
-      {/if}
+      </Card.Root>
     </li>
   {/each}
 </ul>
-
-<style>
-  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-  li { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
-  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .name { overflow-wrap: anywhere; }
-  .path { font-size: 0.85rem; overflow-wrap: anywhere; }
-  .actions { display: flex; gap: 8px; margin-top: 8px; }
-  .badge { font-size: 0.8rem; padding: 2px 10px; border-radius: 999px; border: 1px solid currentColor; }
-  .badge.active { color: var(--ok); }
-  .badge.failed { color: var(--destructive); }
-  .badge.other { color: var(--warn); }
-  li.pending { opacity: 0.6; }
-  li.starting { border-style: dashed; }
-</style>

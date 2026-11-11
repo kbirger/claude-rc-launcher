@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { Alert } from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { cn } from "#lib/utils.js";
   import { onMount } from "svelte";
   import X from "@tabler/icons-svelte/icons/x-filled";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
@@ -68,10 +70,10 @@
 </script>
 
 {#if items.length && dismissed !== key}
-  <section class="banner" role={actionable ? "alert" : "status"} aria-label="Updates">
-    <ul>
+  <Alert role={actionable ? "alert" : "status"} aria-label="Updates" class="flex items-start gap-3 py-1 pr-1 pl-3">
+    <ul class="m-0 flex flex-1 list-none flex-col gap-1 p-0">
       {#each items as item, i (bannerKey(item) + ":" + i)}
-        <li class:warn={item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating"}>
+        <li class={cn("flex min-h-11 flex-wrap items-center gap-2", item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating" && "border-l-3 border-warning pl-2")}>
           {#if item.kind === "hub-update"}
             <span>The hub is out of date. Latest release: {item.target}.</span>
             <Button size="touch" disabled={busy} onclick={updateHub}>Update hub</Button>
@@ -99,12 +101,5 @@
       {/each}
     </ul>
     <Button variant="ghost" size="icon-touch" class="text-muted-foreground" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={20} aria-hidden="true" /></Button>
-  </section>
+  </Alert>
 {/if}
-
-<style>
-  .banner { display: flex; align-items: flex-start; gap: 12px; padding: 4px 4px 4px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
-  ul { flex: 1; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; }
-  li.warn { border-left: 3px solid var(--warn); padding-left: 8px; }
-</style>
