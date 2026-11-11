@@ -56,12 +56,12 @@
 {#if error}<span class="error" role="alert">{error}</span>{/if}
 
 <style>
-  .step { font-size: 0.85rem; color: var(--muted); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .step.error { color: var(--danger); margin: 0; }
+  .step { font-size: 0.85rem; color: var(--muted-foreground); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step.error { color: var(--destructive); margin: 0; }
   .picker { display: inline-flex; flex: 1 1 auto; min-width: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   select {
     min-height: 44px; flex: 1 1 auto; min-width: 0; padding: 0 8px; font: inherit;
-    color: var(--text, inherit); background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--foreground, inherit); background: var(--card); border: 1px solid var(--border); border-radius: 6px;
   }
 </style>

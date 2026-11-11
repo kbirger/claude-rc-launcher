@@ -1,10 +1,74 @@
-/* Tailwind entry point (same place and role as Arcane's src/routes/layout.css).
-   Arcane starts with `@import 'tailwindcss'`. That also loads Tailwind's reset (preflight), which would restyle the
-   current pages, so the pieces load separately and the reset is left out. Add it back when the UI moves to Tailwind. */
-@layer theme, base, components, utilities;
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+/* Tailwind entry point (same place and role as Arcane's src/routes/layout.css). */
+@import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* The dark palettes are picked by the system setting (and by ?theme=ayu / ?theme=tokyonight in src/app.css). */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* shadcn token names. The palette itself (--background, --foreground, --card, --primary, --border, ...) lives in
+   src/app.css, one block per theme. The tokens below that the palette does not name are derived from it, so every
+   theme keeps working with the generated components. */
+:root {
+  --radius: 0.5rem;
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --secondary: color-mix(in srgb, var(--foreground) 6%, var(--card));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 6%, var(--card));
+  --accent: color-mix(in srgb, var(--foreground) 10%, var(--card));
+  --accent-foreground: var(--foreground);
+  --input: var(--border);
+  --ring: var(--primary);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--ok);
+  --color-warning: var(--warn);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  /* Tailwind's reset removes the browser defaults for headings, paragraphs and lists. The current pages rely on them,
+     so they come back here, inside the base layer so Tailwind classes still win. Delete a rule once the pages that
+     need it use Tailwind classes instead. */
+  h1, h2, h3, h4, h5, h6 { font-weight: bold; margin-block: 0.67em; }
+  h1 { font-size: 2em; }
+  h2 { font-size: 1.5em; }
+  h3 { font-size: 1.17em; margin-block: 1em; }
+  h4 { margin-block: 1.33em; }
+  h5 { font-size: 0.83em; margin-block: 1.67em; }
+  h6 { font-size: 0.67em; margin-block: 2.33em; }
+  p, ul, ol, dl, blockquote, pre, figure { margin-block: 1em; }
+  ul, ol { list-style: revert; padding-inline-start: 40px; }
+  b, strong { font-weight: bolder; }
+  small { font-size: 80%; }
+  hr { border-top-width: 1px; margin-block: 0.5em; }
+  ::placeholder { color: revert-layer; opacity: revert-layer; }
+}

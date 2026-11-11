@@ -102,10 +102,10 @@
 {/if}
 
 <style>
-  .banner { display: flex; align-items: flex-start; gap: 12px; padding: 4px 4px 4px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+  .banner { display: flex; align-items: flex-start; gap: 12px; padding: 4px 4px 4px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
   ul { flex: 1; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; }
   li.warn { border-left: 3px solid var(--warn); padding-left: 8px; }
-  .dismiss { flex: none; min-width: 44px; min-height: 44px; border: none; background: transparent; color: var(--muted, inherit); padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .dismiss { flex: none; min-width: 44px; min-height: 44px; border: none; background: transparent; color: var(--muted-foreground, inherit); padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .dismiss:hover { color: inherit; }
 </style>

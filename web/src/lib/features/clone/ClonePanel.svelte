@@ -88,22 +88,22 @@
   .panel { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; margin-top: 8px; }
   .top { display: flex; justify-content: space-between; align-items: center; }
   form { display: grid; gap: 8px; }
-  .lbl { font-size: 0.85rem; color: var(--muted); }
+  .lbl { font-size: 0.85rem; color: var(--muted-foreground); }
   .into { overflow-wrap: anywhere; height: auto; padding: 8px 16px; }
   .error, .note { margin: 0; overflow-wrap: anywhere; }
   .note { font-size: 0.85rem; }
-  .login { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--surface); display: grid; gap: 4px; }
+  .login { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); display: grid; gap: 4px; }
   .login p { margin: 0; }
   .code { font-family: ui-monospace, monospace; font-size: 1.4rem; letter-spacing: 0.1em; }
-  .login a { color: var(--accent); overflow-wrap: anywhere; }
-  .list { flex: 1; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; min-height: 120px; }
-  .owner { padding: 6px 12px; font-size: 0.8rem; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .login a { color: var(--primary); overflow-wrap: anywhere; }
+  .list { flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-height: 120px; }
+  .owner { padding: 6px 12px; font-size: 0.8rem; background: var(--background); border-bottom: 1px solid var(--border); }
   ul { list-style: none; margin: 0; padding: 0; }
   li + li { border-top: 1px solid var(--border); }
   .repo { width: 100%; text-align: left; border: none; border-radius: 0; background: transparent; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; }
-  .repo.picked { background: var(--bg); color: var(--accent); }
+  .repo.picked { background: var(--background); color: var(--primary); }
   .rname { overflow-wrap: anywhere; flex: 1; }
-  .badge { font-size: 0.75rem; padding: 0 8px; border-radius: 999px; border: 1px solid var(--muted); color: var(--muted); }
+  .badge { font-size: 0.75rem; padding: 0 8px; border-radius: 999px; border: 1px solid var(--muted-foreground); color: var(--muted-foreground); }
   .when { font-size: 0.8rem; }
   .pad { padding: 12px; margin: 0; }
 </style>

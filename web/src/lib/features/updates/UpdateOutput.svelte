@@ -38,6 +38,6 @@
 
 <style>
   .output { flex-basis: 100%; }
-  summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
-  pre { margin: 0; max-height: 12rem; overflow: auto; padding: 8px; font-size: 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+  summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted-foreground); }
+  pre { margin: 0; max-height: 12rem; overflow: auto; padding: 8px; font-size: 0.8rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
 </style>

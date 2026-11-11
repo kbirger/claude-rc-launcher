@@ -96,7 +96,7 @@
   .warn p { margin: 0 0 4px; }
   .warn label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
   .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: stretch; justify-content: center; }
-  .dialog { background: var(--bg); width: 100%; display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
+  .dialog { background: var(--background); width: 100%; display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
   @media (min-width: 640px) {
     .overlay { align-items: center; }
     .dialog { max-width: 560px; max-height: 80vh; border-radius: 12px; }
@@ -104,19 +104,19 @@
   .top { display: flex; justify-content: space-between; align-items: center; }
   h2 { margin: 0; font-size: 1.1rem; }
   .crumbs { display: flex; flex-wrap: wrap; align-items: center; margin: 4px 0; }
-  .crumb { border: none; background: transparent; padding: 0 6px; color: var(--accent); }
+  .crumb { border: none; background: transparent; padding: 0 6px; color: var(--primary); }
   .bar { display: flex; gap: 8px; margin-bottom: 8px; }
   .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
   .gh-btn { display: inline-flex; align-items: center; gap: 8px; background: #0969da; border-color: #0969da; color: #fff; }
   @media (prefers-color-scheme: dark) { .gh-btn { background: #1f6feb; border-color: #1f6feb; } }
-  ul { list-style: none; margin: 0 0 8px; padding: 0; flex: 1; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+  ul { list-style: none; margin: 0 0 8px; padding: 0; flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
   li + li { border-top: 1px solid var(--border); }
   .dir { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; border: none; border-radius: 0; background: transparent; }
   .name { min-width: 0; overflow-wrap: anywhere; }
   .runas { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-  .untrusted { color: var(--muted); }
+  .untrusted { color: var(--muted-foreground); }
   .lock { flex: none; }
-  .trust { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--surface); }
+  .trust { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); }
   .trust p { margin: 0 0 8px; overflow-wrap: anywhere; }
   .pad { padding: 12px; }
   .footer { display: grid; gap: 8px; }

@@ -153,15 +153,15 @@
 <style>
   /* One column for everything under the header (the header spans the full width). */
   .column { max-width: 720px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
   h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; gap: 2px; font-size: 0.7rem; line-height: 1.1; margin: 0; flex: none; }
-  .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted); font-size: 0.9rem; }
+  .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted-foreground); font-size: 0.9rem; }
   .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--accent); }
+  .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--primary); }
   footer { display: flex; justify-content: center; }
-  footer a { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; color: var(--muted); }
-  footer a:hover { color: var(--accent); }
+  footer a { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; color: var(--muted-foreground); }
+  footer a:hover { color: var(--primary); }
   .new { width: 100%; margin-bottom: 16px; }
   @media (max-width: 480px) {
     .name { display: none; }

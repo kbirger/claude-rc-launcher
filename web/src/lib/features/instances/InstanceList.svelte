@@ -71,14 +71,14 @@
 
 <style>
   ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-  li { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
+  li { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
   .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .name { overflow-wrap: anywhere; }
   .path { font-size: 0.85rem; overflow-wrap: anywhere; }
   .actions { display: flex; gap: 8px; margin-top: 8px; }
   .badge { font-size: 0.8rem; padding: 2px 10px; border-radius: 999px; border: 1px solid currentColor; }
   .badge.active { color: var(--ok); }
-  .badge.failed { color: var(--danger); }
+  .badge.failed { color: var(--destructive); }
   .badge.other { color: var(--warn); }
   li.pending { opacity: 0.6; }
   li.starting { border-style: dashed; }
