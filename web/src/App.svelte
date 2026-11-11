@@ -170,8 +170,9 @@
   .finished { padding: 4px 16px; }
   .reload { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); border-left: 3px solid var(--warn); }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
-  h1 { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; margin: 0; flex: 1; }
+  h1 { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 0.7rem; line-height: 1.1; margin: 0; flex: none; }
   .logo { border-radius: 6px; }
+  header .user { margin-left: auto; min-width: 0; }
   .user { color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .logout { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; color: var(--accent); }
   main { max-width: 720px; margin: 0 auto; padding: 16px; }
