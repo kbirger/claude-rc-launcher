@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
-import { inRoot } from "../../../test/effect-root.svelte";
+import { inRoot } from "../../../../test/effect-root.svelte";
 import { createCloneModel } from "./model.svelte";
 
 const GROUPS = [{ owner: "acme", repos: [{ name: "app", private: false, pushedAt: "2026-11-01T10:00:00Z" }] }];

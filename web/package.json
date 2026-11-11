@@ -2,13 +2,19 @@
   "name": "claude-rc-launcher-web",
   "private": true,
   "type": "module",
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
   "scripts": {
     "dev": "bun --bun vite",
     "build": "bun --bun vite build",
-    "check": "bun --bun svelte-check --tsconfig ./tsconfig.json",
+    "prepare": "svelte-kit sync || true",
+    "check": "bun --bun svelte-kit sync && bun --bun svelte-check --tsconfig ./tsconfig.json",
     "test": "bun --bun vitest run"
   },
   "devDependencies": {
+    "@sveltejs/adapter-static": "^4.0.1",
+    "@sveltejs/kit": "^3.2.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
@@ -18,7 +24,6 @@
   },
   "dependencies": {
     "@lucide/svelte": "^1.71.0",
-    "@tanstack/svelte-query": "^6.4.1",
-    "build": "^0.1.4"
+    "@tanstack/svelte-query": "^6.4.1"
   }
 }

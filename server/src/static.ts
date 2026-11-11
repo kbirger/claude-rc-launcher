@@ -49,7 +49,7 @@ export function staticHandler(files: WebFiles): MiddlewareHandler {
       entry = files.get(key);
       if (!entry) return c.text("Not Found", 404);
     }
-    const cache = key.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    const cache = key.startsWith("/assets/") || key.startsWith("/_app/immutable/") ? "public, max-age=31536000, immutable" : "no-cache";
     return new Response(c.req.method === "HEAD" ? null : Bun.file(entry.path), {
       headers: { "Content-Type": entry.type, "Cache-Control": cache },
     });

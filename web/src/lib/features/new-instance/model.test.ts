@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
-import { inRoot, reactive } from "../../../test/effect-root.svelte";
+import { inRoot, reactive } from "../../../../test/effect-root.svelte";
 import type { StartArgs } from "../instances";
 import { createNewDialogModel } from "./model.svelte";
 import type { NewInitial } from "./trustprompt";

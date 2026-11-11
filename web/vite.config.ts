@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { sveltekit } from "@sveltejs/kit/vite";
+import { kitConfig } from "./kit.config.ts";
 
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [sveltekit(kitConfig)],
   server: {
     proxy: {
       "/api": "http://localhost:8080",
