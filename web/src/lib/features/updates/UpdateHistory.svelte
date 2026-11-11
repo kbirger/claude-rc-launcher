@@ -1,43 +1,39 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
+  import * as Card from "#lib/components/ui/card/index.js";
   import { historyQuery } from "./queries";
-  import { historyTitle, linesSummary } from "./updatehistory";
+  import { historyEntries, historyTitle, linesSummary } from "./updatehistory";
 
-  let { host, startOpen = false }: { host: string; startOpen?: boolean } = $props();
+  // `names` maps a host id to the name to show. `limit` shows only the newest entries.
+  let { names = {}, limit }: { names?: Record<string, string>; limit?: number } = $props();
 
-  // svelte-ignore state_referenced_locally: only the first value matters, the section is open or closed from then on
-  let open = $state(startOpen);
-  const historyQ = createQuery(() => ({ ...historyQuery(), enabled: open }));
-  const items = $derived(historyQ.data?.[host] ?? []);
+  const historyQ = createQuery(historyQuery);
+  const entries = $derived(historyEntries(historyQ.data ?? {}, limit));
 </script>
 
-<details class="history" bind:open>
-  <summary>Update history</summary>
-  {#if historyQ.isError}
-    <p class="muted">The history is not available.</p>
-  {:else if items.length === 0}
-    <p class="muted">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
-  {:else}
-    <ul>
-      {#each items as i (i.entry.startedAt)}
-        <li>
-          <details>
-            <summary>{historyTitle(i)} ({linesSummary(i.lines.length)})</summary>
-            {#if i.lines.length}
+{#if historyQ.isError}
+  <p class="muted">The history is not available.</p>
+{:else if entries.length === 0}
+  <p class="muted">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
+{:else}
+  <ul class="m-0 grid list-none gap-3 p-0">
+    {#each entries as { host, item } (host + item.entry.startedAt)}
+      <li>
+        <Card.Root size="sm" class="gap-2">
+          <Card.Header>
+            <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{names[host] ?? host}</Card.Title>
+            <Card.Description class={item.entry.status === "failed" || item.entry.status === "rolled back" ? "text-destructive" : ""}>{historyTitle(item)}</Card.Description>
+          </Card.Header>
+          <Card.Content>
+            {#if item.lines.length}
               <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
-              <pre tabindex="0" role="log" aria-label={`Output of the update of ${host}`}>{i.lines.map((l) => l.line).join("\n")}</pre>
+              <pre tabindex="0" role="log" aria-label={`Output of the update of ${names[host] ?? host} (${linesSummary(item.lines.length)})`} class="m-0 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs break-all whitespace-pre-wrap">{item.lines.map((l) => l.line).join("\n")}</pre>
+            {:else}
+              <p class="m-0 text-xs text-muted-foreground">No output was recorded for this update.</p>
             {/if}
-          </details>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-</details>
-
-<style>
-  .history { padding: 0 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
-  summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted-foreground); }
-  ul { list-style: none; margin: 0; padding: 0; }
-  .muted { color: var(--muted-foreground); margin: 0 0 8px; }
-  pre { margin: 0 0 8px; max-height: 12rem; overflow: auto; padding: 8px; font-size: 0.8rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
-</style>
+          </Card.Content>
+        </Card.Root>
+      </li>
+    {/each}
+  </ul>
+{/if}

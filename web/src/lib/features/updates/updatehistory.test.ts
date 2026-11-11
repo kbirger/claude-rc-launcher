@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { historyTitle, linesSummary } from "./updatehistory";
+import { historyEntries, historyTitle, linesSummary } from "./updatehistory";
 import { pollWhileRunning, historyQuery } from "./queries";
 
 const item = (o: object = {}) => ({ entry: { host: "win", startedAt: "not a time", startedBy: "kir", from: "0.10.0", to: "0.10.1", status: "updated", ...o }, lines: [] }) as any;
@@ -21,4 +21,12 @@ test("the poll runs only while an update runs", () => {
 
 test("the history query uses the history key", () => {
   expect(historyQuery().queryKey).toEqual(["history"]);
+});
+
+test("the entries of all hosts are merged, newest first, and the limit keeps the newest", () => {
+  const at = (host: string, startedAt: string) => item({ host, startedAt });
+  const byHost = { a: [at("a", "2026-11-11T10:00:00Z"), at("a", "2026-11-09T10:00:00Z")], b: [at("b", "2026-11-10T10:00:00Z")] };
+  expect(historyEntries(byHost).map((e) => e.host + e.item.entry.startedAt.slice(8, 10))).toEqual(["a11", "b10", "a09"]);
+  expect(historyEntries(byHost, 2).map((e) => e.host)).toEqual(["a", "b"]);
+  expect(historyEntries({})).toEqual([]);
 });

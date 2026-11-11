@@ -14,3 +14,10 @@ export function historyTitle(i: HistoryItem): string {
 
 /** The summary of the lines of one item: `3 lines`, `1 line` or `no output`. */
 export const linesSummary = (n: number): string => (n === 0 ? "no output" : `${n} ${n === 1 ? "line" : "lines"}`);
+
+/** The entries of all hosts, newest first, as `{ host, item }`. `limit` keeps the newest ones. */
+export function historyEntries(byHost: Record<string, HistoryItem[]>, limit?: number): { host: string; item: HistoryItem }[] {
+  const all = Object.entries(byHost).flatMap(([host, items]) => items.map((item) => ({ host, item })));
+  all.sort((a, b) => Date.parse(b.item.entry.startedAt) - Date.parse(a.item.entry.startedAt));
+  return limit === undefined ? all : all.slice(0, limit);
+}

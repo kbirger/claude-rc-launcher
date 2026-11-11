@@ -3,8 +3,8 @@
   import { getShell } from "#lib/shell/context";
 
   const shell = getShell();
+  const names = $derived(Object.fromEntries(shell.hosts.map((h) => [h.id, h.name])));
 </script>
 
-{#key shell.flow.selected}
-  <UpdateHistory host={shell.flow.selected} startOpen />
-{/key}
+<!-- Every update of every machine, newest first, with its output. -->
+<UpdateHistory {names} />
