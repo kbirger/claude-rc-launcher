@@ -1,7 +1,7 @@
 <script lang="ts">
-  import Folder from "@tabler/icons-svelte/icons/folder";
+  import Folder from "@tabler/icons-svelte/icons/folder-filled";
   import Git from "@tabler/icons-svelte/icons/brand-git";
-  import Github from "@tabler/icons-svelte/icons/brand-github";
+  import Github from "@tabler/icons-svelte/icons/brand-github-filled";
   import type { IconKind } from "./foldericon";
 
   let { kind }: { kind: IconKind } = $props();
