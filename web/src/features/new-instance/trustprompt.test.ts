@@ -32,3 +32,10 @@ test("other errors give a message", () => {
   expect(startErrorAction(new ApiError(428, "other", { code: "x" }), { path: "/p", user: "" })).toEqual({ kind: "error", message: "other" });
   expect(startErrorAction(new Error("x"), { path: "/p", user: "" })).toEqual({ kind: "error", message: "Failed to start" });
 });
+
+test("a trust start needs no listing; a plain start needs a folder", () => {
+  expect(trustStartArgs({ path: "/old", user: "alice" }, null, "bob", true)).toEqual({ path: "/old", user: "alice", addTrust: true });
+  expect(trustStartArgs(null, null, "bob", false)).toBeNull();
+  expect(trustStartArgs(null, { path: "" }, "bob", false)).toBeNull();
+  expect(trustStartArgs(null, null, "bob", true)).toBeNull();
+});

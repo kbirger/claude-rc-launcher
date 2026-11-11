@@ -36,6 +36,8 @@
   // Set when a start got a 428 "untrusted": the dialog opens again at that folder with the trust question.
   let newInitial = $state<{ path: string; user?: string; name?: string; trust: TrustPrompt } | undefined>();
   let startError = $state("");
+  // NewDialog reads `initial` once. A 428 that comes while the dialog is open bumps this to remount it with the newest prompt.
+  let dialogGen = $state(0);
 
   // The start lives here, not in the dialog, so it outlives the dialog. The callbacks sit on the options, not on mutate():
   // each start keeps the options (and so the host) it was built with, even when another start or a host switch follows.
@@ -52,6 +54,7 @@
         if (act.kind === "trust") {
           newInitial = { path: a.path, user: a.user, name: a.name, trust: act.prompt };
           showNew = true;
+          dialogGen++;
         } else startError = act.message;
       },
     };
@@ -147,7 +150,7 @@
   {/key}
 </main>
 {#if showNew}
-  {#key selected}
+  {#key `${selected}\n${dialogGen}`}
     <NewDialog
       host={selected}
       busyReason={selectedBusy}

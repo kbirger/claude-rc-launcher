@@ -107,9 +107,11 @@
   }
 
   // Hands the start to App, which closes the dialog and shows a pending row. It does not wait.
+  // A trust start uses the prompt's folder and user, so it works while the listing loads or after a browse error.
   function start(addTrust = false, l: DirListing | null = listing) {
-    if (!l || l.path === "" || needsAck) return;
+    if (needsAck) return;
     const a = trustStartArgs(trustPrompt, l, chosenUser, addTrust);
+    if (!a) return;
     onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust });
   }
 </script>
