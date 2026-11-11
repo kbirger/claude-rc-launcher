@@ -185,6 +185,32 @@ describe("hub abs for touched files outside the session folder", () => {
     expect(calls.length).toBe(n);
   });
 
+  test("a preview by abs gets one audit line with the status only, and no log line holds the path", async () => {
+    const logs: string[] = [];
+    const orig = { log: console.log, error: console.error, warn: console.warn };
+    const keep = (...a: unknown[]) => void logs.push(a.map(String).join(" "));
+    console.log = console.error = console.warn = keep;
+    const abs = "/home/u/.ssh/secret-name.txt";
+    try {
+      await (await build({ call: async () => ({ status: 200, body: { name: "x" } }) }).request(`${base}/${SID}/file?abs=${encodeURIComponent(abs)}`)).text();
+      await (await build({ call: async () => ({ status: 404, body: { error: "file was not touched by this session" } }) }).request(`${base}/${SID}/file?abs=${encodeURIComponent(abs)}`)).text();
+      await (await build({ call: async () => { throw new HostError("nas", "timeout"); } }).request(`${base}/${SID}/file?abs=${encodeURIComponent(abs)}`)).text();
+      await (await build({ download: async () => nodeRes("x") }).request(`${base}/${SID}/download?abs=${encodeURIComponent(abs)}`)).text();
+      // A preview by path is not audited.
+      await (await build({ call: async () => ({ status: 200, body: {} }) }).request(`${base}/${SID}/file?path=a.txt`)).text();
+    } finally {
+      Object.assign(console, orig);
+    }
+    expect(logs.filter((l) => l.startsWith("audit"))).toEqual([
+      "audit user=unknown host=nas GET preview abs 200",
+      "audit user=unknown host=nas GET preview abs 404",
+      "audit user=unknown host=nas GET preview abs 502",
+      "audit user=unknown host=nas GET download 200",
+    ]);
+    expect(logs.join("\n")).not.toContain("secret-name");
+    expect(logs.join("\n")).not.toContain(".ssh");
+  });
+
   test("files does not forward abs", async () => {
     const calls: any[] = [];
     const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 200, body: {} })) as any });

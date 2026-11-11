@@ -147,11 +147,20 @@ export function hostsApi(o: {
   // Audit every state-changing request, local or remote.
   app.use("/:host/*", async (c, next) => {
     await next();
-    // A download is logged with its status only, never the file name.
-    if (c.req.method === "GET" && /\/instances\/[^/]+\/sessions\/[^/]+\/download$/.test(new URL(c.req.url).pathname)) {
+    // A download, and a preview of a touched file by `abs`, are logged with their status only, never the file name.
+    const url = new URL(c.req.url);
+    const what =
+      c.req.method !== "GET"
+        ? undefined
+        : /\/instances\/[^/]+\/sessions\/[^/]+\/download$/.test(url.pathname)
+          ? "download"
+          : /\/instances\/[^/]+\/sessions\/[^/]+\/file$/.test(url.pathname) && url.searchParams.has("abs")
+            ? "preview abs"
+            : undefined;
+    if (what) {
       const u = c.get("user" as never) as User | undefined;
-      const hostId = /\/hosts\/([^/]+)/.exec(new URL(c.req.url).pathname)?.[1] ?? "unknown";
-      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} GET download ${c.res.status}`);
+      const hostId = /\/hosts\/([^/]+)/.exec(url.pathname)?.[1] ?? "unknown";
+      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} GET ${what} ${c.res.status}`);
     }
     if (isWrite(c.req.method)) {
       const u = c.get("user" as never) as User | undefined;
