@@ -15,6 +15,12 @@
   --accent: #e6b450; --accent-text: #1f1500; --danger: #f07178; --ok: #aad94c; --warn: #ffb454;
   color-scheme: dark;
 }
+/* Opt-in Tokyo Night palette: open the page with ?theme=tokyonight (remembered). */
+:root[data-theme="tokyonight"] {
+  --bg: #1a1b26; --surface: #1f2335; --text: #c0caf5; --muted: #9aa5ce; --border: #414868;
+  --accent: #7aa2f7; --accent-text: #1a1b26; --danger: #f7768e; --ok: #9ece6a; --warn: #e0af68;
+  color-scheme: dark;
+}
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; }
 button, input { font: inherit; color: inherit; }

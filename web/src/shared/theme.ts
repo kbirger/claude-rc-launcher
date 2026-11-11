@@ -11,6 +11,6 @@ export function applyTheme(): void {
   } catch {
     /* storage unavailable: fall back to the system palette */
   }
-  if (name === "ayu") document.documentElement.dataset.theme = name;
+  if (name === "ayu" || name === "tokyonight") document.documentElement.dataset.theme = name;
   else delete document.documentElement.dataset.theme;
 }
