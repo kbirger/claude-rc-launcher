@@ -405,6 +405,22 @@ describe("new dialog model", () => {
     expect(m.model.path).toBe(`${HOME}/b`);
   });
 
+  // Pins today's result, which the brief does not settle: a clone that ends well enters and starts its folder, and the
+  // late prompt goes (App then clears the outcome too). See the task 6 report.
+  test("a late prompt during a clone that then succeeds is dropped and the cloned folder starts", async () => {
+    const m = mount();
+    m.model.go(`${HOME}/b`);
+    await tick();
+    m.model.openClone();
+    m.model.setCloneBusy(true);
+    m.props.initial = { path: `${HOME}/a`, trust: trust(`${HOME}/a`) };
+    await tick();
+    m.model.setCloneBusy(false);
+    await m.model.cloned(`${HOME}/b/app`);
+    expect(m.started).toEqual([{ path: `${HOME}/b/app`, name: undefined, user: "dev", addTrust: false }]);
+    expect(m.model.trustPrompt).toBeNull();
+  });
+
   test("a late prompt while the clone view is open with no clone running keeps the view and the folder", async () => {
     const m = mount();
     m.model.go(`${HOME}/b`);
