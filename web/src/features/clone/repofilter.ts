@@ -1,4 +1,4 @@
-import type { RepoGroup } from "./api";
+import type { RepoGroup } from "../../shared/api";
 
 // Case-insensitive substring match on the repo name. Groups with no match are dropped.
 export function filterGroups(groups: RepoGroup[], query: string): RepoGroup[] {

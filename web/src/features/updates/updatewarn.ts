@@ -1,4 +1,4 @@
-import type { HostInfo, UpdateEntry } from "./api";
+import type { HostInfo, UpdateEntry } from "../../shared/api";
 import { isRunning } from "./updatebanner";
 
 /** Why starting a session or a clone on `host` now is risky, or undefined when it is not. */

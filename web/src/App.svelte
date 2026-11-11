@@ -1,20 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { getMe, type HostInfo, type Me } from "./lib/api";
-  import { connectEvents } from "./lib/events";
-  import { selectionAfter } from "./lib/selection";
-  import UpdateOutput from "./lib/UpdateOutput.svelte";
-  import { lastEntry } from "./lib/updatebanner";
-  import { showsFinishedPanel } from "./lib/updateoutput";
-  import { hostsQuery, latestQuery, updatesQuery } from "./lib/queries";
-  import HubVersionLine from "./lib/HubVersionLine.svelte";
-  import { busyReason, reloadDecision } from "./lib/updatewarn";
-  import UpdateHistory from "./lib/UpdateHistory.svelte";
-  import UpdateBanner from "./lib/UpdateBanner.svelte";
-  import HostPicker from "./lib/HostPicker.svelte";
-  import InstanceList from "./lib/InstanceList.svelte";
-  import NewDialog from "./lib/NewDialog.svelte";
+  import { getMe, type HostInfo, type Me } from "./shared/api";
+  import { connectEvents } from "./realtime/events";
+  import { selectionAfter } from "./features/hosts/selection";
+  import UpdateOutput from "./features/updates/UpdateOutput.svelte";
+  import { lastEntry } from "./features/updates/updatebanner";
+  import { showsFinishedPanel } from "./features/updates/updateoutput";
+  import { hostsQuery, latestQuery, updatesQuery } from "./shared/queries";
+  import HubVersionLine from "./features/hosts/HubVersionLine.svelte";
+  import { busyReason, reloadDecision } from "./features/updates/updatewarn";
+  import UpdateHistory from "./features/updates/UpdateHistory.svelte";
+  import UpdateBanner from "./features/updates/UpdateBanner.svelte";
+  import HostPicker from "./features/hosts/HostPicker.svelte";
+  import InstanceList from "./features/instances/InstanceList.svelte";
+  import NewDialog from "./features/new-instance/NewDialog.svelte";
 
   const HOST_KEY = "claude-rc-host";
 

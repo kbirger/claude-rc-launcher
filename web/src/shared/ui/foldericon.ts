@@ -1,4 +1,4 @@
-import type { DirListing } from "./api";
+import type { DirListing } from "../api";
 
 export type IconKind = "folder" | "git" | "github";
 

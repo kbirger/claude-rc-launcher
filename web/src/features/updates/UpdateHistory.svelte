@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
-  import { historyQuery } from "./queries";
+  import { historyQuery } from "../../shared/queries";
   import { historyTitle, linesSummary } from "./updatehistory";
 
   let { host }: { host: string } = $props();

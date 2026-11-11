@@ -1,8 +1,8 @@
 <script lang="ts">
   import { useQueryClient } from "@tanstack/svelte-query";
-  import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "./api";
-  import { hostOptionLabel, stepIsError, stepText } from "./updateoutput";
-  import { isRunning, lastEntry } from "./updatebanner";
+  import { ApiError, updateHost, type HostInfo, type UpdateEntry } from "../../shared/api";
+  import { hostOptionLabel, stepIsError, stepText } from "../updates/updateoutput";
+  import { isRunning, lastEntry } from "../updates/updatebanner";
   import { clientLabel } from "./clientlabel";
 
   let { hosts, selected, onselect, updates = [], now = new Date() }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date } = $props();

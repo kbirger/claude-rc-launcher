@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { filterGroups } from "./repofilter";
-import type { RepoGroup } from "./api";
+import type { RepoGroup } from "../../shared/api";
 
 const r = (name: string) => ({ name, private: false, pushedAt: "" });
 const groups: RepoGroup[] = [

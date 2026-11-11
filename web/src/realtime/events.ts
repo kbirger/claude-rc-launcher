@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/svelte-query";
-import type { HostInfo, LogLine, Presence, UpdateEntry } from "./api";
+import type { HostInfo, LogLine, Presence, UpdateEntry } from "../shared/api";
 
 const MAX_LINES = 200;
 const HOST_STATUS = { online: "ok", offline: "offline", restarting: "restarting", error: "error" } as const;

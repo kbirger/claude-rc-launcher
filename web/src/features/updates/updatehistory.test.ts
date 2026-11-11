@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { historyTitle, linesSummary } from "./updatehistory";
-import { pollWhileRunning, historyQuery } from "./queries";
+import { pollWhileRunning, historyQuery } from "../../shared/queries";
 
 const item = (o: object = {}) => ({ entry: { host: "win", startedAt: "not a time", startedBy: "kir", from: "0.10.0", to: "0.10.1", status: "updated", ...o }, lines: [] }) as any;
 

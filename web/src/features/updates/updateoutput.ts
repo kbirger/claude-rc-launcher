@@ -1,4 +1,4 @@
-import type { HostInfo, UpdateEntry } from "./api";
+import type { HostInfo, UpdateEntry } from "../../shared/api";
 
 /** The step of a running entry as text: `installing` or `installing-client: C:\...`. Empty when there is no step. */
 export function stepText(e: UpdateEntry): string {
