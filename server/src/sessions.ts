@@ -39,7 +39,7 @@ import type { LiveInfo } from "./livesessions";
 import { absRefused, within } from "./paths";
 
 /** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
-export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status: string; remoteControl: boolean } };
+export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean } };
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
 export type TranscriptFs = {
@@ -351,7 +351,10 @@ export async function listSessions(o: {
     const name = tidy(live?.name) ?? (await nameOf(fs, f, o.names ?? defaultNames));
     if (name) s.name = name;
     // Field by field: nothing else from the running-session file reaches the answer.
-    if (live) s.live = { status: live.status, remoteControl: live.remoteControl };
+    if (live) {
+      s.live = { remoteControl: live.remoteControl };
+      if (live.status !== undefined) s.live.status = live.status;
+    }
     if (f.branch) s.branch = f.branch;
     return s;
   });

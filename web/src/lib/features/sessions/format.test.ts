@@ -175,3 +175,7 @@ test("liveBadges shows only live for a status other than busy or idle", () => {
     { label: "Remote Control", class: "" },
   ]);
 });
+
+test("liveBadges shows only live when the node sends no status", () => {
+  expect(liveBadges({ ...sess, live: { remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
+});

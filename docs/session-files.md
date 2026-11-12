@@ -113,7 +113,8 @@ with a secret token.
   link that leads out, no session counts as live.
 - It opens at most 500 files and reads at most 64 KB of each file. It stops listing the folder after 5000 names. It
   skips a file that is larger or that is not valid JSON.
-- It accepts only the status `busy` or `idle`. It skips a file with any other status.
+- It passes on only the status `busy` or `idle`. If the file has any other status, the session is still live, but it
+  has no status. The list then shows "live" alone.
 - It counts a file only while its process runs. On Linux the start time of the process in `/proc/<pid>/stat` must
   be equal to `procStart` in the file. A different start time means that the system gave the pid to a new process.
   The `pidDomain` of the file must also name this machine and this pid namespace. If `/proc` cannot be read, and on

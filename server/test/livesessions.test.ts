@@ -77,14 +77,13 @@ describe("readLiveSessions", () => {
     expect(JSON.stringify(v)).not.toContain("cse_1");
   });
 
-  test("a bad pid, a pid that does not match the file name, a bad session id or a bad status is ignored", async () => {
+  test("a bad pid, a pid that does not match the file name, or a bad session id is ignored", async () => {
     const checked: number[] = [];
     const files = {
       "0.json": file(0),
       "-1.json": file(-1),
       "100.json": file(101),
       "102.json": file(102, { sessionId: "../x" }),
-      "103.json": file(103, { status: 5 }),
       "104.json": file(104, { pid: "104" }),
     };
     const m = await readLiveSessions({ home: HOME, fs: fakeFs(files), alive: (p) => (checked.push(p), true), proc: NO_PROC });
@@ -93,9 +92,14 @@ describe("readLiveSessions", () => {
     expect(checked).not.toContain(-1);
   });
 
-  test("only the statuses busy and idle are accepted", async () => {
-    const files = { "100.json": file(100, { status: "x".repeat(32) }), "101.json": file(101, { status: "waiting", sessionId: S2 }) };
-    expect((await live(files, [100, 101])).size).toBe(0);
+  test("a status other than busy or idle keeps the session live, with no status", async () => {
+    const files = { "100.json": file(100, { status: "waiting" }), "101.json": file(101, { status: "x".repeat(5000), sessionId: S2 }) };
+    const m = await live(files, [100, 101]);
+    expect([...m.entries()]).toEqual([
+      [S1, { remoteControl: false, name: "proj-1" }],
+      [S2, { remoteControl: false, name: "proj-1" }],
+    ]);
+    expect("status" in m.get(S1)!).toBe(false);
   });
 
   test("a name that is not a string is left out", async () => {

@@ -90,7 +90,7 @@ export function sessionDetail(s: Session, now: number): string[] {
  *  Control" when the session is attached to it. Use them with the outline Badge, as the instance card does. */
 export function liveBadges(s: Session): { label: string; class: string }[] {
   if (!s.live) return [];
-  // Only the two known statuses are shown. Any other value (another node version) shows as "live" alone.
+  // Only the two known statuses are shown. No status, or any other value (another node version), shows as "live" alone.
   const known = s.live.status === "busy" || s.live.status === "idle";
   const out = [{ label: known ? `live · ${s.live.status}` : "live", class: s.live.status === "busy" ? "text-success" : "text-muted-foreground" }];
   if (s.live.remoteControl) out.push({ label: "Remote Control", class: "" });

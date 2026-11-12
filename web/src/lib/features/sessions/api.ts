@@ -1,7 +1,7 @@
 import { ApiError, hostUrl, request } from "../../shared/http";
 
-/** `live`: set only while the session runs. `status` is "busy" or "idle". `remoteControl`: attached to Remote Control. */
-export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status: string; remoteControl: boolean } };
+/** `live`: set only while the session runs. `status` is "busy" or "idle", or absent for a status the node does not know. `remoteControl`: attached to Remote Control. */
+export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean } };
 /** `confirmed`: the write succeeded. A denied, failed or unanswered call is false. A node older than this field sends none. */
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed?: boolean };
 export type Entry = { name: string; kind: "dir" | "file" | "other"; size?: number; mtime: string };

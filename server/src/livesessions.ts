@@ -9,7 +9,8 @@ import { within } from "./paths";
 // Only files that end in `.json` are opened, at most 64 KB of each is read, and only the fields of LiveInfo leave it.
 // The instance user owns this folder, so the folder must really be inside home, and the listing is bounded.
 
-export type LiveInfo = { status: "busy" | "idle"; remoteControl: boolean; name?: string };
+/** `status` is set only for a known value ("busy" or "idle"). A future value keeps the session live, with no status. */
+export type LiveInfo = { status?: "busy" | "idle"; remoteControl: boolean; name?: string };
 export type LiveFs = {
   /** The names in a folder, one at a time, so that the caller can stop early. */
   entries(dir: string): AsyncIterable<string>;
@@ -165,7 +166,6 @@ export async function readLiveSessions(o: {
     // pid 0 and negative pids name process groups, and kill(0) or kill(-1) would succeed.
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || name !== `${pid}.json`) continue;
     if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) continue;
-    if (status !== "busy" && status !== "idle") continue;
     if (typeof pidDomain === "string") {
       const d = PID_DOMAIN.exec(pidDomain);
       if (d && ((machine !== undefined && d[1] !== machine) || (ns !== undefined && d[2] !== ns))) continue;
@@ -178,13 +178,15 @@ export async function readLiveSessions(o: {
     const at = typeof updatedAt === "number" ? updatedAt : 0;
     const prev = out.get(sessionId);
     if (prev && prev.updatedAt >= at) continue;
-    const info: LiveInfo & { updatedAt: number } = { status, remoteControl: typeof bridgeSessionId === "string" && bridgeSessionId.length > 0, updatedAt: at };
+    const info: LiveInfo & { updatedAt: number } = { remoteControl: typeof bridgeSessionId === "string" && bridgeSessionId.length > 0, updatedAt: at };
+    if (status === "busy" || status === "idle") info.status = status;
     if (typeof appName === "string" && appName.length > 0 && appName.length <= MAX_NAME) info.name = appName;
     out.set(sessionId, info);
   }
   const result = new Map<string, LiveInfo>();
   for (const [id, v] of out) {
-    const info: LiveInfo = { status: v.status, remoteControl: v.remoteControl };
+    const info: LiveInfo = { remoteControl: v.remoteControl };
+    if (v.status !== undefined) info.status = v.status;
     if (v.name !== undefined) info.name = v.name;
     result.set(id, info);
   }

@@ -252,6 +252,12 @@ describe("live sessions", () => {
     expect(JSON.stringify(out)).not.toContain("SECRET");
   });
 
+  test("a live session without a known status gets live with no status field", async () => {
+    const out = await list(new Map([[ID2, { remoteControl: false }]]));
+    expect(out[1]!.live).toEqual({ remoteControl: false });
+    expect("status" in out[1]!.live!).toBe(false);
+  });
+
   test("without the live option no session is live", async () => {
     expect((await list()).every((s) => s.live === undefined)).toBe(true);
   });
