@@ -375,6 +375,10 @@ export async function touchedFiles(o: {
   const tried = new Map<string, Use>();
   try {
     for await (const line of fs.lines(file)) {
+      // Most lines are prompts, answers and progress records: skip them before the costly parse. Only a line with a
+      // tool_use or tool_result block can change the lists. A line that hides the word (a JSON escape) is skipped,
+      // which can only leave a path out or unconfirmed (fail closed). "tool_use_id" does not contain `"tool_use"`.
+      if (!line.includes('"tool_use"') && !line.includes('"tool_result"')) continue;
       const r = parse(line);
       const content = r?.message?.content;
       if (!Array.isArray(content)) continue;

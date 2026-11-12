@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -454,6 +454,20 @@ describe("touchedFiles inputs", () => {
     const raws = ["\\\\srv\\share\\a.txt", "//srv/share/b.txt", "\\\\?\\C:\\c.txt", "\\\\.\\pipe\\d", "C:\\Users\\u\\e.txt", "c:/Users/u/f.txt"];
     const out = await touched(raws.flatMap((r) => wrote("Write", { file_path: r }, T)), { platform: "win32", root: "C:\\work\\proj" });
     expect(out.map((t) => t.path)).toEqual(["c:\\Users\\u\\f.txt", "C:\\Users\\u\\e.txt"]);
+  });
+
+  test("only lines that name a tool_use or a tool_result are parsed, and the answer is the same", async () => {
+    const plain = Array.from({ length: 50 }, (_, i) => rec({ type: i % 2 ? "assistant" : "user", message: { content: [{ type: "text", text: `line ${i}` }] } }));
+    const tools = [...wrote("Write", { file_path: "/work/proj/a" }, T), ...wrote("Edit", { file_path: "/etc/b" }, T)];
+    const spy = spyOn(JSON, "parse");
+    try {
+      // The transcript is given, so no scan parses the cwd line: every parse is touchedFiles' own.
+      const out = await touched([...plain, ...tools, ...plain], { file: `${proj("-work-proj")}/${ID1}.jsonl` });
+      expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/etc/b", true], ["/work/proj/a", true]]);
+      expect(spy.mock.calls.length).toBe(tools.length);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("on every platform /proc, /sys, /dev and the refused folders are left out of the list", async () => {
