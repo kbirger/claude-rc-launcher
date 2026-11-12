@@ -175,3 +175,12 @@ test("a text with a few hidden characters keeps its marks and shows no note", as
   expect(target.querySelector("[data-special-note]")).toBeNull();
   expect(target.querySelectorAll(".cm-specialChar").length).toBe(2);
 });
+
+test("the end of a long line of mixed scripts is hidden behind a note, and the text is not changed", async () => {
+  const cp = String.fromCodePoint;
+  const line = Array.from({ length: 5000 }, (_, j) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ").join("");
+  const { target } = show({ text: line + "\nnext" });
+  await ready(target);
+  expect(target.querySelector(".cm-hidden-rest")?.textContent).toMatch(/more characters not shown$/);
+  expect(lines(target)[0]!.length).toBeLessThan(1100); // only the start of the line is built
+});
