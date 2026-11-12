@@ -64,7 +64,7 @@ describe("viewKind", () => {
     expect(viewKind("a.go", 0)).toEqual({ kind: "code", language: "go" });
   });
   test("the markdown limit counts characters and is inclusive", () => {
-    expect(MARKDOWN_LIMIT).toBe(102400);
+    expect(MARKDOWN_LIMIT).toBe(65536);
     expect(viewKind("a.md", MARKDOWN_LIMIT).kind).toBe("markdown");
     expect(viewKind("a.md", MARKDOWN_LIMIT + 1).kind).toBe("plain");
   });
@@ -75,7 +75,7 @@ describe("viewKind", () => {
     expect(viewKind("a.md", 128 * 1024).kind).toBe("plain");
   });
   test("a too large markdown file has a note that names the limit and says characters", () => {
-    expect(viewKind("a.md", MARKDOWN_LIMIT + 1)).toEqual({ kind: "plain", note: "This file has more than 100 K characters (K is 1,024), which is too many to format. It shows as plain text." });
+    expect(viewKind("a.md", MARKDOWN_LIMIT + 1)).toEqual({ kind: "plain", note: "This file has more than 64 K characters (K is 1,024), which is too many to format. It shows as plain text." });
   });
   test("a plain text shows in a pre box up to 64 K characters, inclusive", () => {
     expect(PLAIN_PRE_LIMIT).toBe(65536);

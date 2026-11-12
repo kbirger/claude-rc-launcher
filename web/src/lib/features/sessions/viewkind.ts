@@ -1,8 +1,8 @@
 // Decides how the preview shows a text file. Pure: no DOM, no libraries, so the preview page can import it without
 // loading the markdown or code libraries. The language ids are the keys of the loaders in languages.ts.
 
-/** Largest text, in characters of the string (not bytes), that is rendered as markdown. 100 K, where K is 1024. */
-export const MARKDOWN_LIMIT = 100 * 1024;
+/** Largest text, in characters of the string (not bytes), that is rendered as markdown. 64 K, where K is 1024. Measured: a normal document of this size renders in under 1 s with the processor slowed 4 times. */
+export const MARKDOWN_LIMIT = 64 * 1024;
 /** Largest plain text, in characters of the string (not bytes), that shows in a plain pre box. A larger text shows in CodeView, which builds only the lines in view. 64 K, where K is 1024. */
 export const PLAIN_PRE_LIMIT = 64 * 1024;
 
