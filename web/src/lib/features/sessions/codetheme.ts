@@ -22,6 +22,8 @@ export const codeTheme: Extension = EditorView.theme({
   ".cm-scroller": { fontFamily: "ui-monospace, monospace", lineHeight: "1.45" },
   ".cm-content": { padding: "0.75rem" },
   ".cm-line": { padding: "0" },
+  // A marked control or bidirectional character. The box and the red text use the destructive color, which has at least 3:1 against the card in every palette.
+  ".cm-specialChar": { color: "var(--destructive)", outline: "1px solid var(--destructive)", outlineOffset: "-1px", borderRadius: "2px", backgroundColor: "color-mix(in srgb, var(--destructive) 15%, transparent)" },
   ".cm-gutters": { backgroundColor: "transparent", color: "var(--muted-foreground)", border: "none" },
 });
 

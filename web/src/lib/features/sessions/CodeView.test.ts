@@ -120,3 +120,44 @@ test("unmount before the editor has loaded builds no editor at all", async () =>
   expect(target.querySelector(".cm-editor")).toBeNull();
   expect(document.querySelector(".cm-editor")).toBeNull();
 });
+
+const marked = (target: HTMLElement) => Array.from(target.querySelectorAll(".cm-specialChar")).map((e) => e.getAttribute("title"));
+
+test("control, zero-width and bidirectional characters are marked, with the code point in the title", async () => {
+  const bad = ["\u0000", "‮", "​", "﻿", "⁦", "‏"];
+  const { target } = show({ text: `a${bad.join("b")}c` });
+  await ready(target);
+  expect(target.querySelectorAll(".cm-specialChar").length).toBe(bad.length);
+  expect(marked(target).every((t) => t && t.length > 0)).toBe(true);
+  expect(new Set(marked(target)).size).toBe(bad.length); // each title names its own character
+});
+
+test("normal text is not marked: tabs, CRLF, accents, CJK and emoji", async () => {
+  const { target } = show({ text: "\tfunction é() {\r\n\treturn \"日本語 😀 👨‍👩‍👧\";\r\n}\n" });
+  await ready(target);
+  expect(target.querySelectorAll(".cm-specialChar").length).toBe(0);
+});
+
+test("changing the wrap asks the view to scroll the line at the top of the screen back to the top", async () => {
+  const text = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");
+  const props = reactiveProps({ text, wrap: true });
+  // The view binds dispatch in its constructor, so the spy must exist before the view is built.
+  const dispatch = vi.spyOn(EditorView.prototype, "dispatch");
+  const { target } = show(props);
+  await ready(target);
+  // jsdom has no layout: say that the page is scrolled 400 px into the editor.
+  const top = vi.spyOn(EditorView.prototype, "documentTop", "get").mockReturnValue(-400);
+  dispatch.mockClear();
+  props.wrap = false;
+  flushSync();
+  const call = dispatch.mock.calls.find((c) => Array.isArray((c[0] as { effects?: unknown[] }).effects));
+  expect((call![0] as { effects: unknown[] }).effects.length).toBe(2); // the reconfigure and the scrollIntoView
+  top.mockReturnValue(100); // the editor starts below the top of the screen: nothing to keep
+  dispatch.mockClear();
+  props.wrap = true;
+  flushSync();
+  const call2 = dispatch.mock.calls.find((c) => Array.isArray((c[0] as { effects?: unknown[] }).effects));
+  expect((call2![0] as { effects: unknown[] }).effects.length).toBe(1);
+  top.mockRestore();
+  dispatch.mockRestore();
+});
