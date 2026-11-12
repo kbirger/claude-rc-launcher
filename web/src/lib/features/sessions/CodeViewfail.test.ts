@@ -14,6 +14,7 @@ test("when the editor cannot load, the text shows in a pre box", async () => {
   expect(target.querySelector("pre")!.textContent).toBe("<b>a</b>\nsecond");
   expect(target.querySelector("b")).toBeNull();
   expect(target.querySelector(".cm-editor")).toBeNull();
+  expect(target.querySelector("[data-code-note]")?.textContent).toBe("Colors could not load. Showing plain text.");
   unmount(c);
   target.remove();
 });
