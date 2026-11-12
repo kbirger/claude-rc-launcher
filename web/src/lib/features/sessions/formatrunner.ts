@@ -1,7 +1,7 @@
 // Runs the slow library step with a time limit. The default runner makes a module worker for each call and ends it when
 // the result arrives or the time is up, so a hostile file cannot freeze the page: the worker is stopped. The result is
 // untrusted html or undefined. Without Worker (vitest, old browsers) the job runs in this process, and only the cheap
-// guards protect the page. This file must not name marked: formatjobs.ts is loaded only by the worker and
+// guards protect the page. This file must not name markdown-it: formatjobs.ts is loaded only by the worker and
 // by that fallback.
 export type FormatJob = { kind: "markdown"; text: string };
 /** Gives untrusted html, or undefined when the job failed or took too long. Never trust the string: sanitize it. */

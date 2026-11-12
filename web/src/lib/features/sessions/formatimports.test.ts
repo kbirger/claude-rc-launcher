@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-// The main thread must not load marked: only the worker (and the no-Worker fallback, through formatjobs)
+// The main thread must not load markdown-it: only the worker (and the no-Worker fallback, through formatjobs)
 // does. These files are the ones the preview page loads, so they must not name the libraries.
 const read = (file: string) => readFileSync(join(process.cwd(), "src/lib/features/sessions", file), "utf8");
 const importLines = (file: string) =>
@@ -10,11 +10,11 @@ const importLines = (file: string) =>
     .split("\n")
     .filter((l) => /^\s*(import|export)\b.*\bfrom\b|\bimport\s*\(/.test(l) || /^\s*import\s+["']/.test(l));
 
-describe("the main thread files do not import marked", () => {
+describe("the main thread files do not import markdown-it", () => {
   for (const file of ["formatted.ts", "formatrunner.ts", "sanitize.ts", "viewkind.ts", "guards.ts"]) {
     test(file, () => {
       const lines = importLines(file);
-      for (const l of lines) expect(l, `${file}: ${l}`).not.toMatch(/["']marked(\/[^"']*)?["']/);
+      for (const l of lines) expect(l, `${file}: ${l}`).not.toMatch(/["']markdown-it(\/[^"']*)?["']/);
       const banned = file === "formatrunner.ts" ? /\.\/markdown["']/ : /\.\/(markdown|formatjobs)["']/;
       for (const l of lines) expect(l, `${file}: ${l}`).not.toMatch(banned);
     });
@@ -24,8 +24,8 @@ describe("the main thread files do not import marked", () => {
     expect(src.match(/import\("\.\/formatjobs"\)/g)).toHaveLength(1);
     expect(src).toContain("format.worker");
   });
-  test("only formatjobs.ts imports marked", () => {
-    const withLib = ["formatjobs.ts", "markdown.ts", "format.worker.ts"].filter((f) => importLines(f).some((l) => /["']marked/.test(l)));
+  test("only formatjobs.ts imports markdown-it", () => {
+    const withLib = ["formatjobs.ts", "markdown.ts", "format.worker.ts"].filter((f) => importLines(f).some((l) => /["']markdown-it/.test(l)));
     expect(withLib).toEqual(["formatjobs.ts"]);
   });
 });

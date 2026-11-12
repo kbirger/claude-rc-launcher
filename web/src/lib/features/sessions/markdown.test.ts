@@ -285,7 +285,7 @@ describe("limits", () => {
   });
 });
 
-describe("pre-scan: inputs that make marked slow", () => {
+describe("pre-scan: inputs known to be slow to render", () => {
   const N = MARKDOWN_LIMIT;
   const SLOW: Record<string, string> = {
     stars: "*".repeat(N) + "x",
@@ -329,4 +329,27 @@ describe("pre-scan: inputs that make marked slow", () => {
     expect(out).toBeDefined();
     expect(new DOMParser().parseFromString(out!, "text/html").querySelector("table")).not.toBeNull();
   });
+});
+
+// What jsdom proves here: the markdown-it step and the sanitizer finish these inputs well inside 2 s even in jsdom, which is
+// several times slower than a browser, or the pre-scan refuses them at once. What only a real browser proves: the time at
+// the size limit with the processor slowed down, and that the page stays responsive. The Chromium run in the task I report
+// did that, and it found inputs that are still slow (see the report).
+describe("inputs that were slow for other parsers render quickly", () => {
+  const N = MARKDOWN_LIMIT;
+  const INPUTS: Record<string, string> = {
+    mixedStarUnderscore: "*a_".repeat(34133),
+    underscoreA: "_a".repeat(51200),
+    stars: "*".repeat(N) + "x",
+    quoteSpaced: "> ".repeat(51200),
+    brackets: "](x".repeat(34133),
+    wordUnderscores: ("a" + "_".repeat(299) + "b").repeat(Math.floor(N / 301)),
+  };
+  for (const [name, src] of Object.entries(INPUTS)) {
+    test(`${name}: under 2 s`, () => {
+      const start = performance.now();
+      renderMarkdown(src);
+      expect(performance.now() - start).toBeLessThan(2000);
+    });
+  }
 });

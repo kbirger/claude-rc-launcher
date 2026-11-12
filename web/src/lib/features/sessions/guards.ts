@@ -1,10 +1,12 @@
-// Cheap checks that run before any library. Pure: no DOM, no libraries, so the preview page can import them. The
-// library (marked) is slow on some small-looking inputs, and no list of bad inputs can bound the
-// time, so the real bound is the worker timeout in formatrunner.ts. These checks only refuse the known worst cases early.
+// Cheap checks that run before any library. Pure: no DOM, no libraries, so the preview page can import them. No list of
+// bad inputs can bound the time, so the real bound is the worker timeout in formatrunner.ts. These checks only refuse
+// the known worst cases early.
 
-// Pre-scan limits. marked is slow on some small-looking inputs: a long run of * or _ is quadratic in its emphasis scan
-// (1.1 s at 16000 characters, minutes at 100 K), and deep nesting of quotes and list markers costs seconds before it
-// overflows the stack. The scan is O(n) and runs first. A hit gives undefined, so the preview shows plain text.
+// Pre-scan limits. The old library (marked) was quadratic on a long run of * or _. markdown-it is not: it parses the same
+// run in 35 ms. The run limit stays for another reason. markdown-it turns a long run of * or _ into emphasis nested
+// 25000 levels deep, and the DOMPurify step on the main thread then takes seconds (10 s at 4x CPU slowdown for 100 K
+// characters). Deep nesting of quotes and list markers also stays refused. The scan is O(n) and runs first. A hit gives
+// undefined, so the preview shows plain text. The scan does not catch every deep nesting: see the task I report.
 /** A run of this many equal * or _ characters in a row is refused. A rule of 200 and a line of 299 are fine. */
 export const MAX_EMPHASIS_RUN = 300;
 /** Most quote marks and list markers allowed in the prefix of one line. */
@@ -14,7 +16,7 @@ export const MAX_LIST_INDENT = 80;
 
 const isDigit = (c: number) => c >= 48 && c <= 57;
 
-/** True when the text would make marked slow. One pass over the text, no regular expression with backtracking. */
+/** True when the text is known to be slow to render. One pass over the text, no regular expression with backtracking. */
 export function isTooSlowToRender(text: string): boolean {
   const n = text.length;
   let run = 0;
