@@ -23,8 +23,8 @@ function problems(html: string, final: boolean): string[] {
     }
     if (tag === "a") {
       const raw = el.getAttribute("href");
-      // Layer 2 may drop a bad href and keep a bare link. Layer 1 must never write a link without a good href.
-      if (!(final && raw === null) && !/^(https?:|mailto:)/i.test(raw ?? "")) out.push(`href ${raw}`);
+      // Every link, in both layers, must have a good href: layer 2 turns a link without one into its text.
+      if (!/^(https?:|mailto:)/i.test(raw ?? "")) out.push(`href ${raw}`);
       if (final && (el.getAttribute("target") !== "_blank" || el.getAttribute("rel") !== "noopener noreferrer nofollow")) out.push("link target or rel");
     }
   }
@@ -267,5 +267,51 @@ describe("limits", () => {
   });
   test("renderMarkdown never throws", () => {
     expect(() => renderMarkdown("\u0000".repeat(1000))).not.toThrow();
+  });
+});
+
+describe("pre-scan: inputs that make marked slow", () => {
+  const N = MARKDOWN_LIMIT;
+  const SLOW: Record<string, string> = {
+    stars: "*".repeat(N) + "x",
+    underscores: "_".repeat(N) + "x",
+    quoteSpaced: "> ".repeat(N / 2),
+    quote: ">".repeat(N),
+    quoteList: "> - ".repeat(N / 4),
+    orderedParen: "1) ".repeat(Math.floor(N / 3)),
+    orderedDot: "1. ".repeat(Math.floor(N / 3)),
+    bullets: "- ".repeat(N / 2),
+    indentedList: " ".repeat(80) + "- x",
+    indentedListTab: " ".repeat(80) + "1. x",
+    manyLines: ("> ".repeat(40) + "x\n").repeat(1000),
+  };
+  for (const [name, src] of Object.entries(SLOW)) {
+    test(`${name}: gives undefined fast`, () => {
+      const start = performance.now();
+      expect(renderMarkdown(src)).toBeUndefined();
+      expect(performance.now() - start).toBeLessThan(500);
+    });
+  }
+  const OK: Record<string, string> = {
+    rule200: "_".repeat(200) + "\n\ntext",
+    stars299: "*".repeat(299) + "\n\ntext",
+    quote3: "> > > a\n> > > b",
+    list3: "- a\n  - b\n    - c\n      - d",
+    indent79: " ".repeat(79) + "- x",
+    quote32: "> ".repeat(32) + "x",
+  };
+  for (const [name, src] of Object.entries(OK)) {
+    test(`${name}: still renders`, () => {
+      expect(renderMarkdown(src)).toBeDefined();
+    });
+  }
+  test("a 100 KB normal document still renders, in under 5 s", () => {
+    const unit = "# Head\n\nSome *emphasis* and **strong** and [a link](https://ok.example) and `code`.\n\n- one\n  - two\n    - three\n\n> quote\n\n```\ncode block\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n";
+    const big = unit.repeat(Math.ceil(MARKDOWN_LIMIT / unit.length)).slice(0, MARKDOWN_LIMIT);
+    const start = performance.now();
+    const out = renderMarkdown(big);
+    expect(performance.now() - start).toBeLessThan(5000);
+    expect(out).toBeDefined();
+    expect(new DOMParser().parseFromString(out!, "text/html").querySelector("table")).not.toBeNull();
   });
 });

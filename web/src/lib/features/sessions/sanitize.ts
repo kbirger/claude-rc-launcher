@@ -18,12 +18,20 @@ markdownPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.nodeName === "A") {
     node.setAttribute("target", "_blank");
     node.setAttribute("rel", "noopener noreferrer nofollow");
+  } else {
+    // ALLOWED_ATTR is global, so href and title would stay on any allowed tag. They belong on links only.
+    node.removeAttribute("href");
+    node.removeAttribute("title");
   }
+});
+// class is never allowed in markdown output. ALLOWED_ATTR leaves it out; this stays as a second guard.
+markdownPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+  if (data.attrName === "class") data.keepAttr = false;
 });
 
 /** Markdown output: fixed tags, only `href` and `title` on links, only http, https and mailto addresses. No `class`, no `style`, no handlers. */
-export const sanitizeMarkdownHtml = (html: string): SafeHtml =>
-  markdownPurify.sanitize(html, {
+export function sanitizeMarkdownHtml(html: string): SafeHtml {
+  const fragment = markdownPurify.sanitize(html, {
     ALLOWED_TAGS: [...MARKDOWN_TAGS],
     ALLOWED_ATTR: ["href", "title"],
     ALLOWED_URI_REGEXP: URI,
@@ -31,10 +39,26 @@ export const sanitizeMarkdownHtml = (html: string): SafeHtml =>
     ALLOW_ARIA_ATTR: false,
     ALLOW_UNKNOWN_PROTOCOLS: false,
     KEEP_CONTENT: true,
-    RETURN_TRUSTED_TYPE: false,
-  }) as SafeHtml;
+    RETURN_DOM_FRAGMENT: true,
+  });
+  if (!fragment) return "" as SafeHtml; // DOMPurify gives no fragment when nothing is left
+  // A link that lost its href (javascript:, data:, a bad scheme) is not a link: keep its content, drop the tag.
+  for (const a of Array.from(fragment.querySelectorAll("a:not([href])"))) a.replaceWith(...Array.from(a.childNodes));
+  const box = document.createElement("div");
+  box.appendChild(fragment);
+  return box.innerHTML as SafeHtml;
+}
 
 const codePurify = createDOMPurify(window);
+
+// highlight.js writes class="hljs", "hljs-keyword", "hljs-title_" and the like. Any other class (for example a Tailwind
+// class such as "fixed inset-0") could restyle the page, so it is dropped.
+const HLJS_CLASS = /^hljs(?:-[a-z0-9_]+)*$/;
+codePurify.addHook("uponSanitizeAttribute", (_node, data) => {
+  if (data.attrName !== "class") return;
+  const tokens = data.attrValue.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0 || !tokens.every((t) => HLJS_CLASS.test(t))) data.keepAttr = false;
+});
 
 /** Code color output of highlight.js: only `span` with `class`. Every other tag is dropped and its text kept. */
 export const sanitizeCodeHtml = (html: string): SafeHtml =>

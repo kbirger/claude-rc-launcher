@@ -61,3 +61,32 @@ describe("sanitizeCodeHtml", () => {
     expect(s.className).toBe("hljs-keyword");
   });
 });
+
+describe("class rule (hljs tokens only, and never in markdown)", () => {
+  const classes = (html: string) => Array.from(doc(html).body.querySelectorAll("*")).map((e) => e.getAttribute("class"));
+  test("the code sanitizer drops class values that are not hljs tokens", () => {
+    for (const bad of ["fixed inset-0 z-50 bg-white", "x\" onclick=\"alert(1)", "hljs-keyword fixed", "HLJS-KEYWORD", "", "   ", "language-ts", "hljs--x", "hljs-", "hljs-a b"]) {
+      expect(classes(sanitizeCodeHtml(`<span class="${bad.replace(/"/g, "&quot;")}">a</span>`)), bad).toEqual([null]);
+    }
+  });
+  test("the code sanitizer keeps hljs tokens", () => {
+    expect(classes(sanitizeCodeHtml('<span class="hljs-keyword hljs-string">a</span><span class="hljs">b</span><span class="hljs-title_ hljs-attr">c</span>'))).toEqual(["hljs-keyword hljs-string", "hljs", "hljs-title_ hljs-attr"]);
+  });
+  test("the markdown sanitizer never keeps class", () => {
+    expect(classes(sanitizeMarkdownHtml('<p class="hljs-keyword">a</p><code class="hljs">b</code><a class="x" href="https://ok.example">c</a>'))).toEqual([null, null, null]);
+  });
+});
+
+describe("href and title only on links; links need an href", () => {
+  test("href and title are removed from other elements", () => {
+    const out = doc(sanitizeMarkdownHtml('<p title="t" href="https://x.example">a</p><td title="t" href="https://x.example">b</td><a title="T" href="https://x.example">c</a>'));
+    for (const e of Array.from(out.body.querySelectorAll("p,td"))) expect(Array.from(e.attributes).map((a) => a.name)).toEqual([]);
+    expect(out.querySelector("a")?.getAttribute("title")).toBe("T");
+  });
+  test("a link whose href was removed becomes its children", () => {
+    const out = doc(sanitizeMarkdownHtml('<p><a href="javascript:1">one <b>two</b> <em>three</em></a> <a>bare</a> <a href="data:text/html,hi">d</a></p>'));
+    expect(out.querySelector("a")).toBeNull();
+    expect(out.body.textContent).toBe("one two three bare d");
+    expect(out.querySelector("em")?.textContent).toBe("three");
+  });
+});
