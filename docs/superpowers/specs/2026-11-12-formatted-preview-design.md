@@ -73,3 +73,21 @@ A measurement changed the code view. highlight.js froze the page on long unbroke
 - Rendered markdown keeps the plan above: the strict renderer, DOMPurify, the size limit, and a Web Worker with a two second limit around the renderer. The worker output is untrusted and the main thread sanitizes it.
 - The colors come from CodeMirror's highlight style, mapped to the theme's color variables, so light and dark themes both work.
 - The preview is still cut at 512 KB by the server. With a viewport view, a larger cap is possible later. A range request would also be possible. Both are out of scope here.
+
+## Parser swap (2026-11-12)
+
+The rendered markdown view now uses `markdown-it` in place of `marked`. The reason is speed on hostile input. A benchmark with Bun on 100 KB inputs showed that `marked` and `micromark` need more than 20 seconds for `"*a_".repeat(34133)` and for `"*".repeat(102400) + "x"`. `micromark` needs 16 seconds for `"](x".repeat(34133)`. `markdown-it` stayed under 300 milliseconds on all 12 hostile inputs. `commonmark.js` stayed under 45 milliseconds but makes very deep output for nested quotes.
+
+The plan was to remove the worker, the runner, the job indirection and the pre-scan, and to render on the main thread. The rule was to do that only if the worst case at 4x processor slowdown is at most 1.0 second for inputs of the limit size (102,400 characters).
+
+The rule failed, so the worker stays. A run of 557 hostile inputs in real Chromium (146 of them invented from the `markdown-it` rules) gave these results at 4x slowdown, parse plus DOMPurify plus insert into the page:
+
+- 103 inputs took more than 1.0 second, and 25 took more than 1.0 second for parse and DOMPurify alone.
+- The worst was 19 seconds for a backtick and a newline repeated to the limit (25,602 inline code elements, mostly page layout). Next came 11 seconds for `"*a ".repeat(34000)` (emphasis nested to the depth limit of the HTML parser, and DOMPurify takes 10 seconds on it).
+- A normal 100 KB document with headings, lists, a table and code took 1.2 seconds.
+- The parser alone is fast. The slowest parse was `"![ "` repeated, at about 1.1 seconds.
+
+The cost is in DOMPurify and in the page layout, and both run on the main thread. The worker cannot take them, because DOMPurify needs a DOM. The real app showed the page frozen for 21 seconds at 4x on the worst file, with the worker in place. The pre-scan still catches long runs of `*` and `_`, which is a big part of the deep emphasis cases, but not `"*a "` repeated.
+
+A guard was tried on a scratch copy. It refuses a file (plain text with the failed note) when the layer 1 output has more than 10,000 tags, or when a token is nested deeper than 100 levels. With this guard the worst case was 0.7 seconds for guarded files and 1.2 seconds for `"![ "` repeated, which is the parser. With the guard, a limit of about 80 K characters or a count of `[` would bring that last case under 1.0 second. With that guard the worker could be removed. This needs a decision, so nothing was removed. The main thread variant is kept as a patch in the task I report.
+

@@ -27,9 +27,9 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `api.ts` (web) | The browser calls and the types. |
 | `format.ts` (web) | Small pure helpers for the screens, such as the rows of the Touched list and the live badges. |
 | `viewkind.ts` (web) | Pure. Decides how a preview shows a text file: markdown, code or plain, and the language. It holds the file name map and the size rules. |
-| `formatted.ts`, `formatrunner.ts`, `formatjobs.ts`, `format.worker.ts` (web) | Render markdown. The worker runs `marked` with a two second limit. `formatted.ts` sanitizes the result on the main thread and falls back to plain text when anything fails. |
+| `formatted.ts`, `formatrunner.ts`, `formatjobs.ts`, `format.worker.ts` (web) | Render markdown. The worker runs `markdown-it` with a two second limit. `formatted.ts` sanitizes the result on the main thread and falls back to plain text when anything fails. |
 | `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` runs both layers in one process, for the tests. `sanitize.ts` is the DOMPurify layer. Only the preview page loads them. |
-| `guards.ts` (web) | Cheap checks for text that would take too long to render. |
+| `guards.ts` (web) | Cheap checks for text that is known to be slow to render. |
 | `FormattedText.svelte` (web) | The only place that inserts HTML into the page. It takes only text that went through the sanitizer. |
 | `CodeView.svelte`, `editor.ts`, `codetheme.ts`, `languages.ts` (web) | The read-only code viewer. `CodeView.svelte` loads the editor and one language by `import()`. `editor.ts` builds the CodeMirror view. `codetheme.ts` maps the colors to the theme variables. `languages.ts` holds one lazy loader for each language. |
 | `SessionList.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
@@ -213,7 +213,7 @@ comments, strings and variables.
 
 ### Loading
 
-The libraries load by dynamic import, and only when a preview needs them. `marked` runs in a Web Worker and
+The libraries load by dynamic import, and only when a preview needs them. `markdown-it` runs in a Web Worker and
 `dompurify` runs on the main thread, both only for markdown. CodeMirror loads only for code and for the markdown
 source. Each language is its own chunk, and it loads when a file of that language opens. None of this is in the first
 page load.
@@ -227,7 +227,7 @@ page load.
 
 ### Safety
 
-Markdown has two layers, and a hostile file must get past both. Layer 1 is the `marked` renderer in
+Markdown has two layers, and a hostile file must get past both. Layer 1 is the `markdown-it` renderer in
 `formatjobs.ts`. It shows raw HTML as text. It shows an image as a text link. It keeps a link only if its address
 starts with `http://`, `https://` or `mailto:`, tested on the raw text before any decoding. It never writes a
 `class`. Layer 2 is DOMPurify in `sanitize.ts`. It keeps a fixed list of tags, only `href` and `title` on links, and
@@ -239,6 +239,14 @@ Code never goes through HTML. CodeMirror writes text nodes, so a code file canno
 link to the page. The code viewer marks control characters, zero-width characters and bidirectional characters with a
 visible box, so a hidden character cannot change how the code reads. `sanitize.ts` is the only file that makes the
 `SafeHtml` type. `FormattedText.svelte` takes only that type, and it is the only file in the app that inserts HTML.
+
+### Slow markdown
+
+The worker limits only the parser. The DOMPurify step and the insert into the page run on the main thread, after the
+worker is done. A test in a real Chromium browser (see the design document) shows that some files make the page stop
+for several seconds on a phone-class processor, even though the parser is fast. The worst files have very deep
+emphasis, or more than about 15,000 elements in the result. The worker does not help for these. A guard is proposed in
+the design document and waits for a decision.
 
 ### Limits that remain
 
