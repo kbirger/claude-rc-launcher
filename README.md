@@ -568,8 +568,8 @@ Files that a command created do not appear. Use the "Folder" tab to find those f
 - The colors cover TypeScript, JavaScript, JSON, Python, shell, YAML, HTML and XML (also Svelte and Vue), CSS, SQL,
   Go, Rust, INI and TOML, diff, Dockerfile and Makefile. The detail is in
   [How session files work](docs/session-files.md#how-the-web-preview-formats-a-file).
-- The preview renders markdown up to 100 K characters. K is 1,024, and the count is characters, not bytes. A larger
-  markdown file shows as plain text with a note. If rendering fails, the file shows as plain text with a note. A markdown file with extreme nesting or tens of thousands of elements can still make the page stop for a few seconds on a slow phone.
+- The preview renders markdown up to 64 K characters. K is 1,024, and the count is characters, not bytes. A larger
+  markdown file shows as plain text with a note. If rendering fails, or a small file is too complex (very deep nesting or thousands of elements), the file shows as plain text with a note.
   Code has no size limit below the 512 KB cut. The code view builds only the lines on the screen.
 - A markdown file cannot run code or load anything from another site. Raw HTML in the file shows as text. An image
   shows as a link with its alt text and never loads. Only links that start with `http://`, `https://` or `mailto:`

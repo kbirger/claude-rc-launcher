@@ -27,9 +27,8 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `api.ts` (web) | The browser calls and the types. |
 | `format.ts` (web) | Small pure helpers for the screens, such as the rows of the Touched list and the live badges. |
 | `viewkind.ts` (web) | Pure. Decides how a preview shows a text file: markdown, code or plain, and the language. It holds the file name map and the size rules. |
-| `formatted.ts`, `formatrunner.ts`, `formatjobs.ts`, `format.worker.ts` (web) | Render markdown. The worker runs `markdown-it` with a two second limit. `formatted.ts` sanitizes the result on the main thread and falls back to plain text when anything fails. |
-| `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` runs both layers in one process, for the tests. `sanitize.ts` is the DOMPurify layer. Only the preview page loads them. |
-| `guards.ts` (web) | Cheap checks for text that is known to be slow to render. |
+| `formatted.ts` (web) | Renders markdown for the preview. It loads `markdown.ts` by dynamic import, and it falls back to plain text with a note when anything fails or the file is too complex. |
+| `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` is layer 1 (`markdown-it`, strict renderer, and the complexity guard) and runs both layers. `sanitize.ts` is the DOMPurify layer. Both load as one lazy chunk, only for a markdown file. |
 | `FormattedText.svelte` (web) | The only place that inserts HTML into the page. It takes only text that went through the sanitizer. |
 | `CodeView.svelte`, `editor.ts`, `codetheme.ts`, `languages.ts` (web) | The read-only code viewer. `CodeView.svelte` loads the editor and one language by `import()`. `editor.ts` builds the CodeMirror view. `codetheme.ts` maps the colors to the theme variables. `languages.ts` holds one lazy loader for each language. |
 | `SessionList.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
@@ -205,7 +204,7 @@ comments, strings and variables.
 
 ### Size rules
 
-- A markdown file up to 100 K characters renders as markdown. A larger one shows as plain text with a note.
+- A markdown file up to 64 K characters renders as markdown. A larger one shows as plain text with a note. A file that is small but too complex also shows as plain text, with its own note (see Slow markdown).
 - A file with a known language shows in the code viewer with no size limit below the 512 KB cut of the server.
 - Any other text shows in a `<pre>` box up to 64 K characters. A longer plain text shows in the code viewer with no
   language, so a large file does not make a huge page.
@@ -213,27 +212,28 @@ comments, strings and variables.
 
 ### Loading
 
-The libraries load by dynamic import, and only when a preview needs them. `markdown-it` runs in a Web Worker and
-`dompurify` runs on the main thread, both only for markdown. CodeMirror loads only for code and for the markdown
+The libraries load by dynamic import, and only when a preview needs them. `markdown-it` and
+`dompurify` run on the main thread, in one lazy chunk, only for markdown. CodeMirror loads only for code and for the markdown
 source. Each language is its own chunk, and it loads when a file of that language opens. None of this is in the first
 page load.
 
 ### Failures
 
-- If rendering fails, the worker takes more than two seconds, or the text trips a guard, the file shows as plain
-  text with a note.
+- If rendering fails, the file shows as plain text with the note "This file could not be formatted." If the complexity
+  guard refuses the file, it shows as plain text with the note "This file is too complex to format."
 - If the editor cannot load, for example when the phone is offline, the code shows in a `<pre>` box.
 - If only the language cannot load, the code shows without colors.
 
 ### Safety
 
 Markdown has two layers, and a hostile file must get past both. Layer 1 is the `markdown-it` renderer in
-`formatjobs.ts`. It shows raw HTML as text. It shows an image as a text link. It keeps a link only if its address
-starts with `http://`, `https://` or `mailto:`, tested on the raw text before any decoding. It never writes a
-`class`. Layer 2 is DOMPurify in `sanitize.ts`. It keeps a fixed list of tags, only `href` and `title` on links, and
-only the same three address types. It adds `target="_blank"` and `rel="noopener noreferrer nofollow"` to every link.
-The worker output is untrusted, so layer 2 runs on the main thread. If the worker takes more than two seconds, the
-page stops it and shows plain text.
+`markdown.ts`. It shows raw HTML as text. It shows an image as a text link. It keeps a link only if its address
+starts with `http://`, `https://` or `mailto:`, tested on the raw text before any decoding. The parser accepts every
+address. A core rule then hides the tags of a link that fails the test, and the `link_open` and `image` renderer
+rules test again. These two rules are the only code that writes `href` or `src`, so no other rule can skip the test.
+It never writes a `class` or a `style`. Layer 2 is DOMPurify in `sanitize.ts`. It keeps a fixed list of tags, only
+`href` and `title` on links, and only the same three address types. It adds `target="_blank"` and
+`rel="noopener noreferrer nofollow"` to every link. Both layers run on the main thread.
 
 Code never goes through HTML. CodeMirror writes text nodes, so a code file cannot add an element, a handler or a
 link to the page. The code viewer marks control characters, zero-width characters and bidirectional characters with a
@@ -242,11 +242,14 @@ visible box, so a hidden character cannot change how the code reads. `sanitize.t
 
 ### Slow markdown
 
-The worker limits only the parser. The DOMPurify step and the insert into the page run on the main thread, after the
-worker is done. A test in a real Chromium browser (see the design document) shows that some files make the page stop
-for several seconds on a phone-class processor, even though the parser is fast. The worst files have very deep
-emphasis, or more than about 15,000 elements in the result. The worker does not help for these. A guard is proposed in
-the design document and waits for a decision.
+The parser is fast, but DOMPurify, the insert and the layout are not, and they run on the main thread. In a real
+Chromium browser with the processor slowed four times, a file of 100 K characters could stop the page for up to 21
+seconds. The cost grows with the number of elements and with the nesting depth. So markdown has a size limit of 64 K
+characters and a guard in `markdown.ts`. The guard parses the text to tokens first and refuses the file when it would
+make more than 4,500 elements (an inline code span counts twice), when anything nests deeper than 100 levels, or when
+the output would be more than eight times longer than the input. A refused file shows as plain text. The guard runs
+before any rendering, so a refusal is fast. The worst file that the guard lets through renders in under one second at
+four times slowdown, measured from the start of the job to the next paint.
 
 ### Limits that remain
 
