@@ -40,9 +40,9 @@ import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { Hono, type Context } from "hono";
 import { downloadHeaders } from "./disposition";
 import { HttpError, type Instances } from "./instances";
-import { readLiveSessions, type LiveInfo } from "./livesessions";
+import type { LiveInfo } from "./livesessions";
 import { absRefused, PathError, within } from "./paths";
-import { findSession, listSessions, touchedFiles } from "./sessions";
+import { SessionCatalog, type Session, type SessionCatalogOptions } from "./sessioncatalog";
 import type { TranscriptFs } from "./transcriptfs";
 import { listIn, openDownload as openDownloadDefault, previewIn as previewInDefault, type OpenHooks } from "./sessionfs";
 
@@ -74,18 +74,32 @@ export type SessionApiDeps = {
   platform?: NodeJS.Platform;
   /** Reads the running sessions under a home folder (tests). Defaults to readLiveSessions. */
   live?: (home: string) => Promise<ReadonlyMap<string, LiveInfo>>;
+  /** One catalog for the whole app, so that every router shares one name cache. Without it, the options above build one. */
+  sessions?: SessionCatalog;
 };
+
+/** The catalog options that `deps` sets. An option that `deps` does not set is left out, so the catalog default applies. */
+function catalogOptions(deps: SessionApiDeps): SessionCatalogOptions {
+  return {
+    ...(deps.fs ? { fs: deps.fs } : {}),
+    ...(deps.live ? { live: deps.live } : {}),
+    ...(deps.refuseDirs ? { refuseDirs: deps.refuseDirs } : {}),
+    ...(deps.platform ? { platform: deps.platform } : {}),
+    ...(deps.openDownload ? { openDownload: deps.openDownload } : {}),
+    ...(deps.previewIn ? { previewIn: deps.previewIn } : {}),
+  };
+}
 
 /** Which file a file or download request names: `path` (relative to the session folder) or `abs` (a touched file). */
 type Target = { path: string } | { abs: string };
 
 /** Routes for the sessions of one instance. Mount at `/instances/:id/sessions`. */
 export function sessionApi(deps: SessionApiDeps): Hono {
-  const { instances, fs } = deps;
-  const open = deps.openDownload ?? openDownloadDefault;
-  const readLive = deps.live ?? ((home: string) => readLiveSessions({ home }));
-  const preview = deps.previewIn ?? previewInDefault;
-  const platform = deps.platform ?? process.platform;
+  const { instances } = deps;
+  const catalog = deps.sessions ?? new SessionCatalog(catalogOptions(deps));
+  const open = catalog.openDownload;
+  const preview = catalog.previewIn;
+  const platform = catalog.platform;
   const win = platform === "win32";
   const P = win ? win32Path : posix;
   const r = new Hono();
@@ -103,13 +117,13 @@ export function sessionApi(deps: SessionApiDeps): Hono {
    * (and inside the real work trees folder for a work tree session). `root` is the lexical cwd, for the transcript;
    * file functions get `real`.
    */
-  async function rootOf(c: Context): Promise<{ h: { path: string; home: string }; sessionId: string; root: string; real: string; file: string }> {
+  async function rootOf(c: Context): Promise<{ session: Session; real: string }> {
     const h = await home(c);
     const sessionId = c.req.param("sid") ?? "";
     if (!SESSION_ID.test(sessionId)) throw new HttpError(400, "invalid session id");
-    const found = await findSession({ ...h, sessionId, ...(fs ? { fs } : {}) });
-    if (!found) throw new HttpError(404, "session not found");
-    const { root, worktree, file } = found;
+    const session = await catalog.instance(h).find(sessionId);
+    if (!session) throw new HttpError(404, "session not found");
+    const { root, worktree } = session;
     if (dirname(root) === root) throw new HttpError(404, "session not found");
     const real = await realOrMissing(root);
     // The instance path was stored as a real path, so a different real path means the folder or a parent became a link.
@@ -119,7 +133,7 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     if (!within(real, realInstance)) throw new HttpError(404, "session folder not found");
     if (worktree && !within(real, await realOrMissing(join(instance, ".claude", "worktrees")))) throw new HttpError(404, "session folder not found");
     if (dirname(real) === real) throw new HttpError(404, "session not found");
-    return { h, sessionId, root, real, file };
+    return { session, real };
   }
 
   /** Real path of `p`. A missing or unreadable folder (ENOENT, ENOTDIR, EACCES, ELOOP) is 404. */
@@ -162,15 +176,15 @@ export function sessionApi(deps: SessionApiDeps): Hono {
    */
   async function onTarget<T>(c: Context, fn: (root: string, rel: string, hooks: OpenHooks) => Promise<T>): Promise<T> {
     const t = targetOf(c);
-    const { h, sessionId, root, real, file } = await rootOf(c);
+    const { session, real } = await rootOf(c);
     if ("path" in t) return inRoot(real, () => fn(real, t.path, EXACT));
     const want = P.resolve(t.abs);
     const key = (p: string) => (win ? p.toLowerCase() : p);
-    const dirs = await refused();
+    const dirs = await catalog.refusedDirs();
     // Never served, even when written: UNC and device paths on Windows, /proc, /sys, /dev, the node's state folders.
     if (absRefused(t.abs, { platform, dirs }) || absRefused(want, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
     // The same lexical root, transcript and refused folders as /touched, so the list matches what the browser was shown.
-    const touched = await touchedFiles({ ...h, sessionId, root, file, platform, dirs, ...(fs ? { fs } : {}) });
+    const touched = await session.touched({ dirs });
     // Only a confirmed write counts: a denied or failed call to a path wrote nothing there.
     const hit = touched.filter((f) => f.confirmed === true).find((f) => key(f.path) === key(want));
     if (!hit || absRefused(hit.path, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
@@ -179,24 +193,13 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     return fn(P.dirname(entry), P.basename(entry), EXACT_FILE);
   }
 
-  /** The state folders, as given and as real paths (a state folder reached through a link). */
-  async function refused(): Promise<string[]> {
-    const given = deps.refuseDirs ?? [];
-    const real = await Promise.all(given.map((d) => realpath(d).catch(() => undefined)));
-    return [...given, ...real.filter((d): d is string => d !== undefined)];
-  }
-
-  r.get("/", async (c) => {
-    const h = await home(c);
-    // Live status is extra: when the running-session files cannot be read, the list is still answered.
-    const live = await readLive(h.home).catch(() => undefined);
-    return c.json(await listSessions({ ...h, ...(fs ? { fs } : {}), ...(live ? { live } : {}) }));
-  });
+  // Live status is extra: when the running-session files cannot be read, the list is still answered (InstanceSessions.list).
+  r.get("/", async (c) => c.json(await catalog.instance(await home(c)).list()));
 
   r.get("/:sid/touched", async (c) => {
-    const { h, sessionId, root, file } = await rootOf(c);
+    const { session } = await rootOf(c);
     // Refused paths are left out, so that the list never shows a link that the abs gate answers with 404.
-    return c.json(await touchedFiles({ ...h, sessionId, root, file, platform, dirs: await refused(), ...(fs ? { fs } : {}) }));
+    return c.json(await session.touched({ dirs: await catalog.refusedDirs() }));
   });
 
   r.get("/:sid/files", async (c) => {

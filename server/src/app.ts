@@ -22,6 +22,7 @@ import { LatestError, type createLatestRelease } from "./latest";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
 import { sessionApi } from "./sessionapi";
+import { SessionCatalog } from "./sessioncatalog";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -55,7 +56,14 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 /** `adoptDir` replaces the owner change of a new folder (tests). */
-export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined; sessions?: SessionCatalog };
+
+/** The session catalog of one app. Each app factory builds one, so that all its session routes share one name cache. */
+function sessionCatalogFor(cfg: Config): SessionCatalog {
+  // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
+  const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
+  return new SessionCatalog({ refuseDirs });
+}
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
@@ -155,9 +163,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     });
   }
 
-  // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
-  const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
-  r.route("/instances/:id/sessions", sessionApi({ instances, refuseDirs }));
+  r.route("/instances/:id/sessions", sessionApi({ instances, sessions: deps.sessions ?? sessionCatalogFor(cfg) }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;
@@ -226,7 +232,8 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       });
     });
   }
-  api.route("/", instanceApi({ cfg, instances, dirOwner, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
+  const sessions = sessionCatalogFor(cfg);
+  api.route("/", instanceApi({ cfg, instances, dirOwner, sessions, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
   return app;
@@ -269,10 +276,12 @@ export function createApp(deps: Deps): Hono {
   const updates = deps.updates
     ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion, ...(deps.presence ? { presence: deps.presence } : {}) }), probe: probeVersion }
     : undefined;
+  // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
+  const sessions = sessionCatalogFor(cfg);
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) }),
+      local: instanceApi({ cfg, instances, dirOwner, sessions, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) }),
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,

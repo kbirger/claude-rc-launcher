@@ -3,6 +3,7 @@
  * name cache. `instance()` gives the sessions of one folder, and `find()` gives one Session. Like sessions.ts before
  * it, this file only READS TRANSCRIPTS. See docs/session-files.md.
  */
+import { realpath } from "node:fs/promises";
 import { readLiveSessions, type LiveInfo } from "./livesessions";
 import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
@@ -20,7 +21,7 @@ export type SessionCatalogOptions = {
   fs?: TranscriptFs;
   names?: NameCache;
   live?: LiveReader;
-  /** The session routes pass it in. The catalog starts to use it when the routes move onto it. */
+  /** The node's own state folders: an `abs` there is never served. */
   refuseDirs?: readonly string[];
   platform?: NodeJS.Platform;
   openDownload?: typeof openDownload;
@@ -51,6 +52,7 @@ export class SessionCatalog {
   readonly openDownload: typeof openDownload;
   readonly previewIn: typeof previewIn;
   private readonly live: LiveReader;
+  private readonly refuseDirs?: readonly string[];
 
   constructor(o: SessionCatalogOptions = {}) {
     this.fs = o.fs ?? defaultTranscriptFs;
@@ -59,6 +61,7 @@ export class SessionCatalog {
     this.openDownload = o.openDownload ?? openDownload;
     this.previewIn = o.previewIn ?? previewIn;
     this.live = o.live ?? ((home) => readLiveSessions({ home }));
+    this.refuseDirs = o.refuseDirs;
   }
 
   /** No I/O here. */
@@ -69,6 +72,13 @@ export class SessionCatalog {
   /** The running sessions by session id. It rejects as the reader rejects. */
   readLive(home: string): Promise<ReadonlyMap<string, LiveInfo>> {
     return this.live(home);
+  }
+
+  /** The state folders, as given and as real paths (a state folder reached through a link). */
+  async refusedDirs(): Promise<string[]> {
+    const given = this.refuseDirs ?? [];
+    const real = await Promise.all(given.map((d) => realpath(d).catch(() => undefined)));
+    return [...given, ...real.filter((d): d is string => d !== undefined)];
   }
 }
 
