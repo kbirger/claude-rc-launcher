@@ -54,7 +54,8 @@ If the name is longer than 200 characters, Claude Code keeps the first 200, then
 transcript. A work tree session has its own folder next to the main one. Its name comes from the same rule applied to
 `<path>/.claude/worktrees/<name>`, so it is usually the project folder name, then `--claude-worktrees-`, then the name
 of the work tree. That name can pass 200 characters and be cut, so the code takes the folders whose name starts with
-the first 200 characters of the project name plus `--claude-worktrees-` and keeps a session only when its first `cwd` is inside `<path>/.claude/worktrees`.
+the first 200 characters of (the uncut encoded path plus `--claude-worktrees-`). It keeps a session only when its
+first `cwd` is inside `<path>/.claude/worktrees`.
 
 A transcript has one JSON record on each line. These short examples show the records that the code uses:
 

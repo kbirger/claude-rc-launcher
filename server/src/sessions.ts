@@ -9,7 +9,8 @@
  *   (see encodeProjectDir). The rule is lossy (my.proj and my-proj give the same name), so scan checks the cwd inside
  *   the transcript as well. A work tree session lives in a sibling folder named by the same rule from the work tree
  *   path: -home-u-my-proj--claude-worktrees-fix-bug for /home/u/my-proj/.claude/worktrees/fix-bug. That name can be cut
- *   and hashed, so scan takes the folders that start with the first 200 characters of (project name + marker) and lets the cwd check decide.
+ *   and hashed, so scan takes the folders that start with the first 200 characters of (the uncut encoded project path
+ *   plus the marker) and lets the cwd check decide.
  *
  * (b) What a transcript looks like: one JSON record per line (JSON Lines). Short, anonymised examples of the record
  *   kinds this file uses:
@@ -207,7 +208,9 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
   // A work tree folder is named by encoding `<path>/.claude/worktrees/<name>`, which can pass 200 characters and then be
   // cut and hashed, so its name may not hold the whole marker. Its first 200 characters always start with
   // (e + marker).slice(0, 200), where e is the untruncated project name, so that is the cheap test that cannot miss.
-  // It does not match unrelated projects. The check of the first cwd below drops a lookalike.
+  // The name filter can let lookalikes through: /work/proj/.claude/worktrees-old/x, the sibling /work/proj--claude-worktrees-x,
+  // or any project with the same first 200 encoded characters when the path is 200 or longer. The gate is the check of the
+  // first cwd below (`within` the <path>/.claude/worktrees folder).
   const prefix = (encodeUnits(trimSeparators(o.path)) + WORKTREE_MARK).slice(0, MAX_ENCODED);
   const dirs: { dir: string; allowed: string; worktree: boolean }[] = [{ dir: join(base, enc), allowed: o.path, worktree: false }];
   try {
@@ -440,8 +443,11 @@ type Use = { path: string; inside: boolean; tool: "write" | "edit"; at: string }
  * than once. A repeat with the same id, the same tool name and the same resolved path is the same call: the first is
  * kept and the repeat is ignored (the rest of its input is not compared). A repeat with another tool name or another
  * path poisons the id.
- * Fail closed everywhere: a use without a string id, two different uses with the same id, a result before its use, a
- * result from any other record type, and a use dropped from the full pending list (1000, oldest first) never confirm.
+ * Fail closed: a use without a string id, two kept uses with the same id and a different tool or path, a result before
+ * its use, a result from any other record type, and a use dropped from the full pending list (1000, oldest first) never
+ * confirm. A first use that is skipped before the pending list (a path that is not a string, a path that absRefused
+ * refuses, a tool that is not a file tool) is not tracked: a later use with the same id and another path can still be
+ * confirmed by the result. That is safe because the abs gate checks the path again when it is served.
  * A path that was confirmed once stays confirmed. A later failed call does not change its time, tool or place.
  *
  * The answer lists the confirmed paths first, newest first, then the unconfirmed ones (each path once), newest first,
