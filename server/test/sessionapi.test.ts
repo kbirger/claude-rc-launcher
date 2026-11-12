@@ -403,6 +403,25 @@ describe("touched files outside the session folder (abs)", () => {
     }
   });
 
+  test("the touched answer leaves out /proc, /sys, /dev and state folder files, and keeps a normal outside file", async () => {
+    const state = join(dir, "state");
+    await mkdir(state);
+    await writeFile(join(state, "key.pem"), "secret");
+    await symlink(state, join(dir, "state-link"));
+    const t = join(out, "t.txt");
+    const listed = ["/proc/version", "/sys/kernel/x", "/dev/null", join(state, "key.pem"), t];
+    for (const dirs of [[state], [join(dir, "state-link")]]) {
+      const a = app(listed, { refuseDirs: dirs });
+      const touched = (await (await get(a, `/${SID}/touched`)).json()) as { path: string }[];
+      expect({ dirs, paths: touched.map((f) => f.path) }).toEqual({ dirs, paths: [t] });
+      for (const p of listed.slice(0, 4)) {
+        const { f, d } = await both(a, q(p));
+        expect({ p, f: f.status, d: d.status }).toEqual({ p, f: 404, d: 404 });
+      }
+      expect((await get(a, `/${SID}/file?${q(t)}`)).status).toBe(200);
+    }
+  });
+
   test("an abs inside a refused state folder is 404, also when the folder is reached through a link", async () => {
     const t = join(out, "t.txt");
     for (const dirs of [[out], [`${out}/`], [join(dir, "state-link")]]) {

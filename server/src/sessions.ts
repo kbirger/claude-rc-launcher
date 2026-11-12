@@ -339,8 +339,13 @@ export async function touchedFiles(o: {
   fs?: TranscriptFs;
   /** The transcript that findSession found. Without it the session is looked up again. */
   file?: string;
-  /** Path rules to use (tests). On Windows a path that is not a drive-letter path (UNC, device) is left out. */
+  /** Path rules to use (tests). */
   platform?: NodeJS.Platform;
+  /**
+   * The node's state folders. A path that `absRefused` refuses (these folders, /proc, /sys and /dev, and on Windows
+   * a path that is not a drive-letter path) is left out of the list, so the list shows only what the `abs` gate serves.
+   */
+  dirs?: readonly string[];
 }): Promise<TouchedFile[]> {
   if (!SESSION_ID.test(o.sessionId)) return [];
   const fs = o.fs ?? defaultFs;
@@ -381,7 +386,7 @@ export async function touchedFiles(o: {
         const raw = name === "NotebookEdit" ? block.input.notebook_path : name === "Write" || name === "Edit" || name === "MultiEdit" ? block.input.file_path : undefined;
         if (typeof raw !== "string" || raw.length === 0) continue;
         const p = P.resolve(root, raw);
-        if (platform === "win32" && absRefused(p, { platform })) continue;
+        if (absRefused(p, { platform, dirs: o.dirs })) continue;
         const at = typeof r.timestamp === "string" ? r.timestamp : "";
         const u: Use = { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at };
         if (!confirmed.has(p)) putNewest(tried, p, u, TOUCHED_MAX);

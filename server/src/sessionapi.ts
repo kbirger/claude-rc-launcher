@@ -121,8 +121,8 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     const dirs = await refused();
     // Never served, even when written: UNC and device paths on Windows, /proc, /sys, /dev, the node's state folders.
     if (absRefused(t.abs, { platform, dirs }) || absRefused(want, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
-    // The same lexical root and transcript as /touched, so the list matches what the browser was shown.
-    const touched = await touchedFiles({ ...h, sessionId, root, file, platform, ...(fs ? { fs } : {}) });
+    // The same lexical root, transcript and refused folders as /touched, so the list matches what the browser was shown.
+    const touched = await touchedFiles({ ...h, sessionId, root, file, platform, dirs, ...(fs ? { fs } : {}) });
     // Only a confirmed write counts: a denied or failed call to a path wrote nothing there.
     const hit = touched.filter((f) => f.confirmed === true).find((f) => key(f.path) === key(want));
     if (!hit || absRefused(hit.path, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
@@ -142,7 +142,8 @@ export function sessionApi(deps: SessionApiDeps): Hono {
 
   r.get("/:sid/touched", async (c) => {
     const { h, sessionId, root, file } = await rootOf(c);
-    return c.json(await touchedFiles({ ...h, sessionId, root, file, platform, ...(fs ? { fs } : {}) }));
+    // Refused paths are left out, so that the list never shows a link that the abs gate answers with 404.
+    return c.json(await touchedFiles({ ...h, sessionId, root, file, platform, dirs: await refused(), ...(fs ? { fs } : {}) }));
   });
 
   r.get("/:sid/files", async (c) => {

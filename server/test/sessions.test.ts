@@ -423,6 +423,15 @@ describe("touchedFiles inputs", () => {
     const out = await touched(raws.flatMap((r) => wrote("Write", { file_path: r }, T)), { platform: "win32", root: "C:\\work\\proj" });
     expect(out.map((t) => t.path)).toEqual(["c:\\Users\\u\\f.txt", "C:\\Users\\u\\e.txt"]);
   });
+
+  test("on every platform /proc, /sys, /dev and the refused folders are left out of the list", async () => {
+    const raws = ["/proc/self/environ", "/sys/kernel/x", "/dev/null", "/var/lib/state/key.pem", "/var/lib/state", "/var/lib/stateful/ok.txt", "/etc/ok"];
+    const out = await touched(raws.flatMap((r) => wrote("Write", { file_path: r }, T)), { platform: "linux", dirs: ["/var/lib/state"] });
+    expect(out.map((t) => t.path)).toEqual(["/etc/ok", "/var/lib/stateful/ok.txt"]);
+    // A refused path that was only tried is left out too.
+    const tried = await touched([use("Write", { file_path: "/proc/1/mem" }, T, "p1")], { platform: "linux" });
+    expect(tried).toEqual([]);
+  });
 });
 
 describe("touched means written", () => {
