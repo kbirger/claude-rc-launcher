@@ -28,6 +28,15 @@ export interface HostClient {
    * must treat "the loop ended and the signal is not aborted" as a disconnect. A network error in the middle of the stream gives the class of the error (`unreachable` for a reset); a broken format (a size cap) gives `bad response`. The stream never logs.
    */
   stream(path: string, o?: { signal?: AbortSignal; onActivity?: () => void }): Promise<AsyncIterable<SseEvent>>;
+  /**
+   * `GET <path>` whose body is handed back unread: no size cap, no JSON parsing. `headerTimeoutMs` covers the response
+   * headers only. Aborting `signal` aborts the request. Any status other than 401 or a redirect is returned as it is;
+   * the caller owns the body and must read or cancel it. Optional so that test fakes of the interface stay valid.
+   */
+  download?(
+    path: string,
+    o?: { query?: Record<string, string>; signal?: AbortSignal; headerTimeoutMs?: number },
+  ): Promise<{ status: number; headers: Headers; body: ReadableStream<Uint8Array> | null }>;
 }
 
 /** Returns the full `Authorization` header value for one exact request. */
@@ -145,6 +154,45 @@ export function createHostClient(host: HostConfig, authorize: Authorizer, o: { f
       } catch {
         return fail("bad response", "non-JSON body");
       }
+    },
+    async download(path, opts = {}) {
+      const url = new URL(path, host.url);
+      for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
+      // identity: the bytes and Content-Length stay as the node sent them, with no decoding on the way.
+      const headers: Record<string, string> = { "accept-encoding": "identity" };
+      try {
+        headers.authorization = await authorize({ method: "GET", pathAndQuery: url.pathname + url.search, body: "" });
+      } catch (e) {
+        return fail("rejected our credentials", e);
+      }
+      const ctl = new AbortController();
+      const onAbort = () => ctl.abort(opts.signal?.reason);
+      if (opts.signal?.aborted) onAbort();
+      else opts.signal?.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(() => ctl.abort(new DOMException("header timeout", "TimeoutError")), opts.headerTimeoutMs ?? DEFAULT_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await doFetch(url, {
+          method: "GET",
+          headers,
+          redirect: "manual",
+          signal: ctl.signal,
+          tls: { ca: host.ca, ...(host.serverName ? { serverName: host.serverName } : {}) },
+        } as RequestInit);
+      } catch (e) {
+        opts.signal?.removeEventListener("abort", onAbort);
+        // The caller went away: not a node failure, so nothing is logged.
+        if (opts.signal?.aborted) throw new HostError(host.id, classify(e));
+        return fail(classify(e), e);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (res.status === 401 || (res.status >= 300 && res.status < 400)) {
+        opts.signal?.removeEventListener("abort", onAbort);
+        void res.body?.cancel().catch(() => {});
+        return fail(res.status === 401 ? "rejected our credentials" : "bad response", res.status === 401 ? undefined : `redirect ${res.status}`);
+      }
+      return { status: res.status, headers: res.headers, body: res.body };
     },
     async stream(path, opts = {}) {
       const url = new URL(path, host.url);

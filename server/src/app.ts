@@ -21,6 +21,7 @@ import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
+import { sessionApi } from "./sessionapi";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -153,6 +154,10 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       return c.json(await cloner.loginStatus(id));
     });
   }
+
+  // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
+  const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
+  r.route("/instances/:id/sessions", sessionApi({ instances, refuseDirs }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;

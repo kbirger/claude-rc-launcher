@@ -524,3 +524,29 @@ describe("identityFor", () => {
   });
 });
 
+
+describe("claudeHome", () => {
+  test("returns the instance folder and the home of the default user", async () => {
+    const id = await seed("/srv/a", "alpha");
+    const h = await svc().claudeHome(id);
+    expect(h.path).toBe("/srv/a");
+    expect(h.home).toBe("/root");
+  });
+  test("returns the home of the run-as user from User=", async () => {
+    await svc().start({ path: "/srv/a", user: "alice" });
+    const [inst] = await svc().list();
+    expect(await svc().claudeHome(inst!.id)).toEqual({ path: "/srv/a", home: "/home/alice" });
+  });
+  test("a unit whose user has vanished is 404 instance user not found", async () => {
+    await svc().start({ path: "/srv/a", user: "alice" });
+    const [inst] = await svc().list();
+    const gone: UserDirectory = { list: async () => [], get: async () => undefined, lookup: async () => undefined };
+    const err = await svc({}, { users: gone }).claudeHome(inst!.id).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect([err.status, err.message]).toEqual([404, "instance user not found"]);
+  });
+  test("an unknown or bad id is 404", async () => {
+    expect(await status(svc().claudeHome("0123456789ab"))).toBe(404);
+    expect(await status(svc().claudeHome("../x"))).toBe(404);
+  });
+});

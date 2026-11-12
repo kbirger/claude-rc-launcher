@@ -533,6 +533,47 @@ If `gh` keeps its token in a desktop keyring, the node cannot read the token. Th
 - If the node restarts during a clone, the client reports that it lost track of the clone. The partial folder stays on
   disk. Remove that folder before you clone the repo again.
 
+## Session files
+
+You can look at the files of a session from your phone. On an instance card, choose "Sessions". The page lists the
+sessions of that instance. Open one to see two tabs. "Touched" lists the files that Claude changed. "Folder" lets
+you browse the session folder.
+
+The list shows every session that Claude Code recorded for the instance folder. It includes work-tree sessions that
+Claude Code files under `.claude/worktrees`. It also includes sessions that you started yourself in that folder.
+A session that runs now shows a "live" badge with its status ("busy" or "idle"). If it uses Remote Control, it also
+shows a "Remote Control" badge. A running session shows the name that the Claude app shows.
+
+"Touched" lists files that Claude wrote or edited with its file tools. A file counts only when the write succeeded.
+If the call was denied, failed or got no answer, the list shows the file as "not written" and does not open it.
+Files that a command created do not appear. Use the "Folder" tab to find those files.
+
+- The node reads files as its own service account. It can read only what that account can read.
+- The node serves files inside a session folder. On each request it finds the folder again from the transcript.
+  The real place of that folder must be inside the instance folder. If a link leads it out, the node refuses it.
+- A touched file outside the session folder can also be opened. The node serves it only if its path is exactly on
+  that session's touched list and the write succeeded. It refuses any other file outside the folder. It also refuses
+  the file if its name or its parent folder is a link. The touched list comes from the transcript, so anyone who can
+  write the transcript can add a file to it.
+- The node never serves a file outside the session folder that has more than one hard link.
+- The node never serves a file outside the session folder under `/proc`, `/sys`, `/dev` or its own state folder.
+  On Windows it serves a file outside the session folder only by a drive-letter path. It refuses a network path
+  (`\\server\share`) and a device path (`\\?\` or `\\.\`), because opening a network path can send the
+  credentials of the service account to that server.
+- The node reads transcripts from `<home>/.claude/projects` of the instance user. Claude Code deletes old transcripts
+  after its cleanup period, so an old session disappears from the list.
+- A text file shows as plain text. A larger text file shows its first 512 KB and a download button. Any other file
+  is a download.
+- A download is a stream. The hub passes the bytes on and never holds a whole file in memory.
+
+The first version shows only the work trees that belong to a session. It has no markdown or code formatting and no
+editing. Session files are not yet verified on Windows nodes.
+
+If a node runs an older version without this feature, the web UI hides the "Sessions" button for its instances. Update
+the node to see the button.
+
+To learn how session files work inside the code, read [How session files work](docs/session-files.md).
+
 ## Multiple hosts
 
 ```

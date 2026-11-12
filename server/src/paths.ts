@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, posix, resolve, sep, win32 } from "node:path";
 
 export class PathError extends Error {
   status: 400 | 403 | 404;
@@ -59,4 +59,38 @@ export async function resolveWithinRoots(input: string, roots: string[]): Promis
   }
   if (!st.isDirectory()) throw new PathError(400, "not a directory");
   return real;
+}
+
+/** Pseudo file systems of the node itself: reading there shows its memory, environment and devices. */
+const PSEUDO = ["/proc", "/sys", "/dev"];
+
+/** True when `p` is `dir` or inside it, with the path rules of `platform` (no case on Windows). */
+function under(p: string, dir: string, platform: NodeJS.Platform): boolean {
+  const P = platform === "win32" ? win32 : posix;
+  const k = (x: string) => (platform === "win32" ? x.toLowerCase() : x);
+  const d = k(P.resolve(dir));
+  const t = k(p);
+  return t === d || t.startsWith(d.endsWith(P.sep) ? d : d + P.sep);
+}
+
+/**
+ * True for an absolute path that a session never gets to read through `abs`, even when it wrote the file there.
+ * On Windows only a drive-letter path is served (`C:\...`): a UNC path (`\\server\share`, `//server/share`) would
+ * make the service account sign in to that server and can leak its NTLM credentials, and a device path (`\\?\`,
+ * `\\.\`) skips the normal path rules. A colon after the drive names an alternate data stream. Elsewhere /proc, /sys
+ * and /dev are refused. `dirs` (the node's own state folders) are refused on every platform.
+ */
+export function absRefused(p: string, o: { platform?: NodeJS.Platform; dirs?: readonly string[] } = {}): boolean {
+  const platform = o.platform ?? process.platform;
+  let full: string;
+  if (platform === "win32") {
+    // Two separators of any kind at the start: UNC, or a device path. Checked on the text before it is resolved.
+    if (/^[\\/]{2}/.test(p)) return true;
+    full = win32.resolve(p);
+    if (!/^[A-Za-z]:\\/.test(full) || full.slice(2).includes(":")) return true;
+  } else {
+    full = posix.resolve(p);
+    if (PSEUDO.some((d) => under(full, d, platform))) return true;
+  }
+  return (o.dirs ?? []).some((d) => under(full, d, platform));
 }

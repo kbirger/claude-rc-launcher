@@ -5,6 +5,7 @@
   import { cn } from "#lib/utils.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
+  import { SessionsLink } from "#lib/features/sessions";
   import InstanceLogs from "./InstanceLogs.svelte";
   import { createInstancesModel } from "./model.svelte";
   import type { Instance } from "./api";
@@ -71,6 +72,7 @@
             </div>
             <div class="flex gap-2">
               <Button variant="outline" size="touch" disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</Button>
+              <SessionsLink {host} instance={i.id} />
               <Button variant="destructive" size="touch" disabled={!!r.pending} onclick={() => stop(i)}>Stop</Button>
             </div>
             {#if i.id in open}<InstanceLogs {host} id={i.id} />{/if}

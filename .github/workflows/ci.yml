@@ -38,4 +38,5 @@ jobs:
           server/test/win-update.test.ts server/test/win-install.test.ts server/test/win-launcher.test.ts
           server/test/win-path.test.ts server/test/win-bootstrap.test.ts server/test/win-token.test.ts
           server/test/updateevents.test.ts server/test/nodeapp.test.ts server/test/win-definition.test.ts
+          server/test/sessionfs.test.ts
       - run: bun run build:win

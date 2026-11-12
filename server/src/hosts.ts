@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { Config } from "./config";
+import { downloadHeaders, lastSegment } from "./disposition";
 import { HostError, type HostClient, type HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
@@ -12,6 +13,25 @@ import type { User } from "./userauth";
 import type { UpdateRecord } from "./updaterecord";
 import type { UpdateTracker } from "./updatetracker";
 import type { UpdateReport } from "./serviceupdate";
+
+/** Reads at most `max` bytes of a small body and cancels the rest. */
+async function readSmall(body: ReadableStream<Uint8Array> | null, max: number): Promise<string> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      break;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 /** The oldest known version among the `clients` of a node's `/node` body, or undefined. */
 function clientVersionOf(body: unknown): string | undefined {
@@ -52,6 +72,10 @@ export const REPOS_TIMEOUT_MS = 120_000;
 export const LOGIN_START_TIMEOUT_MS = 20_000;
 
 const ID_RE = /^[0-9a-f]{12}$/;
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MAX_PATH_QUERY = 4096;
+/** The most of an error body the hub reads from a node that refuses a download. */
+const MAX_ERROR_BODY = 64 * 1024;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
@@ -123,6 +147,21 @@ export function hostsApi(o: {
   // Audit every state-changing request, local or remote.
   app.use("/:host/*", async (c, next) => {
     await next();
+    // A download, and a preview of a touched file by `abs`, are logged with their status only, never the file name.
+    const url = new URL(c.req.url);
+    const what =
+      c.req.method !== "GET"
+        ? undefined
+        : /\/instances\/[^/]+\/sessions\/[^/]+\/download$/.test(url.pathname)
+          ? "download"
+          : /\/instances\/[^/]+\/sessions\/[^/]+\/file$/.test(url.pathname) && url.searchParams.has("abs")
+            ? "preview abs"
+            : undefined;
+    if (what) {
+      const u = c.get("user" as never) as User | undefined;
+      const hostId = /\/hosts\/([^/]+)/.exec(url.pathname)?.[1] ?? "unknown";
+      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} GET ${what} ${c.res.status}`);
+    }
     if (isWrite(c.req.method)) {
       const u = c.get("user" as never) as User | undefined;
       const pathname = new URL(c.req.url).pathname;
@@ -191,6 +230,13 @@ export function hostsApi(o: {
       throw e;
     }
   };
+  /** Like `forward`, for routes that answer JSON only: 200 and 400 to 599 pass, any other node status is a 502. */
+  const forwardJson = (fn: (c: Context, client: HostClient) => Promise<{ status: number; body: unknown }>) =>
+    forward(async (c, k) => {
+      const r = await fn(c, k);
+      if (r.status === 200 || (r.status >= 400 && r.status <= 599)) return r;
+      return { status: 502, body: { error: "bad response", host: clientOf(c).id } };
+    });
   const instanceId = (c: Context) => {
     const id = c.req.param("id") ?? "";
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
@@ -233,6 +279,81 @@ export function hostsApi(o: {
       return k.call("POST", "/api/fs/mkdir", { json, timeoutMs: requestTimeoutMs });
     }),
   );
+  const sessionId = (c: Context) => {
+    const sid = c.req.param("sid") ?? "";
+    if (!SESSION_ID_RE.test(sid)) throw new HttpError(400, "invalid session id");
+    return sid;
+  };
+  /** A `path` query: at most 4096 characters, no NUL. Undefined when absent. */
+  const pathQuery = (c: Context, required = false) => {
+    const p = c.req.query("path");
+    if (p === undefined) {
+      if (required) throw new HttpError(400, "path is required");
+      return undefined;
+    }
+    if (p.length > MAX_PATH_QUERY || p.includes("\0")) throw new HttpError(400, "invalid path");
+    return p;
+  };
+  /** The file a file or download request names: exactly one of `path` and `abs`, each checked like `path`. */
+  const fileQuery = (c: Context): { path: string } | { abs: string } => {
+    const abs = c.req.query("abs");
+    if (abs === undefined) return { path: pathQuery(c, true)! };
+    if (c.req.query("path") !== undefined) throw new HttpError(400, "give path or abs, not both");
+    // Only the node knows its own path rules (it may be Windows), so absoluteness is checked there.
+    if (abs.length > MAX_PATH_QUERY || abs.includes("\0")) throw new HttpError(400, "invalid path");
+    return { abs };
+  };
+  const sessionsBase = (c: Context) => `/api/instances/${instanceId(c)}/sessions`;
+
+  remote.get("/instances/:id/sessions", forwardJson((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions/:sid/touched", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/touched`, { timeoutMs: requestTimeoutMs })));
+  remote.get(
+    "/instances/:id/sessions/:sid/files",
+    forwardJson((c, k) => {
+      const base = `${sessionsBase(c)}/${sessionId(c)}/files`;
+      if (c.req.query("abs") !== undefined) throw new HttpError(400, "abs is not accepted here");
+      const p = pathQuery(c);
+      const query = { ...(p !== undefined ? { path: p } : {}), ...(c.req.query("hidden") === "1" ? { hidden: "1" } : {}) };
+      return k.call("GET", base, { ...(Object.keys(query).length ? { query } : {}), timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get(
+    "/instances/:id/sessions/:sid/file",
+    forwardJson((c, k) => {
+      const base = `${sessionsBase(c)}/${sessionId(c)}/file`;
+      return k.call("GET", base, { query: fileQuery(c), timeoutMs: requestTimeoutMs });
+    }),
+  );
+  remote.get("/instances/:id/sessions/:sid/download", async (c) => {
+    const { id, client } = clientOf(c);
+    const base = `${sessionsBase(c)}/${sessionId(c)}/download`;
+    const query = fileQuery(c);
+    const named = "abs" in query ? query.abs : query.path;
+    if (!client.download) return c.json({ error: "downloads are not available for this host" }, 501);
+    try {
+      const r = await client.download(base, { query, signal: c.req.raw.signal, headerTimeoutMs: requestTimeoutMs });
+      if (r.status !== 200) {
+        const text = await readSmall(r.body, MAX_ERROR_BODY);
+        // Only an error status passes; a 204 or a 3xx from the node is not an answer the browser can use.
+        if (r.status < 400 || r.status > 599) return c.json({ error: "bad response", host: id }, 502);
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = { error: "download failed" };
+        }
+        return c.json(json, r.status as 400);
+      }
+      // Every header but the length is built here: a node never chooses how the browser treats the bytes.
+      const length = r.headers.get("content-length");
+      const headers = downloadHeaders(lastSegment(named), length !== null && /^\d+$/.test(length) ? length : undefined);
+      return new Response(r.body, { status: 200, headers });
+    } catch (e) {
+      if (e instanceof HostError) return c.json({ error: e.message, host: id }, 502);
+      throw e;
+    }
+  });
+
   remote.get("/node", forward((_c, k) => k.call("GET", "/api/node", { timeoutMs: requestTimeoutMs })));
   remote.post(
     "/update",

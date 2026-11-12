@@ -1,0 +1,181 @@
+import { expect, test } from "vitest";
+import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
+
+test("relativeTo cuts the root off a path inside it", () => {
+  expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
+  expect(relativeTo("/r/p/", "/r/p/a.ts")).toBe("a.ts");
+});
+
+test("relativeTo gives undefined for the root itself or a path outside", () => {
+  expect(relativeTo("/r/p", "/r/p")).toBeUndefined();
+  expect(relativeTo("/r/p", "/r/pq/a.ts")).toBeUndefined();
+  expect(relativeTo("/r/p", "/x/a.ts")).toBeUndefined();
+});
+
+test("lastSegments keeps the final two", () => {
+  expect(lastSegments("/a/b/c/d.txt")).toBe("c/d.txt");
+  expect(lastSegments("d.txt")).toBe("d.txt");
+});
+
+test("joinPath joins without a leading slash", () => {
+  expect(joinPath("", "a")).toBe("a");
+  expect(joinPath("a/b", "c")).toBe("a/b/c");
+});
+
+test("humanSize uses B, KB and MB", () => {
+  expect(humanSize(12)).toBe("12 B");
+  expect(humanSize(2048)).toBe("2.0 KB");
+  expect(humanSize(5 * 1024 * 1024)).toBe("5.0 MB");
+});
+
+test("ago gives a short relative time", () => {
+  const now = Date.parse("2026-01-02T00:00:00Z");
+  expect(ago("2026-01-01T23:59:30Z", now)).toBe("now");
+  expect(ago("2026-01-01T23:15:00Z", now)).toBe("45m ago");
+  expect(ago("2026-01-01T20:00:00Z", now)).toBe("4h ago");
+  expect(ago("2025-12-30T00:00:00Z", now)).toBe("3d ago");
+  expect(ago("nonsense", now)).toBe("—");
+});
+
+test("worktreeName gives the last segment of a work tree root", () => {
+  expect(worktreeName("/p/.claude/worktrees/feat-x")).toBe("feat-x");
+  expect(worktreeName("/p")).toBeUndefined();
+});
+
+test("sessionsHref leaves empty values out", () => {
+  expect(sessionsHref({ host: "h", instance: "i", session: undefined, path: "" })).toBe("/sessions?host=h&instance=i");
+});
+
+test("relativeTo handles Windows paths", () => {
+  expect(relativeTo("C:\\r\\p", "C:\\r\\p\\src\\a.ts")).toBe("src/a.ts");
+  expect(relativeTo("c:\\R\\p", "C:\\r\\P\\a.ts")).toBe("a.ts");
+  expect(relativeTo("C:\\", "C:\\a.ts")).toBe("a.ts");
+  expect(relativeTo("C:\\r\\p", "C:\\r\\p")).toBeUndefined();
+  expect(relativeTo("C:\\r\\p", "C:\\r\\pq\\a.ts")).toBeUndefined();
+  expect(relativeTo("C:\\r\\p", "D:\\r\\p\\a.ts")).toBeUndefined();
+});
+
+test("relativeTo stays case-sensitive for a POSIX root", () => {
+  expect(relativeTo("/r/P", "/r/p/a.ts")).toBeUndefined();
+});
+
+test("worktreeName handles a Windows root", () => {
+  expect(worktreeName("C:\\r\\p\\.claude\\worktrees\\feat-x")).toBe("feat-x");
+});
+
+test("touchedRows keeps the node order, newest first", () => {
+  const f = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at, confirmed: true });
+  const rows = touchedRows([f("/r/new.ts", "2026-11-11T12:00:00Z"), f("/r/mid.ts", "2026-11-11T11:00:00Z"), f("/r/old.ts", "2026-11-11T10:00:00Z")], "/r");
+  expect(rows.map((r) => r.rel)).toEqual(["new.ts", "mid.ts", "old.ts"]);
+});
+
+test("sessionsHref carries hidden=1 and drops a false hidden", () => {
+  expect(sessionsHref({ session: "s", view: "folder", path: "src", hidden: true })).toBe("/sessions?session=s&view=folder&path=src&hidden=1");
+  expect(sessionsHref({ session: "s", view: "folder", hidden: false })).toBe("/sessions?session=s&view=folder");
+});
+
+test("showHidden reads hidden=1 and turns on for a path through a dot name", () => {
+  expect(showHidden("1", "")).toBe(true);
+  expect(showHidden(null, "src/a")).toBe(false);
+  expect(showHidden("0", "src")).toBe(false);
+  expect(showHidden(null, ".github/workflows")).toBe(true);
+  expect(showHidden(undefined, "src/.cache")).toBe(true);
+  expect(showHidden(null, "src\\.cache")).toBe(true);
+});
+
+test("lastSegments accepts Windows separators", () => {
+  expect(lastSegments("C:\\r\\p\\src\\a.ts")).toBe("src/a.ts");
+});
+
+test("sessionsHref encodes awkward values so they come back unchanged", () => {
+  const vals = { path: "a b/#?%&+.txt", file: "javascript:alert(1)", host: "//evil.example", instance: "i d" };
+  const href = sessionsHref(vals);
+  expect(href.startsWith("/sessions?")).toBe(true);
+  // Stays a same-origin path: never a protocol or a protocol-relative URL.
+  expect(new URL(href, "https://hub.example").origin).toBe("https://hub.example");
+  const q = new URL(href, "https://hub.example").searchParams;
+  for (const [k, v] of Object.entries(vals)) expect(q.get(k)).toBe(v);
+  expect(href).not.toContain("#");
+  expect(href).toContain("%2B");
+});
+
+const sess = { id: "abcdef1234567890", root: "/r", startedAt: "", lastActiveAt: "2026-01-01T00:00:00Z" };
+const NOW = Date.parse("2026-01-01T02:00:00Z");
+
+test("sessionTitle gives the name or a placeholder", () => {
+  expect(sessionTitle({ ...sess, name: "Fix bug" })).toBe("Fix bug");
+  expect(sessionTitle(sess)).toBeUndefined();
+});
+
+test("sessionDetail lists id, age and a real branch only", () => {
+  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual(["abcdef12", "2h ago", "main"]);
+  expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", "2h ago"]);
+  expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", "2h ago"]);
+});
+
+test("sessionsHref encodes an abs value so it comes back unchanged", () => {
+  for (const abs of ["/home/u/a b#c?d%e&f+g é.txt", "C:\\Users\\u\\ü.txt", "/x/%2e%2e/y"]) {
+    const href = sessionsHref({ host: "h", instance: "i", session: "s", view: "touched", abs });
+    expect(href.startsWith("/sessions?")).toBe(true);
+    expect(href).not.toContain("#");
+    expect(new URL(href, "https://hub.example").origin).toBe("https://hub.example");
+    expect(new URL(href, "https://hub.example").searchParams.get("abs")).toBe(abs);
+  }
+});
+
+test("touchedRows gives no link to a file that was not written (denied, failed or no result)", () => {
+  const rows = touchedRows(
+    [
+      { path: "/r/src/a.ts", inside: true, tool: "edit", at: "", confirmed: false },
+      { path: "/home/u/.ssh/id_rsa", inside: false, tool: "edit", at: "", confirmed: false },
+    ],
+    "/r",
+  );
+  expect(rows.map((r) => [r.rel, r.link])).toEqual([["src/a.ts", undefined], [undefined, undefined]]);
+});
+
+test("touchedRows keeps the link when an older node sends no confirmed field (the node is the gate)", () => {
+  const rows = touchedRows([{ path: "/r/a.ts", inside: true, tool: "edit", at: "" }], "/r");
+  expect(rows[0]!.link).toEqual({ file: "a.ts" });
+});
+
+test("touchedRows links every written row: inside files by relative path, the rest by abs", () => {
+  const rows = touchedRows(
+    [
+      { path: "/r/src/a.ts", inside: true, tool: "edit", at: "", confirmed: true },
+      { path: "/home/u/notes.md", inside: false, tool: "write", at: "", confirmed: true },
+      { path: "/r", inside: true, tool: "write", at: "", confirmed: true },
+    ],
+    "/r",
+  );
+  expect(rows.map((r) => r.link)).toEqual([{ file: "src/a.ts" }, { abs: "/home/u/notes.md" }, { abs: "/r" }]);
+  expect(rows[1]!.rel).toBeUndefined();
+});
+
+test("liveBadges shows live and the status, busy as active and idle muted", () => {
+  expect(liveBadges({ ...sess, live: { status: "busy", remoteControl: false } })).toEqual([{ label: "live · busy", class: "text-success" }]);
+  expect(liveBadges({ ...sess, live: { status: "idle", remoteControl: false } })).toEqual([{ label: "live · idle", class: "text-muted-foreground" }]);
+});
+
+test("liveBadges adds Remote Control when the session is attached to it", () => {
+  expect(liveBadges({ ...sess, live: { status: "idle", remoteControl: true } })).toEqual([
+    { label: "live · idle", class: "text-muted-foreground" },
+    { label: "Remote Control", class: "" },
+  ]);
+});
+
+test("liveBadges gives nothing for a session that is not running", () => {
+  expect(liveBadges(sess)).toEqual([]);
+});
+
+test("liveBadges shows only live for a status other than busy or idle", () => {
+  expect(liveBadges({ ...sess, live: { status: "x".repeat(32), remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
+  expect(liveBadges({ ...sess, live: { status: "", remoteControl: true } })).toEqual([
+    { label: "live", class: "text-muted-foreground" },
+    { label: "Remote Control", class: "" },
+  ]);
+});
+
+test("liveBadges shows only live when the node sends no status", () => {
+  expect(liveBadges({ ...sess, live: { remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
+});
