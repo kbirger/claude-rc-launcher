@@ -3,7 +3,35 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LiveInfo } from "../src/livesessions";
-import { encodeProjectDir, findSession, listSessions, newNameCache, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
+import { SessionCatalog } from "../src/sessioncatalog";
+import { newNameCache, type NameCache } from "../src/sessionnames";
+import { scan } from "../src/sessionscan";
+import { touchedIn } from "../src/touched";
+import { encodeProjectDir, SESSION_ID } from "../src/transcript";
+import { defaultTranscriptFs, type TranscriptFs } from "../src/transcriptfs";
+
+type Query = { home: string, path: string, sessionId: string, fs?: TranscriptFs };
+
+// Test-local helpers: the old function names and parameters, built on the session classes, so that no call site changes.
+const listSessions = (o: { home: string, path: string, fs?: TranscriptFs, names?: NameCache, live?: ReadonlyMap<string, LiveInfo> }) =>
+  new SessionCatalog({ fs: o.fs, names: o.names, live: async () => o.live ?? new Map() }).instance(o).list();
+
+const findSession = async (o: Query) => {
+  const s = await new SessionCatalog({ fs: o.fs }).instance(o).find(o.sessionId);
+  return s && { root: s.root, worktree: s.worktree, file: s.file };
+};
+
+const sessionRootOf = async (o: Query) => (await new SessionCatalog({ fs: o.fs }).instance(o).find(o.sessionId))?.root;
+
+// The old touchedFiles wrapper, unchanged, on top of scan and touchedIn. It does not go through the Session class:
+// some tests pass a root that differs from the transcript cwd, or a transcript file to skip the scan.
+const touchedFiles = async (o: Query & { root: string, file?: string, platform?: NodeJS.Platform, dirs?: readonly string[] }) => {
+  if (!SESSION_ID.test(o.sessionId)) return [];
+  const fs = o.fs ?? defaultTranscriptFs;
+  const file = o.file ?? (await scan({ home: o.home, path: o.path, fs, only: o.sessionId }))[0]?.file;
+  if (!file) return [];
+  return touchedIn({ fs, file, root: o.root, platform: o.platform, dirs: o.dirs });
+};
 
 const HOME = "/h";
 const PATH = "/work/proj";
@@ -579,7 +607,9 @@ describe("touchedFiles inputs", () => {
     let readdirs = 0;
     const base = fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...wrote("Write", { file_path: "/work/proj/a" }, T)] } });
     const fs = { ...base, readdir: async (d: string) => (readdirs++, base.readdir(d)) };
-    const out = await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs, file: `${proj("-work-proj")}/${ID1}.jsonl` });
+    const session = await new SessionCatalog({ fs }).instance({ home: HOME, path: PATH }).find(ID1);
+    readdirs = 0;
+    const out = await session!.touched({ dirs: [] });
     expect(out.map((t) => t.path)).toEqual(["/work/proj/a"]);
     expect(readdirs).toBe(0);
   });

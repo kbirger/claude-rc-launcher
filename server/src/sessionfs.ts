@@ -1,8 +1,9 @@
 /*
  * What this file is: it OPENS PROJECT FILES safely (list a folder, preview a file, download a file) inside one root
- * folder. How it differs from sessions.ts: sessions.ts READS TRANSCRIPTS to find sessions, their names and the paths
- * they touched, and it never opens the user's project files. This file never reads a transcript. sessionapi.ts joins
- * the two: it finds the session folder (or the touched file) with sessions.ts and hands it to this file to open.
+ * folder. How it differs from the transcript files: sessioncatalog.ts and the files it uses READ TRANSCRIPTS to find
+ * sessions, their names and the paths they touched, and they never open the user's project files. This file never
+ * reads a transcript. pinnedroot.ts joins the two: it checks the session folder (or the touched file) and hands it to
+ * this file to open.
  */
 import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath, stat, type FileHandle } from "node:fs/promises";
@@ -10,7 +11,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { PathError, within } from "./paths";
 
 // Files inside a session root, for preview and download. The node runs as its service account and serves any
-// signed-in hub user, so the gate here is that a path stays inside the root. The caller (sessionapi rootOf) checks
+// signed-in hub user, so the gate here is that a path stays inside the root. The caller (PinnedRoot.pin) checks
 // that the root itself is inside the instance folder and hands over its real path. Every file is opened by its checked real path
 // without following a final symlink and without blocking, and the open handle must be the file that was checked.
 

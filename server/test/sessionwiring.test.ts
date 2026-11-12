@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config";
-import { encodeProjectDir } from "../src/sessions";
+import { encodeProjectDir } from "../src/transcript";
 
 // The refusal rules have unit tests. This checks that the node app hands its real state folders to the abs gate.
 

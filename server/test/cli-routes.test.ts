@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { createApp, createNodeApp } from "../src/app";
+import { SessionCatalog } from "../src/sessioncatalog";
 import { cliBearerAuth } from "../src/cliauth";
 import type { Config } from "../src/config";
 import { createHostClient, secretAuthorizer, type HostConfig } from "../src/hostclient";
@@ -50,12 +51,12 @@ async function startNode() {
   return { url: `https://localhost:${server.port}`, fp: `sha256:${cert.fingerprintSha256}`, secret: sec.secret, starts };
 }
 
-async function setup(o: { cli?: boolean } = {}) {
+async function setup(o: { cli?: boolean; claudeHome?: (id: string) => Promise<{ path: string; home: string }> } = {}) {
   const k = await kit();
   const node = await startNode();
   const root = realpathSync(tmp());
   const cfg = { name: "box", hosts: [], roots: [root], publicUrl: "https://rc.example.com" } as unknown as Config;
-  const local: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async (_: string, n: number) => `local log ${n}` };
+  const local: any = { list: async () => [{ ...inst, name: "local-one" }], start: async (i: any) => ({ ...inst, ...i }), stop: async () => {}, trustFilter: async () => () => false, logs: async (_: string, n: number) => `local log ${n}`, ...(o.claudeHome ? { claudeHome: o.claudeHome } : {}) };
   const makeClient = (h: HostConfig) => createHostClient(h, secretAuthorizer(node.secret));
   const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [], clients: new Map(), makeClient });
   const enrollment = { hubKeys: ["PUBKEY"] };
@@ -85,6 +86,25 @@ describe("/cli", () => {
     const s = await setup({ cli: false });
     expect((await s.call("GET", "/cli/config", undefined, {})).status).toBe(404);
     expect((await s.call("GET", "/cli/api/me")).status).toBe(404);
+  });
+
+  test("the browser and the CLI session routes of the hub share one session catalog", async () => {
+    const home = tmp();
+    const s = await setup({ claudeHome: async () => ({ path: "/srv/p", home }) });
+    const seen: SessionCatalog[] = [];
+    const instance = SessionCatalog.prototype.instance;
+    SessionCatalog.prototype.instance = function (this: SessionCatalog, h) {
+      seen.push(this);
+      return instance.call(this, h);
+    };
+    try {
+      expect((await s.call("GET", `/api/hosts/local/instances/${ID}/sessions`, undefined, { "x-browser": "1" })).status).toBe(200);
+      expect((await s.call("GET", `/cli/api/hosts/local/instances/${ID}/sessions`)).status).toBe(200);
+    } finally {
+      SessionCatalog.prototype.instance = instance;
+    }
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBe(seen[1]);
   });
 
   test("GET /cli/config is open and returns only issuer and client_id", async () => {

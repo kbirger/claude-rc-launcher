@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { HttpError, type Instances } from "../src/instances";
 import { onError } from "../src/app";
 import { sessionApi } from "../src/sessionapi";
-import type { TranscriptFs } from "../src/sessions";
+import type { TranscriptFs } from "../src/transcriptfs";
 
 const ID = "0123456789ab";
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -238,7 +238,7 @@ describe("a session root reached through a symlink", () => {
     await writeFile(join(out, "s.txt"), "secret");
     const inst = { claudeHome: async () => ({ path: root, home: "/home/x" }) } as unknown as Instances;
     const app = new Hono();
-    // The swap runs after rootOf has checked the real root, as a racing instance user would.
+    // The swap runs after PinnedRoot.pin has checked the real root, as a racing instance user would.
     const mod = await import("../src/sessionfs");
     app.route("/instances/:id/sessions", sessionApi({
       instances: inst,
