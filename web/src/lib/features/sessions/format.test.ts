@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
+import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName, splitPath } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -178,4 +178,12 @@ test("liveBadges shows only live for a status other than busy or idle", () => {
 
 test("liveBadges shows only live when the node sends no status", () => {
   expect(liveBadges({ ...sess, live: { remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
+});
+
+test("splitPath gives the last name and the folder above it", () => {
+  expect(splitPath("src/lib/a.svelte")).toEqual({ name: "a.svelte", dir: "src/lib" });
+  expect(splitPath("a.svelte")).toEqual({ name: "a.svelte", dir: "" });
+  expect(splitPath("/etc/hosts")).toEqual({ name: "hosts", dir: "/etc" });
+  expect(splitPath("/x")).toEqual({ name: "x", dir: "/" });
+  expect(splitPath("C:\\proj\\src\\a.ts")).toEqual({ name: "a.ts", dir: "C:/proj/src" });
 });

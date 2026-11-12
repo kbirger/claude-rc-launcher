@@ -20,18 +20,18 @@
   const tab = (v: "touched" | "folder") => (view === v ? "default" : "outline");
 </script>
 
-<div class="grid gap-3">
+<div class="grid grid-cols-[minmax(0,1fr)] gap-3">
   <!-- A file preview needs the room: it has its own Back button, so the session header is left out while a file is open. -->
   {#if !abs && !file}
   <Button variant="outline" size="touch" href={sessionsHref({ host, instance })}>All sessions</Button>
   {/if}
   {#if s && !abs && !file}
     {@const wt = worktreeName(s.root)}
-    <div class="flex flex-wrap items-center gap-2 text-muted-foreground">
-      <span class="font-semibold text-foreground">{s.branch ?? "no branch"}</span>
+    <div class="flex min-w-0 flex-wrap items-center gap-x-2 text-muted-foreground">
+      <span class="min-w-0 font-semibold text-foreground [overflow-wrap:anywhere]">{s.branch ?? "no branch"}</span>
       <span class="font-mono">{s.id.slice(0, 8)}</span>
       <span>{ago(s.lastActiveAt, now)}</span>
-      {#if wt}<Badge variant="outline">work tree</Badge><span>{wt}</span>{/if}
+      {#if wt}<Badge variant="outline">work tree</Badge><span class="min-w-0 [overflow-wrap:anywhere]">{wt}</span>{/if}
     </div>
   {/if}
 
