@@ -2,7 +2,8 @@
 import { describe, expect, test } from "vitest";
 import { MARKDOWN_LIMIT } from "./viewkind";
 import { sanitizeMarkdownHtml } from "./sanitize";
-import { MAX_ELEMENTS, MAX_LEVEL, MAX_RUN_COST, markdownToHtml, markdownToHtmlGuarded, renderMarkdown, renderMarkdownResult, safeHref } from "./markdown";
+import { blockWeights, weightOfWord } from "./layoutweight";
+import { MAX_BLOCK_WEIGHT, MAX_BRACKETS, MAX_ELEMENTS, MAX_HEAVY_WEIGHT, MAX_LEVEL, MAX_TOTAL_WEIGHT, MAX_RUN_COST, mdForTests, markdownToHtmlForTests, markdownToHtmlGuarded, renderMarkdown, renderMarkdownResult, safeHref } from "./markdown";
 import { formatText } from "./formatted";
 
 const TAGS = new Set(["a", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong", "del", "table", "thead", "tbody", "tr", "th", "td"]);
@@ -185,7 +186,7 @@ describe("hostile markdown corpus", () => {
   for (const [name, src] of Object.entries(PAYLOADS)) {
     // Layer 1 alone must already be safe: it is the renderer, with no sanitizer after it.
     test(`${name}: the renderer alone is safe`, () => {
-      expect(problems(markdownToHtml(src), false)).toEqual([]);
+      expect(problems(markdownToHtmlForTests(src), false)).toEqual([]);
     });
     // Both layers: the result is safe, or the render failed and gave undefined (the preview then shows plain text).
     test(`${name}: renderMarkdown is safe`, () => {
@@ -271,7 +272,7 @@ describe("safeHref", () => {
 
 describe("limits", () => {
   test("a text of MARKDOWN_LIMIT characters renders in a few seconds, or gives undefined", () => {
-    const unit = "# t\n\nSome words in a paragraph, with a [link](https://ok.example) and `code`, and more words to fill the line.\n\n- [ ] item **bold**\n\n";
+    const unit = "# t\n\nSome words in a paragraph, with a [link](https://ok.example) and `code`, and more words to fill the line, and more words to fill the line, and more words to fill the line, and more words to fill the line.\n\n- [ ] item **bold**\n\n";
     const big = unit.repeat(Math.ceil(MARKDOWN_LIMIT / unit.length)).slice(0, MARKDOWN_LIMIT);
     const start = performance.now();
     const out = renderMarkdown(big);
@@ -366,7 +367,7 @@ describe("every link form ends as plain text unless the address is http, https o
   const hrefs = (html: string) => Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")).map((a) => a.getAttribute("href"));
   for (const src of BAD) {
     test(`plain text: ${JSON.stringify(src).slice(0, 60)}`, () => {
-      const html = markdownToHtml(src);
+      const html = markdownToHtmlForTests(src);
       const d = new DOMParser().parseFromString(html, "text/html");
       expect(d.querySelector("img, [src]")).toBeNull();
       for (const h of hrefs(html)) expect(h).toMatch(/^(https?:\/\/|mailto:)/i);
@@ -376,15 +377,168 @@ describe("every link form ends as plain text unless the address is http, https o
     for (const src of BAD.slice(0, 41)) {
       if (src.startsWith("[![") || src.startsWith("[a [b]")) continue;
       if (src.startsWith("<a@b") || src.startsWith("www") || src.includes("\"x") || src.includes("\u0001")) continue; // the encoder makes these safe links: a quote becomes %22
-      expect(hrefs(markdownToHtml(src)), src).toEqual([]);
+      expect(hrefs(markdownToHtmlForTests(src)), src).toEqual([]);
     }
   });
   test("the good forms are links with the safe address", () => {
-    for (const src of OK) expect(hrefs(markdownToHtml(src)).length, src).toBeGreaterThan(0);
+    for (const src of OK) expect(hrefs(markdownToHtmlForTests(src)).length, src).toBeGreaterThan(0);
   });
   test("an image never makes img or src, and the text stays", () => {
-    const html = markdownToHtml("![alt text](https://a.example/i.png)");
+    const html = markdownToHtmlForTests("![alt text](https://a.example/i.png)");
     expect(html).not.toContain("<img");
     expect(html).toContain("Image: alt text");
+  });
+});
+
+// The layout guard. The guard decision is pure, so jsdom can test it: these tests prove which inputs are refused and which are
+// rendered. They do NOT prove the time. The time of every reproduction below was measured in real Chromium with the processor
+// slowed 4 times, in the real app (task I report): before the guard each of the refused ones took 1.2 to 28 s.
+describe("the layout guard", () => {
+  const cp = String.fromCodePoint;
+  test("one block of words that are not Latin: refused above MAX_BLOCK_WEIGHT, rendered at it", () => {
+    expect(markdownToHtmlGuarded("ア ".repeat(MAX_BLOCK_WEIGHT))).toBeDefined();
+    expect(markdownToHtmlGuarded("ア ".repeat(MAX_BLOCK_WEIGHT + 10))).toBeUndefined();
+  });
+  test("reproduction: a Hebrew letter and a Latin letter in 21,845 words in one paragraph (3.6 s at 4x) is refused", () => {
+    expect(markdownToHtmlGuarded("אa ".repeat(21845))).toBeUndefined();
+  });
+  test("reproduction: a private use character and a Han character in a word, 8,000 words (5.9 to 7.1 s at 4x) is refused", () => {
+    const text = Array.from({ length: 8000 }, (_, j) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ").join("");
+    expect(markdownToHtmlGuarded(text)).toBeUndefined();
+  });
+  test("reproduction: 21,000 two-character words of private use and Han (17 s at 4x) is refused", () => {
+    const text = Array.from({ length: 21000 }, (_, j) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ").join("");
+    expect(markdownToHtmlGuarded(text)).toBeUndefined();
+  });
+  test("Hebrew with Latin: about 900 words in a block is the limit (weight 9 each)", () => {
+    const n = Math.floor(MAX_BLOCK_WEIGHT / weightOfWord("אa"));
+    expect(markdownToHtmlGuarded("אa ".repeat(n))).toBeDefined();
+    expect(markdownToHtmlGuarded("אa ".repeat(n + 1))).toBeUndefined();
+  });
+  test("heavy words (private use with Han): refused above MAX_HEAVY_WEIGHT over the whole file, rendered below", () => {
+    const word = (j: number) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ";
+    expect(markdownToHtmlGuarded(Array.from({ length: MAX_HEAVY_WEIGHT / 8 - 1 }, (_, j) => word(j)).join(""))).toBeDefined();
+    expect(markdownToHtmlGuarded(Array.from({ length: MAX_HEAVY_WEIGHT / 8 + 1 }, (_, j) => word(j)).join(""))).toBeUndefined();
+  });
+  test("many blocks just under the limit add up: the total weight is limited over the whole file", () => {
+    const para = "aア ".repeat(Math.floor(MAX_BLOCK_WEIGHT / weightOfWord("aア")) - 10) + "\n\n";
+    const blocks = Math.floor(MAX_TOTAL_WEIGHT / blockWeights(para).total);
+    expect(markdownToHtmlGuarded(para.repeat(blocks))).toBeDefined();
+    expect(markdownToHtmlGuarded(para.repeat(blocks + 2))).toBeUndefined();
+  });
+  test("a heading, a list item, a table cell, a quote and a link text count as a block each", () => {
+    for (const wrap of [(t: string) => "# " + t, (t: string) => "- " + t, (t: string) => "> " + t, (t: string) => "| a |\n|---|\n| " + t + " |", (t: string) => "[" + t + "](https://e.example)"]) {
+      expect(markdownToHtmlGuarded(wrap("ア ".repeat(MAX_BLOCK_WEIGHT + 10)))).toBeUndefined();
+      expect(markdownToHtmlGuarded(wrap("ア ".repeat(100)))).toBeDefined();
+    }
+  });
+  test("Thai without spaces is refused through the run cost, Chinese without spaces is not", () => {
+    expect(markdownToHtmlGuarded("ก".repeat(Math.ceil(Math.sqrt(MAX_RUN_COST)) + 1))).toBeUndefined();
+    expect(markdownToHtmlGuarded(Array.from({ length: 60000 }, (_, j) => cp(0x4e00 + ((j * 13) % 20000))).join(""))).toBeDefined();
+  });
+  test("reproduction: Latin and Han letters alternating in one word of 64,000 characters (2.0 s at 4x) is refused", () => {
+    expect(markdownToHtmlGuarded("A你".repeat(32000))).toBeUndefined();
+  });
+  test("reproduction: kana words separated by the ideographic space, 32,768 of them (23 s at 4x) is refused", () => {
+    expect(markdownToHtmlGuarded("ア\u3000".repeat(32768))).toBeUndefined();
+  });
+  test("reproduction: Latin words separated by the ideographic space, 21,845 of them (14 s at 4x) is refused", () => {
+    expect(markdownToHtmlGuarded("ab\u3000".repeat(21845))).toBeUndefined();
+  });
+  test("reproduction: kana separated by a comma or a dash and no space, 32,768 of them (1.9 to 2.8 s at 4x) is refused", () => {
+    for (const sep of [",", "-", "/", "…", "—", "?", ")"]) expect(markdownToHtmlGuarded(("ア" + sep).repeat(32768)), sep).toBeUndefined();
+  });
+  test("reproduction: a smiling face and a variation selector, 7,000 words of three (1.2 s at 4x) is refused", () => {
+    expect(markdownToHtmlGuarded("☺️☺︎☺️☺︎☺️☺︎ ".repeat(5400))).toBeUndefined();
+  });
+  test("a long Latin run next to one Han character is still a long run", () => {
+    expect(markdownToHtmlGuarded("A".repeat(60000) + "你")).toBeUndefined();
+  });
+  test("more than MAX_BRACKETS openers are refused", () => {
+    expect(markdownToHtmlGuarded("[ ".repeat(MAX_BRACKETS))).toBeDefined();
+    expect(markdownToHtmlGuarded("[ ".repeat(MAX_BRACKETS + 1))).toBeUndefined();
+    expect(markdownToHtmlGuarded("![ ".repeat(MAX_BRACKETS + 1))).toBeUndefined();
+  });
+  test("normal prose of 60,000 characters in each of eight scripts still renders", () => {
+    const prose: Record<string, { words: string[]; sep: string; end: string }> = {
+      ko: { words: ["오늘은", "날씨가", "정말", "좋아서", "공원에", "API를", "사용해서", "2024년에", "문서를"], sep: " ", end: ". " },
+      ja: { words: ["今日は", "天気が", "とても", "良かったので", "公園に", "APIを", "使って", "文書を"], sep: "", end: "。" },
+      zh: { words: ["今天", "天气", "非常", "好", "我们", "去", "公园", "使用", "API", "文档"], sep: "", end: "。" },
+      hi: { words: ["आज", "मौसम", "बहुत", "अच्छा", "था", "इसलिए", "हम", "पार्क", "में"], sep: " ", end: "। " },
+      ru: { words: ["Сегодня", "была", "очень", "хорошая", "погода", "поэтому", "мы", "пошли"], sep: " ", end: ". " },
+      ar: { words: ["اليوم", "كان", "الطقس", "جميلا", "جدا", "لذلك", "ذهبنا", "إلى"], sep: " ", end: ". " },
+      th: { words: ["วันนี้", "อากาศ", "ดีมาก", "เราจึง", "ไปที่", "สวนสาธารณะ", "กับเพื่อน"], sep: "", end: " " },
+      en: { words: ["Today", "the", "weather", "was", "very", "nice", "so", "we", "went"], sep: " ", end: ". " },
+    };
+    for (const [lang, v] of Object.entries(prose)) {
+      let s = "";
+      let k = 0;
+      while (s.length < 60000) {
+        let p = "";
+        for (let i = 0; i < 4; i++) {
+          let sentence = "";
+          for (let j = 0; j < 12; j++) sentence += (j && v.sep ? v.sep : "") + v.words[k++ % v.words.length];
+          p += sentence + v.end;
+        }
+        s += p.trim() + "\n\n";
+      }
+      expect(markdownToHtmlGuarded(s), lang).toBeDefined();
+    }
+  });
+});
+
+// The layer 1 pieces that make a link safe, one by one. Each one is tested alone, so removing one of them fails a test even when the
+// others would still keep the output safe.
+describe("the link rules alone", () => {
+  const unsafe = "[t](javascript:alert(1)) and [u](https://a.example)";
+  const kids = (src: string) => (mdForTests.parse(src, {}).find((t) => t.type === "inline")?.children ?? []);
+  test("the core rule hides the open and the close token of an unsafe link, and only those", () => {
+    const k = kids(unsafe);
+    const opens = k.filter((t) => t.type === "link_open");
+    const closes = k.filter((t) => t.type === "link_close");
+    expect(opens.map((t) => t.hidden)).toEqual([true, false]);
+    expect(closes.map((t) => t.hidden)).toEqual([true, false]);
+  });
+  test("the core rule also hides unsafe links inside the children of an image", () => {
+    const img = kids("![[a](javascript:x) b](https://y.example/i.png)").find((t) => t.type === "image")!;
+    const inner = (img.children ?? []).filter((t) => t.type === "link_open" || t.type === "link_close");
+    expect(inner.length).toBe(2);
+    expect(inner.every((t) => t.hidden)).toBe(true);
+  });
+  test("the link renderer rule alone prints nothing for an unsafe address, and the tag for a safe one", () => {
+    const rule = mdForTests.renderer.rules.link_open!;
+    const state = new mdForTests.core.State("", mdForTests, {});
+    const bad = new state.Token("link_open", "a", 1);
+    bad.attrSet("href", "javascript:alert(1)");
+    expect(rule([bad], 0, mdForTests.options, {}, mdForTests.renderer)).toBe("");
+    const good = new state.Token("link_open", "a", 1);
+    good.attrSet("href", "https://a.example/x");
+    good.attrSet("title", 't"x');
+    expect(rule([good], 0, mdForTests.options, {}, mdForTests.renderer)).toBe('<a href="https://a.example/x" title="t&quot;x">');
+  });
+  test("the image renderer rule alone prints plain text for an unsafe address and never prints the children", () => {
+    const rule = mdForTests.renderer.rules.image!;
+    const state = new mdForTests.core.State("", mdForTests, {});
+    const bad = new state.Token("image", "img", 0);
+    bad.attrSet("src", "javascript:alert(1)");
+    bad.content = "alt";
+    expect(rule([bad], 0, mdForTests.options, {}, mdForTests.renderer)).toBe("Image: alt");
+    const link = new state.Token("link_open", "a", 1);
+    link.attrSet("href", "https://evil.example");
+    const good = new state.Token("image", "img", 0);
+    good.attrSet("src", "https://a.example/i.png");
+    good.content = "alt";
+    good.children = [link];
+    expect(rule([good], 0, mdForTests.options, {}, mdForTests.renderer)).toBe('<a href="https://a.example/i.png">Image: alt</a>');
+  });
+  test("validateLink accepts every address, because the strict check runs after the parse (this pins that design)", () => {
+    expect(mdForTests.validateLink("javascript:alert(1)")).toBe(true);
+    expect(mdForTests.validateLink("https://a.example")).toBe(true);
+    expect(mdForTests.validateLink("data:text/html,x")).toBe(true);
+  });
+  test("raw HTML is off in the options, even though the renderer rules would also escape it", () => {
+    expect(mdForTests.options.html).toBe(false);
+    expect(mdForTests.options.linkify).toBe(false);
+    expect(mdForTests.options.typographer).toBe(false);
   });
 });
