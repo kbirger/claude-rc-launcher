@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LiveInfo } from "../src/livesessions";
-import { findSession, listSessions, newNameCache, sessionRootOf, touchedFiles } from "../src/sessions";
+import { findSession, listSessions, sessionRootOf, touchedFiles } from "../src/sessions";
+import { newNameCache } from "../src/sessionnames";
 import { encodeProjectDir } from "../src/transcript";
 import type { TranscriptFs } from "../src/transcriptfs";
 

@@ -3,16 +3,15 @@
  * TRANSCRIPTS: it never opens the user's project files (sessionfs.ts does that). See docs/session-files.md.
  *
  * (c) Which parts of a transcript each function reads
- *   scan reads only the start of each file, up to the first record that has a cwd (the session folder and branch).
- *   readName reads from the start up to the first real prompt (at most 256 KB), and the last 256 KB for title
- *   records. Its result is cached by file size and modification time.
  *   touchedFiles reads the WHOLE transcript line by line (streamed), but parses only the lines that contain
  *   "tool_use" or "tool_result".
  */
-import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import type { LiveInfo } from "./livesessions";
 import { absRefused, within } from "./paths";
-import { encodeUnits, MAX_ENCODED, parse, SESSION_ID, trimSeparators, WORKTREE_MARK, encodeProjectDir } from "./transcript";
+import { parse, SESSION_ID } from "./transcript";
+import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
+import { scan } from "./sessionscan";
 import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
 
 /** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
@@ -20,189 +19,7 @@ export type Session = { id: string; root: string; name?: string; branch?: string
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
 
-export type NameCache = {
-  get(file: string): { size: number | undefined; mtimeMs: number; name: string | undefined } | undefined;
-  set(file: string, v: { size: number | undefined; mtimeMs: number; name: string | undefined }): void;
-};
-
-/** A bounded map: when full, the oldest entry goes. */
-export function newNameCache(max = 2000): NameCache {
-  const m = new Map<string, { size: number | undefined; mtimeMs: number; name: string | undefined }>();
-  return {
-    get: (f) => m.get(f),
-    set(f, v) {
-      m.delete(f);
-      m.set(f, v);
-      while (m.size > max) m.delete(m.keys().next().value as string);
-    },
-  };
-}
 const defaultNames = newNameCache();
-
-const NAME_WINDOW = 256 * 1024;
-const NAME_MAX = 80;
-
-/**
- * One transcript that belongs to the instance folder, as scan found it: the session id, the transcript file, its
- * modification time and size (for the name cache), the session folder from its first cwd (`root`, lexical), whether it came
- * from a work tree folder, and the branch and start time of that first record. No file of the project is read for it.
- */
-type Found = { id: string; file: string; mtimeMs: number; size?: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
-
-/**
- * Find every transcript for `path`: the main folder and the work tree folders. Keep a session only when its first cwd
- * fits. It does not scan for touched files: it reads only the head of each transcript, up to the first record with a
- * cwd. With `only` it looks at that one session id.
- */
-async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: string }): Promise<Found[]> {
-  const base = join(o.home, ".claude", "projects");
-  const enc = encodeProjectDir(o.path);
-  // A work tree folder is named by encoding `<path>/.claude/worktrees/<name>`, which can pass 200 characters and then be
-  // cut and hashed, so its name may not hold the whole marker. Its first 200 characters always start with
-  // (e + marker).slice(0, 200), where e is the untruncated project name, so that is the cheap test that cannot miss.
-  // The name filter can let lookalikes through: /work/proj/.claude/worktrees-old/x, the sibling /work/proj--claude-worktrees-x,
-  // or any project with the same first 200 encoded characters when the path is 200 or longer. The gate is the check of the
-  // first cwd below (`within` the <path>/.claude/worktrees folder).
-  const prefix = (encodeUnits(trimSeparators(o.path)) + WORKTREE_MARK).slice(0, MAX_ENCODED);
-  const dirs: { dir: string; allowed: string; worktree: boolean }[] = [{ dir: join(base, enc), allowed: o.path, worktree: false }];
-  try {
-    for (const name of await o.fs.readdir(base)) {
-      if (name !== enc && name.startsWith(prefix)) {
-        dirs.push({ dir: join(base, name), allowed: join(o.path, ".claude", "worktrees"), worktree: true });
-      }
-    }
-  } catch {
-    // no projects folder
-  }
-  const out: Found[] = [];
-  for (const { dir, allowed, worktree } of dirs) {
-    let names: string[];
-    try {
-      names = await o.fs.readdir(dir);
-    } catch {
-      continue;
-    }
-    for (const name of names) {
-      if (!name.endsWith(".jsonl")) continue;
-      const id = name.slice(0, -".jsonl".length);
-      if (!SESSION_ID.test(id) || (o.only && id !== o.only)) continue;
-      const file = join(dir, name);
-      let mtimeMs: number;
-      let size: number | undefined;
-      try {
-        const st = await o.fs.stat(file);
-        mtimeMs = st.mtimeMs;
-        size = st.size;
-      } catch {
-        continue;
-      }
-      let first: Record<string, any> | undefined;
-      try {
-        for await (const line of o.fs.lines(file)) {
-          const r = parse(line);
-          if (r && typeof r.cwd === "string" && r.cwd.length > 0) {
-            first = r;
-            break;
-          }
-        }
-      } catch {
-        continue;
-      }
-      // A relative cwd would resolve against the node's own working folder.
-      if (!first || !isAbsolute(first.cwd)) continue;
-      const root = resolve(first.cwd);
-      // The folder name rule is lossy, so check the real cwd.
-      if (!within(root, resolve(allowed))) continue;
-      out.push({
-        id,
-        file,
-        mtimeMs,
-        size,
-        root,
-        worktree,
-        branch: typeof first.gitBranch === "string" && first.gitBranch ? first.gitBranch : undefined,
-        startedAt: typeof first.timestamp === "string" ? first.timestamp : undefined,
-      });
-    }
-  }
-  return out;
-}
-
-const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:", "[Request interrupted"];
-
-/** The text of a real user prompt, or undefined for meta records, command echoes and system messages. */
-function promptText(r: Record<string, any>): string | undefined {
-  if (r.type !== "user" || r.isMeta === true) return undefined;
-  const c = r.message?.content;
-  let text: unknown = c;
-  if (Array.isArray(c)) text = c.find((b) => b && b.type === "text" && typeof b.text === "string")?.text;
-  if (typeof text !== "string") return undefined;
-  const t = text.trim();
-  if (t.length === 0 || NOT_PROMPT.some((p) => t.startsWith(p))) return undefined;
-  return t;
-}
-
-function tidy(raw: string | undefined): string | undefined {
-  // Drop format and control characters (bidi overrides, zero-width characters) and collapse whitespace, so that a
-  // name cannot look like another one. A joined emoji (it uses U+200D) is shown as its parts.
-  // Format characters go first, because \s also matches U+FEFF. Control characters go after the collapse, so that a
-  // tab or a line feed still becomes a space.
-  const t = (raw ?? "").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").replace(/\p{Cc}/gu, "").replace(/ {2,}/g, " ").trim();
-  if (t.length === 0) return undefined;
-  // Cut on code points, not UTF-16 units, so that an emoji is never split in half.
-  const points = Array.from(t);
-  return points.length > NAME_MAX ? points.slice(0, NAME_MAX).join("").trimEnd() + "..." : t;
-}
-
-type Titles = { custom?: string; ai?: string; agent?: string };
-const TITLE_KINDS = ['"custom-title"', '"ai-title"', '"agent-name"'];
-
-/** A title that is empty once whitespace is collapsed is ignored on purpose, so the next kind of name is used. */
-function takeTitle(t: Titles, r: Record<string, any>): void {
-  if (r.type === "custom-title" && typeof r.customTitle === "string" && tidy(r.customTitle)) t.custom = r.customTitle;
-  else if (r.type === "ai-title" && typeof r.aiTitle === "string" && tidy(r.aiTitle)) t.ai = r.aiTitle;
-  else if (r.type === "agent-name" && typeof r.agentName === "string" && tidy(r.agentName)) t.agent = r.agentName;
-}
-
-/** Read the head (to the first real prompt, at most 256 KB) and the tail (last 256 KB). Tail titles beat head titles of the same kind. */
-async function readName(fs: TranscriptFs, file: string): Promise<string | undefined> {
-  const head: Titles = {};
-  const tail: Titles = {};
-  let first: string | undefined;
-  try {
-    let bytes = 0;
-    for await (const line of fs.lines(file)) {
-      bytes += line.length + 1;
-      const r = parse(line);
-      if (r) {
-        takeTitle(head, r);
-        first = promptText(r);
-      }
-      if (first !== undefined || bytes > NAME_WINDOW) break;
-    }
-  } catch {
-    // keep what was found
-  }
-  try {
-    for (const line of (await fs.tail?.(file, NAME_WINDOW)) ?? []) {
-      // Most tail lines are tool calls and results: skip them before the costly parse.
-      if (!TITLE_KINDS.some((k) => line.includes(k))) continue;
-      const r = parse(line);
-      if (r) takeTitle(tail, r);
-    }
-  } catch {
-    // keep what was found
-  }
-  return tidy(tail.custom ?? head.custom ?? tail.ai ?? head.ai ?? tail.agent ?? head.agent ?? first);
-}
-
-async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<string | undefined> {
-  const hit = cache.get(f.file);
-  if (hit && hit.size === f.size && hit.mtimeMs === f.mtimeMs) return hit.name;
-  const name = await readName(fs, f.file);
-  cache.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, name });
-  return name;
-}
 
 /** At most this many transcripts are read for names at once, so that a big folder stays under the open-file limit. */
 const NAME_READS = 8;
