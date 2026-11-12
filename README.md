@@ -562,12 +562,25 @@ Files that a command created do not appear. Use the "Folder" tab to find those f
   credentials of the service account to that server.
 - The node reads transcripts from `<home>/.claude/projects` of the instance user. Claude Code deletes old transcripts
   after its cleanup period, so an old session disappears from the list.
-- A text file shows as plain text. A larger text file shows its first 512 KB and a download button. Any other file
-  is a download.
+- A markdown file (`.md` or `.markdown`) shows rendered, with headings, lists, tables, code blocks, quotes, links and
+  task lists. A Source switch shows the plain text with colors instead. A file in a known language shows with colors,
+  and a Wrap switch turns line wrapping on and off. Any other text file shows as plain text.
+- The colors cover TypeScript, JavaScript, JSON, Python, shell, YAML, HTML and XML (also Svelte and Vue), CSS, SQL,
+  Go, Rust, INI and TOML, diff, Dockerfile and Makefile. The detail is in
+  [How session files work](docs/session-files.md#how-the-web-preview-formats-a-file).
+- The preview renders markdown up to 100 K characters. K is 1,024, and the count is characters, not bytes. A larger
+  markdown file shows as plain text with a note. If rendering fails, the file shows as plain text with a note.
+  Code has no size limit below the 512 KB cut. The code view builds only the lines on the screen.
+- A markdown file cannot run code or load anything from another site. Raw HTML in the file shows as text. An image
+  shows as a link with its alt text and never loads. Only links that start with `http://`, `https://` or `mailto:`
+  stay, and they open in a new tab. Code never goes through HTML.
+- The libraries for markdown and colors load only when a preview opens.
+- A text file shows its first 512 KB. A Download button gives the whole file. Any other file is a download.
 - A download is a stream. The hub passes the bytes on and never holds a whole file in memory.
 
-The first version shows only the work trees that belong to a session. It has no markdown or code formatting and no
-editing. Session files are not yet verified on Windows nodes.
+The preview has no editor, no line numbers, no search, no images, and no JSON or CSV views. A selection covers only
+the lines that the view has built, so use Download to copy the whole file. Session files are not yet verified on
+Windows nodes.
 
 If a node runs an older version without this feature, the web UI hides the "Sessions" button for its instances. Update
 the node to see the button.

@@ -26,6 +26,12 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `disposition.ts` | Makes the download headers (the file name). |
 | `api.ts` (web) | The browser calls and the types. |
 | `format.ts` (web) | Small pure helpers for the screens, such as the rows of the Touched list and the live badges. |
+| `viewkind.ts` (web) | Pure. Decides how a preview shows a text file: markdown, code or plain, and the language. It holds the file name map and the size rules. |
+| `formatted.ts`, `formatrunner.ts`, `formatjobs.ts`, `format.worker.ts` (web) | Render markdown. The worker runs `marked` with a two second limit. `formatted.ts` sanitizes the result on the main thread and falls back to plain text when anything fails. |
+| `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` runs both layers in one process, for the tests. `sanitize.ts` is the DOMPurify layer. Only the preview page loads them. |
+| `guards.ts` (web) | Cheap checks for text that would take too long to render. |
+| `FormattedText.svelte` (web) | The only place that inserts HTML into the page. It takes only text that went through the sanitizer. |
+| `CodeView.svelte`, `editor.ts`, `codetheme.ts`, `languages.ts` (web) | The read-only code viewer. `CodeView.svelte` loads the editor and one language by `import()`. `editor.ts` builds the CodeMirror view. `codetheme.ts` maps the colors to the theme variables. `languages.ts` holds one lazy loader for each language. |
 | `SessionList.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
 
 ## The request flow for a download
@@ -153,3 +159,85 @@ These numbers were measured on the development machine:
 
 The proposed decision is to keep this work on the main thread. A cache and a limit on parallel reads keep it small.
 A worker thread or a child process is not used. This decision is proposed and still waits for the approval of the user.
+
+## How the web preview formats a file
+
+The server sends the same preview JSON as before. The browser does the formatting. `FilePreview.svelte` asks
+`viewKind` for the view. It uses the file name and the number of characters of the text. It never looks at bytes.
+
+### What the preview shows
+
+A markdown file shows rendered, and a Source switch shows its text in the code viewer. A file with a known language
+shows in the code viewer with colors, and a Wrap switch turns line wrapping on and off. Wrapping is on at first. Any
+other text file shows as plain text. A file that is not text shows a note. Every preview has a Download button.
+
+### Which files get colors
+
+The file name picks the language. The whole name is tried first, then the extension. The case of the name does not
+matter.
+
+| Language | Names and extensions |
+| --- | --- |
+| TypeScript | `ts`, `mts`, `cts`, `tsx` |
+| JavaScript | `js`, `mjs`, `cjs`, `jsx` |
+| JSON | `json`, `jsonc` |
+| Python | `py` |
+| Shell | `sh`, `bash`, `zsh` |
+| YAML | `yml`, `yaml` |
+| HTML and XML | `html`, `htm`, `xhtml`, `xml`, `svg`, `svelte`, `vue` |
+| CSS | `css` |
+| SQL | `sql` |
+| Go | `go` |
+| Rust | `rs` |
+| INI and TOML | `ini`, `toml`, `cfg` |
+| Diff | `diff`, `patch` |
+| Dockerfile | `Dockerfile`, `Dockerfile.<suffix>`, `dockerfile` |
+| Makefile | `Makefile`, `GNUmakefile`, `mk` |
+
+Markdown has a grammar too, but only the Source view of a markdown file uses it. Shell, INI and TOML, diff and
+Dockerfile use small stream parsers. Makefile has no parser of its own, so it uses the shell parser. It colors
+comments, strings and variables.
+
+### Size rules
+
+- A markdown file up to 100 K characters renders as markdown. A larger one shows as plain text with a note.
+- A file with a known language shows in the code viewer with no size limit below the 512 KB cut of the server.
+- Any other text shows in a `<pre>` box up to 64 K characters. A longer plain text shows in the code viewer with no
+  language, so a large file does not make a huge page.
+- K is 1,024, and the limits count characters of the text, not bytes.
+
+### Loading
+
+The libraries load by dynamic import, and only when a preview needs them. `marked` runs in a Web Worker and
+`dompurify` runs on the main thread, both only for markdown. CodeMirror loads only for code and for the markdown
+source. Each language is its own chunk, and it loads when a file of that language opens. None of this is in the first
+page load.
+
+### Failures
+
+- If rendering fails, the worker takes more than two seconds, or the text trips a guard, the file shows as plain
+  text with a note.
+- If the editor cannot load, for example when the phone is offline, the code shows in a `<pre>` box.
+- If only the language cannot load, the code shows without colors.
+
+### Safety
+
+Markdown has two layers, and a hostile file must get past both. Layer 1 is the `marked` renderer in
+`formatjobs.ts`. It shows raw HTML as text. It shows an image as a text link. It keeps a link only if its address
+starts with `http://`, `https://` or `mailto:`, tested on the raw text before any decoding. It never writes a
+`class`. Layer 2 is DOMPurify in `sanitize.ts`. It keeps a fixed list of tags, only `href` and `title` on links, and
+only the same three address types. It adds `target="_blank"` and `rel="noopener noreferrer nofollow"` to every link.
+The worker output is untrusted, so layer 2 runs on the main thread. If the worker takes more than two seconds, the
+page stops it and shows plain text.
+
+Code never goes through HTML. CodeMirror writes text nodes, so a code file cannot add an element, a handler or a
+link to the page. The code viewer marks control characters, zero-width characters and bidirectional characters with a
+visible box, so a hidden character cannot change how the code reads. `sanitize.ts` is the only file that makes the
+`SafeHtml` type. `FormattedText.svelte` takes only that type, and it is the only file in the app that inserts HTML.
+
+### Limits that remain
+
+- The preview shows no images.
+- It has no JSON or CSV view, no search, no line numbers and no editor.
+- The code viewer builds only the lines in view. A selection covers only the lines that are built, so use Download
+  to get the whole file.
