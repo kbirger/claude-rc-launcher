@@ -260,13 +260,24 @@ these is true:
   (private use, or two scripts that are not Latin) 4,000 in all.
 - It has more than 8,000 `[` characters, or the output would be more than eight times longer than the input.
 
-A refused file shows as plain text with a note, and only its first 1,024 characters show in the viewer, with the
-download for the rest, because the viewer is slow on the same hostile text. The guard runs before any rendering, so a
-refusal is fast. Normal prose of 60,000 characters in Korean, Japanese, Chinese, Hindi, Russian, Arabic, Thai and
+A refused file shows its full text in the code viewer, with the note "This file is too complex to format. Showing
+plain text." The guard runs before any rendering, so a refusal is fast. Normal prose of 60,000 characters in Korean, Japanese, Chinese, Hindi, Russian, Arabic, Thai and
 English renders in 0.17 to 0.44 seconds at four times slowdown. The worst file that the guard lets through took 0.66
 seconds at four times slowdown and 0.24 seconds at normal speed, from the start of the job to the next paint. A
 document with more than about 3,200 elements, for example a table of more than 550 rows of 8 columns (or 695 rows of 6
 columns), shows as plain text.
+
+### The code viewer and hostile text
+
+The viewer builds one widget for each hidden or control character, and it builds a whole line. A file with 32,768
+invisible characters took 10 seconds at four times slowdown, and one line of 64 K characters of mixed scripts took 13
+seconds. So the viewer limits both. A text with more than 1,500 hidden or control characters (control characters,
+zero-width characters, bidirectional controls, the byte order mark) shows a note above the viewer, "This file has more
+than 1,500 hidden or control characters. They are not marked.", and none of them is marked. A text with fewer keeps
+full marking, because a few hidden characters are what a Trojan Source trick needs. A line of more than 1,000
+characters with a layout weight above 3,000 (the weight of `layoutweight.ts`) shows its first 1,000 characters and a
+note, "... N more characters not shown". The text is not changed. At four times slowdown the worst file opened in
+0.71 seconds (600 KB of one letter on one line). Hidden characters in the part that is not shown are not marked.
 
 ### Limits that remain
 

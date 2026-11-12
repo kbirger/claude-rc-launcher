@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { COMPLEX_FALLBACK_LIMIT, LANGUAGES, MARKDOWN_LIMIT, PLAIN_PRE_LIMIT, PLAIN_PRE_LINE_LIMIT, longestLine, isMarkdownName, languageFor, showsInPre, viewKind } from "./viewkind";
+import { LANGUAGES, MARKDOWN_LIMIT, PLAIN_PRE_LIMIT, PLAIN_PRE_LINE_LIMIT, longestLine, isMarkdownName, languageFor, showsInPre, viewKind } from "./viewkind";
 
 describe("languageFor", () => {
   test("picks the grammar by extension, without case", () => {
@@ -97,8 +97,5 @@ describe("viewKind", () => {
   });
   test("a large file of an unknown type has no note", () => {
     expect(viewKind("big.txt", MARKDOWN_LIMIT * 2)).toEqual({ kind: "plain" });
-  });
-  test("a markdown file that is too complex shows only its first 1,024 characters in the viewer", () => {
-    expect(COMPLEX_FALLBACK_LIMIT).toBe(1024);
   });
 });
