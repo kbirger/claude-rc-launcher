@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { SessionCatalog, Session } from "../src/sessioncatalog";
 import type { TranscriptFs } from "../src/transcriptfs";
 
+// The fake file system and the expected paths are POSIX strings, so the tests that read them skip on Windows.
+const win = process.platform === "win32";
 const HOME = "/h";
 const PATH = "/work/proj";
 const ID1 = "11111111-1111-1111-1111-111111111111";
@@ -48,9 +50,10 @@ function fakeFs(calls: Calls): TranscriptFs {
 const none = (): Calls => ({ readdir: 0, stat: 0, lines: 0, tail: 0 });
 
 describe("SessionCatalog", () => {
-  test("instance() reads no file", () => {
+  test("instance() and the Session constructor read no file", () => {
     const calls = none();
-    new SessionCatalog({ fs: fakeFs(calls) }).instance({ path: PATH, home: HOME });
+    const inst = new SessionCatalog({ fs: fakeFs(calls) }).instance({ path: PATH, home: HOME });
+    new Session(inst, { id: ID1, file: FILE, mtimeMs: 1, root: PATH, worktree: false });
     expect(calls).toEqual(none());
   });
 
@@ -63,7 +66,7 @@ describe("SessionCatalog", () => {
     expect(new SessionCatalog().names).not.toBe(new SessionCatalog().names);
   });
 
-  test("list() returns plain records with only the old keys", async () => {
+  test.skipIf(win)("list() returns plain records with only the old keys", async () => {
     const live = async () => new Map([[ID1, { status: "busy" as const, remoteControl: true, name: "Live name" }]]);
     const list = await new SessionCatalog({ fs: fakeFs(none()), live }).instance({ path: PATH, home: HOME }).list();
     expect(list.length).toBe(1);
@@ -74,7 +77,7 @@ describe("SessionCatalog", () => {
     expect(Object.keys(json[0].live)).toEqual(["remoteControl", "status"]);
   });
 
-  test("find() returns a Session whose touched() reads its own file and does not scan", async () => {
+  test.skipIf(win)("find() returns a Session whose touched() reads its own file and does not scan", async () => {
     const calls = none();
     const s = await new SessionCatalog({ fs: fakeFs(calls) }).instance({ path: PATH, home: HOME }).find(ID1);
     expect(s).toBeInstanceOf(Session);

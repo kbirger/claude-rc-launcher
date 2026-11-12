@@ -20,6 +20,7 @@ export type SessionCatalogOptions = {
   fs?: TranscriptFs;
   names?: NameCache;
   live?: LiveReader;
+  /** The session routes pass it in. The catalog starts to use it when the routes move onto it. */
   refuseDirs?: readonly string[];
   platform?: NodeJS.Platform;
   openDownload?: typeof openDownload;
