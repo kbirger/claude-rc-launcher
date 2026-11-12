@@ -37,8 +37,8 @@ describe("collapsedRanges", () => {
     }
   });
   test("a long line with more than MAX_LINE_NON_ASCII non-ASCII characters is hidden, Latin words with joiners too", () => {
-    expect(collapsedRanges("ab\u200c".repeat(MAX_LINE_NON_ASCII / 2))).toEqual([]);
-    expect(collapsedRanges("ab\u200c".repeat(MAX_LINE_NON_ASCII + 10)).length).toBe(1);
+    expect(collapsedRanges("ab\u200c ".repeat(MAX_LINE_NON_ASCII / 2))).toEqual([]);
+    expect(collapsedRanges("ab\u200c ".repeat(MAX_LINE_NON_ASCII + 10)).length).toBe(1);
     expect(collapsedRanges("a\u0301*".repeat(MAX_LINE_NON_ASCII + 10)).length).toBe(1);
   });
   test("a surrogate pair is not split", () => {
