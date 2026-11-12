@@ -29,7 +29,7 @@ function transcripts(roots: Record<string, string>): TranscriptFs {
   };
 }
 
-function build(opts: { home?: boolean; roots?: Record<string, string>; path?: string } = {}) {
+function build(opts: { home?: boolean; roots?: Record<string, string>; path?: string; live?: Parameters<typeof sessionApi>[0]["live"] } = {}) {
   const inst = {
     claudeHome: async (id: string) => {
       if (id !== ID) throw new HttpError(404, "instance not found");
@@ -38,7 +38,7 @@ function build(opts: { home?: boolean; roots?: Record<string, string>; path?: st
   } as unknown as Instances;
   if (opts.home === false) delete (inst as { claudeHome?: unknown }).claudeHome;
   const app = new Hono();
-  app.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: transcripts(opts.roots ?? { [SID]: root }) }));
+  app.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: transcripts(opts.roots ?? { [SID]: root }), ...(opts.live ? { live: opts.live } : {}) }));
   app.onError(onError);
   return app;
 }
@@ -59,6 +59,20 @@ describe("sessions list", () => {
     const r = await get(build(), "");
     expect(r.status).toBe(200);
     expect(((await r.json()) as { id: string }[]).map((s) => s.id)).toEqual([SID]);
+  });
+  test("GET sessions marks a running session live, read from the instance user's home", async () => {
+    const homes: string[] = [];
+    const live = async (h: string) => (homes.push(h), new Map([[SID, { status: "busy", remoteControl: true, name: "app name" }]]));
+    const r = await get(build({ live, roots: { [SID]: root, [SID2]: root } }), "");
+    const list = (await r.json()) as { id: string; name?: string; live?: unknown }[];
+    expect(homes).toEqual(["/home/x"]);
+    expect(list.find((s) => s.id === SID)).toMatchObject({ name: "app name", live: { status: "busy", remoteControl: true } });
+    expect(list.find((s) => s.id === SID2)?.live).toBeUndefined();
+  });
+  test("GET sessions still answers when the running-session files cannot be read", async () => {
+    const r = await get(build({ live: async () => { throw new Error("EACCES"); } }), "");
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { live?: unknown }[])[0]?.live).toBeUndefined();
   });
   test("GET sessions returns 404 for an unknown instance", async () => {
     const r = await build().request(`/instances/aaaaaaaaaaaa/sessions`);

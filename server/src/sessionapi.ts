@@ -3,6 +3,7 @@ import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { Hono, type Context } from "hono";
 import { downloadHeaders } from "./disposition";
 import { HttpError, type Instances } from "./instances";
+import { readLiveSessions, type LiveInfo } from "./livesessions";
 import { absRefused, PathError, within } from "./paths";
 import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./sessions";
 import { listIn, openDownload as openDownloadDefault, previewIn as previewInDefault, type OpenHooks } from "./sessionfs";
@@ -27,6 +28,8 @@ export type SessionApiDeps = {
   refuseDirs?: readonly string[];
   /** Path rules for `abs` (tests). Defaults to the platform of the node. */
   platform?: NodeJS.Platform;
+  /** Reads the running sessions under a home folder (tests). Defaults to readLiveSessions. */
+  live?: (home: string) => Promise<ReadonlyMap<string, LiveInfo>>;
 };
 
 /** Which file a file or download request names: `path` (relative to the session folder) or `abs` (a touched file). */
@@ -36,6 +39,7 @@ type Target = { path: string } | { abs: string };
 export function sessionApi(deps: SessionApiDeps): Hono {
   const { instances, fs } = deps;
   const open = deps.openDownload ?? openDownloadDefault;
+  const readLive = deps.live ?? ((home: string) => readLiveSessions({ home }));
   const preview = deps.previewIn ?? previewInDefault;
   const platform = deps.platform ?? process.platform;
   const win = platform === "win32";
@@ -138,7 +142,12 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     return [...given, ...real.filter((d): d is string => d !== undefined)];
   }
 
-  r.get("/", async (c) => c.json(await listSessions({ ...(await home(c)), ...(fs ? { fs } : {}) })));
+  r.get("/", async (c) => {
+    const h = await home(c);
+    // Live status is extra: when the running-session files cannot be read, the list is still answered.
+    const live = await readLive(h.home).catch(() => undefined);
+    return c.json(await listSessions({ ...h, ...(fs ? { fs } : {}), ...(live ? { live } : {}) }));
+  });
 
   r.get("/:sid/touched", async (c) => {
     const { h, sessionId, root, file } = await rootOf(c);

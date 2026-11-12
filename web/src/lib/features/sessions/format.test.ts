@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
+import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -150,4 +150,20 @@ test("touchedRows links every written row: inside files by relative path, the re
   );
   expect(rows.map((r) => r.link)).toEqual([{ file: "src/a.ts" }, { abs: "/home/u/notes.md" }, { abs: "/r" }]);
   expect(rows[1]!.rel).toBeUndefined();
+});
+
+test("liveBadges shows live and the status, busy as active and idle muted", () => {
+  expect(liveBadges({ ...sess, live: { status: "busy", remoteControl: false } })).toEqual([{ label: "live · busy", class: "text-success" }]);
+  expect(liveBadges({ ...sess, live: { status: "idle", remoteControl: false } })).toEqual([{ label: "live · idle", class: "text-muted-foreground" }]);
+});
+
+test("liveBadges adds Remote Control when the session is attached to it", () => {
+  expect(liveBadges({ ...sess, live: { status: "idle", remoteControl: true } })).toEqual([
+    { label: "live · idle", class: "text-muted-foreground" },
+    { label: "Remote Control", class: "" },
+  ]);
+});
+
+test("liveBadges gives nothing for a session that is not running", () => {
+  expect(liveBadges(sess)).toEqual([]);
 });

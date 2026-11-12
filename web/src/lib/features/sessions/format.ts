@@ -85,3 +85,12 @@ export function sessionDetail(s: Session, now: number): string[] {
   if (s.branch && s.branch !== "HEAD") out.push(s.branch);
   return out;
 }
+
+/** Badges of a running session: "live" with its status (busy looks active, any other status muted), and "Remote
+ *  Control" when the session is attached to it. Use them with the outline Badge, as the instance card does. */
+export function liveBadges(s: Session): { label: string; class: string }[] {
+  if (!s.live) return [];
+  const out = [{ label: `live · ${s.live.status}`, class: s.live.status === "busy" ? "text-success" : "text-muted-foreground" }];
+  if (s.live.remoteControl) out.push({ label: "Remote Control", class: "" });
+  return out;
+}

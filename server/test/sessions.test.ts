@@ -224,6 +224,38 @@ const prompt = (content: unknown, extra: object = {}) => rec({ type: "user", mes
 const nameOf = async (lines: string[], tail?: string[], mtimeMs = 1000) =>
   (await listSessions({ home: HOME, path: PATH, fs: fakeFs({ [F1]: { mtimeMs, lines: [user(PATH), ...lines], tail } }), names: newNameCache() }))[0].name;
 
+describe("live sessions", () => {
+  const F2 = `${proj("-work-proj")}/${ID2}.jsonl`;
+  const two = () => fakeFs({ [F1]: { mtimeMs: 2000, lines: [user(PATH), title("customTitle", "custom")] }, [F2]: { mtimeMs: 1000, lines: [user(PATH), prompt("hello")] } });
+  const list = (live?: Map<string, { status: string; remoteControl: boolean; name?: string }>) =>
+    listSessions({ home: HOME, path: PATH, fs: two(), names: newNameCache(), ...(live ? { live } : {}) });
+
+  test("a live session gets its status and Remote Control state, the others get no live field", async () => {
+    const out = await list(new Map([[ID2, { status: "busy", remoteControl: true }]]));
+    expect(out.map((s) => [s.id, s.live])).toEqual([[ID1, undefined], [ID2, { status: "busy", remoteControl: true }]]);
+    expect("live" in out[0]!).toBe(false);
+  });
+
+  test("the name from the live file beats every transcript name, and is tidied", async () => {
+    const out = await list(new Map([[ID1, { status: "idle", remoteControl: false, name: "  app   name  " }], [ID2, { status: "idle", remoteControl: false }]]));
+    expect(out.map((s) => s.name)).toEqual(["app name", "hello"]);
+    const long = await list(new Map([[ID1, { status: "idle", remoteControl: false, name: "n".repeat(100) }]]));
+    expect(long[0]!.name).toBe("n".repeat(80) + "...");
+  });
+
+  test("only status and remoteControl reach the Session, and the order stays newest first", async () => {
+    const info = { status: "busy", remoteControl: false, name: "x", peerToken: "SECRET" } as never;
+    const out = await list(new Map([[ID2, info]]));
+    expect(out.map((s) => s.id)).toEqual([ID1, ID2]);
+    expect(out[1]!.live).toEqual({ status: "busy", remoteControl: false });
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+  });
+
+  test("without the live option no session is live", async () => {
+    expect((await list()).every((s) => s.live === undefined)).toBe(true);
+  });
+});
+
 describe("session names", () => {
   test("custom-title beats ai-title beats agent-name beats the first prompt", async () => {
     const p = prompt("hello");

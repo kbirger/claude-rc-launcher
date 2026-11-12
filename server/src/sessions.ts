@@ -1,9 +1,11 @@
 import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import type { LiveInfo } from "./livesessions";
 import { absRefused, within } from "./paths";
 
-export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string };
+/** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
+export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status: string; remoteControl: boolean } };
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
 export type TranscriptFs = {
@@ -275,14 +277,25 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) 
 }
 
 /** List the sessions of the folder, newest first. Nothing marks Remote Control sessions with certainty, so all are listed. */
-export async function listSessions(o: { home: string; path: string; fs?: TranscriptFs; names?: NameCache }): Promise<Session[]> {
+export async function listSessions(o: {
+  home: string;
+  path: string;
+  fs?: TranscriptFs;
+  names?: NameCache;
+  /** The running sessions by session id (readLiveSessions). Without it no session is marked live. */
+  live?: ReadonlyMap<string, LiveInfo>;
+}): Promise<Session[]> {
   const fs = o.fs ?? defaultFs;
   const found = await scan({ home: o.home, path: o.path, fs });
   const sessions = await mapLimit(found, NAME_READS, async (f): Promise<Session> => {
     const lastActiveAt = new Date(f.mtimeMs).toISOString();
     const s: Session = { id: f.id, root: f.root, startedAt: f.startedAt ?? lastActiveAt, lastActiveAt };
-    const name = await nameOf(fs, f, o.names ?? defaultNames);
+    const live = o.live?.get(f.id);
+    // The live name is what the Claude app shows, so it comes first. It is not cached: it changes while the session runs.
+    const name = tidy(live?.name) ?? (await nameOf(fs, f, o.names ?? defaultNames));
     if (name) s.name = name;
+    // Field by field: nothing else from the running-session file reaches the answer.
+    if (live) s.live = { status: live.status, remoteControl: live.remoteControl };
     if (f.branch) s.branch = f.branch;
     return s;
   });
