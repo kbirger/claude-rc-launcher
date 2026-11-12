@@ -16,7 +16,7 @@ let dir: string;
 let root: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "pinned-"));
+  dir = await realpath(await mkdtemp(join(tmpdir(), "pinned-")));
   root = join(dir, "work");
   await mkdir(root);
 });
