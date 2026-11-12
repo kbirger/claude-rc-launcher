@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { HttpError } from "../src/instances";
 import * as pinnedroot from "../src/pinnedroot";
 import { PinnedRoot, type PinnedFile } from "../src/pinnedroot";
-import { Session, SessionCatalog } from "../src/sessioncatalog";
+import { Session, SessionCatalog, type SessionCatalogOptions } from "../src/sessioncatalog";
+import type { TranscriptFs } from "../src/transcriptfs";
 
 // The real-root cases use symlinks and POSIX folders, so they skip on Windows. The two type tests never run their bodies.
 const win = process.platform === "win32";
@@ -22,8 +23,8 @@ beforeEach(async () => {
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
 /** A Session of the instance folder `root` whose transcript names `cwd` as its first cwd. */
-function sessionAt(cwd: string): Session {
-  const inst = new SessionCatalog().instance({ path: root, home: join(dir, "home") });
+function sessionAt(cwd: string, o: SessionCatalogOptions = {}): Session {
+  const inst = new SessionCatalog(o).instance({ path: root, home: join(dir, "home") });
   return new Session(inst, { id: SID, file: join(dir, "t.jsonl"), mtimeMs: 1, root: cwd, worktree: false });
 }
 
@@ -73,5 +74,74 @@ describe("PinnedRoot", () => {
     expect(e).toBeInstanceOf(HttpError);
     expect((e as HttpError).status).toBe(404);
     expect((e as HttpError).message).toBe("session folder not found");
+  });
+});
+
+// The opener result goes to the route as it is: a wrapped download stream would break its abort and close handling.
+describe("the opener result", () => {
+  /** A fake opener that records its arguments and returns `sentinel`. */
+  const opener = (sentinel: object) => {
+    const calls: unknown[][] = [];
+    const fn = (...args: unknown[]) => {
+      calls.push(args);
+      return Promise.resolve(sentinel);
+    };
+    return { fn: fn as never, calls };
+  };
+
+  /** A transcript with one confirmed Write of `abs`, so that `touchedFile(abs)` finds it. */
+  const writeFs = (abs: string): TranscriptFs => {
+    const lines = [
+      JSON.stringify({ type: "assistant", timestamp: "2026-01-01T00:00:00Z", message: { content: [{ type: "tool_use", id: "t1", name: "Write", input: { file_path: abs } }] } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } }),
+    ];
+    return {
+      readdir: async () => [],
+      stat: async () => ({ mtimeMs: 1 }),
+      lines: async function* () { yield* lines; },
+    };
+  };
+
+  /** A PinnedFile for a touched file outside the session folder. */
+  async function pinnedFile(o: SessionCatalogOptions) {
+    const abs = join(dir, "out", "note.txt");
+    const pinned = await sessionAt(root, { fs: writeFs(abs), ...o }).open();
+    return { file: await pinned.touchedFile(abs), abs };
+  }
+
+  test("PinnedRoot.download returns the opener result unchanged", async () => {
+    const sentinel = { stream: {} };
+    const o = opener(sentinel);
+    const pinned = await sessionAt(root, { openDownload: o.fn }).open();
+    const out = await pinned.download("a/b.txt");
+    expect(out).toBe(sentinel as never);
+    expect(o.calls).toEqual([[await realpath(root), "a/b.txt", { exactRoot: true }]]);
+  });
+
+  test("PinnedRoot.preview returns the opener result unchanged", async () => {
+    const sentinel = { kind: "text" };
+    const o = opener(sentinel);
+    const pinned = await sessionAt(root, { previewIn: o.fn }).open();
+    const out = await pinned.preview("a/b.txt");
+    expect(out).toBe(sentinel as never);
+    expect(o.calls).toEqual([[await realpath(root), "a/b.txt", { exactRoot: true }]]);
+  });
+
+  test("PinnedFile.download returns the opener result unchanged", async () => {
+    const sentinel = { stream: {} };
+    const o = opener(sentinel);
+    const { file, abs } = await pinnedFile({ openDownload: o.fn });
+    const out = await file.download();
+    expect(out).toBe(sentinel as never);
+    expect(o.calls).toEqual([[dirname(abs), basename(abs), { exactRoot: true, exactPath: true }]]);
+  });
+
+  test("PinnedFile.preview returns the opener result unchanged", async () => {
+    const sentinel = { kind: "text" };
+    const o = opener(sentinel);
+    const { file, abs } = await pinnedFile({ previewIn: o.fn });
+    const out = await file.preview();
+    expect(out).toBe(sentinel as never);
+    expect(o.calls).toEqual([[dirname(abs), basename(abs), { exactRoot: true, exactPath: true }]]);
   });
 });
