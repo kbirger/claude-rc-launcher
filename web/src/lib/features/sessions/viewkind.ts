@@ -3,8 +3,14 @@
 
 /** Largest text, in characters of the string (not bytes), that is rendered as markdown. 64 K, where K is 1024. Measured: a normal document of this size renders in under 1 s with the processor slowed 4 times. */
 export const MARKDOWN_LIMIT = 64 * 1024;
-/** Largest plain text, in characters of the string (not bytes), that shows in a plain pre box. A larger text shows in CodeView, which builds only the lines in view. 64 K, where K is 1024. */
-export const PLAIN_PRE_LIMIT = 64 * 1024;
+/**
+ * Largest plain text, in characters of the string (not bytes), that shows in a plain pre box. A larger text shows in CodeView,
+ * which builds only the lines in view. 8 K, where K is 1024. The pre box lays out a long unbroken run of letters in a time that
+ * grows with the square of its length (65,536 letters took 16 s with the processor slowed 4 times, 8,000 took about 0.5 s).
+ */
+export const PLAIN_PRE_LIMIT = 8 * 1024;
+/** A text with a line longer than this many characters shows in CodeView, whatever its total length. */
+export const PLAIN_PRE_LINE_LIMIT = 2000;
 
 /** The 15 languages that a file name can pick, and "markdown", which only the Source view of a markdown file uses. */
 export const LANGUAGES = ["typescript", "javascript", "json", "python", "bash", "yaml", "xml", "css", "sql", "go", "rust", "ini", "diff", "dockerfile", "makefile", "markdown"] as const;
@@ -62,5 +68,17 @@ export function viewKind(name: string, length: number): ViewPlan {
   return language === undefined ? { kind: "plain" } : { kind: "code", language };
 }
 
-/** True when a plain text shows in a pre box. A longer text shows in CodeView, so a 512 KB file does not make a giant DOM. */
-export const showsInPre = (length: number): boolean => length <= PLAIN_PRE_LIMIT;
+/** The length of the longest line of the text. A line ends at a line feed or a carriage return. */
+export function longestLine(text: string): number {
+  let best = 0;
+  let run = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 10 || c === 13) run = 0;
+    else if (++run > best) best = run;
+  }
+  return best;
+}
+
+/** True when a plain text shows in a pre box: it is short and has no long line. Any other text shows in CodeView, so a 512 KB file does not make a giant DOM and a long line does not make a slow layout. */
+export const showsInPre = (text: string): boolean => text.length <= PLAIN_PRE_LIMIT && longestLine(text) <= PLAIN_PRE_LINE_LIMIT;

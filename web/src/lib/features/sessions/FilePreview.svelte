@@ -75,9 +75,9 @@
   {/if}
 {/snippet}
 
-<!-- Plain text. A small text is a pre box. A larger text is a CodeView with no language, so a 512 KB file does not make a giant page. A markdown file that could not be formatted always uses CodeView: a pre box lays out a long unbroken line slowly. -->
+<!-- Plain text. A short text with no long line is a pre box. Any other text is a CodeView with no language, so a 512 KB file does not make a giant page and a long line does not make a slow layout. A markdown file that could not be formatted always uses CodeView: a pre box lays out a long unbroken line slowly. -->
 {#snippet plain(text: string, code: boolean = false)}
-  {#if !code && showsInPre(text.length)}
+  {#if !code && showsInPre(text)}
     {@render controls(false, false)}
     <pre use:track data-preview="plain" class="{PANE} m-0 rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
   {:else}

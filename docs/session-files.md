@@ -206,8 +206,9 @@ comments, strings and variables.
 
 - A markdown file up to 64 K characters renders as markdown. A larger one shows as plain text with a note. A file that is small but too complex also shows as plain text, with its own note (see Slow markdown).
 - A file with a known language shows in the code viewer with no size limit below the 512 KB cut of the server.
-- Any other text shows in a `<pre>` box up to 64 K characters. A longer plain text shows in the code viewer with no
-  language, so a large file does not make a huge page.
+- Any other text shows in a `<pre>` box up to 8 K characters. A longer plain text shows in the code viewer with no
+  language, so a large file does not make a huge page. A text with any line longer than 2,000 characters also shows
+  in the code viewer, whatever its length, because a `<pre>` box lays out a long unbroken line very slowly.
 - K is 1,024, and the limits count characters of the text, not bytes.
 
 ### Loading

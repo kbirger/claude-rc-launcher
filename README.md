@@ -570,7 +570,7 @@ Files that a command created do not appear. Use the "Folder" tab to find those f
   [How session files work](docs/session-files.md#how-the-web-preview-formats-a-file).
 - The preview renders markdown up to 64 K characters. K is 1,024, and the count is characters, not bytes. A larger
   markdown file shows as plain text with a note. If rendering fails, or a small file is too complex (very deep nesting or thousands of elements), the file shows as plain text with a note.
-  Code has no size limit below the 512 KB cut. The code view builds only the lines on the screen.
+  Code has no size limit below the 512 KB cut. The code view builds only the lines on the screen. Plain text up to 8 K characters, with no line longer than 2,000 characters, shows in a simple box. Any other plain text shows in the code view.
 - A markdown file cannot run code or load anything from another site. Raw HTML in the file shows as text. An image
   shows as a link with its alt text and never loads. Only links that start with `http://`, `https://` or `mailto:`
   stay, and they open in a new tab. Code never goes through HTML.

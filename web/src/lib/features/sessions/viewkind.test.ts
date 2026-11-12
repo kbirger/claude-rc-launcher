@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { LANGUAGES, MARKDOWN_LIMIT, PLAIN_PRE_LIMIT, isMarkdownName, languageFor, showsInPre, viewKind } from "./viewkind";
+import { LANGUAGES, MARKDOWN_LIMIT, PLAIN_PRE_LIMIT, PLAIN_PRE_LINE_LIMIT, longestLine, isMarkdownName, languageFor, showsInPre, viewKind } from "./viewkind";
 
 describe("languageFor", () => {
   test("picks the grammar by extension, without case", () => {
@@ -77,11 +77,23 @@ describe("viewKind", () => {
   test("a too large markdown file has a note that names the limit and says characters", () => {
     expect(viewKind("a.md", MARKDOWN_LIMIT + 1)).toEqual({ kind: "plain", note: "This file has more than 64 K characters (K is 1,024), which is too many to format. It shows as plain text." });
   });
-  test("a plain text shows in a pre box up to 64 K characters, inclusive", () => {
-    expect(PLAIN_PRE_LIMIT).toBe(65536);
-    expect(showsInPre(0)).toBe(true);
-    expect(showsInPre(PLAIN_PRE_LIMIT)).toBe(true);
-    expect(showsInPre(PLAIN_PRE_LIMIT + 1)).toBe(false);
+  test("a plain text shows in a pre box up to 8 K characters, inclusive", () => {
+    expect(PLAIN_PRE_LIMIT).toBe(8192);
+    expect(showsInPre("")).toBe(true);
+    expect(showsInPre("a\n".repeat(PLAIN_PRE_LIMIT / 2))).toBe(true);
+    expect(showsInPre("a\n".repeat(PLAIN_PRE_LIMIT / 2) + "a")).toBe(false);
+  });
+  test("a text with a line longer than 2000 characters uses the viewer, whatever its length", () => {
+    expect(PLAIN_PRE_LINE_LIMIT).toBe(2000);
+    expect(showsInPre("a".repeat(2000))).toBe(true);
+    expect(showsInPre("a".repeat(2001))).toBe(false);
+    expect(showsInPre("short\n" + "a".repeat(2500) + "\nshort")).toBe(false);
+    expect(showsInPre(("a".repeat(1999) + "\n").repeat(4))).toBe(true);
+  });
+  test("longestLine counts to a line feed or a carriage return", () => {
+    expect(longestLine("")).toBe(0);
+    expect(longestLine("ab\ncde\rf")).toBe(3);
+    expect(longestLine("ab\r\ncd")).toBe(2);
   });
   test("a large file of an unknown type has no note", () => {
     expect(viewKind("big.txt", MARKDOWN_LIMIT * 2)).toEqual({ kind: "plain" });

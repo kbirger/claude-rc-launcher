@@ -89,3 +89,6 @@ What protects the page now:
 - A file that the guard refuses shows in the code viewer, not in a `<pre>` box, because a `<pre>` box has the same slow layout for a long unbroken run.
 
 Result. A run of 621 inputs of at most 65,536 characters in the real app, from the start of the format job to the next paint, with the processor slowed four times: the worst case was 0.83 seconds, no input was above one second, and the worst case at normal speed was 0.25 seconds. The inputs include every family of the first run, inputs just below and above each limit of the guard, and 80 inputs that were made as dense as the guard allows. A very dense document, for example a table with thousands of cells, is refused and shows as plain text.
+
+The same layout cost hit plain text. A text of 65,536 letters with no space took 16 seconds in a `<pre>` box at four times slowdown. So plain text now uses a `<pre>` box only up to 8 K characters and only when no line is longer than 2,000 characters. Any other plain text shows in the code viewer without a language, which builds only the lines in view.
+
