@@ -2,31 +2,6 @@
  * Sessions, their names and the files they touched, read from Claude Code transcripts. This file only READS
  * TRANSCRIPTS: it never opens the user's project files (sessionfs.ts does that). See docs/session-files.md.
  *
- * (a) Where the data lives
- *   <home>/.claude/projects/<project folder>/<session id>.jsonl
- *   The project folder name is the session folder path with each character that is not an ASCII letter or digit turned
- *   into "-": /home/u/my.proj becomes -home-u-my-proj. A name over 200 characters is cut to 200, then "-" and a hash
- *   (see encodeProjectDir). The rule is lossy (my.proj and my-proj give the same name), so scan checks the cwd inside
- *   the transcript as well. A work tree session lives in a sibling folder named by the same rule from the work tree
- *   path: -home-u-my-proj--claude-worktrees-fix-bug for /home/u/my-proj/.claude/worktrees/fix-bug. That name can be cut
- *   and hashed, so scan takes the folders that start with the first 200 characters of (the uncut encoded project path
- *   plus the marker) and lets the cwd check decide.
- *
- * (b) What a transcript looks like: one JSON record per line (JSON Lines). Short, anonymised examples of the record
- *   kinds this file uses:
- *   A user record. The first record with a cwd gives the session folder, the branch and the start time:
- *     {"type":"user","cwd":"/home/u/proj","gitBranch":"main","timestamp":"2026-11-11T10:00:00Z","message":{"content":"fix the bug"}}
- *   A name the user gave with /rename:
- *     {"type":"custom-title","customTitle":"Fix login","sessionId":"1111..."}
- *   A name Claude made up:
- *     {"type":"ai-title","aiTitle":"Login bug fix","sessionId":"1111..."}
- *   The name of an agent session:
- *     {"type":"agent-name","agentName":"reviewer","sessionId":"1111..."}
- *   An assistant record that calls the Edit tool on a file:
- *     {"type":"assistant","timestamp":"...","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Edit","input":{"file_path":"/home/u/proj/a.ts"}}]}}
- *   The user record with the result of that call. is_error is absent or false when the write succeeded:
- *     {"type":"user","timestamp":"...","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}
- *
  * (c) Which parts of a transcript each function reads
  *   scan reads only the start of each file, up to the first record that has a cwd (the session folder and branch).
  *   readName reads from the start up to the first real prompt (at most 256 KB), and the last 256 KB for title
@@ -34,23 +9,16 @@
  *   touchedFiles reads the WHOLE transcript line by line (streamed), but parses only the lines that contain
  *   "tool_use" or "tool_result".
  */
-import { createReadStream } from "node:fs";
-import { open, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
 import type { LiveInfo } from "./livesessions";
 import { absRefused, within } from "./paths";
+import { encodeUnits, MAX_ENCODED, parse, SESSION_ID, trimSeparators, WORKTREE_MARK, encodeProjectDir } from "./transcript";
+import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
 
 /** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
 export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean } };
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
-export type TranscriptFs = {
-  readdir(dir: string): Promise<string[]>;
-  stat(p: string): Promise<{ mtimeMs: number; size?: number }>;
-  lines(p: string): AsyncIterable<string>;
-  /** The complete lines in the last `bytes` bytes of the file (the first, partial line is dropped). Optional: without it only the head is read. */
-  tail?(p: string, bytes: number): Promise<string[]>;
-};
 
 export type NameCache = {
   get(file: string): { size: number | undefined; mtimeMs: number; name: string | undefined } | undefined;
@@ -71,124 +39,8 @@ export function newNameCache(max = 2000): NameCache {
 }
 const defaultNames = newNameCache();
 
-const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const MAX_LINE = 1024 * 1024;
 const NAME_WINDOW = 256 * 1024;
 const NAME_MAX = 80;
-
-/**
- * Stream a file line by line. A line over 1 MB is dropped without being kept in memory.
- * This runs on the main thread. The chunks are read without blocking, so the event loop gets a turn between them.
- * The measured cost and the proposed threading decision are in docs/session-files.md ("Cost and threading").
- */
-async function* streamLines(p: string): AsyncIterable<string> {
-  let parts: Buffer[] = [];
-  let size = 0;
-  let skipping = false;
-  for await (const chunk of createReadStream(p) as AsyncIterable<Buffer>) {
-    let start = 0;
-    while (start <= chunk.length) {
-      const nl = chunk.indexOf(0x0a, start);
-      const end = nl === -1 ? chunk.length : nl;
-      if (!skipping) {
-        size += end - start;
-        if (size > MAX_LINE) {
-          skipping = true;
-          parts = [];
-        } else if (end > start) {
-          parts.push(chunk.subarray(start, end));
-        }
-      }
-      if (nl === -1) break;
-      if (!skipping) yield Buffer.concat(parts).toString("utf8");
-      parts = [];
-      size = 0;
-      skipping = false;
-      start = nl + 1;
-    }
-  }
-  if (!skipping && size > 0) yield Buffer.concat(parts).toString("utf8");
-}
-
-/**
- * The complete lines in the last `bytes` bytes. A positional read: the rest of the file stays unread.
- * Why a byte window and not a number of lines: neither Bun nor Node has a built-in "last N lines". Reading a fixed
- * window from the end is the standard approach, and its cost does not depend on how long the lines are. The window
- * usually starts in the middle of a line, so that first partial line is dropped.
- */
-async function tailLines(p: string, bytes: number): Promise<string[]> {
-  const fh = await open(p, "r");
-  try {
-    const size = (await fh.stat()).size;
-    const n = Math.min(size, bytes);
-    const buf = Buffer.alloc(n);
-    let got = 0;
-    while (got < n) {
-      const r = await fh.read(buf, got, n - got, size - n + got);
-      if (r.bytesRead === 0) break;
-      got += r.bytesRead;
-    }
-    let text = buf.subarray(0, got);
-    if (size > n) {
-      const nl = text.indexOf(0x0a);
-      text = nl === -1 ? text.subarray(got) : text.subarray(nl + 1);
-    }
-    return text.toString("utf8").split("\n");
-  } finally {
-    await fh.close();
-  }
-}
-
-const defaultFs: TranscriptFs = {
-  readdir: (dir) => readdir(dir),
-  stat: (p) => stat(p),
-  lines: streamLines,
-  tail: tailLines,
-};
-
-/** The longest project folder name Claude Code writes before it cuts the name and adds a hash. */
-const MAX_ENCODED = 200;
-const WORKTREE_MARK = "--claude-worktrees-";
-
-/** Step 1: drop trailing "/" and "\\", unless that leaves nothing or a bare drive such as "S:". */
-function trimSeparators(path: string): string {
-  const t = path.replace(/[\\/]+$/, "");
-  return t === "" || t.endsWith(":") ? path : t;
-}
-
-/** Step 2: each UTF-16 unit that is not an ASCII letter or digit becomes "-" (a surrogate pair gives two dashes). */
-function encodeUnits(path: string): string {
-  return path.replace(/[^a-zA-Z0-9]/g, "-");
-}
-
-/** Claude Code's 32-bit string hash over the UTF-16 units, as base 36 text of its absolute value. */
-function pathHash(path: string): string {
-  let h = 0;
-  for (let i = 0; i < path.length; i++) h = ((h << 5) - h + path.charCodeAt(i)) | 0;
-  return Math.abs(h).toString(36);
-}
-
-/**
- * The folder name Claude Code uses under `projects/`. Same rule as encode_project_path in
- * github.com/sevenevesai/claude-session-parser (src/usage.rs, MIT or Apache-2.0), which was checked against Claude Code
- * 2.1.287: trailing separators are dropped, each UTF-16 unit that is not an ASCII letter or digit becomes "-", and a
- * name over 200 characters is cut to 200, then "-" and the hash of the path.
- */
-export function encodeProjectDir(path: string): string {
-  const p = trimSeparators(path);
-  const e = encodeUnits(p);
-  return e.length <= MAX_ENCODED ? e : `${e.slice(0, MAX_ENCODED)}-${pathHash(p)}`;
-}
-
-function parse(line: string): Record<string, any> | undefined {
-  if (line.length === 0 || line[0] !== "{") return undefined;
-  try {
-    const v = JSON.parse(line);
-    return v && typeof v === "object" ? v : undefined;
-  } catch {
-    return undefined; // not JSON, or a half-written last line
-  }
-}
 
 /**
  * One transcript that belongs to the instance folder, as scan found it: the session id, the transcript file, its
@@ -378,7 +230,7 @@ export async function listSessions(o: {
   /** The running sessions by session id (readLiveSessions). Without it no session is marked live. */
   live?: ReadonlyMap<string, LiveInfo>;
 }): Promise<Session[]> {
-  const fs = o.fs ?? defaultFs;
+  const fs = o.fs ?? defaultTranscriptFs;
   const found = await scan({ home: o.home, path: o.path, fs });
   const sessions = await mapLimit(found, NAME_READS, async (f): Promise<Session> => {
     const lastActiveAt = new Date(f.mtimeMs).toISOString();
@@ -406,7 +258,7 @@ type SessionQuery = { home: string; path: string; sessionId: string; fs?: Transc
  */
 export async function findSession(o: SessionQuery): Promise<{ root: string; worktree: boolean; file: string } | undefined> {
   if (!SESSION_ID.test(o.sessionId)) return undefined;
-  const found = await scan({ home: o.home, path: o.path, fs: o.fs ?? defaultFs, only: o.sessionId });
+  const found = await scan({ home: o.home, path: o.path, fs: o.fs ?? defaultTranscriptFs, only: o.sessionId });
   return found[0] ? { root: found[0].root, worktree: found[0].worktree, file: found[0].file } : undefined;
 }
 
@@ -470,7 +322,7 @@ export async function touchedFiles(o: {
   dirs?: readonly string[];
 }): Promise<TouchedFile[]> {
   if (!SESSION_ID.test(o.sessionId)) return [];
-  const fs = o.fs ?? defaultFs;
+  const fs = o.fs ?? defaultTranscriptFs;
   const file = o.file ?? (await scan({ home: o.home, path: o.path, fs, only: o.sessionId }))[0]?.file;
   if (!file) return [];
   const platform = o.platform ?? process.platform;

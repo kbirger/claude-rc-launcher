@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { HttpError, type Instances } from "../src/instances";
 import { onError } from "../src/app";
 import { sessionApi } from "../src/sessionapi";
-import type { TranscriptFs } from "../src/sessions";
+import type { TranscriptFs } from "../src/transcriptfs";
 
 const ID = "0123456789ab";
 const SID = "11111111-2222-3333-4444-555555555555";

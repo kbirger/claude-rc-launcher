@@ -42,7 +42,8 @@ import { downloadHeaders } from "./disposition";
 import { HttpError, type Instances } from "./instances";
 import { readLiveSessions, type LiveInfo } from "./livesessions";
 import { absRefused, PathError, within } from "./paths";
-import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./sessions";
+import { findSession, listSessions, touchedFiles } from "./sessions";
+import type { TranscriptFs } from "./transcriptfs";
 import { listIn, openDownload as openDownloadDefault, previewIn as previewInDefault, type OpenHooks } from "./sessionfs";
 
 /** An instance id: exactly 12 lowercase hex characters, for example "0123456789ab". */
