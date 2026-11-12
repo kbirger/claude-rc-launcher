@@ -36,10 +36,11 @@ const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
 /** The last name of a path. Both "/" and "\\" separate names. */
 const lastName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
 
-/** The language for a file name, or undefined. The whole name is tried first (Dockerfile, Makefile), then the extension. */
+/** The language for a file name, or undefined. The whole name is tried first (Dockerfile, Makefile, Dockerfile.dev), then the extension. */
 export function languageFor(name: string): LanguageId | undefined {
   const base = lastName(name).toLowerCase();
   if (Object.hasOwn(BY_NAME, base)) return BY_NAME[base];
+  if (base.startsWith("dockerfile.")) return "dockerfile";
   const dot = base.lastIndexOf(".");
   if (dot < 0) return undefined;
   const ext = base.slice(dot + 1);

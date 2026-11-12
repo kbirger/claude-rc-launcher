@@ -22,6 +22,11 @@ describe("languageFor", () => {
     expect(languageFor("GNUmakefile")).toBe("makefile");
     expect(languageFor("rules.mk")).toBe("makefile");
   });
+  test("picks Dockerfile.<suffix> and <name>.dockerfile as dockerfile, in any case", () => {
+    for (const n of ["Dockerfile.dev", "Dockerfile.prod", "dockerfile.test", "DOCKERFILE.CI", "x.dockerfile", "sub/Dockerfile.dev"]) expect(languageFor(n), n).toBe("dockerfile");
+    expect(languageFor("Dockerfilex")).toBeUndefined();
+    expect(languageFor("my.Dockerfile.bak")).toBeUndefined();
+  });
   test("uses the last name of a path with / or \\", () => {
     expect(languageFor("src/lib/a.ts")).toBe("typescript");
     expect(languageFor("C:\\proj\\Makefile")).toBe("makefile");

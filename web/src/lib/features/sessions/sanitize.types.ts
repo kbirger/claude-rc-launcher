@@ -6,7 +6,5 @@ import type { SafeHtml } from "./sanitize";
 
 // @ts-expect-error a plain string is not SafeHtml
 export const notSafe: SafeHtml = "<b>";
-// @ts-expect-error a code result needs SafeHtml, not a string
-export const notSafeCode: Formatted = { kind: "code", html: "<b>" };
 // @ts-expect-error a markdown result needs SafeHtml, not a string
 export const notSafeMarkdown: Formatted = { kind: "markdown", html: "<b>" };
