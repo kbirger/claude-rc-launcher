@@ -98,7 +98,7 @@ describe("viewKind", () => {
   test("a large file of an unknown type has no note", () => {
     expect(viewKind("big.txt", MARKDOWN_LIMIT * 2)).toEqual({ kind: "plain" });
   });
-  test("a markdown file that is too complex shows only its first 4 K characters in the viewer", () => {
-    expect(COMPLEX_FALLBACK_LIMIT).toBe(4096);
+  test("a markdown file that is too complex shows only its first 1,024 characters in the viewer", () => {
+    expect(COMPLEX_FALLBACK_LIMIT).toBe(1024);
   });
 });

@@ -61,6 +61,10 @@ describe("blockWeights", () => {
   test("punctuation, digits and joiners end a word too", () => {
     for (const sep of [",", "-", "/", "…", "—", "\u200d", "\u2060", "!", "1"]) expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(3);
   });
+  test("a bidirectional control adds 2", () => {
+    expect(blockWeights("a\u202bb\u202c").total).toBe(4);
+    expect(blockWeights("a\u200fb").total).toBe(2);
+  });
   test("a symbol or an emoji adds half a point", () => {
     expect(blockWeights("😀 😀").total).toBe(2 + 1);
     expect(blockWeights("☺️☺︎ ".repeat(10)).total).toBe(20 + 10);

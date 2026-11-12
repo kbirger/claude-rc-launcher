@@ -12,9 +12,9 @@ export const PLAIN_PRE_LIMIT = 8 * 1024;
 /**
  * When a markdown file is refused as too complex, the viewer shows only this many characters of it. A refused file is one that is
  * slow to lay out, and the viewer is slow on the same text (a file of 32,768 words with an invisible character between them took
- * 10 s at 4x in the viewer). The page tells the user and offers the download for the rest.
+ * 10 s at 4x in the viewer, and 4,096 characters of rare ones took 1.5 s). At 1,024 characters the worst file took 0.51 s. The page tells the user and offers the download for the rest.
  */
-export const COMPLEX_FALLBACK_LIMIT = 4 * 1024;
+export const COMPLEX_FALLBACK_LIMIT = 1024;
 
 /** A text with a line longer than this many characters shows in CodeView, whatever its total length. */
 export const PLAIN_PRE_LINE_LIMIT = 2000;

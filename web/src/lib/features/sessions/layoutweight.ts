@@ -13,6 +13,9 @@ const SPACE = 32;
 const isSeparator = (c: number): boolean =>
   c === SPACE || (c >= 9 && c <= 13) || c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200b) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
 
+/** The left-to-right and right-to-left marks, the embeddings and overrides, and the isolates. */
+const isBidiControl = (c: number): boolean => c === 0x200e || c === 0x200f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+
 /** Han, kana and the CJK symbols. The page may break a line after any of these, so a run of them is not one unbroken run. */
 const isIdeograph = (c: number): boolean =>
   (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xffef) || (c >= 0x20000 && c <= 0x3ffff);
@@ -118,6 +121,8 @@ export function blockWeights(text: string): Weights {
         total += w + changes;
         if (isHeavy(classes)) heavy += w;
       }
+      // Bidirectional controls make the page reorder the text (the weight is set from a run in which 7,000 words had them: 1.8 s at 4x).
+      if (isBidiControl(c)) total += 2;
       // A space that is not Latin (the ideographic space) needs a font of its own: Latin words with it between them took 14 s at 4x.
       if (sep && c >= 0x590) total += 1;
       classes = 0;
