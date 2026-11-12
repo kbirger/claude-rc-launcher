@@ -3,8 +3,9 @@
  * code that calls the file opener for a session. See docs/session-files.md.
  *
  * EXACT means { exactRoot: true }: sessionfs.ts must find that the root it gets is already a real path, so a folder
- * that became a link after rootOf checked it is refused. EXACT_FILE adds exactPath: no link anywhere below the root,
- * and a file with a second hard link is refused, because a link would name a file that is not on the touched list.
+ * that became a link after PinnedRoot.pin checked it is refused. EXACT_FILE adds exactPath: no link anywhere below
+ * the root, and a file with a second hard link is refused, because a link would name a file that is not on the
+ * touched list.
  */
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
@@ -13,7 +14,7 @@ import { absRefused, PathError, within } from "./paths";
 import type { Session, SessionCatalog } from "./sessioncatalog";
 import { listIn, type Download, type Listing, type Preview } from "./sessionfs";
 
-/** The root handed over is the real path that rootOf checked; a change after the check is refused. */
+/** The root handed over is the real path that PinnedRoot.pin checked. A change after the check is refused. */
 const EXACT = { exactRoot: true } as const;
 /** For a touched file served by `abs`: its parent folder is the root, and neither the folder nor the name may be a link. */
 const EXACT_FILE = { exactRoot: true, exactPath: true } as const;
@@ -47,8 +48,8 @@ export class PinnedRoot {
   /**
    * The session folder, found again from the transcript on every request. The instance user writes the transcript,
    * so its cwd is only a hint: `real` is where the folder really is, and it must sit inside the real instance folder
-   * (and inside the real work trees folder for a work tree session). `root` is the lexical cwd, for the transcript;
-   * file functions get `real`.
+   * (and inside the real work trees folder for a work tree session). `root` is the lexical cwd, for the transcript.
+   * File functions get `real`.
    */
   static async pin(session: Session): Promise<PinnedRoot> {
     const { root, worktree } = session;
@@ -85,9 +86,9 @@ export class PinnedRoot {
   }
 
   /**
-   * Runs `fn` on the file a request names. A `path` stays inside the session folder. An `abs` is served only when it
-   * equals a path on the session's touched list; then its real parent folder is the root. Nothing reads the file
-   * system for an `abs` before it matched, and a miss never tells whether the file exists.
+   * The touched file that an `abs` request names. It is served only when it equals a path on the session's touched
+   * list. Then its real parent folder is the root. Nothing reads the file system for an `abs` before it matched, and a
+   * miss never tells whether the file exists.
    */
   async touchedFile(abs: string): Promise<PinnedFile> {
     const session = this.session;

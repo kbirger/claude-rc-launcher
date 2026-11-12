@@ -1,24 +1,28 @@
 /*
- * The HTTP routes for the sessions of one instance. It joins sessions.ts (which reads transcripts) and sessionfs.ts
- * (which opens project files safely). See docs/session-files.md for the whole picture.
+ * The HTTP routes for the sessions of one instance. They are a thin layer over the session classes in
+ * sessioncatalog.ts (which read transcripts) and pinnedroot.ts (which checks the real root and opens files through
+ * sessionfs.ts). This file never holds a checked root as a string. See docs/session-files.md for the whole picture.
  *
  * The five routes, mounted at /instances/:id/sessions:
- *   GET /                 the sessions of the instance folder, newest first (listSessions, plus live status).
- *   GET /:sid/touched     the files the session wrote or edited (touchedFiles), without refused places.
- *   GET /:sid/files       one folder of the session folder (listIn). ?path=sub/folder, ?hidden=1 shows dot names.
- *   GET /:sid/file        a preview of one file (previewIn). ?path=rel/file or ?abs=/full/path.
- *   GET /:sid/download    the bytes of one file (openDownload). ?path= or ?abs=, as for /file.
+ *   GET /                 the sessions of the instance folder, newest first (InstanceSessions.list, plus live status).
+ *   GET /:sid/touched     the files the session wrote or edited (Session.touched), without refused places.
+ *   GET /:sid/files       one folder of the session folder (PinnedRoot.list). ?path=sub/folder, ?hidden=1 shows
+ *                         dot names.
+ *   GET /:sid/file        a preview of one file (PinnedRoot.preview). ?path=rel/file or ?abs=/full/path.
+ *   GET /:sid/download    the bytes of one file (PinnedRoot.download). ?path= or ?abs=, as for /file.
  *
- * rootOf runs first for every /:sid route. It finds the session again from its transcript (findSession), takes the
- * first cwd of the transcript as the lexical root, and then takes the real path of that folder (realpath). The
- * instance user writes the transcript, so the cwd is only a hint. These checks must hold, or the answer is 404:
+ * Every /:sid route first finds the session again from its transcript (sessionOf, with InstanceSessions.find). Then
+ * Session.open runs the real-root check in PinnedRoot.pin. It takes the first cwd of the transcript as the lexical
+ * root, and then takes the real path of that folder (realpath). The instance user writes the transcript, so the cwd
+ * is only a hint. These checks must hold, or the answer is 404:
  *   - the root is not a file system root (such as "/"),
  *   - the instance folder is still its own real path (no part of it became a link),
  *   - the real root is inside the real instance folder,
  *   - for a work tree session, the real root is inside <instance>/.claude/worktrees.
  *
  * A `path` request stays inside that real root: sessionfs.ts checks each path. An `abs` request names a file by its
- * full path, so it can reach a file outside the session folder. The `abs` gate (onTarget) serves it only when:
+ * full path, so it can reach a file outside the session folder. The `abs` gate (PinnedRoot.touchedFile) serves it
+ * only when:
  *   - the path is touched AND confirmed: the transcript has a Write, Edit, MultiEdit or NotebookEdit call for it,
  *     and a result for that call without an error (so the write really happened),
  *   - the match is exact: the resolved request path equals the list entry (no case on Windows), and the file is then
@@ -26,10 +30,10 @@
  *   - the path is not in a refused place (absRefused in paths.ts): /proc, /sys, /dev, the node's own state folders,
  *     and on Windows any path that is not a drive-letter path. The /touched route leaves the same places out.
  *
- * Where each check lives: instance id and session id patterns, rootOf, targetOf and the `abs` gate are here. The
- * refused places are in paths.ts (absRefused). The touched list and its confirmation rules are in sessions.ts
- * (touchedFiles). The checks while a file is opened (inside the root, links, hard links, no blocking open) are in
- * sessionfs.ts.
+ * Where each check lives: the instance id and session id patterns and targetOf are here. The real-root check, the
+ * `abs` gate and the EXACT and EXACT_FILE open modes are in pinnedroot.ts. The refused places are in paths.ts
+ * (absRefused). The touched list and its confirmation rules are in touched.ts (touchedIn). The checks while a file is
+ * opened (inside the root, links, hard links, no blocking open) are in sessionfs.ts.
  */
 import { posix, win32 as win32Path } from "node:path";
 import { Hono, type Context } from "hono";

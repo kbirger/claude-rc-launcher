@@ -9,12 +9,18 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 
 | File | Job |
 | --- | --- |
-| `sessions.ts` | Reads Claude Code transcripts. It finds the sessions of an instance folder, their names, and the files that each session wrote. It never opens a project file. |
+| `transcript.ts` | Pure helpers for transcripts: the session id pattern, the project folder name rule and the record parser. It reads nothing. |
+| `transcriptfs.ts` | The seam that reads transcript files: list a folder, stat a file, read the lines, read the end of a file. The default reads the real disk. |
+| `sessionscan.ts` | Finds the transcripts that belong to an instance folder (`scan`). It reads the start of each transcript, up to the first `cwd`. |
+| `sessionnames.ts` | Finds the name of a session and keeps it in a cache. |
+| `touched.ts` | Finds the files that one session wrote or edited (`touchedIn`), in one known transcript. |
+| `sessioncatalog.ts` | The session classes. One `SessionCatalog` for each app holds the seams and the name cache. `catalog.instance()` gives an `InstanceSessions`, whose `list()` gives plain records and whose `find(id)` gives a `Session`. It never opens a project file. |
+| `pinnedroot.ts` | `PinnedRoot` and `PinnedFile`. `Session.open()` runs the real-root check and gives a `PinnedRoot`. Only a `PinnedRoot` lists a folder, makes a preview or opens a download, and only its `touchedFile` method gives a file outside the session folder (the `abs` gate). |
 | `livesessions.ts` | Reads the running-session files. It tells which sessions run now, their status, their name in the Claude app, and whether they use Remote Control. |
 | `sessionfs.ts` | Opens project files safely inside one root folder. It lists a folder, makes a preview of a file and opens a file for download. It never reads a transcript. |
 | `paths.ts` | Path helpers. `within` checks that a path is inside a folder. `absRefused` checks that a full path is in a refused place. |
-| `sessionapi.ts` | The HTTP routes on the node. It joins `sessions.ts` and `sessionfs.ts` and applies the safety rules. |
-| `app.ts` | Mounts the routes and gives them the state folders of the node. |
+| `sessionapi.ts` | The HTTP routes on the node. It is a thin layer over the session classes. It checks the instance id, the session id and the query, and it never holds a checked root as a string. |
+| `app.ts` | Mounts the routes. It builds one `SessionCatalog` for each app, with the state folders of the node. |
 | `hosts.ts` | The hub routes. They pass session requests to the node of the host. |
 | `hostclient.ts` | The hub client for one node. Its `download` call streams the bytes. |
 | `disposition.ts` | Makes the download headers (the file name). |
@@ -30,9 +36,11 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 2. The hub checks the login. Then `hosts.ts` calls `download` in `hostclient.ts`. This sends the request to the node
    over HTTPS. The hub pins the certificate of the node and sends a signed hub proof (or the shared secret of the
    host) in the `Authorization` header.
-3. On the node, `sessionapi.ts` handles the request. `rootOf` finds the session folder from the transcript
-   (`findSession` in `sessions.ts`) and checks its real place. For an `abs` request, the `abs` gate reads the touched
-   list (`touchedFiles` in `sessions.ts`) and checks the path.
+3. On the node, `sessionapi.ts` handles the request. `InstanceSessions.find` finds the session from the transcript
+   and gives a `Session`. `Session.open()` checks the real place of the session folder and gives a `PinnedRoot`.
+   Only a `PinnedRoot` opens a file. For a `path` request, `PinnedRoot.download` opens the file inside the real
+   folder. For an `abs` request, `PinnedRoot.touchedFile` is the `abs` gate. It reads the touched list
+   (`touchedIn` in `touched.ts`), checks the path and gives a `PinnedFile`, whose `download` opens the file.
 4. `openDownload` in `sessionfs.ts` opens the file and checks that the open file is the file that was checked.
 5. The node answers with a stream. The hub passes the stream on to the browser. Nobody holds the whole file in memory.
 
@@ -82,7 +90,7 @@ Each function reads only what it needs:
 - `scan` reads the start of each transcript, up to the first record with a `cwd`.
 - The name code reads from the start up to the first real prompt (at most 256 KB). It also reads the last 256 KB for
   title records. A cache keeps the name until the size or the modification time of the file changes.
-- `touchedFiles` reads the whole transcript line by line. It parses only lines that contain `"tool_use"` or
+- `touchedIn` reads the whole transcript line by line. It parses only lines that contain `"tool_use"` or
   `"tool_result"`.
 
 ## The three safety rules
@@ -138,8 +146,8 @@ These numbers were measured on the development machine:
 
 - Listing 53 sessions with a cold name cache takes 84 ms in total. The longest block of the event loop is 10 ms.
   With a warm cache the list takes 9 ms.
-- `touchedFiles` on a transcript of 26.6 MB takes 63 to 87 ms. The longest block of the event loop is 7 ms. These
-  numbers were measured before `touchedFiles` began to skip lines without a tool call.
+- The touched list of a transcript of 26.6 MB takes 63 to 87 ms. The longest block of the event loop is 7 ms. These
+  numbers were measured before the touched code began to skip lines without a tool call.
 - The reads are streamed. Between chunks they give the event loop a turn, so other requests still run.
 - Downloads are pull streams. They do no CPU work.
 

@@ -13,7 +13,7 @@
  *   plus the marker) and lets the cwd check decide.
  *
  * (b) What a transcript looks like: one JSON record per line (JSON Lines). Short, anonymised examples of the record
- *   kinds this file uses:
+ *   kinds that sessionscan.ts, sessionnames.ts and touched.ts use:
  *   A user record. The first record with a cwd gives the session folder, the branch and the start time:
  *     {"type":"user","cwd":"/home/u/proj","gitBranch":"main","timestamp":"2026-11-11T10:00:00Z","message":{"content":"fix the bug"}}
  *   A name the user gave with /rename:
