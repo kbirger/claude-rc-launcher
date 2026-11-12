@@ -63,3 +63,13 @@ Session files shows a file as plain text. The user reads markdown reports and so
 - Images from the session folder through a safe route, with fixed image types and no SVG.
 - JSON and CSV views, and a search box inside the preview.
 - Relative links between markdown files inside a session folder.
+
+## Change of plan (2026-11-12)
+
+A measurement changed the code view. highlight.js froze the page on long unbroken word runs (80 seconds for a 131 KB TypeScript file made of one repeated letter). A read-only CodeMirror 6 view handled the same input, and a 2 MB file, in under 100 milliseconds, even with the processor slowed four times. It builds only the lines in view. It writes text nodes, so code never needs a sanitizer.
+
+- The code view and the plain text view for large files use a read-only CodeMirror 6, loaded only when a preview opens. This replaces highlight.js, the code color sanitizer, and the code size limit.
+- A markdown file in the Source view uses the same CodeMirror view with its markdown grammar.
+- Rendered markdown keeps the plan above: the strict renderer, DOMPurify, the size limit, and a Web Worker with a two second limit around the renderer. The worker output is untrusted and the main thread sanitizes it.
+- The colors come from CodeMirror's highlight style, mapped to the theme's color variables, so light and dark themes both work.
+- The preview is still cut at 512 KB by the server. With a viewport view, a larger cap is possible later. A range request would also be possible. Both are out of scope here.
