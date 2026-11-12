@@ -161,3 +161,17 @@ test("changing the wrap asks the view to scroll the line at the top of the scrol
   expect((call2![0] as { effects: unknown[] }).effects.length).toBe(1);
   dispatch.mockRestore();
 });
+
+test("a text with more than the limit of hidden characters shows a note and marks none of them", async () => {
+  const { target } = show({ text: "a​b\n".repeat(1600) });
+  await ready(target);
+  expect(target.querySelector("[data-special-note]")?.textContent).toBe("This file has more than 1,500 hidden or control characters. They are not marked.");
+  expect(target.querySelectorAll(".cm-specialChar").length).toBe(0);
+});
+
+test("a text with a few hidden characters keeps its marks and shows no note", async () => {
+  const { target } = show({ text: "a​b‮c\n" });
+  await ready(target);
+  expect(target.querySelector("[data-special-note]")).toBeNull();
+  expect(target.querySelectorAll(".cm-specialChar").length).toBe(2);
+});

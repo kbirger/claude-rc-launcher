@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import type { Editor } from "./editor";
   import { loadLanguage } from "./languages";
+  import { SPECIAL_CHARS_NOTE, tooManySpecialChars } from "./specialchars";
   import { LANGUAGES, type LanguageId } from "./viewkind";
 
   type Props = { text: string; language?: LanguageId; wrap?: boolean; lineNumbers?: boolean };
@@ -16,6 +17,8 @@
   let failed = $state(false);
   // True when a known language could not load. An id that is not a language is a mistake of the caller, not a failed load.
   let colorsFailed = $state(false);
+  // True when the text has too many hidden or control characters to mark them. The editor does not mark them then.
+  const unmarked = $derived(tooManySpecialChars(text));
 
   onMount(() => {
     let gone = false;
@@ -65,9 +68,12 @@
 </script>
 
 <!-- The note takes 1.75rem, so the box under it is that much lower: the page keeps no scroll bar of its own. -->
-<div class="contents" style:--code-note={failed || colorsFailed ? "1.75rem" : null}>
+<div class="contents" style:--code-note={(failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0) > 0 ? `${((failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0)) * 1.75}rem` : null}>
   {#if failed || colorsFailed}
     <p data-code-note class="m-0 mb-2 text-sm text-muted-foreground">Colors could not load. Showing plain text.</p>
+  {/if}
+  {#if unmarked}
+    <p data-code-note data-special-note class="m-0 mb-2 text-sm text-muted-foreground">{SPECIAL_CHARS_NOTE}</p>
   {/if}
   {#if failed}
     <pre class="m-0 max-h-[calc(var(--pane-max,100dvh)-var(--code-note,0rem))] overflow-auto overscroll-contain rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>

@@ -4,6 +4,7 @@
 import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
 import { EditorView, highlightSpecialChars, lineNumbers } from "@codemirror/view";
 import { codeHighlight, codeTheme } from "./codetheme";
+import { tooManySpecialChars } from "./specialchars";
 
 export type EditorOptions = { text: string; language?: Extension; wrap: boolean; lineNumbers: boolean };
 export type Editor = {
@@ -40,7 +41,8 @@ export function createEditor(parent: HTMLElement, initial: EditorOptions): Edito
         EditorView.contentAttributes.of({ "aria-readonly": "true", "aria-label": "File content" }),
         // Control, zero-width and bidirectional characters (NUL, U+200B to U+200F, U+202A to U+202E, U+2066 to U+2069, U+FEFF)
         // show as a marked box with their code point in the title. Without it, "Trojan Source" tricks in untrusted code are invisible.
-        highlightSpecialChars(),
+        // A text with more than MAX_SPECIAL_CHARS of them is not marked, because the marks are too slow to build (specialchars.ts).
+        tooManySpecialChars(opts.text) ? [] : highlightSpecialChars(),
         codeTheme,
         codeHighlight,
         wrapC.of(wrapExt()),
