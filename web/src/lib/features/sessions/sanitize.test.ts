@@ -64,13 +64,25 @@ describe("sanitizeCodeHtml", () => {
 
 describe("class rule (hljs tokens only, and never in markdown)", () => {
   const classes = (html: string) => Array.from(doc(html).body.querySelectorAll("*")).map((e) => e.getAttribute("class"));
-  test("the code sanitizer drops class values that are not hljs tokens", () => {
-    for (const bad of ["fixed inset-0 z-50 bg-white", "x\" onclick=\"alert(1)", "hljs-keyword fixed", "HLJS-KEYWORD", "", "   ", "language-ts", "hljs--x", "hljs-", "hljs-a b"]) {
+  test("the code sanitizer drops class values that have no hljs token", () => {
+    for (const bad of ["fixed inset-0 z-50 bg-white", "x\" onclick=\"alert(1)", "HLJS-KEYWORD", "", "   ", "language-ts", "language-javascript", "hljs--x", "hljs-", "onclick=alert(1)", "a'b", "fixed_x"]) {
       expect(classes(sanitizeCodeHtml(`<span class="${bad.replace(/"/g, "&quot;")}">a</span>`)), bad).toEqual([null]);
     }
   });
-  test("the code sanitizer keeps hljs tokens", () => {
+  test("the code sanitizer filters token by token", () => {
+    expect(classes(sanitizeCodeHtml('<span class="hljs-keyword fixed">a</span>'))).toEqual(["hljs-keyword"]);
+    expect(classes(sanitizeCodeHtml('<span class="hljs-keyword language-ts hljs-string">a</span>'))).toEqual(["hljs-keyword hljs-string"]);
+    expect(classes(sanitizeCodeHtml('<span class="hljs-keyword onclick=alert(1)">a</span>'))).toEqual(["hljs-keyword"]);
+    expect(classes(sanitizeCodeHtml('<span class="hljs-keyword a&quot;b">a</span>'))).toEqual(["hljs-keyword"]);
+  });
+  test("the code sanitizer keeps hljs tokens and the highlight.js modifier words", () => {
     expect(classes(sanitizeCodeHtml('<span class="hljs-keyword hljs-string">a</span><span class="hljs">b</span><span class="hljs-title_ hljs-attr">c</span>'))).toEqual(["hljs-keyword hljs-string", "hljs", "hljs-title_ hljs-attr"]);
+    expect(classes(sanitizeCodeHtml('<span class="hljs-title function_">a</span><span class="hljs-title class_ inherited__">b</span><span class="hljs-title function_ invoke__">c</span><span class="hljs-subst language_">d</span>'))).toEqual(["hljs-title function_", "hljs-title class_ inherited__", "hljs-title function_ invoke__", "hljs-subst language_"]);
+  });
+  test("real highlight.js output keeps function and class name colors", async () => {
+    const { highlightCode } = await import("./highlight");
+    expect(await highlightCode("function f(){}", "javascript")).toContain("function_");
+    expect(await highlightCode("class A { f() {} }", "typescript")).toContain("class_");
   });
   test("the markdown sanitizer never keeps class", () => {
     expect(classes(sanitizeMarkdownHtml('<p class="hljs-keyword">a</p><code class="hljs">b</code><a class="x" href="https://ok.example">c</a>'))).toEqual([null, null, null]);

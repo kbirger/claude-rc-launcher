@@ -51,13 +51,16 @@ export function sanitizeMarkdownHtml(html: string): SafeHtml {
 
 const codePurify = createDOMPurify(window);
 
-// highlight.js writes class="hljs", "hljs-keyword", "hljs-title_" and the like. Any other class (for example a Tailwind
-// class such as "fixed inset-0") could restyle the page, so it is dropped.
-const HLJS_CLASS = /^hljs(?:-[a-z0-9_]+)*$/;
+// highlight.js writes class="hljs-keyword", "hljs-title function_", "hljs-title class_ inherited__" and the like. A token is
+// kept if it is an hljs token or a highlight.js modifier word (a lower case word that ends in one or two underscores).
+// Every other token is dropped, so a Tailwind class such as "fixed" or "inset-0" cannot restyle the page, and the
+// embedded language marks ("language-javascript") are dropped too. The attribute goes only when no token is left.
+const CLASS_TOKEN = /^(?:hljs(?:-[a-z0-9_]+)*|[a-z]+_{1,2})$/;
 codePurify.addHook("uponSanitizeAttribute", (_node, data) => {
   if (data.attrName !== "class") return;
-  const tokens = data.attrValue.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0 || !tokens.every((t) => HLJS_CLASS.test(t))) data.keepAttr = false;
+  const kept = data.attrValue.split(/\s+/).filter((t) => CLASS_TOKEN.test(t));
+  if (kept.length === 0) data.keepAttr = false;
+  else data.attrValue = kept.join(" ");
 });
 
 /** Code color output of highlight.js: only `span` with `class`. Every other tag is dropped and its text kept. */
