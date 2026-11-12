@@ -541,7 +541,8 @@ you browse the session folder.
 
 The list shows every session that Claude Code recorded for the instance folder. It includes work-tree sessions that
 Claude Code files under `.claude/worktrees`. It also includes sessions that you started yourself in that folder.
-Remote Control sessions cannot be told apart from other sessions, so the list does not try.
+A session that runs now shows a "live" badge with its status ("busy" or "idle"). If it uses Remote Control, it also
+shows a "Remote Control" badge. A running session shows the name that the Claude app shows.
 
 "Touched" lists files that Claude wrote or edited with its file tools. A file counts only when the write succeeded.
 If the call was denied, failed or got no answer, the list shows the file as "not written" and does not open it.
@@ -570,6 +571,8 @@ editing. Session files are not yet verified on Windows nodes.
 
 If a node runs an older version without this feature, the web UI hides the "Sessions" button for its instances. Update
 the node to see the button.
+
+To learn how session files work inside the code, read [How session files work](docs/session-files.md).
 
 ## Multiple hosts
 

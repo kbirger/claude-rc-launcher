@@ -1,3 +1,9 @@
+/*
+ * What this file is: it OPENS PROJECT FILES safely (list a folder, preview a file, download a file) inside one root
+ * folder. How it differs from sessions.ts: sessions.ts READS TRANSCRIPTS to find sessions, their names and the paths
+ * they touched, and it never opens the user's project files. This file never reads a transcript. sessionapi.ts joins
+ * the two: it finds the session folder (or the touched file) with sessions.ts and hands it to this file to open.
+ */
 import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath, stat, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";

@@ -1,3 +1,40 @@
+/*
+ * The HTTP routes for the sessions of one instance. It joins sessions.ts (which reads transcripts) and sessionfs.ts
+ * (which opens project files safely). See docs/session-files.md for the whole picture.
+ *
+ * The five routes, mounted at /instances/:id/sessions:
+ *   GET /                 the sessions of the instance folder, newest first (listSessions, plus live status).
+ *   GET /:sid/touched     the files the session wrote or edited (touchedFiles), without refused places.
+ *   GET /:sid/files       one folder of the session folder (listIn). ?path=sub/folder, ?hidden=1 shows dot names.
+ *   GET /:sid/file        a preview of one file (previewIn). ?path=rel/file or ?abs=/full/path.
+ *   GET /:sid/download    the bytes of one file (openDownload). ?path= or ?abs=, as for /file.
+ *
+ * rootOf runs first for every /:sid route. It finds the session again from its transcript (findSession), takes the
+ * first cwd of the transcript as the lexical root, and then takes the real path of that folder (realpath). The
+ * instance user writes the transcript, so the cwd is only a hint. These checks must hold, or the answer is 404:
+ *   - the root is not a file system root (such as "/"),
+ *   - the instance folder is still its own real path (no part of it became a link),
+ *   - the real root is inside the real instance folder,
+ *   - for a work tree session, the real root is inside <instance>/.claude/worktrees.
+ *
+ * A `path` request stays inside that real root: sessionfs.ts checks each path. An `abs` request names a file by its
+ * full path, so it can reach a file outside the session folder. The `abs` gate (onTarget) serves it only when:
+ *   - the path is touched AND confirmed: the transcript has a Write, Edit, MultiEdit or NotebookEdit call for it,
+ *     and a result for that call without an error (so the write really happened),
+ *   - the match is exact: the resolved request path equals the list entry (no case on Windows), and the file is then
+ *     opened from the list entry, never from the request text,
+ *   - the path is not in a refused place (absRefused in paths.ts): /proc, /sys, /dev, the node's own state folders,
+ *     and on Windows any path that is not a drive-letter path. The /touched route leaves the same places out.
+ *
+ * EXACT means { exactRoot: true }: sessionfs.ts must find that the root it gets is already a real path, so a folder
+ * that became a link after rootOf checked it is refused. EXACT_FILE adds exactPath: no link anywhere below the root,
+ * and a file with a second hard link is refused, because a link would name a file that is not on the touched list.
+ *
+ * Where each check lives: instance id and session id patterns, rootOf, targetOf and the `abs` gate are here. The
+ * refused places are in paths.ts (absRefused). The touched list and its confirmation rules are in sessions.ts
+ * (touchedFiles). The checks while a file is opened (inside the root, links, hard links, no blocking open) are in
+ * sessionfs.ts.
+ */
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { Hono, type Context } from "hono";
@@ -8,13 +45,19 @@ import { absRefused, PathError, within } from "./paths";
 import { findSession, listSessions, touchedFiles, type TranscriptFs } from "./sessions";
 import { listIn, openDownload as openDownloadDefault, previewIn as previewInDefault, type OpenHooks } from "./sessionfs";
 
+/** An instance id: exactly 12 lowercase hex characters, for example "0123456789ab". */
 const ID_RE = /^[0-9a-f]{12}$/;
 /** The root handed over is the real path that rootOf checked; a change after the check is refused. */
 const EXACT = { exactRoot: true } as const;
+/**
+ * A session id: a lowercase UUID in 8-4-4-4-12 hex groups, for example "11111111-2222-3333-4444-555555555555".
+ * It is also the transcript file name (`<id>.jsonl`), so it can never hold a "/" or "..".
+ */
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** For a touched file served by `abs`: its parent folder is the root, and neither the folder nor the name may be a link. */
 const EXACT_FILE = { exactRoot: true, exactPath: true } as const;
 const MAX_ABS = 4096;
+/** Any control character (code 0 to 31, or 127). For example "/tmp/a\nb" has a line feed and is refused with 400. */
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
 

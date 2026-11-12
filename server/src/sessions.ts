@@ -1,3 +1,37 @@
+/*
+ * Sessions, their names and the files they touched, read from Claude Code transcripts. This file only READS
+ * TRANSCRIPTS: it never opens the user's project files (sessionfs.ts does that). See docs/session-files.md.
+ *
+ * (a) Where the data lives
+ *   <home>/.claude/projects/<project folder>/<session id>.jsonl
+ *   The project folder name is the session folder path with each character that is not a letter or a digit turned
+ *   into "-": /home/u/my.proj becomes -home-u-my-proj. The rule is lossy (my.proj and my-proj give the same name), so
+ *   scan checks the cwd inside the transcript as well. A work tree session lives in a sibling folder whose name is the
+ *   project folder name, then "--claude-worktrees-", then the work tree name:
+ *   -home-u-my-proj--claude-worktrees-fix-bug for /home/u/my-proj/.claude/worktrees/fix-bug.
+ *
+ * (b) What a transcript looks like: one JSON record per line (JSON Lines). Short, anonymised examples of the record
+ *   kinds this file uses:
+ *   A user record. The first record with a cwd gives the session folder, the branch and the start time:
+ *     {"type":"user","cwd":"/home/u/proj","gitBranch":"main","timestamp":"2026-11-11T10:00:00Z","message":{"content":"fix the bug"}}
+ *   A name the user gave with /rename:
+ *     {"type":"custom-title","customTitle":"Fix login","sessionId":"1111..."}
+ *   A name Claude made up:
+ *     {"type":"ai-title","aiTitle":"Login bug fix","sessionId":"1111..."}
+ *   The name of an agent session:
+ *     {"type":"agent-name","agentName":"reviewer","sessionId":"1111..."}
+ *   An assistant record that calls the Edit tool on a file:
+ *     {"type":"assistant","timestamp":"...","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Edit","input":{"file_path":"/home/u/proj/a.ts"}}]}}
+ *   The user record with the result of that call. is_error is absent or false when the write succeeded:
+ *     {"type":"user","timestamp":"...","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}
+ *
+ * (c) Which parts of a transcript each function reads
+ *   scan reads only the start of each file, up to the first record that has a cwd (the session folder and branch).
+ *   readName reads from the start up to the first real prompt (at most 256 KB), and the last 256 KB for title
+ *   records. Its result is cached by file size and change time.
+ *   touchedFiles reads the WHOLE transcript line by line (streamed), but parses only the lines that contain
+ *   "tool_use" or "tool_result".
+ */
 import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
@@ -41,7 +75,11 @@ const NAME_WINDOW = 256 * 1024;
 const NAME_MAX = 80;
 const WORKTREE_MARK = "--claude-worktrees-";
 
-/** Stream a file line by line. A line over 1 MB is dropped without being kept in memory. */
+/**
+ * Stream a file line by line. A line over 1 MB is dropped without being kept in memory.
+ * This runs on the main thread. The chunks are read without blocking, so the event loop gets a turn between them.
+ * The measured cost and the proposed threading decision are in docs/session-files.md ("Cost and threading").
+ */
 async function* streamLines(p: string): AsyncIterable<string> {
   let parts: Buffer[] = [];
   let size = 0;
@@ -71,7 +109,12 @@ async function* streamLines(p: string): AsyncIterable<string> {
   if (!skipping && size > 0) yield Buffer.concat(parts).toString("utf8");
 }
 
-/** The complete lines in the last `bytes` bytes. A positional read: the rest of the file stays unread. */
+/**
+ * The complete lines in the last `bytes` bytes. A positional read: the rest of the file stays unread.
+ * Why a byte window and not a number of lines: neither Bun nor Node has a built-in "last N lines". Reading a fixed
+ * window from the end is the standard approach, and its cost does not depend on how long the lines are. The window
+ * usually starts in the middle of a line, so that first partial line is dropped.
+ */
 async function tailLines(p: string, bytes: number): Promise<string[]> {
   const fh = await open(p, "r");
   try {
@@ -117,9 +160,18 @@ function parse(line: string): Record<string, any> | undefined {
   }
 }
 
+/**
+ * One transcript that belongs to the instance folder, as scan found it: the session id, the transcript file, its
+ * change time and size (for the name cache), the session folder from its first cwd (`root`, lexical), whether it came
+ * from a work tree folder, and the branch and start time of that first record. No file of the project is read for it.
+ */
 type Found = { id: string; file: string; mtimeMs: number; size?: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
 
-/** Find every transcript for `path`: the main folder and the work tree folders. Keep a session only when its first cwd fits. */
+/**
+ * Find every transcript for `path`: the main folder and the work tree folders. Keep a session only when its first cwd
+ * fits. It does not scan for touched files: it reads only the head of each transcript, up to the first record with a
+ * cwd. With `only` it looks at that one session id.
+ */
 async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: string }): Promise<Found[]> {
   const base = join(o.home, ".claude", "projects");
   const enc = encodeProjectDir(o.path);
@@ -276,7 +328,7 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) 
   return out;
 }
 
-/** List the sessions of the folder, newest first. Nothing marks Remote Control sessions with certainty, so all are listed. */
+/** List the sessions of the folder, newest first. All are listed. Only a running session (`live`) shows whether it uses Remote Control. */
 export async function listSessions(o: {
   home: string;
   path: string;
@@ -333,6 +385,12 @@ type Use = { path: string; inside: boolean; tool: "write" | "edit"; at: string }
 /**
  * Files Claude wrote or edited with Write, Edit, MultiEdit and NotebookEdit.
  * This is a lower bound: files that Claude made through Bash (redirects, cp, mv, sed -i) leave no trace here.
+ *
+ * What it reads: the whole transcript, line by line, but it parses only lines that contain "tool_use" or
+ * "tool_result" (see the header of this file for examples). An `assistant` record holds the call: a `tool_use` block
+ * with an `id`, the tool `name`, and `input.file_path` (`input.notebook_path` for NotebookEdit). A later `user` record
+ * holds the answer: a `tool_result` block whose `tool_use_id` is that id, with `is_error` when the call failed.
+ * A relative path is resolved against the session folder. A path that absRefused refuses is left out (see `dirs`).
  *
  * A path is `confirmed` only when a tool_use in an `assistant` record has a tool_result with the same id in a later
  * `user` record, and that result has no `is_error` or `is_error: false`. A call that was denied, failed, was
