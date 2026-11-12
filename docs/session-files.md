@@ -243,14 +243,30 @@ visible box, so a hidden character cannot change how the code reads. `sanitize.t
 
 ### Slow markdown
 
-The parser is fast, but DOMPurify, the insert and the layout are not, and they run on the main thread. In a real
+The parser is fast, but DOMPurify, the insert and the page layout are not, and they run on the main thread. In a real
 Chromium browser with the processor slowed four times, a file of 100 K characters could stop the page for up to 21
-seconds. The cost grows with the number of elements and with the nesting depth. So markdown has a size limit of 64 K
-characters and a guard in `markdown.ts`. The guard parses the text to tokens first and refuses the file when it would
-make more than 4,500 elements (an inline code span counts twice), when anything nests deeper than 100 levels, or when
-the output would be more than eight times longer than the input. A refused file shows as plain text. The guard runs
-before any rendering, so a refusal is fast. The worst file that the guard lets through renders in under one second at
-four times slowdown, measured from the start of the job to the next paint.
+seconds, and some small files of non-Latin words stopped it for 14 to 28 seconds. So markdown has a size limit of 64 K
+characters and a guard in `markdown.ts`. The guard parses the text to tokens first and refuses the file when any of
+these is true:
+
+- It would make more than 3,200 elements. An inline code span counts as 2, a link as 1.5 and a table cell as 0.6.
+- Anything nests deeper than 100 levels.
+- The sum of the squares of the lengths of the runs with no space is above 10,000,000. Chinese and Japanese text has no
+  spaces but is not counted, because the page can break a line after every character.
+- One paragraph, heading, list item or table cell has too many words of another script. A word with only characters
+  below U+0590 weighs 0. A word with other letters weighs 1, with Latin and one other script 2, and a word that mixes
+  scripts or has right-to-left letters with Latin weighs 8. Each change of script inside a word, each symbol pair and
+  each bidirectional control adds to the weight. One block may weigh 8,000, the whole file 40,000, and the heavy words
+  (private use, or two scripts that are not Latin) 4,000 in all.
+- It has more than 8,000 `[` characters, or the output would be more than eight times longer than the input.
+
+A refused file shows as plain text with a note, and only its first 1,024 characters show in the viewer, with the
+download for the rest, because the viewer is slow on the same hostile text. The guard runs before any rendering, so a
+refusal is fast. Normal prose of 60,000 characters in Korean, Japanese, Chinese, Hindi, Russian, Arabic, Thai and
+English renders in 0.17 to 0.44 seconds at four times slowdown. The worst file that the guard lets through took 0.66
+seconds at four times slowdown and 0.24 seconds at normal speed, from the start of the job to the next paint. A
+document with more than about 3,200 elements, for example a table of more than 550 rows of 8 columns (or 695 rows of 6
+columns), shows as plain text.
 
 ### Limits that remain
 

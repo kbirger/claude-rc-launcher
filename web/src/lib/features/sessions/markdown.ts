@@ -10,7 +10,7 @@ import { sanitizeMarkdownHtml, type SafeHtml } from "./sanitize";
 
 // The guard. Measured in real Chromium with the processor slowed 4 times, from the start of the format job to the next
 // paint: the cost of a file is in the number of elements that DOMPurify and the page must handle, and in how deep they nest,
-// not in the parser. About 155 microseconds for each element at 4x, so 4,500 elements cost about 0.7 s. A file of 25,000
+// not in the parser. About 155 microseconds for each element at 4x, so 3,200 elements cost about 0.55 s (a file of 3,190 list items took 0.56 s, of autolinks 0.70 s before links counted 1.5). A file of 25,000
 // elements took 4 to 19 s. Emphasis nested 500 deep took 10 s in DOMPurify. So the guard counts the tokens that become an
 // element, and the deepest nesting, after parsing and before any rendering.
 /** Most elements (tags in the output, counting an open and close pair once) that a file may make. An inline code span counts twice, because a line full of them is slower to lay out. A table cell counts 0.6. */
