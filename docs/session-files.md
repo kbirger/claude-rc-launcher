@@ -47,10 +47,14 @@ Claude Code writes one transcript per session:
 ```
 
 `<home>` is the home folder of the instance user. The project folder name comes from the path of the session
-folder. Each character that is not an ASCII letter or digit becomes `-`. For example, `/home/u/my.proj` becomes
-`-home-u-my-proj`. This rule loses information, so the code also checks the `cwd` inside the transcript. A work tree
-session has its own folder next to the main one. Its name is the project folder name, then `--claude-worktrees-`,
-then the name of the work tree.
+folder. Trailing `/` and `\` are dropped first. Then each character that is not an ASCII letter or digit becomes `-`
+(each UTF-16 unit counts, so an emoji gives two dashes). For example, `/home/u/my.proj` becomes `-home-u-my-proj`.
+If the name is longer than 200 characters, Claude Code keeps the first 200, then adds `-` and a hash of the path
+(`encodeProjectDir` has the exact rule). This rule loses information, so the code also checks the `cwd` inside the
+transcript. A work tree session has its own folder next to the main one. Its name comes from the same rule applied to
+`<path>/.claude/worktrees/<name>`, so it is usually the project folder name, then `--claude-worktrees-`, then the name
+of the work tree. That name can pass 200 characters and be cut, so the code takes every folder whose name starts with
+the project name (cut at 200) and keeps a session only when its first `cwd` is inside `<path>/.claude/worktrees`.
 
 A transcript has one JSON record on each line. These short examples show the records that the code uses:
 
@@ -68,6 +72,9 @@ A transcript has one JSON record on each line. These short examples show the rec
   real prompt.
 - A `tool_use` block is a call. A `tool_result` block with the same id is its answer. When `is_error` is absent or
   false, the write succeeded. The code then sets `confirmed` to true for the file.
+- Claude Code can write one tool call more than once while it streams. A repeat with the same id, the same tool name
+  and the same resolved path is the same call: the code keeps the first and ignores the repeat. A repeat with another
+  tool name or another path makes the id unsafe, and no result confirms it.
 
 Each function reads only what it needs:
 

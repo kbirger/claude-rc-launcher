@@ -67,6 +67,51 @@ describe("sessions", () => {
     expect(encodeProjectDir("/root/git/a.b")).toBe("-root-git-a-b");
   });
 
+  // Vectors from github.com/sevenevesai/claude-session-parser, src/usage.rs (encode_project_path tests, checked there
+  // against Claude Code 2.1.287), plus the cases below.
+  test("encodeProjectDir: short POSIX and Windows paths, and trailing separators", () => {
+    expect(encodeProjectDir("/home/alice/projects/foo")).toBe("-home-alice-projects-foo");
+    expect(encodeProjectDir("/Users/seven/Loom/")).toBe("-Users-seven-Loom");
+    expect(encodeProjectDir("S:\\Loom")).toBe("S--Loom");
+    expect(encodeProjectDir("S:\\Loom\\")).toBe("S--Loom");
+    expect(encodeProjectDir("S:/Loom")).toBe("S--Loom");
+    expect(encodeProjectDir("C:\\Users\\Seven\\.claude")).toBe("C--Users-Seven--claude");
+    expect(encodeProjectDir("C:\\Games\\Graal\\VSC\\Era Legacy")).toBe("C--Games-Graal-VSC-Era-Legacy");
+  });
+
+  test("encodeProjectDir: a bare root keeps its separator", () => {
+    expect(encodeProjectDir("S:\\")).toBe("S--");
+    expect(encodeProjectDir("/")).toBe("-");
+  });
+
+  test("encodeProjectDir: every UTF-16 unit that is not an ASCII letter or digit is a dash", () => {
+    // U+00DC, U+00EF, and an emoji (a surrogate pair: two units, two dashes).
+    expect(encodeProjectDir("C:\\Users\\Seven\\\u00dcn\u00efcode \u{1F600}")).toBe("C--Users-Seven--n-code---");
+    expect(encodeProjectDir("/h/caf\u00e9")).toBe("-h-caf-");
+  });
+
+  test("encodeProjectDir: 200 characters stay whole, 201 are cut to 200, then a dash and the base 36 hash", () => {
+    const p200 = "/" + "a".repeat(199);
+    expect(encodeProjectDir(p200)).toBe("-" + "a".repeat(199));
+    const p201 = "/" + "a".repeat(200);
+    expect(encodeProjectDir(p201)).toBe("-" + "a".repeat(199) + "-b6ymvl");
+    // A trailing separator is dropped before the length and the hash are taken.
+    expect(encodeProjectDir(p201 + "/")).toBe("-" + "a".repeat(199) + "-b6ymvl");
+  });
+
+  test("encodeProjectDir: a long path (from the crate) and one hashed by hand", () => {
+    expect(encodeProjectDir("C:\\Users\\Seven\\" + "very-long_folder.name ".repeat(12) + "end")).toBe(
+      "C--Users-Seven-very-long-folder-name-very-long-folder-name-very-long-folder-name-very-long-folder-name-very-long-folder-name-very-long-folder-name-very-long-folder-name-very-long-folder-name-very-long-wel9nd",
+    );
+    // h = 31*h + unit over every UTF-16 unit, as a signed 32-bit integer, then abs and base 36: worked out with an
+    // independent implementation.
+    const p = "/srv/" + "abcdefghij".repeat(25);
+    const e = encodeProjectDir(p);
+    expect(e.length).toBe(200 + 1 + "cd2rdw".length);
+    expect(e.endsWith("-cd2rdw")).toBe(true);
+    expect(e.slice(0, 200)).toBe(p.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 200));
+  });
+
   test("listSessions returns the first cwd as the root and ignores later cwd values", async () => {
     const fs = fakeFs({
       [`${proj("-work-proj")}/${ID1}.jsonl`]: { mtimeMs: Date.UTC(2026, 0, 2), lines: [user(PATH), user("/work/proj/sub", { gitBranch: "x" })] },
@@ -193,6 +238,45 @@ describe("sessions", () => {
     expect(encodeProjectDir("/work/proj/.claude-worktrees-x")).toBe("-work-proj--claude-worktrees-x");
     const fs = fakeFs({ [`${proj("-work-proj--claude-worktrees-x")}/${ID1}.jsonl`]: { lines: [user("/work/proj/.claude-worktrees-x")] } });
     expect(await listSessions({ home: HOME, path: PATH, fs })).toEqual([]);
+  });
+
+  test("a long project path (over 200) finds its main folder and a work tree folder, each once", async () => {
+    const long = "/srv/" + "abcdefghij".repeat(25);
+    const main = encodeProjectDir(long);
+    const wtPath = `${long}/.claude/worktrees/fix`;
+    const wtDir = encodeProjectDir(wtPath);
+    // The work tree folder name is cut and hashed, so it no longer holds the whole marker.
+    expect(wtDir.includes("--claude-worktrees-")).toBe(false);
+    expect(wtDir).not.toBe(main);
+    const fs = fakeFs({
+      [`${proj(main)}/${ID1}.jsonl`]: { mtimeMs: 2000, lines: [user(long)] },
+      [`${proj(wtDir)}/${ID2}.jsonl`]: { mtimeMs: 1000, lines: [user(wtPath)] },
+    });
+    const out = await listSessions({ home: HOME, path: long, fs });
+    expect(out.map((s) => [s.id, s.root])).toEqual([[ID1, long], [ID2, wtPath]]);
+    expect(await findSession({ home: HOME, path: long, sessionId: ID2, fs })).toEqual({ root: wtPath, worktree: true, file: `${proj(wtDir)}/${ID2}.jsonl` });
+    expect((await findSession({ home: HOME, path: long, sessionId: ID1, fs }))?.worktree).toBe(false);
+  });
+
+  test("a short project path still finds its main and work tree folders, each once", async () => {
+    const wt = "/work/proj/.claude/worktrees/feat";
+    const fs = fakeFs({
+      [`${proj("-work-proj")}/${ID1}.jsonl`]: { mtimeMs: 2000, lines: [user(PATH)] },
+      [`${proj("-work-proj--claude-worktrees-feat")}/${ID2}.jsonl`]: { mtimeMs: 1000, lines: [user(wt)] },
+    });
+    expect((await listSessions({ home: HOME, path: PATH, fs })).map((s) => s.id)).toEqual([ID1, ID2]);
+  });
+
+  test("a work tree path of 200 or more encoded characters is found, and a lookalike with an outside cwd is dropped", async () => {
+    const long = "/srv/" + "abcdefghij".repeat(25);
+    const wtDir = encodeProjectDir(`${long}/.claude/worktrees/fix`);
+    const fs = fakeFs({
+      // Same prefix as a work tree folder, but its cwd is in the project and not in .claude/worktrees.
+      [`${proj(wtDir)}/${ID1}.jsonl`]: { lines: [user(`${long}/src`)] },
+      // A different project whose name starts with the same text.
+      [`${proj(encodeProjectDir(long + "2"))}/${ID2}.jsonl`]: { lines: [user(long + "2")] },
+    });
+    expect(await listSessions({ home: HOME, path: long, fs })).toEqual([]);
   });
 
   test("touchedFiles counts a MultiEdit call", async () => {
@@ -546,14 +630,39 @@ describe("touched means written", () => {
     expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "z1"), nested])).toEqual([]);
   });
 
-  test("two uses with the same id fail closed: neither is confirmed by the one result", async () => {
+  test("two uses with the same id and a different path or a different tool fail closed: nothing is confirmed", async () => {
     expect(await confirmedPaths([use("Write", { file_path: "/ok" }, T, "dup"), use("Write", { file_path: "/secret" }, T, "dup"), result("dup")])).toEqual([]);
+    expect(await confirmedPaths([use("Write", { file_path: "/ok" }, T, "dupn"), use("Edit", { file_path: "/ok" }, T, "dupn"), result("dupn")])).toEqual([]);
     // In one record, too.
     const both = rec({ type: "assistant", timestamp: T, message: { content: [
       { type: "tool_use", id: "dup2", name: "Write", input: { file_path: "/ok" } },
       { type: "tool_use", id: "dup2", name: "Edit", input: { file_path: "/secret" } },
     ] } });
     expect(await confirmedPaths([both, result("dup2")])).toEqual([]);
+    // Once poisoned, a third use that matches the first still does not rescue the id.
+    expect(await confirmedPaths([use("Write", { file_path: "/a" }, T, "dup3"), use("Write", { file_path: "/b" }, T, "dup3"), use("Write", { file_path: "/a" }, T, "dup3"), result("dup3")])).toEqual([]);
+    // NotebookEdit and Edit are different tools even though both are edits.
+    expect(await confirmedPaths([use("NotebookEdit", { notebook_path: "/n" }, T, "dup4"), use("Edit", { file_path: "/n" }, T, "dup4"), result("dup4")])).toEqual([]);
+  });
+
+  test("a repeat of the same id with the same tool and the same resolved path is one call: confirmed once, first use kept", async () => {
+    const later = "2026-01-01T00:00:05.000Z";
+    const out = await touched([use("Write", { file_path: "/work/proj/a.txt" }, T, "rep"), use("Write", { file_path: "a.txt", content: "x" }, later, "rep"), result("rep")]);
+    expect(out).toEqual([{ path: "/work/proj/a.txt", inside: true, tool: "write", at: T, confirmed: true }]);
+    // In one record, too.
+    const both = rec({ type: "assistant", timestamp: T, message: { content: [
+      { type: "tool_use", id: "rep2", name: "Edit", input: { file_path: "/work/proj/b.txt", old_string: "a" } },
+      { type: "tool_use", id: "rep2", name: "Edit", input: { file_path: "/work/proj/b.txt", old_string: "a", new_string: "b" } },
+    ] } });
+    expect(await confirmedPaths([both, result("rep2")])).toEqual(["/work/proj/b.txt"]);
+    // A repeat that is not confirmed because the result is an error stays unconfirmed.
+    expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "rep3"), use("Write", { file_path: "/x" }, T, "rep3"), result("rep3", { is_error: true })])).toEqual([]);
+  });
+
+  test("a repeat after the result does not un-confirm the path or make a new pending call", async () => {
+    const lines = [use("Write", { file_path: "/x" }, T, "aft"), result("aft"), use("Write", { file_path: "/x" }, T, "aft"), use("Write", { file_path: "/y" }, T, "aft"), result("aft")];
+    const out = await touched(lines);
+    expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/x", true], ["/y", false]]);
   });
 
   test("a use that reuses an id whose result was already read is ignored", async () => {

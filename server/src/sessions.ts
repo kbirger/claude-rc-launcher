@@ -5,10 +5,11 @@
  * (a) Where the data lives
  *   <home>/.claude/projects/<project folder>/<session id>.jsonl
  *   The project folder name is the session folder path with each character that is not an ASCII letter or digit turned
- *   into "-": /home/u/my.proj becomes -home-u-my-proj. The rule is lossy (my.proj and my-proj give the same name), so
- *   scan checks the cwd inside the transcript as well. A work tree session lives in a sibling folder whose name is the
- *   project folder name, then "--claude-worktrees-", then the work tree name:
- *   -home-u-my-proj--claude-worktrees-fix-bug for /home/u/my-proj/.claude/worktrees/fix-bug.
+ *   into "-": /home/u/my.proj becomes -home-u-my-proj. A name over 200 characters is cut to 200, then "-" and a hash
+ *   (see encodeProjectDir). The rule is lossy (my.proj and my-proj give the same name), so scan checks the cwd inside
+ *   the transcript as well. A work tree session lives in a sibling folder named by the same rule from the work tree
+ *   path: -home-u-my-proj--claude-worktrees-fix-bug for /home/u/my-proj/.claude/worktrees/fix-bug. That name can be cut
+ *   and hashed, so scan takes every folder that starts with the project name and lets the cwd check decide.
  *
  * (b) What a transcript looks like: one JSON record per line (JSON Lines). Short, anonymised examples of the record
  *   kinds this file uses:
@@ -73,7 +74,6 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const MAX_LINE = 1024 * 1024;
 const NAME_WINDOW = 256 * 1024;
 const NAME_MAX = 80;
-const WORKTREE_MARK = "--claude-worktrees-";
 
 /**
  * Stream a file line by line. A line over 1 MB is dropped without being kept in memory.
@@ -145,9 +145,37 @@ const defaultFs: TranscriptFs = {
   tail: tailLines,
 };
 
-/** The folder name Claude Code uses under `projects/`: every character that is not an ASCII letter or digit becomes a dash. */
-export function encodeProjectDir(path: string): string {
+/** The longest project folder name Claude Code writes before it cuts the name and adds a hash. */
+const MAX_ENCODED = 200;
+
+/** Step 1: drop trailing "/" and "\\", unless that leaves nothing or a bare drive such as "S:". */
+function trimSeparators(path: string): string {
+  const t = path.replace(/[\\/]+$/, "");
+  return t === "" || t.endsWith(":") ? path : t;
+}
+
+/** Step 2: each UTF-16 unit that is not an ASCII letter or digit becomes "-" (a surrogate pair gives two dashes). */
+function encodeUnits(path: string): string {
   return path.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/** Claude Code's 32-bit string hash over the UTF-16 units, as base 36 text of its absolute value. */
+function pathHash(path: string): string {
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = ((h << 5) - h + path.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36);
+}
+
+/**
+ * The folder name Claude Code uses under `projects/`. Same rule as encode_project_path in
+ * github.com/sevenevesai/claude-session-parser (src/usage.rs, MIT or Apache-2.0), which was checked against Claude Code
+ * 2.1.287: trailing separators are dropped, each UTF-16 unit that is not an ASCII letter or digit becomes "-", and a
+ * name over 200 characters is cut to 200, then "-" and the hash of the path.
+ */
+export function encodeProjectDir(path: string): string {
+  const p = trimSeparators(path);
+  const e = encodeUnits(p);
+  return e.length <= MAX_ENCODED ? e : `${e.slice(0, MAX_ENCODED)}-${pathHash(p)}`;
 }
 
 function parse(line: string): Record<string, any> | undefined {
@@ -175,10 +203,14 @@ type Found = { id: string; file: string; mtimeMs: number; size?: number; root: s
 async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: string }): Promise<Found[]> {
   const base = join(o.home, ".claude", "projects");
   const enc = encodeProjectDir(o.path);
+  // A work tree folder is named by encoding `<path>/.claude/worktrees/<name>`, which can pass 200 characters and then be
+  // cut and hashed, so its name may not hold the whole marker. Any folder that starts with the untruncated name (cut at
+  // 200) is a candidate. The check of the first cwd below drops every one that is not a work tree of this path.
+  const prefix = encodeUnits(trimSeparators(o.path)).slice(0, MAX_ENCODED);
   const dirs: { dir: string; allowed: string; worktree: boolean }[] = [{ dir: join(base, enc), allowed: o.path, worktree: false }];
   try {
     for (const name of await o.fs.readdir(base)) {
-      if (name.startsWith(enc + WORKTREE_MARK)) {
+      if (name !== enc && name.startsWith(prefix)) {
         dirs.push({ dir: join(base, name), allowed: join(o.path, ".claude", "worktrees"), worktree: true });
       }
     }
@@ -402,8 +434,12 @@ type Use = { path: string; inside: boolean; tool: "write" | "edit"; at: string }
  * A path is `confirmed` only when a tool_use in an `assistant` record has a tool_result with the same id in a later
  * `user` record, and that result has no `is_error` or `is_error: false`. A call that was denied, failed, was
  * interrupted or is still running wrote nothing, so it is not confirmed. Only confirmed paths may be served.
- * Fail closed everywhere: a use without a string id, two uses with the same id, a result before its use, a result
- * from any other record type, and a use dropped from the full pending list (1000, oldest first) never confirm.
+ * Claude Code can write several entries for one API response while it streams, so the same tool_use can appear more
+ * than once. A repeat with the same id, the same tool name and the same resolved path is the same call: the first is
+ * kept and the repeat is ignored (the rest of its input is not compared). A repeat with another tool name or another
+ * path poisons the id.
+ * Fail closed everywhere: a use without a string id, two different uses with the same id, a result before its use, a
+ * result from any other record type, and a use dropped from the full pending list (1000, oldest first) never confirm.
  * A path that was confirmed once stays confirmed. A later failed call does not change its time, tool or place.
  *
  * The answer lists the confirmed paths first, newest first, then the unconfirmed ones (each path once), newest first,
@@ -432,8 +468,9 @@ export async function touchedFiles(o: {
   const platform = o.platform ?? process.platform;
   const P = platform === "win32" ? win32 : posix;
   const root = P.resolve(o.root);
-  // tool_use id -> the call, or null when the id was seen twice (no result may confirm it then).
-  const pending = new Map<string, Use | null>();
+  // tool_use id -> the call and its tool name, or null when the id was seen with two different calls (no result may
+  // confirm it then).
+  const pending = new Map<string, { use: Use; name: string } | null>();
   // Ids whose result was read: a later use with the same id is ignored.
   const answered = new Map<string, true>();
   const confirmed = new Map<string, Use>();
@@ -452,7 +489,7 @@ export async function touchedFiles(o: {
           if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
           const id: string = block.tool_use_id;
           if (!pending.has(id)) continue;
-          const u = pending.get(id);
+          const u = pending.get(id)?.use;
           pending.delete(id);
           putNewest(answered, id, true, TOUCHED_MAX);
           if (!u || (block.is_error !== undefined && block.is_error !== false)) continue;
@@ -471,11 +508,14 @@ export async function touchedFiles(o: {
         if (absRefused(p, { platform, dirs: o.dirs })) continue;
         const at = typeof r.timestamp === "string" ? r.timestamp : "";
         const u: Use = { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at };
-        if (!confirmed.has(p)) putNewest(tried, p, u, TOUCHED_MAX);
         const id = block.id;
+        // The same call again (same id, tool and resolved path): keep the first, ignore the repeat.
+        const prior = typeof id === "string" ? pending.get(id) : undefined;
+        if (prior && prior.name === name && prior.use.path === p) continue;
+        if (!confirmed.has(p)) putNewest(tried, p, u, TOUCHED_MAX);
         if (typeof id !== "string" || answered.has(id)) continue;
         if (pending.has(id)) pending.set(id, null);
-        else putNewest(pending, id, u, PENDING_MAX);
+        else putNewest(pending, id, { use: u, name }, PENDING_MAX);
       }
     }
   } catch {
