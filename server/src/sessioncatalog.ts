@@ -5,6 +5,7 @@
  */
 import { realpath } from "node:fs/promises";
 import { readLiveSessions, type LiveInfo } from "./livesessions";
+import { PinnedRoot } from "./pinnedroot";
 import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
 import { openDownload, previewIn } from "./sessionfs";
@@ -150,5 +151,10 @@ export class Session {
   touched(o: { dirs: readonly string[] }): Promise<TouchedFile[]> {
     const catalog = this.instance.catalog;
     return touchedIn({ fs: catalog.fs, file: this.file, root: this.root, platform: catalog.platform, dirs: o.dirs });
+  }
+
+  /** Runs the real-root check and gives the checked root. A failed check is a 404. */
+  open(): Promise<PinnedRoot> {
+    return PinnedRoot.pin(this);
   }
 }
