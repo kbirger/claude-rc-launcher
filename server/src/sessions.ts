@@ -9,7 +9,7 @@
  *   (see encodeProjectDir). The rule is lossy (my.proj and my-proj give the same name), so scan checks the cwd inside
  *   the transcript as well. A work tree session lives in a sibling folder named by the same rule from the work tree
  *   path: -home-u-my-proj--claude-worktrees-fix-bug for /home/u/my-proj/.claude/worktrees/fix-bug. That name can be cut
- *   and hashed, so scan takes every folder that starts with the project name and lets the cwd check decide.
+ *   and hashed, so scan takes the folders that start with the first 200 characters of (project name + marker) and lets the cwd check decide.
  *
  * (b) What a transcript looks like: one JSON record per line (JSON Lines). Short, anonymised examples of the record
  *   kinds this file uses:
@@ -147,6 +147,7 @@ const defaultFs: TranscriptFs = {
 
 /** The longest project folder name Claude Code writes before it cuts the name and adds a hash. */
 const MAX_ENCODED = 200;
+const WORKTREE_MARK = "--claude-worktrees-";
 
 /** Step 1: drop trailing "/" and "\\", unless that leaves nothing or a bare drive such as "S:". */
 function trimSeparators(path: string): string {
@@ -204,9 +205,10 @@ async function scan(o: { home: string; path: string; fs: TranscriptFs; only?: st
   const base = join(o.home, ".claude", "projects");
   const enc = encodeProjectDir(o.path);
   // A work tree folder is named by encoding `<path>/.claude/worktrees/<name>`, which can pass 200 characters and then be
-  // cut and hashed, so its name may not hold the whole marker. Any folder that starts with the untruncated name (cut at
-  // 200) is a candidate. The check of the first cwd below drops every one that is not a work tree of this path.
-  const prefix = encodeUnits(trimSeparators(o.path)).slice(0, MAX_ENCODED);
+  // cut and hashed, so its name may not hold the whole marker. Its first 200 characters always start with
+  // (e + marker).slice(0, 200), where e is the untruncated project name, so that is the cheap test that cannot miss.
+  // It does not match unrelated projects. The check of the first cwd below drops a lookalike.
+  const prefix = (encodeUnits(trimSeparators(o.path)) + WORKTREE_MARK).slice(0, MAX_ENCODED);
   const dirs: { dir: string; allowed: string; worktree: boolean }[] = [{ dir: join(base, enc), allowed: o.path, worktree: false }];
   try {
     for (const name of await o.fs.readdir(base)) {

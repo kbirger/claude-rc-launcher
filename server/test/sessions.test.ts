@@ -279,6 +279,41 @@ describe("sessions", () => {
     expect(await listSessions({ home: HOME, path: long, fs })).toEqual([]);
   });
 
+  test("work tree candidates are chosen by the name alone: unrelated and sibling folders are never opened", async () => {
+    const opened: string[] = [];
+    const watch = (fs: TranscriptFs): TranscriptFs => ({ ...fs, readdir: async (d) => (opened.push(d), fs.readdir(d)) });
+    // An instance at /root: 50 other projects start with "-root" too.
+    const files: Files = {};
+    for (let i = 0; i < 50; i++) files[`${proj(`-root-other${i}`)}/${ID1}.jsonl`] = { lines: [user(`/root/other${i}`)] };
+    files[`${proj("-root")}/${ID2}.jsonl`] = { lines: [user("/root")] };
+    const out = await listSessions({ home: HOME, path: "/root", fs: watch(fakeFs(files)) });
+    expect(out.map((s) => s.id)).toEqual([ID2]);
+    expect(opened.filter((d) => d.includes("other"))).toEqual([]);
+    // A sibling whose name only starts with the project name.
+    opened.length = 0;
+    const sib = fakeFs({ [`${proj("-work-proj2")}/${ID1}.jsonl`]: { lines: [user("/work/proj2")] }, [`${proj("-work-proj")}/${ID2}.jsonl`]: { lines: [user(PATH)] } });
+    expect((await listSessions({ home: HOME, path: PATH, fs: watch(sib) })).map((s) => s.id)).toEqual([ID2]);
+    expect(opened.some((d) => d.endsWith("-work-proj2"))).toBe(false);
+  });
+
+  test("a work tree folder name cut at 200 characters is still found, with the marker whole, cut in the middle, or gone", async () => {
+    // e is 150 (marker whole), 185 and 195 (marker cut in the middle) and 250 (more than 200, so cut and hashed).
+    for (const n of [150, 185, 195, 250]) {
+      const long = "/" + "a".repeat(n - 2) + "b";
+      expect(encodeProjectDir(long).length === n || n > 200).toBe(true);
+      const wtPath = `${long}/.claude/worktrees/fix-the-bug-in-a-long-named-branch`;
+      const wtDir = encodeProjectDir(wtPath);
+      expect(wtDir.includes("--claude-worktrees-")).toBe(n + 19 <= 200);
+      const main = encodeProjectDir(long);
+      const fs = fakeFs({
+        [`${proj(main)}/${ID1}.jsonl`]: { mtimeMs: 2000, lines: [user(long)] },
+        [`${proj(wtDir)}/${ID2}.jsonl`]: { mtimeMs: 1000, lines: [user(wtPath)] },
+      });
+      const out = await listSessions({ home: HOME, path: long, fs });
+      expect(out.map((s) => [s.id, s.root])).toEqual([[ID1, long], [ID2, wtPath]]);
+    }
+  });
+
   test("touchedFiles counts a MultiEdit call", async () => {
     const fs = fakeFs({
       [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...wrote("MultiEdit", { file_path: "/work/proj/m.ts", edits: [] }, "2026-01-01T00:00:01.000Z")] },
