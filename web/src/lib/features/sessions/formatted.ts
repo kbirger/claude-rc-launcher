@@ -8,6 +8,8 @@ import { viewKind } from "./viewkind";
 export type Formatted = { kind: "markdown"; html: SafeHtml } | { kind: "plain"; note?: string };
 export const FAILED_NOTE = "This file could not be formatted. It shows as plain text.";
 export const TOO_COMPLEX_NOTE = "This file is too complex to format. Showing plain text.";
+/** The note for a file that is also cut: the viewer shows the start of it. */
+export const TOO_COMPLEX_CUT_NOTE = "This file is too complex to format. Showing the start of it as plain text. Download the file for the rest.";
 
 /** `name` is the file name, `text` is the preview text. The result is never an error: a failure gives plain text with a note. */
 export async function formatText(name: string, text: string): Promise<Formatted> {

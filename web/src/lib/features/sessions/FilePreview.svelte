@@ -4,10 +4,10 @@
   import { downloadUrl } from "./api";
   import CodeView from "./CodeView.svelte";
   import { baseName, humanSize } from "./format";
-  import { formatText } from "./formatted";
+  import { TOO_COMPLEX_CUT_NOTE, TOO_COMPLEX_NOTE, formatText } from "./formatted";
   import FormattedText from "./FormattedText.svelte";
   import { previewQuery } from "./queries";
-  import { showsInPre, viewKind } from "./viewkind";
+  import { COMPLEX_FALLBACK_LIMIT, showsInPre, viewKind } from "./viewkind";
 
   // `abs`: `file` is the absolute path of a touched file outside the session folder.
   type Props = { host: string; instance: string; session: string; file: string; abs?: boolean; back: string };
@@ -126,8 +126,9 @@
               <div use:track data-preview="source" class="min-w-0"><CodeView {text} language="markdown" {wrap} /></div>
             {/if}
           {:else}
-            {#if f.note}<p class="text-sm text-muted-foreground">{f.note}</p>{/if}
-            {@render plain(text, true)}
+            {@const cut = f.note === TOO_COMPLEX_NOTE && text.length > COMPLEX_FALLBACK_LIMIT}
+            {#if f.note}<p class="text-sm text-muted-foreground">{cut ? TOO_COMPLEX_CUT_NOTE : f.note}</p>{/if}
+            {@render plain(cut ? text.slice(0, COMPLEX_FALLBACK_LIMIT) : text, true)}
           {/if}
         {/await}
       {:else if plan.kind === "code"}

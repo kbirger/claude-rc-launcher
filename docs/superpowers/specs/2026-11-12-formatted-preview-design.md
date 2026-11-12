@@ -70,7 +70,7 @@ A measurement changed the code view. highlight.js froze the page on long unbroke
 
 - The code view and the plain text view for large files use a read-only CodeMirror 6, loaded only when a preview opens. This replaces highlight.js, the code color sanitizer, and the code size limit.
 - A markdown file in the Source view uses the same CodeMirror view with its markdown grammar.
-- Rendered markdown keeps the plan above: the strict renderer, DOMPurify, the size limit, and a Web Worker with a two second limit around the renderer. The worker output is untrusted and the main thread sanitizes it.
+- Rendered markdown keeps the strict renderer, DOMPurify and the size limit. How the page is protected from slow files changed on the same day: see the last section.
 - The colors come from CodeMirror's highlight style, mapped to the theme's color variables, so light and dark themes both work.
 - The preview is still cut at 512 KB by the server. With a viewport view, a larger cap is possible later. A range request would also be possible. Both are out of scope here.
 

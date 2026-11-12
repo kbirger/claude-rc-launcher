@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, test } from "vitest";
-import { FAILED_NOTE, TOO_COMPLEX_NOTE, formatText } from "./formatted";
+import { FAILED_NOTE, TOO_COMPLEX_CUT_NOTE, TOO_COMPLEX_NOTE, formatText } from "./formatted";
 import { MARKDOWN_LIMIT } from "./viewkind";
 
 const doc = (html: string) => new DOMParser().parseFromString(html, "text/html");
@@ -27,6 +27,8 @@ describe("formatText", () => {
     const r = await formatText("a.md", "*a ".repeat(MARKDOWN_LIMIT / 6) + "a* ".repeat(MARKDOWN_LIMIT / 6));
     expect(r).toEqual({ kind: "plain", note: TOO_COMPLEX_NOTE });
     expect(TOO_COMPLEX_NOTE).not.toBe(FAILED_NOTE);
+    expect(TOO_COMPLEX_CUT_NOTE).toContain("Download");
+    expect(TOO_COMPLEX_CUT_NOTE).not.toBe(TOO_COMPLEX_NOTE);
   });
   test("deep nesting does not throw: it renders or falls back to plain text with a note", async () => {
     const r = await formatText("a.md", "> ".repeat(MARKDOWN_LIMIT / 2));
