@@ -1,0 +1,14 @@
+/* Typography for rendered markdown. Only theme variables are used (app.css and routes/layout.css), so light, dark, Ayu and
+   Tokyo Night all work. The colors of code come from codetheme.ts, not from here. */
+.formatted-md { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.formatted-md > :first-child { margin-top: 0; }
+.formatted-md > :last-child { margin-bottom: 0; }
+.formatted-md pre { overflow: auto; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--card); padding: 0.75rem; font: 0.875rem/1.45 ui-monospace, monospace; }
+.formatted-md code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+.formatted-md :not(pre) > code { border-radius: 0.25rem; background: var(--muted); padding: 0.1em 0.3em; }
+.formatted-md a { color: var(--primary); text-decoration: underline; }
+.formatted-md blockquote { margin-inline: 0; border-inline-start: 3px solid var(--border); padding-inline-start: 1rem; color: var(--muted-foreground); }
+.formatted-md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.formatted-md th, .formatted-md td { overflow-wrap: normal; border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: start; }
+.formatted-md th { background: var(--muted); }
+.formatted-md hr { border: 0; border-top: 1px solid var(--border); }
