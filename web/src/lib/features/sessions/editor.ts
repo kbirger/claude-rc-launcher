@@ -17,9 +17,9 @@ export type Editor = {
   destroy(): void;
 };
 
-/** The start of the line at the top of the screen, or undefined when the top of the editor is on screen or below it. */
+/** The start of the line at the top of the scroll box, or undefined when the box is scrolled to its start. */
 function lineAtTopOfScreen(view: EditorView): number | undefined {
-  const scrolledPast = -view.documentTop;
+  const scrolledPast = view.scrollDOM.scrollTop;
   if (!(scrolledPast > 0)) return undefined;
   return view.lineBlockAtHeight(scrolledPast).from;
 }
@@ -62,9 +62,9 @@ export function createEditor(parent: HTMLElement, initial: EditorOptions): Edito
     setWrap(wrap) {
       opts.wrap = wrap;
       const effects: StateEffect<unknown>[] = [wrapC.reconfigure(wrapExt())];
-      // The page is the scroll container, so CodeMirror keeps no reading position of its own. Wrap changes the height
-      // of every line, so without this the line at the top of the screen moves by many screens. We find that line first
-      // and ask the view to scroll it back to the top once the new layout is known.
+      // Wrap changes the height of every line. CodeMirror keeps the scroll offset only roughly, because it guesses the height
+      // of the lines it has not drawn: the line at the top moved by 5 to 19 lines on a 6,000 line file. We find that line
+      // first and ask the view to scroll it back to the top once the new layout is known.
       const top = lineAtTopOfScreen(view);
       if (top !== undefined) effects.push(EditorView.scrollIntoView(top, { y: "start", yMargin: 0 }));
       view.dispatch({ effects });

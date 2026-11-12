@@ -17,9 +17,11 @@ const PALETTE = {
 };
 
 export const codeTheme: Extension = EditorView.theme({
-  "&": { ...PALETTE, backgroundColor: "transparent", color: "var(--foreground)", fontSize: "0.875rem", maxWidth: "100%" },
+  "&": { ...PALETTE, backgroundColor: "transparent", color: "var(--foreground)", fontSize: "0.875rem", maxWidth: "100%", maxHeight: "calc(var(--pane-max, 100dvh) - var(--code-note, 0rem) - 2px)" },
   "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { fontFamily: "ui-monospace, monospace", lineHeight: "1.45" },
+  // The scroller is the scroll box of the code: it scrolls in both directions inside the pane, and a fling at its end does not drag the page.
+  // --pane-max is set by FilePreview. The 2 px are the border of the box around the editor. A short file is as tall as its text.
+  ".cm-scroller": { fontFamily: "ui-monospace, monospace", lineHeight: "1.45", overflow: "auto", overscrollBehavior: "contain" },
   ".cm-content": { padding: "0.75rem" },
   ".cm-line": { padding: "0" },
   // A marked control or bidirectional character. The box and the red text use the destructive color, which has at least 3:1 against the card in every palette.

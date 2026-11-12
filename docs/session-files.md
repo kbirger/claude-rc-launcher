@@ -171,6 +171,11 @@ A markdown file shows rendered, and a Source switch shows its text in the code v
 shows in the code viewer with colors, and a Wrap switch turns line wrapping on and off. Wrapping is on at first. Any
 other text file shows as plain text. A file that is not text shows a note. Every preview has a Download button.
 
+The controls (Rendered, Source, Wrap and Download) sit in one row above the file. The file fills the rest of the screen
+and scrolls inside its own box, so the page itself does not scroll. With Wrap off, the code scrolls sideways inside the
+box. A short file makes a short box. On a screen that is very low (a phone on its side), the box keeps at least 150
+pixels and the page scrolls instead. While a file is open, the session header is hidden to leave room for it.
+
 ### Which files get colors
 
 The file name picks the language. The whole name is tried first, then the extension. The case of the name does not

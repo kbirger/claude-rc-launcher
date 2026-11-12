@@ -138,26 +138,26 @@ test("normal text is not marked: tabs, CRLF, accents, CJK and emoji", async () =
   expect(target.querySelectorAll(".cm-specialChar").length).toBe(0);
 });
 
-test("changing the wrap asks the view to scroll the line at the top of the screen back to the top", async () => {
+test("changing the wrap asks the view to scroll the line at the top of the scroll box back to the top", async () => {
   const text = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");
   const props = reactiveProps({ text, wrap: true });
   // The view binds dispatch in its constructor, so the spy must exist before the view is built.
   const dispatch = vi.spyOn(EditorView.prototype, "dispatch");
   const { target } = show(props);
   await ready(target);
-  // jsdom has no layout: say that the page is scrolled 400 px into the editor.
-  const top = vi.spyOn(EditorView.prototype, "documentTop", "get").mockReturnValue(-400);
+  // jsdom has no layout: say that the scroll box of the editor is scrolled 400 px.
+  const scroller = target.querySelector(".cm-scroller") as HTMLElement;
+  Object.defineProperty(scroller, "scrollTop", { value: 400, configurable: true, writable: true });
   dispatch.mockClear();
   props.wrap = false;
   flushSync();
   const call = dispatch.mock.calls.find((c) => Array.isArray((c[0] as { effects?: unknown[] }).effects));
   expect((call![0] as { effects: unknown[] }).effects.length).toBe(2); // the reconfigure and the scrollIntoView
-  top.mockReturnValue(100); // the editor starts below the top of the screen: nothing to keep
+  scroller.scrollTop = 0; // the box is at its start: nothing to keep
   dispatch.mockClear();
   props.wrap = true;
   flushSync();
   const call2 = dispatch.mock.calls.find((c) => Array.isArray((c[0] as { effects?: unknown[] }).effects));
   expect((call2![0] as { effects: unknown[] }).effects.length).toBe(1);
-  top.mockRestore();
   dispatch.mockRestore();
 });

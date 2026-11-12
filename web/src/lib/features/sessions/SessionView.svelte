@@ -21,8 +21,11 @@
 </script>
 
 <div class="grid gap-3">
+  <!-- A file preview needs the room: it has its own Back button, so the session header is left out while a file is open. -->
+  {#if !abs && !file}
   <Button variant="outline" size="touch" href={sessionsHref({ host, instance })}>All sessions</Button>
-  {#if s}
+  {/if}
+  {#if s && !abs && !file}
     {@const wt = worktreeName(s.root)}
     <div class="flex flex-wrap items-center gap-2 text-muted-foreground">
       <span class="font-semibold text-foreground">{s.branch ?? "no branch"}</span>
