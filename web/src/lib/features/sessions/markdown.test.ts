@@ -3,6 +3,8 @@ import { describe, expect, test } from "vitest";
 import { MARKDOWN_LIMIT } from "./viewkind";
 import { sanitizeMarkdownHtml } from "./sanitize";
 import { markdownToHtml, renderMarkdown, safeHref } from "./markdown";
+import { formatText } from "./formatted";
+import { runInProcess } from "./formatrunner";
 
 const TAGS = new Set(["a", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong", "del", "table", "thead", "tbody", "tr", "th", "td"]);
 const ATTRS: Record<string, string[]> = { a: ["href", "title", "target", "rel"], th: ["align"], td: ["align"] };
@@ -190,6 +192,19 @@ describe("hostile markdown corpus", () => {
     test(`${name}: renderMarkdown is safe`, () => {
       const out = renderMarkdown(src);
       if (out !== undefined) expect(problems(out, true)).toEqual([]);
+    });
+  }
+});
+
+// The preview goes through formatText: the same jobs, then the sanitizer on the main thread. With a runner that runs the
+// jobs in this process, the result must be exactly the result of renderMarkdown, for the whole corpus.
+describe("formatText equals renderMarkdown for the whole corpus", () => {
+  for (const [name, src] of Object.entries(PAYLOADS)) {
+    test(name, async () => {
+      const expected = renderMarkdown(src);
+      const r = await formatText("a.md", src, runInProcess);
+      if (r.kind === "markdown") expect(r.html).toBe(expected);
+      else expect(expected === undefined || src.length > MARKDOWN_LIMIT).toBe(true);
     });
   }
 });

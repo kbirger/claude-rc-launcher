@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, test } from "vitest";
 import { grammarLoaders, highlightCode } from "./highlight";
+import { formatText } from "./formatted";
+import { runInProcess } from "./formatrunner";
 import { CODE_LIMIT, LANGUAGES, type LanguageId } from "./viewkind";
 
 const doc = (html: string) => new DOMParser().parseFromString(html, "text/html");
@@ -52,6 +54,12 @@ describe("highlightCode", () => {
     expect(out, lang).toBeDefined();
     const classes = Array.from(doc(out!).querySelectorAll("span[class]")).map((s) => s.getAttribute("class"));
     expect(classes, lang).toEqual(EXPECTED[lang]);
+  });
+
+  const NAME: Record<LanguageId, string> = { typescript: "a.ts", javascript: "a.js", json: "a.json", python: "a.py", bash: "a.sh", yaml: "a.yml", xml: "a.xml", css: "a.css", sql: "a.sql", go: "a.go", rust: "a.rs", ini: "a.ini", diff: "a.diff", dockerfile: "Dockerfile", makefile: "Makefile" };
+  test.each([...LANGUAGES])("formatText equals highlightCode for %s", async (lang) => {
+    const r = await formatText(NAME[lang], SAMPLES[lang], runInProcess);
+    expect(r).toEqual({ kind: "code", html: await highlightCode(SAMPLES[lang], lang) });
   });
 
   test.each([...LANGUAGES])("a hostile source file is escaped text in %s", async (lang) => {
