@@ -1,0 +1,20 @@
+// @vitest-environment jsdom
+import { mount, unmount } from "svelte";
+import { expect, test, vi } from "vitest";
+
+// Only the language chunk fails to load. The editor must still show the text, without colors.
+vi.mock("./languages", () => ({ loadLanguage: () => Promise.reject(new Error("offline")) }));
+import CodeView from "./CodeView.svelte";
+
+test("when the language cannot load, the editor shows the text without colors", async () => {
+  const target = document.createElement("div");
+  document.body.append(target);
+  const c = mount(CodeView, { target, props: { text: "const a = 1;", language: "typescript" } });
+  await vi.waitFor(() => expect(target.querySelector(".cm-line")).not.toBeNull());
+  await new Promise((r) => setTimeout(r, 50));
+  expect(target.querySelector(".cm-line")!.textContent).toBe("const a = 1;");
+  expect(target.querySelectorAll(".cm-line span").length).toBe(0);
+  expect(target.querySelector("pre")).toBeNull();
+  unmount(c);
+  target.remove();
+});
