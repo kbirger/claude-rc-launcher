@@ -28,7 +28,7 @@
           <Card.Root size="sm" class="gap-1">
             <Card.Content class="grid gap-1">
               {@const title = sessionTitle(s)}
-              <div class="flex items-start gap-2">
+              <div class="flex flex-wrap items-start gap-2">
                 <span class="line-clamp-2 min-w-0 flex-1 break-words {title ? 'font-semibold' : 'font-normal text-muted-foreground'}">{title ?? "Untitled session"}</span>
                 {#each liveBadges(s) as b (b.label)}<Badge variant="outline" class={b.class}>{b.label}</Badge>{/each}
                 {#if wt}<Badge variant="outline">work tree</Badge>{/if}

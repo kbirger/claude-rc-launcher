@@ -167,3 +167,11 @@ test("liveBadges adds Remote Control when the session is attached to it", () => 
 test("liveBadges gives nothing for a session that is not running", () => {
   expect(liveBadges(sess)).toEqual([]);
 });
+
+test("liveBadges shows only live for a status other than busy or idle", () => {
+  expect(liveBadges({ ...sess, live: { status: "x".repeat(32), remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
+  expect(liveBadges({ ...sess, live: { status: "", remoteControl: true } })).toEqual([
+    { label: "live", class: "text-muted-foreground" },
+    { label: "Remote Control", class: "" },
+  ]);
+});

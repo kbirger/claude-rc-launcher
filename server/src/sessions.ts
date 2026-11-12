@@ -4,7 +4,7 @@
  *
  * (a) Where the data lives
  *   <home>/.claude/projects/<project folder>/<session id>.jsonl
- *   The project folder name is the session folder path with each character that is not a letter or a digit turned
+ *   The project folder name is the session folder path with each character that is not an ASCII letter or digit turned
  *   into "-": /home/u/my.proj becomes -home-u-my-proj. The rule is lossy (my.proj and my-proj give the same name), so
  *   scan checks the cwd inside the transcript as well. A work tree session lives in a sibling folder whose name is the
  *   project folder name, then "--claude-worktrees-", then the work tree name:
@@ -28,7 +28,7 @@
  * (c) Which parts of a transcript each function reads
  *   scan reads only the start of each file, up to the first record that has a cwd (the session folder and branch).
  *   readName reads from the start up to the first real prompt (at most 256 KB), and the last 256 KB for title
- *   records. Its result is cached by file size and change time.
+ *   records. Its result is cached by file size and modification time.
  *   touchedFiles reads the WHOLE transcript line by line (streamed), but parses only the lines that contain
  *   "tool_use" or "tool_result".
  */
@@ -145,7 +145,7 @@ const defaultFs: TranscriptFs = {
   tail: tailLines,
 };
 
-/** The folder name Claude Code uses under `projects/`: every non-alphanumeric character becomes a dash. */
+/** The folder name Claude Code uses under `projects/`: every character that is not an ASCII letter or digit becomes a dash. */
 export function encodeProjectDir(path: string): string {
   return path.replace(/[^a-zA-Z0-9]/g, "-");
 }
@@ -162,7 +162,7 @@ function parse(line: string): Record<string, any> | undefined {
 
 /**
  * One transcript that belongs to the instance folder, as scan found it: the session id, the transcript file, its
- * change time and size (for the name cache), the session folder from its first cwd (`root`, lexical), whether it came
+ * modification time and size (for the name cache), the session folder from its first cwd (`root`, lexical), whether it came
  * from a work tree folder, and the branch and start time of that first record. No file of the project is read for it.
  */
 type Found = { id: string; file: string; mtimeMs: number; size?: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
@@ -254,7 +254,11 @@ function promptText(r: Record<string, any>): string | undefined {
 }
 
 function tidy(raw: string | undefined): string | undefined {
-  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  // Drop format and control characters (bidi overrides, zero-width characters) and collapse whitespace, so that a
+  // name cannot look like another one. A joined emoji (it uses U+200D) is shown as its parts.
+  // Format characters go first, because \s also matches U+FEFF. Control characters go after the collapse, so that a
+  // tab or a line feed still becomes a space.
+  const t = (raw ?? "").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").replace(/\p{Cc}/gu, "").replace(/ {2,}/g, " ").trim();
   if (t.length === 0) return undefined;
   // Cut on code points, not UTF-16 units, so that an emoji is never split in half.
   const points = Array.from(t);

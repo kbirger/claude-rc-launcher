@@ -86,11 +86,13 @@ export function sessionDetail(s: Session, now: number): string[] {
   return out;
 }
 
-/** Badges of a running session: "live" with its status (busy looks active, any other status muted), and "Remote
+/** Badges of a running session: "live" with its status (busy looks active, idle muted), and "Remote
  *  Control" when the session is attached to it. Use them with the outline Badge, as the instance card does. */
 export function liveBadges(s: Session): { label: string; class: string }[] {
   if (!s.live) return [];
-  const out = [{ label: `live · ${s.live.status}`, class: s.live.status === "busy" ? "text-success" : "text-muted-foreground" }];
+  // Only the two known statuses are shown. Any other value (another node version) shows as "live" alone.
+  const known = s.live.status === "busy" || s.live.status === "idle";
+  const out = [{ label: known ? `live · ${s.live.status}` : "live", class: s.live.status === "busy" ? "text-success" : "text-muted-foreground" }];
   if (s.live.remoteControl) out.push({ label: "Remote Control", class: "" });
   return out;
 }

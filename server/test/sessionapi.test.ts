@@ -62,7 +62,7 @@ describe("sessions list", () => {
   });
   test("GET sessions marks a running session live, read from the instance user's home", async () => {
     const homes: string[] = [];
-    const live = async (h: string) => (homes.push(h), new Map([[SID, { status: "busy", remoteControl: true, name: "app name" }]]));
+    const live = async (h: string) => (homes.push(h), new Map([[SID, { status: "busy" as const, remoteControl: true, name: "app name" }]]));
     const r = await get(build({ live, roots: { [SID]: root, [SID2]: root } }), "");
     const list = (await r.json()) as { id: string; name?: string; live?: unknown }[];
     expect(homes).toEqual(["/home/x"]);

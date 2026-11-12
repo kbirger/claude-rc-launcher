@@ -47,7 +47,7 @@ Claude Code writes one transcript per session:
 ```
 
 `<home>` is the home folder of the instance user. The project folder name comes from the path of the session
-folder. Each character that is not a letter or a digit becomes `-`. For example, `/home/u/my.proj` becomes
+folder. Each character that is not an ASCII letter or digit becomes `-`. For example, `/home/u/my.proj` becomes
 `-home-u-my-proj`. This rule loses information, so the code also checks the `cwd` inside the transcript. A work tree
 session has its own folder next to the main one. Its name is the project folder name, then `--claude-worktrees-`,
 then the name of the work tree.
@@ -73,7 +73,7 @@ Each function reads only what it needs:
 
 - `scan` reads the start of each transcript, up to the first record with a `cwd`.
 - The name code reads from the start up to the first real prompt (at most 256 KB). It also reads the last 256 KB for
-  title records. A cache keeps the name until the size or the change time of the file changes.
+  title records. A cache keeps the name until the size or the modification time of the file changes.
 - `touchedFiles` reads the whole transcript line by line. It parses only lines that contain `"tool_use"` or
   `"tool_result"`.
 
@@ -109,10 +109,15 @@ with a secret token.
 `livesessions.ts` follows these rules:
 
 - It opens only files whose names end in `.json`. It never opens a `.key` file.
-- It reads at most 500 files and at most 64 KB of each file. It skips a file that is larger or that is not valid
-  JSON.
-- It counts a file only while its process runs. It checks this with `process.kill(pid, 0)`. If the process is
-  gone, the file is ignored.
+- The real place of the sessions folder must be inside the real home folder. If `.claude` or `.claude/sessions` is a
+  link that leads out, no session counts as live.
+- It opens at most 500 files and reads at most 64 KB of each file. It stops listing the folder after 5000 names. It
+  skips a file that is larger or that is not valid JSON.
+- It accepts only the status `busy` or `idle`. It skips a file with any other status.
+- It counts a file only while its process runs. On Linux the start time of the process in `/proc/<pid>/stat` must
+  be equal to `procStart` in the file. A different start time means that the system gave the pid to a new process.
+  The `pidDomain` of the file must also name this machine and this pid namespace. If `/proc` cannot be read, and on
+  Windows, the check is `process.kill(pid, 0)`.
 - It returns only the status, the Remote Control state and the name. No other field leaves the module.
 
 If a session runs, the list shows a "live" badge with its status. If it uses Remote Control, the list also shows a

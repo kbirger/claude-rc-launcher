@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LiveInfo } from "../src/livesessions";
 import { encodeProjectDir, findSession, listSessions, newNameCache, sessionRootOf, touchedFiles, type TranscriptFs } from "../src/sessions";
 
 const HOME = "/h";
@@ -227,7 +228,7 @@ const nameOf = async (lines: string[], tail?: string[], mtimeMs = 1000) =>
 describe("live sessions", () => {
   const F2 = `${proj("-work-proj")}/${ID2}.jsonl`;
   const two = () => fakeFs({ [F1]: { mtimeMs: 2000, lines: [user(PATH), title("customTitle", "custom")] }, [F2]: { mtimeMs: 1000, lines: [user(PATH), prompt("hello")] } });
-  const list = (live?: Map<string, { status: string; remoteControl: boolean; name?: string }>) =>
+  const list = (live?: Map<string, LiveInfo>) =>
     listSessions({ home: HOME, path: PATH, fs: two(), names: newNameCache(), ...(live ? { live } : {}) });
 
   test("a live session gets its status and Remote Control state, the others get no live field", async () => {
@@ -287,6 +288,14 @@ describe("session names", () => {
     expect(await nameOf([prompt("a".repeat(79) + "😀" + "b")])).toBe("a".repeat(79) + "😀...");
     expect(await nameOf([prompt("😀".repeat(80))])).toBe("😀".repeat(80));
     expect(await nameOf([prompt("😀".repeat(81))])).toBe("😀".repeat(80) + "...");
+  });
+
+  test("format and control characters are removed, so bidi overrides and zero-width characters cannot spoof a name", async () => {
+    expect(await nameOf([prompt("safe\u202Etxt.exe")])).toBe("safetxt.exe");
+    expect(await nameOf([prompt("a\u200Bb\u2066c\uFEFFd\u0007e\u0000f")])).toBe("abcdef");
+    expect(await nameOf([prompt("a \u0007 b\tc")])).toBe("a b c");
+    // A name made only of such characters is no name: the next kind is used.
+    expect(await nameOf([prompt("fallback"), title("customTitle", "\u200B\u202E")])).toBe("fallback");
   });
 
   test("an interrupted-request message is not the first prompt", async () => {
