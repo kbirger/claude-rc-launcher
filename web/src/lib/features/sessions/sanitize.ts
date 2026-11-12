@@ -1,4 +1,4 @@
-// The second layer of the safety rules for formatted text. Both functions take HTML text and give back SafeHtml.
+// The second layer of the safety rules for rendered markdown. The function takes HTML text and gives back SafeHtml.
 // This is the only file that makes the SafeHtml type, and FormattedText.svelte is the only file that shows it.
 // Only the browser runs this file (it needs `window`). The preview loads it by dynamic import.
 import createDOMPurify from "dompurify";
@@ -48,28 +48,3 @@ export function sanitizeMarkdownHtml(html: string): SafeHtml {
   box.appendChild(fragment);
   return box.innerHTML as SafeHtml;
 }
-
-const codePurify = createDOMPurify(window);
-
-// highlight.js writes class="hljs-keyword", "hljs-title function_", "hljs-title class_ inherited__" and the like. A token is
-// kept if it is an hljs token or a highlight.js modifier word (a lower case word that ends in one or two underscores).
-// Every other token is dropped, so a Tailwind class such as "fixed" or "inset-0" cannot restyle the page, and the
-// embedded language marks ("language-javascript") are dropped too. The attribute goes only when no token is left.
-const CLASS_TOKEN = /^(?:hljs(?:-[a-z0-9_]+)*|[a-z]+_{1,2})$/;
-codePurify.addHook("uponSanitizeAttribute", (_node, data) => {
-  if (data.attrName !== "class") return;
-  const kept = data.attrValue.split(/\s+/).filter((t) => CLASS_TOKEN.test(t));
-  if (kept.length === 0) data.keepAttr = false;
-  else data.attrValue = kept.join(" ");
-});
-
-/** Code color output of highlight.js: only `span` with `class`. Every other tag is dropped and its text kept. */
-export const sanitizeCodeHtml = (html: string): SafeHtml =>
-  codePurify.sanitize(html, {
-    ALLOWED_TAGS: ["span"],
-    ALLOWED_ATTR: ["class"],
-    ALLOW_DATA_ATTR: false,
-    ALLOW_ARIA_ATTR: false,
-    KEEP_CONTENT: true,
-    RETURN_TRUSTED_TYPE: false,
-  }) as SafeHtml;

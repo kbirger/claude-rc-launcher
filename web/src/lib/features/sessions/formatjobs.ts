@@ -1,11 +1,8 @@
-// The slow library steps, with no DOM. Only the worker (format.worker.ts) and the no-Worker fallback (formatrunner.ts)
-// import this file. Both jobs give UNTRUSTED html: the strict marked renderer is layer 1, and the caller must run layer 2
+// The slow library step (marked), with no DOM. Only the worker (format.worker.ts) and the no-Worker fallback (formatrunner.ts)
+// import this file. The job gives UNTRUSTED html: the strict marked renderer is layer 1, and the caller must run layer 2
 // (sanitize.ts) on the main thread. Nothing in this file makes SafeHtml.
-import hljs from "highlight.js/lib/core";
-import type { LanguageFn } from "highlight.js";
 import { Marked, type Tokens } from "marked";
-import { hasLongWordRun, isTooSlowToRender } from "./guards";
-import type { LanguageId } from "./viewkind";
+import { isTooSlowToRender } from "./guards";
 
 /** Escapes text for use in HTML text and in a double-quoted or single-quoted attribute. */
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -55,37 +52,6 @@ export function markdownToHtmlJob(text: string): string | undefined {
   try {
     if (isTooSlowToRender(text)) return undefined;
     return markdownToHtml(text);
-  } catch {
-    return undefined;
-  }
-}
-
-type Loader = () => Promise<{ default: LanguageFn }>;
-/** One loader for each language of viewkind.ts. Each import is a separate chunk. Tests replace a loader to simulate a failed load. */
-export const grammarLoaders: Record<LanguageId, Loader> = {
-  typescript: () => import("highlight.js/lib/languages/typescript"),
-  javascript: () => import("highlight.js/lib/languages/javascript"),
-  json: () => import("highlight.js/lib/languages/json"),
-  python: () => import("highlight.js/lib/languages/python"),
-  bash: () => import("highlight.js/lib/languages/bash"),
-  yaml: () => import("highlight.js/lib/languages/yaml"),
-  xml: () => import("highlight.js/lib/languages/xml"),
-  css: () => import("highlight.js/lib/languages/css"),
-  sql: () => import("highlight.js/lib/languages/sql"),
-  go: () => import("highlight.js/lib/languages/go"),
-  rust: () => import("highlight.js/lib/languages/rust"),
-  ini: () => import("highlight.js/lib/languages/ini"),
-  diff: () => import("highlight.js/lib/languages/diff"),
-  dockerfile: () => import("highlight.js/lib/languages/dockerfile"),
-  makefile: () => import("highlight.js/lib/languages/makefile"),
-};
-
-/** Colored untrusted html for `text`, or undefined when a word run is too long, the grammar fails to load or highlight.js throws. */
-export async function codeToHtmlJob(text: string, language: LanguageId): Promise<string | undefined> {
-  try {
-    if (hasLongWordRun(text)) return undefined;
-    if (!hljs.getLanguage(language)) hljs.registerLanguage(language, (await grammarLoaders[language]()).default);
-    return hljs.highlight(text, { language, ignoreIllegals: true }).value;
   } catch {
     return undefined;
   }

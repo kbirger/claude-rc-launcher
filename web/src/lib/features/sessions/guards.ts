@@ -1,5 +1,5 @@
 // Cheap checks that run before any library. Pure: no DOM, no libraries, so the preview page can import them. The
-// libraries (marked and highlight.js) are slow on some small-looking inputs, and no list of bad inputs can bound the
+// library (marked) is slow on some small-looking inputs, and no list of bad inputs can bound the
 // time, so the real bound is the worker timeout in formatrunner.ts. These checks only refuse the known worst cases early.
 
 // Pre-scan limits. marked is slow on some small-looking inputs: a long run of * or _ is quadratic in its emphasis scan
@@ -52,21 +52,6 @@ export function isTooSlowToRender(text: string): boolean {
     }
     while (i < n && text.charCodeAt(i) !== 10) i++;
     i++;
-  }
-  return false;
-}
-
-/** Most characters in a row that are letters, digits, underscore, dollar or hyphen. highlight.js is quadratic on a long run. */
-export const MAX_WORD_RUN = 511;
-
-/** True when the text has a run of 512 or more word characters in a row. One pass, no backtracking. */
-export function hasLongWordRun(text: string): boolean {
-  let run = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    const word = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 36 || c === 45;
-    run = word ? run + 1 : 0;
-    if (run > MAX_WORD_RUN) return true;
   }
   return false;
 }

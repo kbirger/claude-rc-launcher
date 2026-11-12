@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { CODE_LIMIT, LANGUAGES, MARKDOWN_LIMIT, isMarkdownName, languageFor, viewKind } from "./viewkind";
+import { LANGUAGES, MARKDOWN_LIMIT, PLAIN_PRE_LIMIT, isMarkdownName, languageFor, showsInPre, viewKind } from "./viewkind";
 
 describe("languageFor", () => {
   test("picks the grammar by extension, without case", () => {
@@ -29,9 +29,13 @@ describe("languageFor", () => {
   test("gives undefined for an unknown name, a hidden file with no extension, and names that match object keys", () => {
     for (const n of ["notes.txt", "LICENSE", "", "a.", ".gitignore", "constructor", "x.constructor", "toString", "x.__proto__", "x.hasOwnProperty"]) expect(languageFor(n), n).toBeUndefined();
   });
-  test("every language that an extension maps to is in LANGUAGES, and LANGUAGES has 15 entries", () => {
-    expect(LANGUAGES.length).toBe(15);
-    expect(new Set(LANGUAGES).size).toBe(15);
+  test("LANGUAGES has 16 distinct entries: 15 that a name can pick, and markdown", () => {
+    expect(LANGUAGES.length).toBe(16);
+    expect(new Set(LANGUAGES).size).toBe(16);
+    expect(LANGUAGES).toContain("markdown");
+  });
+  test("no file name picks the markdown language: markdown files have their own view", () => {
+    for (const n of ["a.md", "a.markdown", "README.md"]) expect(languageFor(n), n).toBeUndefined();
   });
 });
 
@@ -54,23 +58,25 @@ describe("viewKind", () => {
     expect(viewKind("a.md", 0)).toEqual({ kind: "markdown" });
     expect(viewKind("a.go", 0)).toEqual({ kind: "code", language: "go" });
   });
-  test("the limits count characters and are inclusive", () => {
+  test("the markdown limit counts characters and is inclusive", () => {
     expect(MARKDOWN_LIMIT).toBe(102400);
-    expect(CODE_LIMIT).toBe(131072);
     expect(viewKind("a.md", MARKDOWN_LIMIT).kind).toBe("markdown");
     expect(viewKind("a.md", MARKDOWN_LIMIT + 1).kind).toBe("plain");
-    expect(viewKind("a.ts", CODE_LIMIT).kind).toBe("code");
-    expect(viewKind("a.ts", CODE_LIMIT + 1).kind).toBe("plain");
   });
-  test("a code file between the two limits is still code, and a markdown file is not markdown", () => {
+  test("code has no size limit: a 512 K file is still code", () => {
+    expect(viewKind("a.ts", 512 * 1024)).toEqual({ kind: "code", language: "typescript" });
+    expect(viewKind("a.ts", 10 * 1024 * 1024)).toEqual({ kind: "code", language: "typescript" });
     expect(viewKind("a.ts", MARKDOWN_LIMIT + 1).kind).toBe("code");
-    expect(viewKind("a.md", CODE_LIMIT).kind).toBe("plain");
+    expect(viewKind("a.md", 128 * 1024).kind).toBe("plain");
   });
-  test("a too large file has a note that names the limit and says characters", () => {
-    const md = viewKind("a.md", MARKDOWN_LIMIT + 1);
-    const code = viewKind("a.ts", CODE_LIMIT + 1);
-    expect(md).toEqual({ kind: "plain", note: "This file has more than 100 K characters (K is 1,024), which is too many to format. It shows as plain text." });
-    expect(code).toEqual({ kind: "plain", note: "This file has more than 128 K characters (K is 1,024), which is too many to format. It shows as plain text." });
+  test("a too large markdown file has a note that names the limit and says characters", () => {
+    expect(viewKind("a.md", MARKDOWN_LIMIT + 1)).toEqual({ kind: "plain", note: "This file has more than 100 K characters (K is 1,024), which is too many to format. It shows as plain text." });
+  });
+  test("a plain text shows in a pre box up to 64 K characters, inclusive", () => {
+    expect(PLAIN_PRE_LIMIT).toBe(65536);
+    expect(showsInPre(0)).toBe(true);
+    expect(showsInPre(PLAIN_PRE_LIMIT)).toBe(true);
+    expect(showsInPre(PLAIN_PRE_LIMIT + 1)).toBe(false);
   });
   test("a large file of an unknown type has no note", () => {
     expect(viewKind("big.txt", MARKDOWN_LIMIT * 2)).toEqual({ kind: "plain" });

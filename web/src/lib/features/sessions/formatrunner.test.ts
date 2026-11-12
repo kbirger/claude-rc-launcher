@@ -113,14 +113,12 @@ describe("defaultRunner with a fake Worker", () => {
 });
 
 describe("without Worker (vitest and old browsers) the job runs in this process", () => {
-  test("markdown and code give layer 1 html", async () => {
+  test("markdown gives layer 1 html", async () => {
     vi.stubGlobal("Worker", undefined);
     expect(await defaultRunner({ kind: "markdown", text: "# x" }, 1000)).toContain("<h1>");
-    expect(await defaultRunner({ kind: "code", text: "const a = 1;", language: "typescript" }, 1000)).toContain("hljs-keyword");
     expect(FakeWorker.instances).toHaveLength(0);
   });
   test("the guards still apply", async () => {
-    expect(await runInProcess({ kind: "code", text: "a".repeat(5000), language: "typescript" })).toBeUndefined();
     expect(await runInProcess({ kind: "markdown", text: "*".repeat(400) })).toBeUndefined();
   });
 });
@@ -133,12 +131,12 @@ describe("format.worker", () => {
     await import("./format.worker");
     const onmessage = (self as unknown as { onmessage: (e: { data: unknown }) => Promise<void> }).onmessage;
     await onmessage({ data: { id: 1, job: { kind: "markdown", text: "# x" } } });
-    await onmessage({ data: { id: 2, job: { kind: "code", text: "let a", language: "typescript" } } });
+    await onmessage({ data: { id: 2, job: { kind: "code", text: "let a", language: "typescript" } } }); // a job of another kind is refused
     await onmessage({ data: { id: 3, job: { kind: "nope" } } });
     await onmessage({ data: null });
     expect(posted[0]).toMatchObject({ id: 1 });
     expect((posted[0] as { html: string }).html).toContain("<h1>");
-    expect((posted[1] as { html: string }).html).toContain("hljs-keyword");
+    expect(posted[1]).toMatchObject({ id: 2, error: expect.any(String) });
     expect(posted[2]).toMatchObject({ id: 3, error: expect.any(String) });
     expect(posted[3]).toMatchObject({ error: expect.any(String) });
   });
