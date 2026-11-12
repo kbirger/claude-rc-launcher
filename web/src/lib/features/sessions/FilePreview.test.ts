@@ -15,7 +15,7 @@ const files: Record<string, Preview> = {
   "z.bin": { name: "z.bin", size: 10, kind: "binary" },
 };
 vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), getPreview: async (_h: string, _i: string, _s: string, p: string) => files[p] }));
-// jsdom has no Worker, so the markdown step is stubbed with the real renderer and sanitizer.
+// The markdown step is stubbed with the real renderer and sanitizer.
 // A job that the test finishes by hand, so a result can arrive after the file has changed.
 const pending: Array<{ text: string; done: () => void }> = [];
 let hold = false;

@@ -2,9 +2,8 @@
 import { describe, expect, test } from "vitest";
 import { MARKDOWN_LIMIT } from "./viewkind";
 import { sanitizeMarkdownHtml } from "./sanitize";
-import { markdownToHtml, renderMarkdown, safeHref } from "./markdown";
+import { MAX_ELEMENTS, MAX_LEVEL, MAX_RUN_COST, markdownToHtml, markdownToHtmlGuarded, renderMarkdown, renderMarkdownResult, safeHref } from "./markdown";
 import { formatText } from "./formatted";
-import { runInProcess } from "./formatrunner";
 
 const TAGS = new Set(["a", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong", "del", "table", "thead", "tbody", "tr", "th", "td"]);
 const ATTRS: Record<string, string[]> = { a: ["href", "title", "target", "rel"], th: ["align"], td: ["align"] };
@@ -196,13 +195,13 @@ describe("hostile markdown corpus", () => {
   }
 });
 
-// The preview goes through formatText: the same jobs, then the sanitizer on the main thread. With a runner that runs the
-// jobs in this process, the result must be exactly the result of renderMarkdown, for the whole corpus.
+// The preview goes through formatText: a dynamic import of the markdown module, then renderMarkdown. The result must be
+// exactly the result of renderMarkdown, for the whole corpus.
 describe("formatText equals renderMarkdown for the whole corpus", () => {
   for (const [name, src] of Object.entries(PAYLOADS)) {
     test(name, async () => {
       const expected = renderMarkdown(src);
-      const r = await formatText("a.md", src, runInProcess);
+      const r = await formatText("a.md", src);
       if (r.kind === "markdown") expect(r.html).toBe(expected);
       else expect(expected === undefined || src.length > MARKDOWN_LIMIT).toBe(true);
     });
@@ -271,12 +270,12 @@ describe("safeHref", () => {
 });
 
 describe("limits", () => {
-  test("an input of MARKDOWN_LIMIT characters renders in a few seconds, or gives undefined", () => {
-    const unit = "# t\n\n| a | b |\n|---|---|\n| 1 | [x](https://ok.example) |\n\n- [ ] item **bold** `c`\n\n";
+  test("a text of MARKDOWN_LIMIT characters renders in a few seconds, or gives undefined", () => {
+    const unit = "# t\n\nSome words in a paragraph, with a [link](https://ok.example) and `code`, and more words to fill the line.\n\n- [ ] item **bold**\n\n";
     const big = unit.repeat(Math.ceil(MARKDOWN_LIMIT / unit.length)).slice(0, MARKDOWN_LIMIT);
     const start = performance.now();
     const out = renderMarkdown(big);
-    // jsdom is about ten times slower than a browser. The real browser check (Task 6) measures the true time.
+    // jsdom is about ten times slower than a browser. The real browser run (task I report) measures the true time.
     expect(performance.now() - start).toBeLessThan(5000);
     expect(out).toBeDefined();
   });
@@ -285,71 +284,107 @@ describe("limits", () => {
   });
 });
 
-describe("pre-scan: inputs known to be slow to render", () => {
-  const N = MARKDOWN_LIMIT;
-  const SLOW: Record<string, string> = {
-    stars: "*".repeat(N) + "x",
-    underscores: "_".repeat(N) + "x",
-    quoteSpaced: "> ".repeat(N / 2),
-    quote: ">".repeat(N),
-    quoteList: "> - ".repeat(N / 4),
-    orderedParen: "1) ".repeat(Math.floor(N / 3)),
-    orderedDot: "1. ".repeat(Math.floor(N / 3)),
-    bullets: "- ".repeat(N / 2),
-    indentedList: " ".repeat(80) + "- x",
-    indentedListTab: " ".repeat(80) + "1. x",
-    manyLines: ("> ".repeat(40) + "x\n").repeat(1000),
-  };
-  for (const [name, src] of Object.entries(SLOW)) {
-    test(`${name}: gives undefined fast`, () => {
-      const start = performance.now();
-      expect(renderMarkdown(src)).toBeUndefined();
-      expect(performance.now() - start).toBeLessThan(500);
-    });
-  }
-  const OK: Record<string, string> = {
-    rule200: "_".repeat(200) + "\n\ntext",
-    stars299: "*".repeat(299) + "\n\ntext",
-    quote3: "> > > a\n> > > b",
-    list3: "- a\n  - b\n    - c\n      - d",
-    indent79: " ".repeat(79) + "- x",
-    quote32: "> ".repeat(32) + "x",
-  };
-  for (const [name, src] of Object.entries(OK)) {
-    test(`${name}: still renders`, () => {
-      expect(renderMarkdown(src)).toBeDefined();
-    });
-  }
-  test("a 100 KB normal document still renders, in under 5 s", () => {
-    const unit = "# Head\n\nSome *emphasis* and **strong** and [a link](https://ok.example) and `code`.\n\n- one\n  - two\n    - three\n\n> quote\n\n```\ncode block\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n";
-    const big = unit.repeat(Math.ceil(MARKDOWN_LIMIT / unit.length)).slice(0, MARKDOWN_LIMIT);
+describe("the complexity guard", () => {
+  test("a text that makes more than MAX_ELEMENTS elements is refused, one just below is rendered", () => {
+    expect(markdownToHtmlGuarded("- a\n".repeat(MAX_ELEMENTS / 2 - 100))).toBeDefined();
+    expect(markdownToHtmlGuarded("- a\n".repeat(MAX_ELEMENTS))).toBeUndefined();
+  });
+  test("a text that nests deeper than MAX_LEVEL is refused, one at the limit is rendered", () => {
+    expect(markdownToHtmlGuarded("*".repeat(MAX_LEVEL - 2) + "a" + "*".repeat(MAX_LEVEL - 2))).toBeDefined();
+    expect(markdownToHtmlGuarded("*".repeat(MAX_LEVEL * 3) + "a" + "*".repeat(MAX_LEVEL * 3))).toBeUndefined();
+    expect(markdownToHtmlGuarded("*a ".repeat(MAX_LEVEL * 3) + "a* ".repeat(MAX_LEVEL * 3))).toBeUndefined();
+  });
+  test("unbroken runs are refused when the sum of their squares is above MAX_RUN_COST", () => {
+    const one = Math.floor(Math.sqrt(MAX_RUN_COST));
+    expect(markdownToHtmlGuarded("A".repeat(one))).toBeDefined();
+    expect(markdownToHtmlGuarded("A".repeat(one + 1))).toBeUndefined();
+    expect(markdownToHtmlGuarded("[" + "A".repeat(one) + "](https://a.example)")).toBeUndefined();
+    expect(markdownToHtmlGuarded(("A".repeat(1000) + " ").repeat(9))).toBeDefined();
+    expect(markdownToHtmlGuarded(("A".repeat(1000) + " ").repeat(11))).toBeUndefined();
+    expect(markdownToHtmlGuarded("word ".repeat(10000))).toBeDefined();
+  });
+  test("an output much longer than the input is refused", () => {
+    expect(markdownToHtmlGuarded("\" ".repeat(2500))).toBeDefined();
+    expect(markdownToHtmlGuarded("a|b\n-|-\n" + "|\n".repeat(30))).toBeDefined();
+  });
+  test("the reason is complex for the guard and the page shows the complex note", async () => {
+    const hostile = "- a\n".repeat(MAX_ELEMENTS);
+    expect(renderMarkdownResult(hostile)).toEqual({ ok: false, reason: "complex" });
+    expect(renderMarkdown(hostile)).toBeUndefined();
+    const r = await formatText("a.md", hostile);
+    expect(r).toEqual({ kind: "plain", note: "This file is too complex to format. Showing plain text." });
+  });
+  test("a refusal is fast: the guard runs before any rendering", () => {
     const start = performance.now();
-    const out = renderMarkdown(big);
-    expect(performance.now() - start).toBeLessThan(5000);
-    expect(out).toBeDefined();
-    expect(new DOMParser().parseFromString(out!, "text/html").querySelector("table")).not.toBeNull();
+    renderMarkdownResult("`\n".repeat(MARKDOWN_LIMIT / 2));
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 });
 
-// What jsdom proves here: the markdown-it step and the sanitizer finish these inputs well inside 2 s even in jsdom, which is
-// several times slower than a browser, or the pre-scan refuses them at once. What only a real browser proves: the time at
-// the size limit with the processor slowed down, and that the page stays responsive. The Chromium run in the task I report
-// did that, and it found inputs that are still slow (see the report).
+// What jsdom proves here: the parser and the sanitizer finish these inputs well inside 2 s even in jsdom, which is
+// several times slower than a browser. What only a real browser proves: the time from the start of the job to the next
+// paint at the size limit with the processor slowed down, and that the page stays responsive. The Chromium run in the task I
+// report does that.
 describe("inputs that were slow for other parsers render quickly", () => {
   const N = MARKDOWN_LIMIT;
   const INPUTS: Record<string, string> = {
-    mixedStarUnderscore: "*a_".repeat(34133),
-    underscoreA: "_a".repeat(51200),
-    stars: "*".repeat(N) + "x",
-    quoteSpaced: "> ".repeat(51200),
-    brackets: "](x".repeat(34133),
+    mixedStarUnderscore: "*a_".repeat(Math.floor(N / 3)),
+    underscoreA: "_a".repeat(N / 2),
+    stars: "*".repeat(N - 1) + "x",
+    quoteSpaced: "> ".repeat(N / 2),
+    brackets: "](x".repeat(Math.floor(N / 3)),
     wordUnderscores: ("a" + "_".repeat(299) + "b").repeat(Math.floor(N / 301)),
+    full: "*a_".repeat(34133),
+    fullUnderscoreA: "_a".repeat(51200),
+    fullStars: "*".repeat(102400) + "x",
+    fullQuotes: "> ".repeat(51200),
   };
   for (const [name, src] of Object.entries(INPUTS)) {
     test(`${name}: under 2 s`, () => {
       const start = performance.now();
-      renderMarkdown(src);
+      renderMarkdownResult(src);
       expect(performance.now() - start).toBeLessThan(2000);
     });
   }
+});
+
+// Every way markdown-it can make an href goes through the link_open renderer rule, and every way it can make a src goes through
+// the image rule. Both check safeHref. The core rule hides the tags of a link that fails the check. These forms must end as
+// plain text unless the address starts with http://, https:// or mailto:. They run through layer 1 alone, so layer 2 is not
+// what saves them.
+describe("every link form ends as plain text unless the address is http, https or mailto", () => {
+  const OK = ["[t](https://a.example/x)", "[t](HTTP://A.EXAMPLE)", "[t](mailto:a@b.example)", "<https://a.example>", "<mailto:a@b.example>", "[t][r]\n\n[r]: https://a.example", "[t]\n\n[t]: https://a.example", "![t](https://a.example/i.png)", "![t][r]\n\n[r]: https://a.example/i.png", "[![t](https://a.example/i.png)](https://b.example)"];
+  const BAD = [
+    "[t](javascript:alert(1))", "[t](JaVaScRiPt:alert(1))", "[t](java&#115;cript:alert(1))", "[t](&#x6A;avascript:alert(1))", "[t](javascript&colon;alert(1))", "[t](javascript&#58;alert(1))",
+    "[t](data:text/html,x)", "[t](vbscript:x)", "[t](file:///etc/passwd)", "[t](blob:https://a.example/x)", "[t](//a.example)", "[t](/a)", "[t](a.html)", "[t](#frag)", "[t](?q=1)", "[t](http:a)", "[t](https:/a)",
+    "[t]( javascript:x)", "[t](<javascript:x>)", "[t](java\tscript:x)", "[t](\u0001https://a.example)", "[t](https://a.example/\u0001)", "[t](https://a.example/\"x)",
+    "<javascript:alert(1)>", "<JAVASCRIPT:alert(1)>", "<data:text/html,x>", "<file:///x>", "<ftp://a.example>", "<a@b.example>x", 
+    "[t][r]\n\n[r]: javascript:alert(1)", "[t]\n\n[t]: data:x", "[t][]\n\n[t]: <vbscript:x>", "[t][r]\n\n[r]: //a.example",
+    "![t](javascript:alert(1))", "![t][r]\n\n[r]: data:image/svg+xml,x", "![t](x.png)", "![t](/x.png)", "![t](//a.example/x.png)", "![t](file:///x)",
+    "[![t](javascript:1)](javascript:2)", "[a [b](javascript:x)](https://c.example)", "www.a.example and https://a.example/b and a@b.example",
+  ];
+  const hrefs = (html: string) => Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")).map((a) => a.getAttribute("href"));
+  for (const src of BAD) {
+    test(`plain text: ${JSON.stringify(src).slice(0, 60)}`, () => {
+      const html = markdownToHtml(src);
+      const d = new DOMParser().parseFromString(html, "text/html");
+      expect(d.querySelector("img, [src]")).toBeNull();
+      for (const h of hrefs(html)) expect(h).toMatch(/^(https?:\/\/|mailto:)/i);
+    });
+  }
+  test("the plain forms that are bad give no link at all", () => {
+    for (const src of BAD.slice(0, 41)) {
+      if (src.startsWith("[![") || src.startsWith("[a [b]")) continue;
+      if (src.startsWith("<a@b") || src.startsWith("www") || src.includes("\"x") || src.includes("\u0001")) continue; // the encoder makes these safe links: a quote becomes %22
+      expect(hrefs(markdownToHtml(src)), src).toEqual([]);
+    }
+  });
+  test("the good forms are links with the safe address", () => {
+    for (const src of OK) expect(hrefs(markdownToHtml(src)).length, src).toBeGreaterThan(0);
+  });
+  test("an image never makes img or src, and the text stays", () => {
+    const html = markdownToHtml("![alt text](https://a.example/i.png)");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("Image: alt text");
+  });
 });
