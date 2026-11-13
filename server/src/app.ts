@@ -11,6 +11,7 @@ import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
 import type { AdoptDir } from "./ownedir";
 import { hostAdminApi } from "./hostadmin";
+import { renameHandler } from "./hostadmin";
 import { hostsApi } from "./hosts";
 import type { UpdateRecord } from "./updaterecord";
 import type { UpdateLog } from "./updatelog";
@@ -288,6 +289,12 @@ export function createApp(deps: Deps): Hono {
       ...(deps.latest ? { latest: deps.latest } : {}),
       ...(updates ? { updates } : {}),
     });
+  // The web page renames a host. It cannot add or remove one: that stays with the CLI.
+  api.patch("/hosts/:id", async (c, next) => {
+    await renameHandler(registry)(c, next);
+    const u = c.get("user" as never) as User | undefined;
+    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
+  });
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
