@@ -10,6 +10,8 @@ export type { User };
 export interface OidcClient {
   authorizationUrl(p: { redirectUri: string; state: string; codeVerifier: string }): Promise<string>;
   exchange(p: { redirectUri: string; callbackUrl: URL; state: string; codeVerifier: string }): Promise<User>;
+  /** URL that ends the identity provider session. Throws if the provider has no end-session endpoint. */
+  endSessionUrl?(p: { postLogoutRedirectUri: string }): Promise<string>;
 }
 
 function oidcOf(cfg: Config): OidcUserAuth {
@@ -69,6 +71,10 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
       const claims = tokens.claims();
       if (!claims || typeof claims.sub !== "string" || !claims.sub) throw new Error("ID token missing sub");
       return userFromClaims(claims)!;
+    },
+    async endSessionUrl({ postLogoutRedirectUri }) {
+      const config = await getConfig();
+      return client.buildEndSessionUrl(config, { post_logout_redirect_uri: postLogoutRedirectUri }).href;
     },
   };
 }
@@ -147,8 +153,18 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
     return c.redirect("/", 302);
   });
 
-  app.get("/logout", (c) => {
+  app.get("/logout", async (c) => {
     deleteCookie(c, SESSION_COOKIE, { path: "/", secure });
+    // Clearing the hub cookie is not enough: the identity provider session stays alive, so the next page load
+    // signs the user straight back in. End that session too, when the provider offers an end-session endpoint.
+    if (oidc.endSessionUrl) {
+      try {
+        const postLogoutRedirectUri = `${cfg.publicUrl.replace(/\/+$/, "")}/`;
+        return c.redirect(await oidc.endSessionUrl({ postLogoutRedirectUri }), 302);
+      } catch (e) {
+        console.error("OIDC end-session unavailable, cleared the local session only:", e);
+      }
+    }
     return c.redirect("/", 302);
   });
 
