@@ -29,16 +29,16 @@ function transcripts(roots: Record<string, string>): TranscriptFs {
   };
 }
 
-function build(opts: { home?: boolean; roots?: Record<string, string>; path?: string; live?: Parameters<typeof sessionApi>[0]["live"] } = {}) {
+function build(opts: { home?: boolean; roots?: Record<string, string>; path?: string; live?: Parameters<typeof sessionApi>[0]["live"]; run?: Parameters<typeof sessionApi>[0]["run"]; identity?: object } = {}) {
   const inst = {
     claudeHome: async (id: string) => {
       if (id !== ID) throw new HttpError(404, "instance not found");
-      return { path: opts.path ?? root, home: "/home/x" };
+      return { path: opts.path ?? root, home: "/home/x", ...(opts.identity ? { identity: opts.identity } : {}) };
     },
   } as unknown as Instances;
   if (opts.home === false) delete (inst as { claudeHome?: unknown }).claudeHome;
   const app = new Hono();
-  app.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: transcripts(opts.roots ?? { [SID]: root }), ...(opts.live ? { live: opts.live } : {}) }));
+  app.route("/instances/:id/sessions", sessionApi({ instances: inst, fs: transcripts(opts.roots ?? { [SID]: root }), ...(opts.live ? { live: opts.live } : {}), ...(opts.run ? { run: opts.run } : {}) }));
   app.onError(onError);
   return app;
 }
@@ -114,7 +114,28 @@ describe("files", () => {
     expect((await get(build(), `/${SID}/file?path=${encodeURIComponent("../x")}`)).status).toBe(403);
     expect((await get(build(), `/${SID}/download?path=${encodeURIComponent("../x")}`)).status).toBe(403);
   });
-  test("GET touched returns a list", async () => {
+  test("GET changed runs git as the instance user in the checked folder and lists what git shows", async () => {
+  const calls: { cmd: string; args: string[]; cwd?: string }[] = [];
+  const run = async (cmd: string, args: string[], o?: { cwd?: string }) => {
+    calls.push({ cmd, args, cwd: o?.cwd });
+    const out = args.includes("rev-parse") ? "\n" : args.includes("status") ? "?? a.txt\0" : "";
+    return { code: 0, stdout: out, stderr: "" };
+  };
+  const identity = { home: "/home/x", path: "/usr/bin", uid: 1001, gid: 1001 };
+  const r = await get(build({ run, identity }), `/${SID}/changed`);
+  expect(r.status).toBe(200);
+  const list = (await r.json()) as { path: string; state: string }[];
+  expect(list.map((f) => [f.path, f.state])).toEqual([[join(root, "a.txt"), "uncommitted"]]);
+  // setpriv switches to the instance user, and git is told not to run a program that the repository names.
+  expect(calls.every((c) => c.cmd === "setpriv" && c.args.includes("1001") && c.args.includes("core.fsmonitor=false"))).toBe(true);
+  expect(calls.every((c) => c.cwd === calls[0]!.cwd && c.cwd!.endsWith("work"))).toBe(true);
+});
+
+test("GET changed gives 404 for a session that does not exist", async () => {
+  expect((await get(build(), `/${SID2}/changed`)).status).toBe(404);
+});
+
+test("GET touched returns a list", async () => {
     const r = await get(build(), `/${SID}/touched`);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([]);

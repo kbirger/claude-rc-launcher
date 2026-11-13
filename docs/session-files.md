@@ -150,6 +150,26 @@ If a session runs, the list shows a "live" badge with its status. If it uses Rem
 "Remote Control" badge. A name that someone set comes before the names in the transcript. A default name comes after them: it is used only
 when the transcript has no title and no first prompt.
 
+## The Changed list
+
+The Touched list reads only the tool calls `Write`, `Edit`, `MultiEdit` and `NotebookEdit`. A file that Claude made with
+a command (`sed -i`, a redirect, a script) is not on it. The Changed list (`GET /:sid/changed`, `gitchanges.ts`) asks
+git instead. It lists:
+
+- `uncommitted`: the files that `git status` shows as changed or new, when the last write is not more than 2 seconds
+  before the start of the session. A change that was there before the session is left out. A deleted file is left out.
+- `committed` and `deleted`: the files that a commit made since the start of the session changed or removed
+  (`git log --since`, with the commit date).
+
+The start is the start of the first transcript of a chain that `/clear` joined. Git cannot tell who changed a file, so
+the list also has changes by the user and by other sessions in the same folder. The list is empty when the folder is not
+a git work tree, when git fails and when it takes longer than 15 seconds. It has at most 2000 files, and only files below
+the session folder.
+
+The node runs git as the user of the instance (`setpriv`, as the clone and login steps do), in the checked real root of
+the session. It passes `--no-optional-locks`, `core.fsmonitor=false` (a program that the repository config can name) and
+no pager. The files open by their path inside the session folder, so the same checks as for the Folder tab apply.
+
 ## Sessions that `/clear` joins
 
 `/clear` starts a new transcript with a new session id, but the process keeps its Remote Control connection and its

@@ -1,4 +1,4 @@
-import { getPreview, getTouched, listFiles, listSessions } from "./api";
+import { getChanged, getPreview, getTouched, listFiles, listSessions } from "./api";
 
 export const SESSIONS_POLL_MS = 15000;
 export const SESSIONS_STALE_MS = 5000;
@@ -13,8 +13,16 @@ export const sessionsQuery = (host: string, instance: string) => ({
 });
 
 export const touchedQuery = (host: string, instance: string, session: string) => ({
-  queryKey: ["session-touched", host, instance, session] as const,
+  queryKey: ["session-touched", host, instance, session] as readonly string[],
   queryFn: () => getTouched(host, instance, session),
+  staleTime: SESSIONS_STALE_MS,
+  refetchOnWindowFocus: true,
+  retry: false as const,
+});
+
+export const changedQuery = (host: string, instance: string, session: string) => ({
+  queryKey: ["session-changed", host, instance, session] as readonly string[],
+  queryFn: () => getChanged(host, instance, session),
   staleTime: SESSIONS_STALE_MS,
   refetchOnWindowFocus: true,
   retry: false as const,

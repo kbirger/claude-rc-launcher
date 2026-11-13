@@ -16,6 +16,12 @@ export const listSessions = (host: string, instance: string) => request<Session[
 export const getTouched = (host: string, instance: string, session: string) =>
   request<TouchedFile[]>("GET", `${sessionBase(host, instance, session)}/touched`);
 
+/** A file that git shows as changed in the session folder since the session started (the node sends it from /changed). */
+export type ChangedFile = TouchedFile & { state: "uncommitted" | "committed" | "deleted" };
+
+export const getChanged = (host: string, instance: string, session: string) =>
+  request<ChangedFile[]>("GET", `${sessionBase(host, instance, session)}/changed`);
+
 export const listFiles = (host: string, instance: string, session: string, path: string, hidden: boolean) => {
   const q = new URLSearchParams();
   if (path) q.set("path", path);

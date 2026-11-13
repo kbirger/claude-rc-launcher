@@ -8,6 +8,7 @@
  * touched list.
  */
 import { realpath, stat } from "node:fs/promises";
+import { changedIn, type ChangedFile, type GitDeps } from "./gitchanges";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { HttpError } from "./instances";
 import { absRefused, PathError, within } from "./paths";
@@ -69,6 +70,11 @@ export class PinnedRoot {
   list(rel: string, hidden: boolean): Promise<Listing> {
     const real = this.real;
     return inRoot(real, () => listIn(real, rel, hidden, EXACT));
+  }
+
+  /** The files that git shows as changed in the session folder since `since`. See gitchanges.ts. */
+  changed(d: GitDeps, since: string): Promise<ChangedFile[]> {
+    return changedIn({ ...d, real: this.real, label: this.session.root, since });
   }
 
   /** A preview of a file inside the session folder. */

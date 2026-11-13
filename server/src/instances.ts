@@ -33,7 +33,7 @@ export interface Instances {
   trustFilter(user?: string): Promise<(absPath: string) => boolean>;
   dirOwnerFor(user?: string): Promise<{ uid: number; gid: number } | undefined>;
   /** The instance folder and the home of the user it runs as: where its Claude transcripts live. */
-  claudeHome?(id: string): Promise<{ path: string; home: string }>;
+  claudeHome?(id: string): Promise<{ path: string; home: string; identity?: Identity }>;
 }
 
 /** The user an instance runs as: its unit values, and where its trust file lives. */
@@ -172,7 +172,7 @@ export class InstanceService implements Instances {
     return { id, path: managed.path, name: nameFromUnit(content), ...(user ? { user } : {}), ...(await this.show(id)) };
   }
 
-  async claudeHome(id: string): Promise<{ path: string; home: string }> {
+  async claudeHome(id: string): Promise<{ path: string; home: string; identity?: Identity }> {
     if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(404, "instance not found");
     let content: string;
     try {
@@ -190,7 +190,10 @@ export class InstanceService implements Instances {
       if (e instanceof HttpError && e.status === 400) throw new HttpError(404, "instance user not found");
       throw e;
     }
-    return { path: managed.path, home: t.runAs.home };
+    const identity: Identity = { home: t.runAs.home, path: t.runAs.path };
+    if (t.uid !== undefined) identity.uid = t.uid;
+    if (t.gid !== undefined) identity.gid = t.gid;
+    return { path: managed.path, home: t.runAs.home, identity };
   }
 
   /** Validate id and require an existing managed unit file; otherwise 400/404. Runner is never touched. */

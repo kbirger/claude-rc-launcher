@@ -12,13 +12,14 @@ vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   listSessions: async () => [{ id: "s1", root: "/proj", startedAt: "2026-11-12T10:00:00Z", lastActiveAt: "2026-11-12T10:00:00Z" }],
   getTouched: async () => [{ path: "/proj/src/a.ts", inside: true, tool: "write", at: "2026-11-12T10:00:00Z", confirmed: true }],
+  getChanged: async () => [{ path: "/proj/docs/b.md", inside: true, tool: "edit", at: "2026-11-12T10:00:00Z", confirmed: true, state: "uncommitted" }],
   listFiles: async () => ({ path: "", parent: null, entries: [{ name: "readme.md", kind: "file", size: 5, mtime: "2026-11-12T10:00:00Z" }] }),
 }));
 
 const open: Array<() => void> = [];
 afterEach(() => { for (const u of open.splice(0)) u(); goto.mockClear(); replaceState.mockClear(); });
 
-async function show(view: "touched" | "folder", path = "") {
+async function show(view: "touched" | "changed" | "folder", path = "") {
   const target = document.createElement("div");
   document.body.append(target);
   const c = mount(SessionViewHarness, { target, props: { view, path, client: createQueryClient() } });
@@ -29,10 +30,10 @@ async function show(view: "touched" | "folder", path = "") {
 }
 const trigger = (t: HTMLElement, name: string) => [...t.querySelectorAll<HTMLElement>('[role="tab"]')].find((e) => e.textContent?.trim() === name)!;
 
-test("the tabs render Touched and Folder in a named tab list", async () => {
+test("the tabs render Touched, Changed and Folder in a named tab list", async () => {
   const t = await show("touched");
   expect(t.querySelector('[role="tablist"]')!.getAttribute("aria-label")).toBe("Session files");
-  expect(t.querySelectorAll('[role="tab"]')).toHaveLength(2);
+  expect(t.querySelectorAll('[role="tab"]')).toHaveLength(3);
   expect(t.querySelector('[role="tabpanel"]')).not.toBeNull();
   // At least 44 px high: h-11 on each trigger.
   for (const e of t.querySelectorAll('[role="tab"]')) expect(e.className).toContain("h-11");
@@ -80,12 +81,20 @@ test("a click on the active tab changes nothing", async () => {
   expect(replaceState).not.toHaveBeenCalled();
 });
 
+test("view=changed selects Changed and shows the files that git lists", async () => {
+  const t = await show("changed");
+  expect(trigger(t, "Changed").getAttribute("aria-selected")).toBe("true");
+  await vi.waitFor(() => expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("b.md"));
+  expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("uncommitted");
+  expect(t.querySelector<HTMLAnchorElement>('[role="tabpanel"] a')!.getAttribute("href")).toContain("view=changed");
+});
+
 test("the arrow keys move between the tabs", async () => {
   const t = await show("touched");
   const touched = trigger(t, "Touched");
   touched.focus();
   touched.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
   flushSync();
-  expect(trigger(t, "Folder").getAttribute("aria-selected")).toBe("true");
+  expect(trigger(t, "Changed").getAttribute("aria-selected")).toBe("true");
   expect(goto).not.toHaveBeenCalled();
 });
