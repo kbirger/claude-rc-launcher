@@ -26,6 +26,11 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `disposition.ts` | Makes the download headers (the file name). |
 | `api.ts` (web) | The browser calls and the types. |
 | `format.ts` (web) | Small pure helpers for the screens, such as the rows of the Touched list and the live badges. |
+| `viewkind.ts` (web) | Pure. Decides how a preview shows a text file: markdown, code or plain, and the language. It holds the file name map and the size rules. |
+| `formatted.ts` (web) | Renders markdown for the preview. It loads `markdown.ts` by dynamic import, and it falls back to plain text with a note when anything fails or the file is too complex. |
+| `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` is layer 1 (`markdown-it`, strict renderer, and the complexity guard) and runs both layers. `sanitize.ts` is the DOMPurify layer. Both load as one lazy chunk, only for a markdown file. |
+| `FormattedText.svelte` (web) | The only place that inserts HTML into the page. It takes only text that went through the sanitizer. |
+| `CodeView.svelte`, `editor.ts`, `codetheme.ts`, `languages.ts` (web) | The read-only code viewer. `CodeView.svelte` loads the editor and one language by `import()`. `editor.ts` builds the CodeMirror view. `codetheme.ts` maps the colors to the theme variables. `languages.ts` holds one lazy loader for each language. |
 | `SessionList.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
 
 ## The request flow for a download
@@ -153,3 +158,130 @@ These numbers were measured on the development machine:
 
 The proposed decision is to keep this work on the main thread. A cache and a limit on parallel reads keep it small.
 A worker thread or a child process is not used. This decision is proposed and still waits for the approval of the user.
+
+## How the web preview formats a file
+
+The server sends the same preview JSON as before. The browser does the formatting. `FilePreview.svelte` asks
+`viewKind` for the view. It uses the file name and the number of characters of the text. It never looks at bytes.
+
+### What the preview shows
+
+A markdown file shows rendered, and a Source switch shows its text in the code viewer. A file with a known language
+shows in the code viewer with colors, and a Wrap switch turns line wrapping on and off. Wrapping is on at first. Any
+other text file shows as plain text. A file that is not text shows a note. Every preview has a Download button.
+
+The controls (Rendered, Source, Wrap and Download) sit in one row above the file. The file fills the rest of the screen
+and scrolls inside its own box, so the page itself does not scroll. With Wrap off, the code scrolls sideways inside the
+box. A short file makes a short box. On a screen that is very low (a phone on its side), the box keeps at least 150
+pixels and the page scrolls instead. While a file is open, the session header is hidden to leave room for it.
+
+### Which files get colors
+
+The file name picks the language. The whole name is tried first, then the extension. The case of the name does not
+matter.
+
+| Language | Names and extensions |
+| --- | --- |
+| TypeScript | `ts`, `mts`, `cts`, `tsx` |
+| JavaScript | `js`, `mjs`, `cjs`, `jsx` |
+| JSON | `json`, `jsonc` |
+| Python | `py` |
+| Shell | `sh`, `bash`, `zsh` |
+| YAML | `yml`, `yaml` |
+| HTML and XML | `html`, `htm`, `xhtml`, `xml`, `svg`, `svelte`, `vue` |
+| CSS | `css` |
+| SQL | `sql` |
+| Go | `go` |
+| Rust | `rs` |
+| INI and TOML | `ini`, `toml`, `cfg` |
+| Diff | `diff`, `patch` |
+| Dockerfile | `Dockerfile`, `Dockerfile.<suffix>`, `dockerfile` |
+| Makefile | `Makefile`, `GNUmakefile`, `mk` |
+
+Markdown has a grammar too, but only the Source view of a markdown file uses it. Shell, INI and TOML, diff and
+Dockerfile use small stream parsers. Makefile has no parser of its own, so it uses the shell parser. It colors
+comments, strings and variables.
+
+### Size rules
+
+- A markdown file up to 64 K characters renders as markdown. A larger one shows as plain text with a note. A file that is small but too complex also shows as plain text, with its own note (see Slow markdown).
+- A file with a known language shows in the code viewer with no size limit below the 512 KB cut of the server.
+- Any other text shows in a `<pre>` box up to 8 K characters. A longer plain text shows in the code viewer with no
+  language, so a large file does not make a huge page. A text with any line longer than 2,000 characters also shows
+  in the code viewer, whatever its length, because a `<pre>` box lays out a long unbroken line very slowly.
+- K is 1,024, and the limits count characters of the text, not bytes.
+
+### Loading
+
+The libraries load by dynamic import, and only when a preview needs them. `markdown-it` and
+`dompurify` run on the main thread, in one lazy chunk, only for markdown. CodeMirror loads only for code and for the markdown
+source. Each language is its own chunk, and it loads when a file of that language opens. None of this is in the first
+page load.
+
+### Failures
+
+- If rendering fails, the file shows as plain text with the note "This file could not be formatted." If the complexity
+  guard refuses the file, it shows as plain text with the note "This file is too complex to format."
+- If the editor cannot load, for example when the phone is offline, the code shows in a `<pre>` box.
+- If only the language cannot load, the code shows without colors.
+
+### Safety
+
+Markdown has two layers, and a hostile file must get past both. Layer 1 is the `markdown-it` renderer in
+`markdown.ts`. It shows raw HTML as text. It shows an image as a text link. It keeps a link only if its address
+starts with `http://`, `https://` or `mailto:`, tested on the raw text before any decoding. The parser accepts every
+address. A core rule then hides the tags of a link that fails the test, and the `link_open` and `image` renderer
+rules test again. These two rules are the only code that writes `href` or `src`, so no other rule can skip the test.
+It never writes a `class` or a `style`. Layer 2 is DOMPurify in `sanitize.ts`. It keeps a fixed list of tags, only
+`href` and `title` on links, and only the same three address types. It adds `target="_blank"` and
+`rel="noopener noreferrer nofollow"` to every link. Both layers run on the main thread.
+
+Code never goes through HTML. CodeMirror writes text nodes, so a code file cannot add an element, a handler or a
+link to the page. The code viewer marks control characters, zero-width characters and bidirectional characters with a
+visible box, so a hidden character cannot change how the code reads. `sanitize.ts` is the only file that makes the
+`SafeHtml` type. `FormattedText.svelte` takes only that type, and it is the only file in the app that inserts HTML.
+
+### Slow markdown
+
+The parser is fast, but DOMPurify, the insert and the page layout are not, and they run on the main thread. In a real
+Chromium browser with the processor slowed four times, a file of 100 K characters could stop the page for up to 21
+seconds, and some small files of non-Latin words stopped it for 14 to 28 seconds. So markdown has a size limit of 64 K
+characters and a guard in `markdown.ts`. The guard parses the text to tokens first and refuses the file when any of
+these is true:
+
+- It would make more than 3,200 elements. An inline code span counts as 2, a link as 1.5 and a table cell as 0.6.
+- Anything nests deeper than 100 levels.
+- The sum of the squares of the lengths of the runs with no space is above 10,000,000. Chinese and Japanese text has no
+  spaces but is not counted, because the page can break a line after every character.
+- One paragraph, heading, list item or table cell has too many words of another script. A word with only characters
+  below U+0590 weighs 0. A word with other letters weighs 1, with Latin and one other script 2, and a word that mixes
+  scripts or has right-to-left letters with Latin weighs 8. Each change of script inside a word, each symbol pair and
+  each bidirectional control adds to the weight. One block may weigh 8,000, the whole file 40,000, and the heavy words
+  (private use, or two scripts that are not Latin) 4,000 in all.
+- It has more than 8,000 `[` characters, or the output would be more than eight times longer than the input.
+
+A refused file shows its full text in the code viewer, with the note "This file is too complex to format. Showing
+plain text." The guard runs before any rendering, so a refusal is fast. Normal prose of 60,000 characters in Korean, Japanese, Chinese, Hindi, Russian, Arabic, Thai and
+English renders in 0.17 to 0.44 seconds at four times slowdown. The worst file that the guard lets through took 0.66
+seconds at four times slowdown and 0.24 seconds at normal speed, from the start of the job to the next paint. A
+document with more than about 3,200 elements, for example a table of more than 550 rows of 8 columns (or 695 rows of 6
+columns), shows as plain text.
+
+### The code viewer and hostile text
+
+The viewer builds one widget for each hidden or control character, and it builds a whole line. A file with 32,768
+invisible characters took 10 seconds at four times slowdown, and one line of 64 K characters of mixed scripts took 13
+seconds. So the viewer limits both. A text with more than 1,500 hidden or control characters (control characters,
+zero-width characters, bidirectional controls, the byte order mark) shows a note above the viewer, "This file has more
+than 1,500 hidden or control characters. They are not marked.", and none of them is marked. A text with fewer keeps
+full marking, because a few hidden characters are what a Trojan Source trick needs. A line of more than 1,000
+characters with a layout weight above 3,000 (the weight of `layoutweight.ts`) shows its first 1,000 characters and a
+note, "... N more characters not shown". The text is not changed. At four times slowdown the worst file opened in
+0.71 seconds (600 KB of one letter on one line). Hidden characters in the part that is not shown are not marked.
+
+### Limits that remain
+
+- The preview shows no images.
+- It has no JSON or CSV view, no search, no line numbers and no editor.
+- The code viewer builds only the lines in view. A selection covers only the lines that are built, so use Download
+  to get the whole file.

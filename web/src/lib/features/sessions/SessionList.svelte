@@ -20,24 +20,24 @@
 {:else if !q.data?.length}
   <p class="text-muted-foreground">No sessions yet for this instance.</p>
 {:else}
-  <ul class="m-0 grid list-none gap-3 p-0">
+  <ul class="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-3 p-0">
     {#each q.data as s (s.id)}
       {@const wt = worktreeName(s.root)}
-      <li>
-        <a href={sessionsHref({ host, instance, session: s.id })} class="block min-h-11 no-underline">
+      <li class="min-w-0">
+        <a href={sessionsHref({ host, instance, session: s.id })} class="block min-h-11 min-w-0 no-underline">
           <Card.Root size="sm" class="gap-1">
             <Card.Content class="grid gap-1">
               {@const title = sessionTitle(s)}
               <div class="flex flex-wrap items-start gap-2">
-                <span class="line-clamp-2 min-w-0 flex-1 break-words {title ? 'font-semibold' : 'font-normal text-muted-foreground'}">{title ?? "Untitled session"}</span>
+                <span class="min-w-0 flex-1 [overflow-wrap:anywhere] {title ? 'font-semibold' : 'font-normal text-muted-foreground'}">{title ?? "Untitled session"}</span>
                 {#each liveBadges(s) as b (b.label)}<Badge variant="outline" class={b.class}>{b.label}</Badge>{/each}
                 {#if wt}<Badge variant="outline">work tree</Badge>{/if}
               </div>
               <div class="flex flex-wrap gap-x-2 text-muted-foreground">
                 {#each sessionDetail(s, now) as part, i (i)}
-                  <span class={i === 0 ? "font-mono" : "min-w-0 truncate"}>{part}</span>
+                  <span class={i === 0 ? "font-mono" : "min-w-0 [overflow-wrap:anywhere]"}>{part}</span>
                 {/each}
-                {#if wt}<span class="min-w-0 truncate">{wt}</span>{/if}
+                {#if wt}<span class="min-w-0 [overflow-wrap:anywhere]">{wt}</span>{/if}
               </div>
             </Card.Content>
           </Card.Root>

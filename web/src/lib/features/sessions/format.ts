@@ -76,6 +76,15 @@ export function touchedRows(
 /** The last name of a path, split on "/" and "\\". */
 export const baseName = (path: string): string => fwd(path).split("/").filter(Boolean).at(-1) ?? path;
 
+/** A path split into its last name and the folder above it ("" when there is none). Accepts "\\" like `baseName`. */
+export function splitPath(path: string): { name: string; dir: string } {
+  const p = fwd(path).replace(/\/+$/, "");
+  const i = p.lastIndexOf("/");
+  if (i < 0) return { name: p, dir: "" };
+  // The root "/" is a folder of its own: "/x" has the folder "/".
+  return { name: p.slice(i + 1), dir: i === 0 ? "/" : p.slice(0, i) };
+}
+
 /** The session name, or undefined when it has none (the list then shows a placeholder). */
 export const sessionTitle = (s: Session): string | undefined => s.name || undefined;
 
