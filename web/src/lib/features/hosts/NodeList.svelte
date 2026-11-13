@@ -70,7 +70,8 @@
         <!-- The first line: the name (or the rename form above), the role and the health of the node. -->
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           {#if editing !== h.id}<span class="min-w-0 font-semibold [overflow-wrap:anywhere]">{h.name}</span>{/if}
-          <span class={chip}>{roleOf(h)}</span>
+          <!-- The hub is the special node, so its chip has the primary color. An agent has the plain chip. -->
+          <span class={cn(chip, roleOf(h) === "hub" && "border-primary/40 bg-primary/10 font-medium text-primary")}>{roleOf(h)}</span>
           <Badge variant={h.status === "ok" || h.status === "restarting" ? "outline" : "destructive"} class={cn("h-6", h.status === "ok" ? "text-success" : h.status === "restarting" ? "text-warning" : "")}>{h.status}</Badge>
         </div>
         <!-- The second line: one chip for each component, with its update badge. -->
