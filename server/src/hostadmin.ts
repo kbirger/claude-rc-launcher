@@ -27,6 +27,18 @@ function checkServerName(v: unknown): string | undefined {
   return v;
 }
 
+/** `PATCH /:id` with `{ name }`: changes the display name of a managed host. Used by the CLI route and by the web page. */
+export function renameHandler(registry: HostRegistry): MiddlewareHandler {
+  return async (c) => {
+    const id = c.req.param("id") ?? "";
+    c.set("auditHost" as never, id as never);
+    const body = await readObject(c);
+    if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 64) throw new HttpError(400, "name is required: a non-empty string of at most 64 characters");
+    const e = await registry.rename(id, body.name.trim());
+    return c.json({ id, name: e.host.name, url: e.host.url, source: e.source });
+  };
+}
+
 /** Host management for the CLI: read a node certificate, add, rename and remove a managed host. */
 export function hostAdminApi(o: {
   registry: HostRegistry;
@@ -99,14 +111,7 @@ export function hostAdminApi(o: {
     return c.json({ id, name: host.name, url, source: "managed" }, 201);
   });
 
-  r.patch("/:id", audit, async (c) => {
-    const id = c.req.param("id");
-    c.set("auditHost" as never, id as never);
-    const body = await readObject(c);
-    if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 64) throw new HttpError(400, "name is required: a non-empty string of at most 64 characters");
-    const e = await o.registry.rename(id, body.name.trim());
-    return c.json({ id, name: e.host.name, url: e.host.url, source: e.source });
-  });
+  r.patch("/:id", audit, renameHandler(o.registry));
 
   r.delete("/:id", audit, async (c) => {
     const id = c.req.param("id");

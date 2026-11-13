@@ -170,3 +170,23 @@ describe("audit", () => {
     ]);
   });
 });
+
+describe("PATCH /:id", () => {
+  test("changes the name of a managed host and rejects an empty name", async () => {
+    const s = await setup();
+    const url = `https://localhost:${new URL(s.node.url).port}`;
+    expect((await s.post("/", { id: "win", url, fingerprint: s.fp })).status).toBe(201);
+    const patch = (body: unknown) => app_request(s, "/win", body);
+    expect((await patch({ name: "  " })).status).toBe(400);
+    const ok = await patch({ name: "KIRSTATION4" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).name).toBe("KIRSTATION4");
+    expect(s.registry.get("win")?.host.name).toBe("KIRSTATION4");
+  });
+});
+const app_request = (s: { registry: HostRegistry }, p: string, body: unknown) => {
+  const app = new Hono();
+  app.route("/cli/api/hosts", hostAdminApi({ registry: s.registry, makeClient: () => { throw new Error("unused"); } }));
+  app.onError(onError);
+  return app.request(`/cli/api/hosts${p}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(body) });
+};
