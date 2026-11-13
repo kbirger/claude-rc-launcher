@@ -217,6 +217,27 @@ describe("logout", () => {
     expect(r.headers.get("location")).toBe("/");
     expect(find(r, "session")).toMatch(CLEARED);
   });
+  test("ends the identity provider session when the provider supports it", async () => {
+    const asked: string[] = [];
+    const oidc: OidcClient = {
+      ...stub().oidc,
+      async endSessionUrl(p) {
+        asked.push(p.postLogoutRedirectUri);
+        return `https://idp/end-session/?post_logout_redirect_uri=${encodeURIComponent(p.postLogoutRedirectUri)}`;
+      },
+    };
+    const r = await build(mkCfg(), oidc).request("/auth/logout");
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toStartWith("https://idp/end-session/");
+    expect(asked).toEqual(["https://rc.example.com/"]);
+    expect(find(r, "session")).toMatch(CLEARED);
+  });
+  test("provider has no end-session endpoint or is down: still clears session and goes to /", async () => {
+    const oidc: OidcClient = { ...stub().oidc, async endSessionUrl() { throw new Error("no end_session_endpoint"); } };
+    const r = await build(mkCfg(), oidc).request("/auth/logout");
+    expect(r.headers.get("location")).toBe("/");
+    expect(find(r, "session")).toMatch(CLEARED);
+  });
 });
 
 describe("requireUser", () => {
