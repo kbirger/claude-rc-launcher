@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName, splitPath } from "./format";
+import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionMatches, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName, splitPath } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -108,9 +108,9 @@ test("sessionTitle gives the name or a placeholder", () => {
 });
 
 test("sessionDetail lists id, age and a real branch only", () => {
-  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual(["abcdef12", "2h ago", "main"]);
-  expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", "2h ago"]);
-  expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", "2h ago"]);
+  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /), "main"]);
+  expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
+  expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
 });
 
 test("sessionsHref encodes an abs value so it comes back unchanged", () => {
@@ -186,4 +186,12 @@ test("splitPath gives the last name and the folder above it", () => {
   expect(splitPath("/etc/hosts")).toEqual({ name: "hosts", dir: "/etc" });
   expect(splitPath("/x")).toEqual({ name: "x", dir: "/" });
   expect(splitPath("C:\\proj\\src\\a.ts")).toEqual({ name: "a.ts", dir: "C:/proj/src" });
+});
+
+test("sessionMatches needs every word in the name, id, branch or folder", () => {
+  const s = { ...sess, name: "Fix login", branch: "feat/auth", root: "/r/app" };
+  expect(sessionMatches(s, "")).toBe(true);
+  expect(sessionMatches(s, "LOGIN auth")).toBe(true);
+  expect(sessionMatches(s, "abcdef12")).toBe(true);
+  expect(sessionMatches(s, "login nope")).toBe(false);
 });

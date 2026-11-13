@@ -1,11 +1,12 @@
 import type { HostInfo } from "../hosts";
 import type { UpdateEntry } from "./api";
-import { releaseOf } from "../../shared/version";
+import { isBehind, releaseOf } from "../../shared/version";
 import { stepText } from "./updateoutput";
 
 export type BannerItem =
   | { kind: "hub-update"; target: string }
   | { kind: "node-update"; hosts: { id: string; name: string; target: string }[] }
+  | { kind: "nodes-after-hub"; hosts: string[] }
   | { kind: "hub-local-build" }
   | { kind: "by-hand"; host: string; message: string }
   | { kind: "offline-after-hub-update"; hosts: string[] }
@@ -50,6 +51,15 @@ export function bannerModel(o: { hosts: HostInfo[]; updates: UpdateEntry[]; late
       .filter((h) => h.id !== "local" && h.status === "ok" && h.stale && h.target && !isRunning(last(h.id), o.now))
       .map((h) => ({ id: h.id, name: h.name, target: h.target as string }));
     if (nodes.length) items.push({ kind: "node-update", hosts: nodes });
+    // A node can only be updated to the version of the hub. While the hub is behind the latest release, the nodes that
+    // are behind it too (and are not listed above) wait for the hub update. They are named so that none looks forgotten.
+    const latest = hub?.target;
+    if (hub?.stale && latest) {
+      const waiting = o.hosts
+        .filter((h) => h.id !== "local" && h.status === "ok" && !nodes.some((n) => n.id === h.id) && !isRunning(last(h.id), o.now) && (isBehind(h.version, latest) || isBehind(h.clientVersion, latest)))
+        .map((h) => h.name);
+      if (waiting.length) items.push({ kind: "nodes-after-hub", hosts: waiting });
+    }
   }
 
   if (hub && unknownVersion(hub.version)) items.push({ kind: "hub-local-build" });
@@ -101,6 +111,7 @@ export function bannerKey(item: BannerItem): string {
   switch (item.kind) {
     case "hub-update": return `hub-update:${item.target}`;
     case "node-update": return `node-update:${item.hosts.map((h) => `${h.id}@${h.target}`).sort().join(",")}`;
+    case "nodes-after-hub": return `after-hub:${[...item.hosts].sort().join(",")}`;
     case "updating": return `updating:${item.host}`;
     case "by-hand": return `by-hand:${item.host}`;
     case "offline-after-hub-update": return `offline:${[...item.hosts].sort().join(",")}`;

@@ -16,7 +16,7 @@
   let { open = $bindable(false) }: { open: boolean } = $props();
   const shell = getShell();
   const items = [
-    { href: "/", label: "Instances", icon: Home },
+    { href: "/instances", label: "Instances", icon: Home },
     { href: "/nodes", label: "Nodes", icon: Server },
     { href: "/updates", label: "Updates", icon: ArrowUp },
     { href: "/history", label: "Update history", icon: History },

@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { useIsMutating } from "@tanstack/svelte-query";
   import { UpdateBanner, UpdateHistory } from "#lib/features/updates";
   import { mockState, type MockName } from "#lib/features/updates/mock";
   import { bannerModel } from "#lib/features/updates/updatebanner";
@@ -24,7 +25,10 @@
 
   const names = $derived(Object.fromEntries(shell.hosts.map((h) => [h.id, h.name])));
   const items = $derived(bannerModel({ hosts, updates, latestError: shell.latestError, now: shell.now }));
-  const updating = $derived(items.some((i) => i.kind === "updating"));
+  // The update record only shows a run after the hub has written it. A call that is on its way already counts, so the crab starts
+  // the moment the button is pressed. The mock never makes a real call, so it uses the record alone.
+  const calling = useIsMutating({ mutationKey: ["update-host"] });
+  const updating = $derived(items.some((i) => i.kind === "updating") || (!mock && calling.current > 0));
   // The crab gives up for as long as the banner reports a failed update.
   const failed = $derived(!updating && items.some((i) => i.kind === "failed"));
   // An update that finished well in the last 30 seconds is worth a celebration.
