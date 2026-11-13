@@ -66,11 +66,15 @@
             <Button type="button" variant="ghost" size="sm" onclick={() => (editing = null)}>Cancel</Button>
           </form>
           {#if error}<span class="text-xs text-destructive" role="alert">{error}</span>{/if}
-        {:else}
-          <span class="min-w-0 font-semibold [overflow-wrap:anywhere]">{h.name}</span>
         {/if}
-        <div class="flex flex-wrap items-center gap-1.5">
+        <!-- The first line: the name (or the rename form above), the role and the health of the node. -->
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {#if editing !== h.id}<span class="min-w-0 font-semibold [overflow-wrap:anywhere]">{h.name}</span>{/if}
           <span class={chip}>{roleOf(h)}</span>
+          <Badge variant={h.status === "ok" || h.status === "restarting" ? "outline" : "destructive"} class={cn("h-6", h.status === "ok" ? "text-success" : h.status === "restarting" ? "text-warning" : "")}>{h.status}</Badge>
+        </div>
+        <!-- The second line: one chip for each component, with its update badge. -->
+        <div class="flex flex-wrap items-center gap-1.5">
           {#if h.status === "ok"}
             {#each components(h, latest) as c (c.key)}
               <span class={chip}>
@@ -95,7 +99,6 @@
               </span>
             {/each}
           {/if}
-          <Badge variant={h.status === "ok" || h.status === "restarting" ? "outline" : "destructive"} class={cn("h-6", h.status === "ok" ? "text-success" : h.status === "restarting" ? "text-warning" : "")}>{h.status}</Badge>
         </div>
         {#if h.status !== "ok" && h.error}
           <span class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{h.error}</span>
