@@ -27,7 +27,7 @@ function checkServerName(v: unknown): string | undefined {
   return v;
 }
 
-/** Host management for the CLI: read a node certificate, add a managed host, remove a managed host. */
+/** Host management for the CLI: read a node certificate, add, rename and remove a managed host. */
 export function hostAdminApi(o: {
   registry: HostRegistry;
   makeClient: (h: HostConfig) => HostClient;
@@ -97,6 +97,15 @@ export function hostAdminApi(o: {
     }
     await o.registry.add(host);
     return c.json({ id, name: host.name, url, source: "managed" }, 201);
+  });
+
+  r.patch("/:id", audit, async (c) => {
+    const id = c.req.param("id");
+    c.set("auditHost" as never, id as never);
+    const body = await readObject(c);
+    if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 64) throw new HttpError(400, "name is required: a non-empty string of at most 64 characters");
+    const e = await o.registry.rename(id, body.name.trim());
+    return c.json({ id, name: e.host.name, url: e.host.url, source: e.source });
   });
 
   r.delete("/:id", audit, async (c) => {

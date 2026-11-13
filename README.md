@@ -1039,6 +1039,7 @@ Start the node first. It logs `node certificate fingerprint sha256:<hex>` at eve
 ```sh
 claude-rc host add nas --url https://10.0.0.5:8443 --name NAS
 claude-rc host add pi  --url https://pi.internal:8443 --server-name pi.internal
+claude-rc host rename nas "Garage NAS"   # the display name; the id stays
 claude-rc host remove nas
 ```
 

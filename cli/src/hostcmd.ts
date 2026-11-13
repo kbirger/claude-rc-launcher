@@ -49,3 +49,8 @@ export async function hostRemove(id: string, hub: HubClient, out: (s: string) =>
   await hub.request("DELETE", `/cli/api/hosts/${encodeURIComponent(id)}`);
   out(`removed host ${id}`);
 }
+
+export async function hostRename(id: string, name: string, hub: HubClient, out: (s: string) => void): Promise<void> {
+  await hub.request("PATCH", `/cli/api/hosts/${encodeURIComponent(id)}`, { name });
+  out(`renamed host ${id} to ${name}`);
+}

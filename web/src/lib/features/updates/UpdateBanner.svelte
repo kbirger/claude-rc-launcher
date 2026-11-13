@@ -171,7 +171,7 @@
       <Table.Body>
         {#each hosts as h (h.id)}
           <Table.Row>
-            <Table.Cell class="align-top"><a class="text-primary underline-offset-4 hover:underline" href="/nodes#node-{h.id}">{h.name}</a></Table.Cell>
+            <Table.Cell class="align-top">{h.name}</Table.Cell>
             {#if h.status === "ok"}
               <Table.Cell class={cn("align-top whitespace-normal [overflow-wrap:anywhere]", isBehind(h.version, latest) && "text-warning")}>{h.version ?? "unknown"}</Table.Cell>
               <Table.Cell class={cn("align-top whitespace-nowrap", isBehind(h.clientVersion, latest) && "text-warning")}>{h.clientVersion ?? (h.noClient ? "none" : "not reported")}</Table.Cell>

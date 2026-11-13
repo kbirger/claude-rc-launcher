@@ -89,7 +89,7 @@ export function hubClient(o: { creds: Credentials; save: (c: Credentials) => voi
     },
 
     /** `opts.timeoutMs` limits each attempt. Without it, a call has no time limit of its own. */
-    async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, opts?: { timeoutMs?: number }): Promise<T> {
+    async request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, opts?: { timeoutMs?: number }): Promise<T> {
       if (creds.expiresAt - now() < RENEW_WINDOW_S) await refresh();
       let res = await send(method, path, body, opts?.timeoutMs);
       if (res.status === 401) {
