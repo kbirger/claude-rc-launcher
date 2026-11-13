@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { sseResponse, trackStreams } from "./sse";
 import type { DefinitionStatus } from "./win/definition";
@@ -63,7 +64,8 @@ export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersion
 function sessionCatalogFor(cfg: Config): SessionCatalog {
   // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
   const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
-  return new SessionCatalog({ refuseDirs });
+  const dir = cfg.node?.tls.stateDir ?? cfg.stateDir;
+  return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json") } : {}) });
 }
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */

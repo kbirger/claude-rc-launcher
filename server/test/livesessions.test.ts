@@ -45,8 +45,8 @@ describe("readLiveSessions", () => {
     const files = { "100.json": file(100, { bridgeSessionId: "cse_abc" }), "200.json": file(200, { sessionId: S2, status: "idle", name: "other" }) };
     const m = await live(files, [100, 200]);
     expect([...m.entries()]).toEqual([
-      [S1, { status: "busy", remoteControl: true, name: "proj-1" }],
-      [S2, { status: "idle", remoteControl: false, name: "other" }],
+      [S1, { status: "busy", remoteControl: true, name: "proj-1", nameIsDefault: true, bridgeId: "cse_abc" }],
+      [S2, { status: "idle", remoteControl: false, name: "other", nameIsDefault: true }],
     ]);
   });
 
@@ -71,10 +71,24 @@ describe("readLiveSessions", () => {
   test("only the whitelisted fields are returned", async () => {
     const m = await live({ "100.json": file(100, { peerToken: "SECRET", messagingSocketPath: "/tmp/sock", bridgeSessionId: "cse_1" }) }, [100]);
     const v = m.get(S1)!;
-    expect(Object.keys(v).sort()).toEqual(["name", "remoteControl", "status"]);
+    expect(Object.keys(v).sort()).toEqual(["bridgeId", "name", "nameIsDefault", "remoteControl", "status"]);
     expect(JSON.stringify(v)).not.toContain("SECRET");
     expect(JSON.stringify(v)).not.toContain("sock");
-    expect(JSON.stringify(v)).not.toContain("cse_1");
+    expect(v.bridgeId).toBe("cse_1");
+  });
+
+  test("nameIsDefault is true only for nameSource derived", async () => {
+    const cases: [string, object, boolean][] = [
+      ["derived", {}, true],
+      ["missing", { nameSource: undefined }, false],
+      ["unknown", { nameSource: "future" }, false],
+      ["user", { nameSource: "user" }, false],
+    ];
+    for (const [label, extra, want] of cases) {
+      const v = (await live({ "100.json": file(100, extra) }, [100])).get(S1)!;
+      expect([label, v.nameIsDefault === true]).toEqual([label, want]);
+    }
+    expect(JSON.stringify((await live({ "100.json": file(100, { nameSource: "user" }) }, [100])).get(S1))).not.toContain("nameSource");
   });
 
   test("a bad pid, a pid that does not match the file name, or a bad session id is ignored", async () => {
@@ -96,8 +110,8 @@ describe("readLiveSessions", () => {
     const files = { "100.json": file(100, { status: "waiting" }), "101.json": file(101, { status: "x".repeat(5000), sessionId: S2 }) };
     const m = await live(files, [100, 101]);
     expect([...m.entries()]).toEqual([
-      [S1, { remoteControl: false, name: "proj-1" }],
-      [S2, { remoteControl: false, name: "proj-1" }],
+      [S1, { remoteControl: false, name: "proj-1", nameIsDefault: true }],
+      [S2, { remoteControl: false, name: "proj-1", nameIsDefault: true }],
     ]);
     expect("status" in m.get(S1)!).toBe(false);
   });

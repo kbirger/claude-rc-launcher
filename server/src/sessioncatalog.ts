@@ -6,6 +6,7 @@
  */
 import { realpath } from "node:fs/promises";
 import { readLiveSessions, type LiveInfo } from "./livesessions";
+import { SessionChains } from "./sessionchains";
 import { PinnedRoot } from "./pinnedroot";
 import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
@@ -15,7 +16,10 @@ import { SESSION_ID } from "./transcript";
 import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
 
 /** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
-export type SessionSummary = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean } };
+export type SessionSummary = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean };
+  /** Set when `/clear` made this session out of earlier ones (same Remote Control connection): their ids, oldest first. */
+  earlier?: string[];
+};
 
 export type LiveReader = (home: string) => Promise<ReadonlyMap<string, LiveInfo>>;
 
@@ -23,6 +27,8 @@ export type SessionCatalogOptions = {
   fs?: TranscriptFs;
   names?: NameCache;
   live?: LiveReader;
+  /** Where the session chains are kept (a JSON file). Without it they live in memory only. */
+  chainFile?: string;
   /** The node's own state folders: an `abs` there is never served. */
   refuseDirs?: readonly string[];
   platform?: NodeJS.Platform;
@@ -50,6 +56,7 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) 
 export class SessionCatalog {
   readonly fs: TranscriptFs;
   readonly names: NameCache;
+  readonly chains: SessionChains;
   readonly platform: NodeJS.Platform;
   readonly openDownload: typeof openDownload;
   readonly previewIn: typeof previewIn;
@@ -59,6 +66,7 @@ export class SessionCatalog {
   constructor(o: SessionCatalogOptions = {}) {
     this.fs = o.fs ?? defaultTranscriptFs;
     this.names = o.names ?? newNameCache();
+    this.chains = new SessionChains(o.chainFile);
     this.platform = o.platform ?? process.platform;
     this.openDownload = o.openDownload ?? openDownload;
     this.previewIn = o.previewIn ?? previewIn;
@@ -96,12 +104,32 @@ export class InstanceSessions {
     const live = await this.catalog.readLive(this.home).catch(() => undefined);
     const fs = this.catalog.fs;
     const found = await scan({ home: this.home, path: this.path, fs });
-    const sessions = await mapLimit(found, NAME_READS, async (f): Promise<SessionSummary> => {
+    // Remember which session ids ran with which Remote Control connection, then join the ones that share a connection.
+    if (live) await this.catalog.chains.observe([...live].flatMap(([id, v]) => (v.bridgeId ? [[v.bridgeId, id] as const] : [])));
+    const byId = new Map(found.map((f) => [f.id, f]));
+    const hidden = new Set<string>();
+    const chainOf = new Map<string, Found[]>();
+    for (const f of found) {
+      if (hidden.has(f.id)) continue;
+      const members = (await this.catalog.chains.chainOf(f.id)).flatMap((i) => byId.get(i) ?? []);
+      if (members.length < 2) continue;
+      // The newest transcript of the chain is the one that shows. The others are folded into it.
+      const head = members.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a));
+      for (const m of members) if (m !== head) hidden.add(m.id);
+      chainOf.set(head.id, members.filter((m) => m !== head));
+    }
+    const sessions = await mapLimit(found.filter((f) => !hidden.has(f.id)), NAME_READS, async (f): Promise<SessionSummary> => {
+      const earlier = chainOf.get(f.id);
+      const first = earlier?.length ? earlier.reduce((a, b) => ((b.startedAt ?? "") < (a.startedAt ?? "") ? b : a)) : undefined;
       const lastActiveAt = new Date(f.mtimeMs).toISOString();
-      const s: SessionSummary = { id: f.id, root: f.root, startedAt: f.startedAt ?? lastActiveAt, lastActiveAt };
+      const s: SessionSummary = { id: f.id, root: f.root, startedAt: first?.startedAt ?? f.startedAt ?? lastActiveAt, lastActiveAt };
       const liveInfo = live?.get(f.id);
-      // The live name is what the Claude app shows, so it comes first. It is not cached: it changes while the session runs.
-      const name = tidy(liveInfo?.name) ?? (await nameOf(fs, f, this.catalog.names));
+      // A name that someone set is what the Claude app shows, so it comes first. It is not cached: it changes while the
+      // session runs. A default name (made by Claude Code) comes last: the titles in the transcript say more.
+      // In a chain the name of the first transcript comes next, because the app names the whole connection from it.
+      const liveName = tidy(liveInfo?.name);
+      const chainName = first ? await nameOf(fs, first, this.catalog.names) : undefined;
+      const name = (liveInfo?.nameIsDefault ? undefined : liveName) ?? chainName ?? (await nameOf(fs, f, this.catalog.names)) ?? liveName;
       if (name) s.name = name;
       // Field by field: nothing else from the running-session file reaches the answer.
       if (liveInfo) {
@@ -109,6 +137,7 @@ export class InstanceSessions {
         if (liveInfo.status !== undefined) s.live.status = liveInfo.status;
       }
       if (f.branch) s.branch = f.branch;
+      if (earlier?.length) s.earlier = earlier.sort((a, b) => ((a.startedAt ?? "") < (b.startedAt ?? "") ? -1 : 1)).map((m) => m.id);
       return s;
     });
     return sessions.sort((a, b) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0));
