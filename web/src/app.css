@@ -1,29 +1,293 @@
+/* Default palette. Every shadcn token is set in each palette block (colors only: --radius stays in routes/layout.css),
+   so a theme can change any of them without relying on the defaults derived in routes/layout.css. */
 :root {
-  --background: #f6f6f8; --card: #fff; --foreground: #1b1b1f; --muted-foreground: #6b6b76; --border: #d9d9e0;
-  --primary: #5b4bdb; --primary-foreground: #fff; --destructive: #c62828; --ok: #1b7f3b; --warn: #b26a00;
+  --background: #f6f6f8;
+  --foreground: #1b1b1f;
+  --card: #fff;
+  --card-foreground: #1b1b1f;
+  --popover: #fff;
+  --popover-foreground: #1b1b1f;
+  --primary: #5b4bdb;
+  --primary-foreground: #fff;
+  --secondary: #f1f1f2;
+  --secondary-foreground: #1b1b1f;
+  --muted: #f1f1f2;
+  --muted-foreground: #6b6b76;
+  --accent: #e9e9ea;
+  --accent-foreground: #1b1b1f;
+  --destructive: #c62828;
+  --border: #d9d9e0;
+  --input: #d9d9e0;
+  --ring: #5b4bdb;
+  --chart-1: #5b4bdb;
+  --chart-2: #1b7f3b;
+  --chart-3: #b26a00;
+  --chart-4: #c62828;
+  --chart-5: #6b6b76;
+  --sidebar: #fbfbfc;
+  --sidebar-foreground: #1b1b1f;
+  --sidebar-primary: #5b4bdb;
+  --sidebar-primary-foreground: #fff;
+  --sidebar-accent: #e9e9ea;
+  --sidebar-accent-foreground: #1b1b1f;
+  --sidebar-border: #d9d9e0;
+  --sidebar-ring: #5b4bdb;
+  --ok: #1b7f3b; --warn: #b26a00;
   color-scheme: light;
 }
 :root.dark {
+  --background: #121216;
+  --foreground: #ececf1;
+  --card: #1d1d23;
+  --card-foreground: #ececf1;
+  --popover: #1d1d23;
+  --popover-foreground: #ececf1;
+  --primary: #8a7dff;
+  --primary-foreground: #111;
+  --secondary: #292930;
+  --secondary-foreground: #ececf1;
+  --muted: #292930;
+  --muted-foreground: #9a9aa6;
+  --accent: #323238;
+  --accent-foreground: #ececf1;
+  --destructive: #ff6b6b;
+  --border: #34343e;
+  --input: #34343e;
+  --ring: #8a7dff;
+  --chart-1: #8a7dff;
+  --chart-2: #4cd37b;
+  --chart-3: #ffb74d;
+  --chart-4: #ff6b6b;
+  --chart-5: #9a9aa6;
+  --sidebar: #17171c;
+  --sidebar-foreground: #ececf1;
+  --sidebar-primary: #8a7dff;
+  --sidebar-primary-foreground: #111;
+  --sidebar-accent: #323238;
+  --sidebar-accent-foreground: #ececf1;
+  --sidebar-border: #34343e;
+  --sidebar-ring: #8a7dff;
+  --ok: #4cd37b; --warn: #ffb74d;
   color-scheme: dark;
-  --background: #121216; --card: #1d1d23; --foreground: #ececf1; --muted-foreground: #9a9aa6; --border: #34343e;
-  --primary: #8a7dff; --primary-foreground: #111; --destructive: #ff6b6b; --ok: #4cd37b; --warn: #ffb74d;
 }
-/* Opt-in Ayu Dark palette: open the page with ?theme=ayu (remembered), ?theme=default to go back. */
+/* Ayu palette: open the page with ?theme=ayu (remembered), ?theme=default to go back. Light and dark follow the mode.
+   The light variant is Ayu Light. The surfaces and text are the Ayu surface and editor colors. The orange, green,
+   yellow and red are darkened until they have 4.5:1 against the page, card and hover colors, because the app uses
+   them as text. The bright Ayu orange, green and yellow are in the chart colors. */
 :root[data-theme="ayu"] {
-  --background: #0d1017; --card: #141821; --foreground: #bebcb5; --muted-foreground: #8a949f; --border: #2d3443;
-  --primary: #e6b450; --primary-foreground: #1f1500; --destructive: #f07178; --ok: #aad94c; --warn: #ffb454;
+  --background: #f8f9fa;
+  --foreground: #5c6166;
+  --card: #fcfcfc;
+  --card-foreground: #5c6166;
+  --popover: #fff;
+  --popover-foreground: #5c6166;
+  --primary: #925808;
+  --primary-foreground: #fff;
+  --secondary: #ebeef0;
+  --secondary-foreground: #5c6166;
+  --muted: #ebeef0;
+  --muted-foreground: #586679;
+  --accent: #e4e8eb;
+  --accent-foreground: #5c6166;
+  --destructive: #c81d1d;
+  --border: #d6dbe0;
+  --input: #d6dbe0;
+  --ring: #925808;
+  --chart-1: #fa8532;
+  --chart-2: #eba400;
+  --chart-3: #86b300;
+  --chart-4: #22a4e6;
+  --chart-5: #a37acc;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #5c6166;
+  --sidebar-primary: #925808;
+  --sidebar-primary-foreground: #fff;
+  --sidebar-accent: #e4e8eb;
+  --sidebar-accent-foreground: #5c6166;
+  --sidebar-border: #d6dbe0;
+  --sidebar-ring: #925808;
+  --ok: #526e00; --warn: #885f00;
+  color-scheme: light;
+}
+:root[data-theme="ayu"].dark {
+  --background: #0d1017;
+  --foreground: #bebcb5;
+  --card: #141821;
+  --card-foreground: #bebcb5;
+  --popover: #141821;
+  --popover-foreground: #bebcb5;
+  --primary: #e6b450;
+  --primary-foreground: #1f1500;
+  --secondary: #1e222a;
+  --secondary-foreground: #bebcb5;
+  --muted: #1e222a;
+  --muted-foreground: #8a949f;
+  --accent: #252830;
+  --accent-foreground: #bebcb5;
+  --destructive: #f07178;
+  --border: #2d3443;
+  --input: #2d3443;
+  --ring: #e6b450;
+  --chart-1: #e6b450;
+  --chart-2: #aad94c;
+  --chart-3: #ffb454;
+  --chart-4: #f07178;
+  --chart-5: #8a949f;
+  --sidebar: #10141c;
+  --sidebar-foreground: #bebcb5;
+  --sidebar-primary: #e6b450;
+  --sidebar-primary-foreground: #1f1500;
+  --sidebar-accent: #252830;
+  --sidebar-accent-foreground: #bebcb5;
+  --sidebar-border: #2d3443;
+  --sidebar-ring: #e6b450;
+  --ok: #aad94c; --warn: #ffb454;
   color-scheme: dark;
 }
-/* Opt-in Tokyo Night palette: open the page with ?theme=tokyonight (remembered). */
+/* Tokyo Night palette: open the page with ?theme=tokyonight (remembered). Light and dark follow the mode. The light
+   colors come from the Tokyo Night Light palette; the card, secondary, accent, border and sidebar shades are mixes of it. */
 :root[data-theme="tokyonight"] {
-  --background: #1a1b26; --card: #1f2335; --foreground: #c0caf5; --muted-foreground: #9aa5ce; --border: #414868;
-  --primary: #7aa2f7; --primary-foreground: #1a1b26; --destructive: #f7768e; --ok: #9ece6a; --warn: #e0af68;
+  --background: #e6e7ed;
+  --foreground: #343b58;
+  --card: #f3f4f8;
+  --card-foreground: #343b58;
+  --popover: #f3f4f8;
+  --popover-foreground: #343b58;
+  --primary: #2959aa;
+  --primary-foreground: #fff;
+  --secondary: #dcdee8;
+  --secondary-foreground: #343b58;
+  --muted: #dcdee8;
+  --muted-foreground: #62646c;
+  --accent: #d3d5e1;
+  --accent-foreground: #343b58;
+  --destructive: #8c4351;
+  --border: #c8cad6;
+  --input: #c8cad6;
+  --ring: #2959aa;
+  --chart-1: #2959aa;
+  --chart-2: #385f0d;
+  --chart-3: #7f5412;
+  --chart-4: #8c4351;
+  --chart-5: #5a3e8e;
+  --sidebar: #dedfe8;
+  --sidebar-foreground: #343b58;
+  --sidebar-primary: #2959aa;
+  --sidebar-primary-foreground: #fff;
+  --sidebar-accent: #d3d5e1;
+  --sidebar-accent-foreground: #343b58;
+  --sidebar-border: #c8cad6;
+  --sidebar-ring: #2959aa;
+  --ok: #385f0d; --warn: #7f5412;
+  color-scheme: light;
+}
+:root[data-theme="tokyonight"].dark {
+  --background: #1a1b26;
+  --foreground: #c0caf5;
+  --card: #1f2335;
+  --card-foreground: #c0caf5;
+  --popover: #1f2335;
+  --popover-foreground: #c0caf5;
+  --primary: #7aa2f7;
+  --primary-foreground: #1a1b26;
+  --secondary: #292d41;
+  --secondary-foreground: #c0caf5;
+  --muted: #292d41;
+  --muted-foreground: #9aa5ce;
+  --accent: #2f3448;
+  --accent-foreground: #c0caf5;
+  --destructive: #f7768e;
+  --border: #414868;
+  --input: #414868;
+  --ring: #7aa2f7;
+  --chart-1: #7aa2f7;
+  --chart-2: #9ece6a;
+  --chart-3: #e0af68;
+  --chart-4: #f7768e;
+  --chart-5: #9aa5ce;
+  --sidebar: #16161e;
+  --sidebar-foreground: #c0caf5;
+  --sidebar-primary: #7aa2f7;
+  --sidebar-primary-foreground: #1a1b26;
+  --sidebar-accent: #2f3448;
+  --sidebar-accent-foreground: #c0caf5;
+  --sidebar-border: #414868;
+  --sidebar-ring: #7aa2f7;
+  --ok: #9ece6a; --warn: #e0af68;
+  color-scheme: dark;
+}
+/* Claude palette (light and dark, follows the mode). Every shadcn token is set here, so nothing is derived from the
+   defaults in routes/layout.css. --ok and --warn are the app's own status colors. */
+:root[data-theme="claude"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.147 0.004 49.3);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.147 0.004 49.3);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.147 0.004 49.3);
+  --primary: oklch(0.553 0.195 38.402);
+  --primary-foreground: oklch(0.98 0.016 73.684);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.96 0.002 17.2);
+  --muted-foreground: oklch(0.547 0.021 43.1);
+  --accent: oklch(0.96 0.002 17.2);
+  --accent-foreground: oklch(0.214 0.009 43.1);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0.005 34.3);
+  --input: oklch(0.922 0.005 34.3);
+  --ring: oklch(0.714 0.014 41.2);
+  --chart-1: oklch(0.837 0.128 66.29);
+  --chart-2: oklch(0.705 0.213 47.604);
+  --chart-3: oklch(0.646 0.222 41.116);
+  --chart-4: oklch(0.553 0.195 38.402);
+  --chart-5: oklch(0.47 0.157 37.304);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.986 0.002 67.8);
+  --sidebar-foreground: oklch(0.147 0.004 49.3);
+  --sidebar-primary: oklch(0.646 0.222 41.116);
+  --sidebar-primary-foreground: oklch(0.98 0.016 73.684);
+  --sidebar-accent: oklch(0.96 0.002 17.2);
+  --sidebar-accent-foreground: oklch(0.214 0.009 43.1);
+  --sidebar-border: oklch(0.922 0.005 34.3);
+  --sidebar-ring: oklch(0.714 0.014 41.2);
+  --ok: #1b7f3b; --warn: #b26a00;
+  color-scheme: light;
+}
+:root[data-theme="claude"].dark {
+  --background: oklch(0.147 0.004 49.3);
+  --foreground: oklch(0.986 0.002 67.8);
+  --card: oklch(0.214 0.009 43.1);
+  --card-foreground: oklch(0.986 0.002 67.8);
+  --popover: oklch(0.214 0.009 43.1);
+  --popover-foreground: oklch(0.986 0.002 67.8);
+  --primary: oklch(0.47 0.157 37.304);
+  --primary-foreground: oklch(0.98 0.016 73.684);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.268 0.011 36.5);
+  --muted-foreground: oklch(0.714 0.014 41.2);
+  --accent: oklch(0.268 0.011 36.5);
+  --accent-foreground: oklch(0.986 0.002 67.8);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.547 0.021 43.1);
+  --sidebar: oklch(0.214 0.009 43.1);
+  --sidebar-foreground: oklch(0.986 0.002 67.8);
+  --sidebar-primary: oklch(0.705 0.213 47.604);
+  --sidebar-primary-foreground: oklch(0.98 0.016 73.684);
+  --sidebar-accent: oklch(0.268 0.011 36.5);
+  --sidebar-accent-foreground: oklch(0.986 0.002 67.8);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.547 0.021 43.1);
+  --ok: #4cd37b; --warn: #ffb74d;
   color-scheme: dark;
 }
 /* In the base layer so Tailwind utilities and the shadcn components (which are layered) win over these element rules. */
 @layer base {
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--background); color: var(--foreground); font: 16px/1.4 system-ui, sans-serif; }
+  body { margin: 0; background: var(--background); color: var(--foreground); font: 16px/1.4 var(--font-sans); }
   button, input { font: inherit; color: inherit; }
   button {
     min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: 8px; cursor: pointer;

@@ -94,7 +94,7 @@
   .note { font-size: 0.85rem; }
   .login { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); display: grid; gap: 4px; }
   .login p { margin: 0; }
-  .code { font-family: ui-monospace, monospace; font-size: 1.4rem; letter-spacing: 0.1em; }
+  .code { font-family: var(--font-mono); font-size: 1.4rem; letter-spacing: 0.1em; }
   .login a { color: var(--primary); overflow-wrap: anywhere; }
   .list { flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-height: 120px; }
   .owner { padding: 6px 12px; font-size: 0.8rem; background: var(--background); border-bottom: 1px solid var(--border); }

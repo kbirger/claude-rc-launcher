@@ -65,8 +65,10 @@ test("Folder entries and the breadcrumb wrap", async () => {
   expect(names).toHaveLength(2);
   for (const n of names) expect(n.className).toContain("[overflow-wrap:anywhere]");
   const crumbs = t.querySelectorAll('nav[aria-label="Folder"] a');
-  expect(crumbs).toHaveLength(3);
+  // The session folder and the first folder are links. The folder you are in (q) is the current crumb and not a link.
+  expect(crumbs).toHaveLength(2);
   for (const c of crumbs) expect(c.className).toContain("[overflow-wrap:anywhere]");
+  expect(t.querySelector('nav[aria-label="Folder"] [aria-current="page"]')!.textContent).toBe("q");
 });
 
 test("Session rows wrap the title and the details", async () => {

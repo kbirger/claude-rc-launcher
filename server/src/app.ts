@@ -118,6 +118,20 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     await instances.stop(id);
     return c.body(null, 204);
   });
+  r.post("/instances/:id/pause", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    if (!instances.pause) throw new HttpError(501, "pause is not supported on this node");
+    await instances.pause(id);
+    return c.body(null, 204);
+  });
+  r.post("/instances/:id/resume", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    if (!instances.resume) throw new HttpError(501, "resume is not supported on this node");
+    await instances.resume(id);
+    return c.body(null, 204);
+  });
   r.get("/instances/:id/logs", async (c) => {
     const id = c.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");

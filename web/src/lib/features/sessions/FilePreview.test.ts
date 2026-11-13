@@ -45,11 +45,11 @@ const button = (t: HTMLElement, label: string) => Array.from(t.querySelectorAll(
 test("markdown opens Rendered, and the Source switch shows CodeView with the Wrap switch", async () => {
   const t = await show("a.md");
   expect(t.querySelector("[data-preview=rendered] .formatted-md h1")?.textContent).toBe("Title");
-  expect(button(t, "Rendered")?.getAttribute("aria-pressed")).toBe("true");
+  expect(button(t, "Rendered")?.getAttribute("data-state")).toBe("on");
   expect(button(t, "Wrap")).toBeUndefined();
   button(t, "Source")!.click();
   flushSync();
-  expect(button(t, "Source")?.getAttribute("aria-pressed")).toBe("true");
+  expect(button(t, "Source")?.getAttribute("data-state")).toBe("on");
   expect(t.querySelector("[data-preview=rendered]")).toBeNull();
   expect(t.querySelector("[data-preview=source]")).not.toBeNull();
   expect(button(t, "Wrap")).toBeDefined();

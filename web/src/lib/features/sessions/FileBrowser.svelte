@@ -1,6 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { createQuery } from "@tanstack/svelte-query";
+  import ChevronRight from "@tabler/icons-svelte/icons/chevron-right";
+  import FolderOpen from "@tabler/icons-svelte/icons/folder-open";
   import { cn } from "#lib/utils.js";
   import { crumbs } from "./crumbs";
   import { ago, humanSize, inHiddenPath, joinPath, sessionsHref } from "./format";
@@ -21,21 +23,29 @@
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
 </script>
 
-<nav class="mb-2 flex min-w-0 flex-wrap items-center" aria-label="Folder">
-  {#each crumbs(path) as c, i (c.path)}
-    {#if i > 1}<span class="text-muted-foreground">/</span>{/if}
-    <a href={link(c.path)} class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 [overflow-wrap:anywhere]" aria-current={c.path === crumbPath ? "page" : undefined}>{c.name}</a>
-  {/each}
-</nav>
-<label class="mb-2 inline-flex min-h-11 items-center gap-2">
-  <input
-    type="checkbox"
-    class="m-0 size-4 min-h-0 shrink-0 p-0"
-    checked={hidden}
-    disabled={forced}
-    onchange={(e) => goto(link(path, undefined, e.currentTarget.checked), { replace: true, reset: false })}
-  />Show hidden
-</label>
+<!-- The path of the folder on screen, in a box of its own with the switch for hidden names. The last part is the folder you are in. -->
+<div class="mb-3 flex min-w-0 flex-wrap items-center gap-x-3 rounded-lg border bg-muted/40 px-2">
+  <nav class="flex min-w-0 flex-1 flex-wrap items-center" aria-label="Folder">
+    <FolderOpen size={18} class="mx-1 shrink-0 text-muted-foreground" aria-hidden="true" />
+    {#each crumbs(path) as c, i (c.path)}
+      {#if i > 0}<ChevronRight size={14} class="shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
+      {#if c.path === crumbPath}
+        <span class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 font-semibold [overflow-wrap:anywhere]" aria-current="page">{i === 0 ? "Session folder" : c.name}</span>
+      {:else}
+        <a href={link(c.path)} class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 [overflow-wrap:anywhere]">{i === 0 ? "Session folder" : c.name}</a>
+      {/if}
+    {/each}
+  </nav>
+  <label class="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground">
+    <input
+      type="checkbox"
+      class="m-0 size-4 min-h-0 shrink-0 p-0"
+      checked={hidden}
+      disabled={forced}
+      onchange={(e) => goto(link(path, undefined, e.currentTarget.checked), { replace: true, reset: false })}
+    />Show hidden
+  </label>
+</div>
 
 {#if q.isPending}
   <p class="text-muted-foreground">Loading folder...</p>
