@@ -4,7 +4,7 @@ import readline from "node:readline/promises";
 import { parseCli } from "./args";
 import { runCommand, type CommandName } from "./commands";
 import { ExitError, LOGIN_MESSAGE, credsPath, deleteCreds, loadCreds, saveCreds } from "./creds";
-import { hostAdd, hostRemove } from "./hostcmd";
+import { hostAdd, hostRemove, hostRename } from "./hostcmd";
 import { hubClient } from "./hub";
 import { nodeConfig, type NodeFs } from "./nodecmd";
 import { nodeSetup, nodeUpdate, type Sys } from "./nodesetup";
@@ -184,9 +184,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       return 0;
     }
     if (name === "host") {
-      const [sub, id] = args;
-      if ((sub !== "add" && sub !== "remove") || !id) throw new ExitError("usage: claude-rc host add <id> --url <https-url> ... | claude-rc host remove <id>", 1);
-      if (sub === "add") await hostAdd({ id, flags, hub, readLine: env.readLine, out: io.out });
+      const [sub, id, newName] = args;
+      if ((sub !== "add" && sub !== "remove" && sub !== "rename") || !id || (sub === "rename" && !newName)) throw new ExitError("usage: claude-rc host add <id> --url <https-url> ... | claude-rc host rename <id> <name> | claude-rc host remove <id>", 1);
+      if (sub === "rename") await hostRename(id, newName!, hub, io.out);
+      else if (sub === "add") await hostAdd({ id, flags, hub, readLine: env.readLine, out: io.out });
       else await hostRemove(id, hub, io.out);
       return 0;
     }

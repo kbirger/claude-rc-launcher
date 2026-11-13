@@ -14,7 +14,7 @@
 <ul class="m-0 grid list-none gap-2 p-0" aria-label="Nodes">
   {#each hosts as h (h.id)}
     {@const outdated = h.status === "ok" && isOutdated(h, latest)}
-    <li id="node-{h.id}" class={cn("scroll-mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2", h.id === selected && "border-primary")}>
+    <li class={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2", h.id === selected && "border-primary")}>
       <div class="flex min-w-0 flex-1 basis-40 flex-col gap-1">
         <div class="flex items-center gap-2">
           <span class="min-w-0 font-semibold [overflow-wrap:anywhere]">{h.name}</span>

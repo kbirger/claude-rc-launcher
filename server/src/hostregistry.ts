@@ -132,6 +132,21 @@ export class HostRegistry {
     });
   }
 
+  /** Changes the display name of a managed host. The id, the URL and the pinned certificate stay: other records are keyed by the id. */
+  rename(id: string, name: string): Promise<HostEntry> {
+    return this.locked(async () => {
+      const e = this.get(id);
+      if (!e) throw new HttpError(404, "unknown host");
+      if (e.source === "config") throw new HttpError(409, `host ${id} is defined in config.toml. Edit that file to rename it`);
+      if (!this.store) throw new HttpError(501, "this registry cannot store hosts");
+      const renamed: HostEntry = { ...e, host: { ...e.host, name } };
+      const next = this.entries.map((x) => (x === e ? renamed : x));
+      await this.persist(next);
+      this.entries = next;
+      return renamed;
+    });
+  }
+
   private async persist(entries: HostEntry[]): Promise<void> {
     const hosts: Stored[] = entries
       .filter((e) => e.source === "managed")

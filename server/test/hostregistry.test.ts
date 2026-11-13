@@ -119,3 +119,17 @@ describe("HostRegistry", () => {
     await expect(r.add(host("pi"))).rejects.toMatchObject({ status: 501 });
   });
 });
+
+describe("rename", () => {
+  test("changes the name of a managed host, keeps the id and saves it", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "rc-ren-"));
+    const makeClient = (_h: HostConfig): HostClient => ({ stream: async () => { throw new Error("unused"); }, call: async () => ({ status: 200, body: {} }) });
+    const reg = await HostRegistry.load({ stateDir: dir, hosts: [], clients: new Map(), makeClient });
+    await reg.add({ id: "win", name: "win", url: "https://10.0.0.5:8443", ca: "x", auth: { type: "hub_key" } });
+    await reg.rename("win", "KIRSTATION4");
+    expect(reg.get("win")?.host.name).toBe("KIRSTATION4");
+    const again = await HostRegistry.load({ stateDir: dir, hosts: [], clients: new Map(), makeClient });
+    expect(again.get("win")?.host.name).toBe("KIRSTATION4");
+    await expect(reg.rename("nope", "x")).rejects.toThrow("unknown host");
+  });
+});
