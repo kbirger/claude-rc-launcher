@@ -2,7 +2,6 @@
   import { page } from "$app/state";
   import Home from "@tabler/icons-svelte/icons/home";
   import Server from "@tabler/icons-svelte/icons/server";
-  import History from "@tabler/icons-svelte/icons/history";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Palette from "@tabler/icons-svelte/icons/palette";
   import Github from "@tabler/icons-svelte/icons/brand-github-filled";
@@ -14,11 +13,11 @@
 
   let { open = $bindable(false) }: { open: boolean } = $props();
   const shell = getShell();
+  // The update history is part of Updates (the "All history" link there), so it is not a menu item. It lights up Updates.
   const items = [
     { href: "/instances", label: "Instances", icon: Home },
     { href: "/nodes", label: "Nodes", icon: Server },
-    { href: "/updates", label: "Updates", icon: ArrowUp },
-    { href: "/history", label: "Update history", icon: History },
+    { href: "/updates", label: "Updates", icon: ArrowUp, also: "/history" },
     { href: "/appearance", label: "Appearance", icon: Palette },
   ];
 </script>
@@ -31,7 +30,7 @@
     </Sheet.Header>
     <nav class="grid gap-1 px-4" aria-label="Menu">
       {#each items as it (it.href)}
-        <Button variant={page.url.pathname === it.href ? "secondary" : "ghost"} size="touch" class="justify-start" href={it.href} onclick={() => (open = false)}>
+        <Button variant={page.url.pathname === it.href || page.url.pathname === it.also ? "secondary" : "ghost"} size="touch" class="justify-start" href={it.href} onclick={() => (open = false)}>
           <it.icon size={20} aria-hidden="true" />{it.label}
         </Button>
       {/each}
