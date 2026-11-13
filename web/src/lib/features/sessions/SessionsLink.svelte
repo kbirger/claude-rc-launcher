@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
+  import Messages from "@tabler/icons-svelte/icons/messages";
   import { Button } from "#lib/components/ui/button/index.js";
   import { isUnsupported } from "./api";
   import { sessionsHref } from "./format";
@@ -12,5 +13,5 @@
 </script>
 
 {#if !isUnsupported(q.error)}
-  <Button variant="outline" size="touch" href={sessionsHref({ host, instance })}>Sessions</Button>
+  <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" href={sessionsHref({ host, instance })}><Messages aria-hidden="true" />Sessions</Button>
 {/if}

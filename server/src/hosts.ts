@@ -252,6 +252,8 @@ export function hostsApi(o: {
     }),
   );
   remote.delete("/instances/:id", forward((c, k) => k.call("DELETE", `/api/instances/${instanceId(c)}`, { timeoutMs: requestTimeoutMs })));
+  remote.post("/instances/:id/pause", forward((c, k) => k.call("POST", `/api/instances/${instanceId(c)}/pause`, { timeoutMs: requestTimeoutMs })));
+  remote.post("/instances/:id/resume", forward((c, k) => k.call("POST", `/api/instances/${instanceId(c)}/resume`, { timeoutMs: requestTimeoutMs })));
   remote.get(
     "/instances/:id/logs",
     forward((c, k) => {

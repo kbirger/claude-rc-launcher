@@ -25,6 +25,9 @@ export interface Instances {
   list(): Promise<Instance[]>;
   start(input: { path: string; name?: string; user?: string; addTrust?: boolean }): Promise<Instance>;
   stop(id: string): Promise<void>;
+  /** Stops the service but keeps the instance, so `resume` can start it again. Not every backend has it. */
+  pause?(id: string): Promise<void>;
+  resume?(id: string): Promise<void>;
   logs(id: string, lines: number): Promise<string>;
   users(): Promise<UsersInfo>;
   trustFilter(user?: string): Promise<(absPath: string) => boolean>;
@@ -307,6 +310,28 @@ export class InstanceService implements Instances {
         }
       }
       await this.sysctl(["daemon-reload"]);
+    } finally {
+      this.inflight.delete(id);
+    }
+  }
+
+  /** Stops the unit and takes it out of the boot start, and keeps the unit file. `resume` undoes it. */
+  async pause(id: string): Promise<void> {
+    await this.change(id, ["disable", "--now"], "pause");
+  }
+
+  async resume(id: string): Promise<void> {
+    await this.change(id, ["enable", "--now"], "resume");
+  }
+
+  private async change(id: string, args: string[], verb: string): Promise<void> {
+    if (this.inflight.has(id)) throw new HttpError(409, "operation in progress");
+    this.inflight.set(id, undefined);
+    try {
+      await this.requireManaged(id);
+      const unit = unitName(id);
+      const r = await this.sysctl([...args, unit]);
+      if (r.code !== 0) throw new HttpError(500, `failed to ${verb} ${unit}: ${r.stderr.trim()}`);
     } finally {
       this.inflight.delete(id);
     }

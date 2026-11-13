@@ -179,6 +179,22 @@ describe("list", () => {
   });
 });
 
+describe("pause and resume", () => {
+  test("pause is disable --now and keeps the unit file, resume is enable --now", async () => {
+    const id = await seed("/srv/a");
+    await svc().pause(id);
+    await svc().resume(id);
+    expect(calls).toEqual([sc("disable", "--now", unitName(id)), sc("enable", "--now", unitName(id))]);
+    expect(await readdir(dir)).toEqual([unitName(id)]);
+  });
+  test("a failed pause is 500 and an unmanaged id is 404", async () => {
+    const id = await seed("/srv/a");
+    failDisable = true;
+    expect(await status(svc().pause(id))).toBe(500);
+    expect(await status(svc().resume("abcdef012345"))).toBe(404);
+  });
+});
+
 describe("stop", () => {
   test("disable --now, delete file, daemon-reload", async () => {
     const id = await seed("/srv/a");

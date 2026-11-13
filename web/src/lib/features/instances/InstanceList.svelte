@@ -2,45 +2,41 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import * as Card from "#lib/components/ui/card/index.js";
+  import * as Sheet from "#lib/components/ui/sheet/index.js";
+  import FileText from "@tabler/icons-svelte/icons/file-text";
+  import Pause from "@tabler/icons-svelte/icons/player-pause";
+  import Play from "@tabler/icons-svelte/icons/player-play";
+  import Stop from "@tabler/icons-svelte/icons/player-stop";
   import { cn } from "#lib/utils.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { SessionsLink } from "#lib/features/sessions";
   import InstanceLogs from "./InstanceLogs.svelte";
   import { createInstancesModel } from "./model.svelte";
+  import { isPaused, stateLabel, stateTone } from "./state";
   import type { Instance } from "./api";
 
   let { host, startError = "" }: { host: string; startError?: string } = $props();
 
   // The model holds the state and the rules. This file draws it. App remounts the list (#key) when the host changes.
   const model = createInstancesModel({ host: untrack(() => host), client: useQueryClient(), startError: () => startError });
-  let open = $state<Record<string, true>>({});
+  // The instance whose logs are open in the flyout.
+  let logsFor = $state<{ id: string; name: string } | null>(null);
   const now = $derived(model.now);
 
   function uptime(state: string, startedAt: string | null): string {
-    if (state !== "active" || !startedAt) return "—";
+    if (state !== "active" || !startedAt) return "";
     const t = new Date(startedAt).getTime();
-    if (Number.isNaN(t)) return "—";
+    if (Number.isNaN(t)) return "";
     const s = Math.max(0, Math.floor((now - t) / 1000));
     const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-    if (d > 0) return `${d}d ${h}h`;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  }
-
-  function badge(state: string): string {
-    return state === "active" ? "active" : state === "failed" ? "failed" : "other";
+    if (d > 0) return `up ${d}d ${h}h`;
+    if (h > 0) return `up ${h}h ${m}m`;
+    return `up ${m}m`;
   }
 
   function stop(i: Instance) {
-    if (confirm(`Stop ${i.name}?`)) model.stop(i.id);
-  }
-
-  function toggleLogs(id: string) {
-    if (id in open) {
-      const { [id]: _, ...rest } = open;
-      open = rest;
-    } else open = { ...open, [id]: true };
+    if (confirm(`Stop ${i.name}? This removes it from the list. Use Pause to keep it.`)) model.stop(i.id);
   }
 </script>
 
@@ -53,32 +49,57 @@
     {@const i = r.instance}
     <li>
       <Card.Root size="sm" class={cn("gap-2", r.pending && "opacity-60", r.pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50")}>
-        <Card.Header>
-          <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{r.name}</Card.Title>
-          <Card.Action>
-            {#if r.pending}
-              <Badge variant="outline" class="text-warning">{r.pending}...</Badge>
-            {:else if i}
-              <Badge variant={badge(i.state) === "failed" ? "destructive" : "outline"} class={badge(i.state) === "active" ? "text-success" : badge(i.state) === "other" ? "text-warning" : ""}>{i.state}</Badge>
+        <Card.Content class="flex items-start gap-3">
+          <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div class="flex flex-wrap items-center gap-2">
+              <h3 class="m-0 text-base leading-tight font-semibold [overflow-wrap:anywhere]">{r.name}</h3>
+              {#if r.pending}
+                <Badge variant="outline" class="text-warning">{r.pending}...</Badge>
+              {:else if i}
+                <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : ""}>{stateLabel(i.state)}</Badge>
+              {/if}
+            </div>
+            {#if i}
+              <p class="m-0 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{i.path}</p>
+              {#if i.user || uptime(i.state, i.startedAt)}
+                <p class="m-0 text-xs text-muted-foreground">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
+              {/if}
+              <div class="-ml-2 flex flex-wrap items-center gap-1">
+                <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => (logsFor = { id: i.id, name: r.name })} aria-haspopup="dialog">
+                  <FileText aria-hidden="true" />Logs
+                </Button>
+                <SessionsLink {host} instance={i.id} />
+              </div>
             {/if}
-          </Card.Action>
-        </Card.Header>
-        {#if i}
-          <Card.Content class="grid gap-2">
-            <div class="grid gap-0.5 text-muted-foreground">
-              <div class="[overflow-wrap:anywhere]">{i.path}</div>
-              {#if i.user}<div>{i.user}</div>{/if}
-              <div>{uptime(i.state, i.startedAt)}</div>
+          </div>
+          {#if i}
+            <div class="flex flex-none flex-col gap-1">
+              {#if isPaused(i.state)}
+                <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
+                  <Play aria-hidden="true" />
+                </Button>
+              {:else}
+                <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
+                  <Pause aria-hidden="true" />
+                </Button>
+              {/if}
+              <Button variant="ghost" size="icon" class="text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={!!r.pending} onclick={() => stop(i)} aria-label="Stop {r.name}" title="Stop: removes the instance">
+                <Stop aria-hidden="true" />
+              </Button>
             </div>
-            <div class="flex gap-2">
-              <Button variant="outline" size="touch" disabled={!!r.pending} onclick={() => toggleLogs(i.id)}>{i.id in open ? "Hide logs" : "Logs"}</Button>
-              <SessionsLink {host} instance={i.id} />
-              <Button variant="destructive" size="touch" disabled={!!r.pending} onclick={() => stop(i)}>Stop</Button>
-            </div>
-            {#if i.id in open}<InstanceLogs {host} id={i.id} />{/if}
-          </Card.Content>
-        {/if}
+          {/if}
+        </Card.Content>
       </Card.Root>
     </li>
   {/each}
 </ul>
+
+<Sheet.Root open={logsFor !== null} onOpenChange={(o) => { if (!o) logsFor = null; }}>
+  <Sheet.Content side="bottom" class="mx-auto max-h-[85dvh] w-full max-w-2xl overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]">
+    <Sheet.Header>
+      <Sheet.Title>Logs: {logsFor?.name}</Sheet.Title>
+      <Sheet.Description class="sr-only">The last lines of the log of this instance.</Sheet.Description>
+    </Sheet.Header>
+    <div class="px-4">{#if logsFor}<InstanceLogs {host} id={logsFor.id} />{/if}</div>
+  </Sheet.Content>
+</Sheet.Root>

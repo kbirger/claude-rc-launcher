@@ -43,6 +43,8 @@ function fake(over: Record<string, any> = {}) {
     list: async () => [inst],
     start: async (i: any) => { calls.push(["start", i]); return inst; },
     stop: async (id: string) => { calls.push(["stop", id]); },
+    pause: async (id: string) => { calls.push(["pause", id]); },
+    resume: async (id: string) => { calls.push(["resume", id]); },
     logs: async (id: string, n: number) => { calls.push(["logs", id, n]); return "log text"; },
     users: async () => ({ selectable: true, default: "svc", users: [{ name: "svc" }, { name: "alice" }] }),
     trustFilter: async (u?: string) => {
@@ -174,6 +176,15 @@ describe("instances", () => {
     const r = await app.request(`/api/hosts/local/instances/${ID}`, { method: "DELETE", headers: H() });
     expect(r.status).toBe(204);
     expect(calls).toEqual([["stop", ID]]);
+  });
+  test("POST pause and resume: bad id -> 400; valid -> 204; a backend without them -> 501", async () => {
+    const { app, calls } = mk();
+    expect((await app.request("/api/hosts/local/instances/..%2Fx/pause", { method: "POST", headers: H() })).status).toBe(400);
+    expect((await app.request(`/api/hosts/local/instances/${ID}/pause`, { method: "POST", headers: H() })).status).toBe(204);
+    expect((await app.request(`/api/hosts/local/instances/${ID}/resume`, { method: "POST", headers: H() })).status).toBe(204);
+    expect(calls).toEqual([["pause", ID], ["resume", ID]]);
+    const none = mk({ pause: undefined });
+    expect((await none.app.request(`/api/hosts/local/instances/${ID}/pause`, { method: "POST", headers: H() })).status).toBe(501);
   });
   test("DELETE unknown -> 404 from service", async () => {
     const { app } = mk({ stop: async () => { throw new HttpError(404, "instance not found"); } });

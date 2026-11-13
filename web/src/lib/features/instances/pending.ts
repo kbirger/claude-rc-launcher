@@ -1,7 +1,7 @@
 import type { Instance } from "./api";
 import type { StartArgs } from "./mutations";
 
-export type PendingKind = "starting" | "stopping";
+export type PendingKind = "starting" | "stopping" | "pausing" | "resuming";
 export type ListRow = { key: string; name: string; instance?: Instance; pending?: PendingKind };
 
 export function startRowName(a: { path: string; name?: string }): string {

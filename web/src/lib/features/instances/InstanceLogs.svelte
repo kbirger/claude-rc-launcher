@@ -16,5 +16,5 @@
 {/if}
 
 <style>
-  pre { max-height: 40vh; overflow: auto; font-size: 0.75rem; background: var(--background); padding: 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre { overflow: auto; font-size: 0.75rem; background: var(--background); padding: 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
