@@ -57,45 +57,41 @@
     <li>
       <Card.Root size="sm" class={cn("gap-2", r.pending && "opacity-60", r.pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50")}>
         <Card.Content class="flex flex-col gap-1.5">
-          <!-- The header: the name and the state on the left, the actions on the right, on the line of the name. -->
           <div class="flex items-start justify-between gap-2">
-            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-              <h3 class="m-0 text-base leading-tight font-semibold [overflow-wrap:anywhere]">{r.name}</h3>
-              {#if r.pending}
-                <Badge variant="outline" class="text-warning">{r.pending}...</Badge>
-              {:else if i}
-                <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : ""}>{stateLabel(i.state)}</Badge>
-              {/if}
-            </div>
-            {#if i}
-              <div class="-mt-1 -mr-1.5 flex flex-none items-center">
-                {#if isPaused(i.state)}
-                  <Button variant="ghost" size="icon" class="size-8 hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
-                    <Play aria-hidden="true" />
-                  </Button>
-                {:else}
-                  <Button variant="ghost" size="icon" class="size-8 hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
-                    <Pause aria-hidden="true" />
-                  </Button>
-                {/if}
-                <Button variant="ghost" size="icon" class="size-8 text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={!!r.pending} onclick={() => stop(i)} aria-label="Stop {r.name}" title="Stop: removes the instance">
-                  <Stop aria-hidden="true" />
-                </Button>
-              </div>
+            <h3 class="m-0 text-base leading-tight font-semibold [overflow-wrap:anywhere]">{r.name}</h3>
+            {#if r.pending}
+              <Badge variant="outline" class="flex-none text-warning">{r.pending}...</Badge>
+            {:else if i}
+              <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={cn("flex-none", stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : "")}>{stateLabel(i.state)}</Badge>
             {/if}
           </div>
           {#if i}
-              <p class="m-0 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{i.path}</p>
-              {#if i.user || uptime(i.state, i.startedAt)}
-                <p class="m-0 text-xs text-muted-foreground">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
-              {/if}
-              <div class="-ml-2 flex flex-wrap items-center gap-1">
-                <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
-                  <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
-                </Button>
-                <SessionsLink {host} instance={i.id} />
-              </div>
+            <p class="m-0 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{i.path}</p>
+            {#if i.user || uptime(i.state, i.startedAt)}
+              <p class="m-0 text-xs text-muted-foreground">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
             {/if}
+            <!-- One action row. -mx-2 cancels the ghost buttons' inner padding, so the first and last icons line up with the text edges. -->
+            <div class="-mx-2 mt-1 flex flex-wrap items-center gap-1">
+              <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
+                <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
+              </Button>
+              <SessionsLink {host} instance={i.id} />
+              <div class="ml-auto flex items-center gap-1">
+                {#if isPaused(i.state)}
+                  <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
+                    <Play aria-hidden="true" />
+                  </Button>
+                {:else}
+                  <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
+                    <Pause aria-hidden="true" />
+                  </Button>
+                {/if}
+                <Button variant="ghost" size="icon" class="text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={!!r.pending} onclick={() => stop(i)} aria-label="Stop {r.name}" title="Stop: removes the instance">
+                  <Stop aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          {/if}
         </Card.Content>
         {#if i && i.id in open}
           <Card.Content><InstanceLogs {host} id={i.id} /></Card.Content>
