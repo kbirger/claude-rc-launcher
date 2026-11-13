@@ -38,7 +38,9 @@
 import { posix, win32 as win32Path } from "node:path";
 import { Hono, type Context } from "hono";
 import { downloadHeaders } from "./disposition";
+import type { Identity } from "./asuser";
 import { HttpError, type Instances } from "./instances";
+import { bunRunner, type Runner } from "./runner";
 import type { LiveInfo } from "./livesessions";
 import type { PinnedRoot } from "./pinnedroot";
 import { SessionCatalog, type Session, type SessionCatalogOptions } from "./sessioncatalog";
@@ -69,6 +71,8 @@ export type SessionApiDeps = {
   platform?: NodeJS.Platform;
   /** Reads the running sessions under a home folder (tests). Defaults to readLiveSessions. */
   live?: (home: string) => Promise<ReadonlyMap<string, LiveInfo>>;
+  /** Runs git for the changed list (tests). Defaults to a real process. */
+  run?: Runner;
   /** One catalog for the whole app, so that every router shares one name cache. Without it, the options above build one. */
   sessions?: SessionCatalog;
 };
@@ -93,11 +97,12 @@ export function sessionApi(deps: SessionApiDeps): Hono {
   const { instances } = deps;
   const catalog = deps.sessions ?? new SessionCatalog(catalogOptions(deps));
   const platform = catalog.platform;
+  const run = deps.run ?? bunRunner;
   const win = platform === "win32";
   const P = win ? win32Path : posix;
   const r = new Hono();
 
-  async function home(c: Context): Promise<{ path: string; home: string }> {
+  async function home(c: Context): Promise<{ path: string; home: string; identity?: Identity }> {
     const id = c.req.param("id") ?? "";
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.claudeHome) throw new HttpError(501, "sessions are not available on this host");
@@ -140,6 +145,18 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     const p = await pinnedOf(c);
     // Refused paths are left out, so that the list never shows a link that the abs gate answers with 404.
     return c.json(await p.session.touched({ dirs: await catalog.refusedDirs() }));
+  });
+
+  // What git shows as changed in the folder since the session started (also by commands that the touched list cannot see).
+  r.get("/:sid/changed", async (c) => {
+    const h = await home(c);
+    const p = await pinnedOf(c);
+    const identity = h.identity ?? { home: h.home, path: process.env.PATH ?? "/usr/bin:/bin" };
+    // A session that /clear joined to earlier ones started with the first of them.
+    const inst = catalog.instance(h);
+    const starts = await Promise.all((await catalog.chains.chainOf(p.session.id)).map(async (id) => (await inst.find(id))?.startedAt));
+    const since = starts.filter((t): t is string => typeof t === "string").sort()[0] ?? new Date(0).toISOString();
+    return c.json(await p.changed({ run, identity }, since));
   });
 
   r.get("/:sid/files", async (c) => {

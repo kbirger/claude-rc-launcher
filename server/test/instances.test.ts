@@ -551,7 +551,10 @@ describe("claudeHome", () => {
   test("returns the home of the run-as user from User=", async () => {
     await svc().start({ path: "/srv/a", user: "alice" });
     const [inst] = await svc().list();
-    expect(await svc().claudeHome(inst!.id)).toEqual({ path: "/srv/a", home: "/home/alice" });
+    const h = await svc().claudeHome(inst!.id);
+    expect({ path: h.path, home: h.home }).toEqual({ path: "/srv/a", home: "/home/alice" });
+    // The identity is what git runs as for the Changed list.
+    expect(h.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
   });
   test("a unit whose user has vanished is 404 instance user not found", async () => {
     await svc().start({ path: "/srv/a", user: "alice" });

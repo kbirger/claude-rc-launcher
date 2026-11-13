@@ -15,7 +15,7 @@
   import { instancesQuery } from "../instances/queries";
 
   // `abs`: a touched file opened by its absolute path (it may be outside the session folder). It wins over `file`.
-  type Props = { host: string; instance: string; session: string; view: "touched" | "folder"; path: string; hidden: boolean; file: string; abs?: string; now: number };
+  type Props = { host: string; instance: string; session: string; view: "touched" | "changed" | "folder"; path: string; hidden: boolean; file: string; abs?: string; now: number };
   let { host, instance, session, view, path, hidden, file, abs = "", now }: Props = $props();
 
   const q = createQuery(() => sessionsQuery(host, instance));
@@ -23,7 +23,7 @@
   // The name of the instance, for the way back. The instance list is cached by the page before this one.
   const instances = createQuery(() => instancesQuery(host));
   const instanceName = $derived(instances.data?.find((x) => x.id === instance)?.name);
-  const href = (v: "touched" | "folder", extra: { path?: string; file?: string } = {}) =>
+  const href = (v: "touched" | "changed" | "folder", extra: { path?: string; file?: string } = {}) =>
     sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
   // The tab is state of this page, not a navigation: a click adds no history entry, so Back does not walk through the tabs.
   // The address follows the tab (replaced, not added), so a reload or a Back from a file lands on the same tab.
@@ -31,9 +31,9 @@
   let current = $state(untrack(() => view));
   $effect(() => { current = view; });
   // What each tab shows, in words. It sits under the tabs and follows the selected one.
-  const help = { touched: "Files that Claude wrote or edited in this session.", folder: "Every file in the folder of this session, also files that Claude did not touch." };
+  const help = { touched: "Files that Claude wrote or edited in this session.", changed: "Files that git shows as changed in the folder since the session started. This includes files that commands made.", folder: "Every file in the folder of this session, also files that Claude did not touch." };
   const pick = (v: string) => {
-    if (v !== "touched" && v !== "folder") return;
+    if (v !== "touched" && v !== "changed" && v !== "folder") return;
     current = v;
     replaceState(href(v, v === "folder" ? { path } : {}), {});
   };
@@ -63,12 +63,13 @@
   {#if abs}
     <FilePreview {host} {instance} {session} file={abs} abs back={href("touched")} backLabel="Back to touched files" />
   {:else if file}
-    <FilePreview {host} {instance} {session} {file} back={current === "folder" ? href("folder", { path }) : href("touched")} backLabel={current === "folder" ? "Back to folder" : "Back to touched files"} />
+    <FilePreview {host} {instance} {session} {file} back={current === "folder" ? href("folder", { path }) : href(current)} backLabel={current === "folder" ? "Back to folder" : current === "changed" ? "Back to changed files" : "Back to touched files"} />
   {:else}
     <h3 class="m-0 text-sm font-semibold">Files</h3>
     <Tabs.Root value={current} onValueChange={pick}>
       <Tabs.List aria-label="Session files" class="group-data-horizontal/tabs:h-auto w-full">
         <Tabs.Trigger value="touched" class="h-11 text-sm">Touched</Tabs.Trigger>
+        <Tabs.Trigger value="changed" class="h-11 text-sm">Changed</Tabs.Trigger>
         <Tabs.Trigger value="folder" class="h-11 text-sm">Folder</Tabs.Trigger>
       </Tabs.List>
       <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[current]}</p>
@@ -84,7 +85,7 @@
         {:else if current === "folder"}
           <FileBrowser {host} {instance} {session} {path} {hidden} {now} />
         {:else}
-          <TouchedList {host} {instance} {session} root={s.root} {now} />
+          <TouchedList {host} {instance} {session} root={s.root} {now} kind={current === "changed" ? "changed" : "touched"} />
         {/if}
       </Tabs.Content>
     </Tabs.Root>
