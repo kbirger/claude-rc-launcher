@@ -140,10 +140,29 @@ with a secret token.
   be equal to `procStart` in the file. A different start time means that the system gave the pid to a new process.
   The `pidDomain` of the file must also name this machine and this pid namespace. If `/proc` cannot be read, and on
   Windows, the check is `process.kill(pid, 0)`.
-- It returns only the status, the Remote Control state and the name. No other field leaves the module.
+- It returns only the status, the Remote Control state, the name, `nameIsDefault` and `bridgeId`. No other field
+  leaves the module. Only `sessionchains.ts` reads `bridgeId`, and it never reaches the web.
+  `nameIsDefault` is true only when the file has `nameSource: "derived"`. Claude Code then made the name itself, from
+  the folder name and two characters. A missing or unknown `nameSource` counts as a name that someone set. The value
+  `derived` comes from reading the Claude binary (2.1.323). It is not documented and can change.
 
 If a session runs, the list shows a "live" badge with its status. If it uses Remote Control, the list also shows a
-"Remote Control" badge. The name from this file comes before the names in the transcript.
+"Remote Control" badge. A name that someone set comes before the names in the transcript. A default name comes after them: it is used only
+when the transcript has no title and no first prompt.
+
+## Sessions that `/clear` joins
+
+`/clear` starts a new transcript with a new session id, but the process keeps its Remote Control connection and its
+`bridgeSessionId`. The transcripts do not name their predecessor. `sessionchains.ts` therefore remembers, for each
+bridge id, the session ids that a running-session file showed with it, oldest first. The store is the file
+`session-chains.json` in the state folder of the node. It holds at most 1000 bridge ids and 100 session ids for each.
+
+The match is exact and it only starts when the launcher first sees the pair. A session that was cleared before the
+launcher watched it stays a separate session. There is no guess from times.
+
+If two or more transcripts of the folder share a bridge id, the list shows one session. It is the newest transcript.
+Its name is the name that someone set, or else the name of the first transcript of the chain (the Claude app names the
+connection from it). Its start time is the start of the first transcript. The ids of the others are in `earlier`.
 
 ## Cost and threading
 

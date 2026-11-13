@@ -6,11 +6,16 @@ import { within } from "./paths";
 // The running-session files. Each running Claude Code session keeps `<home>/.claude/sessions/<pid>.json` with its
 // session id, its status ("idle" or "busy"), the name the Claude app shows, and `bridgeSessionId` when it is attached
 // to Remote Control. The same folder holds `<pid>.<hash>.key` files with a peer token: this module never opens them.
-// Only files that end in `.json` are opened, at most 64 KB of each is read, and only the fields of LiveInfo leave it.
+// Only files that end in `.json` are opened, at most 64 KB of each is read, and only the fields of LiveInfo leave it
+// (`bridgeId` is the Remote Control connection id. Only the session chain store reads it, and it never reaches the web).
 // The instance user owns this folder, so the folder must really be inside home, and the listing is bounded.
 
+/**
+ * `nameIsDefault` is true only when the file says `nameSource: "derived"`: Claude Code made the name itself (the folder
+ * name and two characters). A missing or unknown `nameSource` counts as a name that someone set.
+ */
 /** `status` is set only for a known value ("busy" or "idle"). A future value keeps the session live, with no status. */
-export type LiveInfo = { status?: "busy" | "idle"; remoteControl: boolean; name?: string };
+export type LiveInfo = { status?: "busy" | "idle"; remoteControl: boolean; name?: string; nameIsDefault?: boolean; bridgeId?: string };
 export type LiveFs = {
   /** The names in a folder, one at a time, so that the caller can stop early. */
   entries(dir: string): AsyncIterable<string>;
@@ -35,6 +40,7 @@ const MAX_FILES = 500;
 /** At most this many names are taken from the folder, of any kind. */
 const MAX_ENTRIES = 5000;
 const MAX_NAME = 1024;
+const MAX_BRIDGE = 256;
 /** `linux:<machine id>:pid:[<pid namespace inode>]`, for example "linux:9b88...cc:pid:[4026532689]". */
 const PID_DOMAIN = /^linux:([0-9a-f]+):pid:\[(\d+)\]$/;
 
@@ -162,7 +168,7 @@ export async function readLiveSessions(o: {
     } catch {
       continue;
     }
-    const { pid, sessionId, status, name: appName, bridgeSessionId, updatedAt, procStart, pidDomain } = r;
+    const { pid, sessionId, status, name: appName, nameSource, bridgeSessionId, updatedAt, procStart, pidDomain } = r;
     // pid 0 and negative pids name process groups, and kill(0) or kill(-1) would succeed.
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || name !== `${pid}.json`) continue;
     if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) continue;
@@ -181,6 +187,8 @@ export async function readLiveSessions(o: {
     const info: LiveInfo & { updatedAt: number } = { remoteControl: typeof bridgeSessionId === "string" && bridgeSessionId.length > 0, updatedAt: at };
     if (status === "busy" || status === "idle") info.status = status;
     if (typeof appName === "string" && appName.length > 0 && appName.length <= MAX_NAME) info.name = appName;
+    if (typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 && bridgeSessionId.length <= MAX_BRIDGE) info.bridgeId = bridgeSessionId;
+    if (info.name !== undefined && nameSource === "derived") info.nameIsDefault = true;
     out.set(sessionId, info);
   }
   const result = new Map<string, LiveInfo>();
@@ -188,6 +196,8 @@ export async function readLiveSessions(o: {
     const info: LiveInfo = { remoteControl: v.remoteControl };
     if (v.status !== undefined) info.status = v.status;
     if (v.name !== undefined) info.name = v.name;
+    if (v.nameIsDefault) info.nameIsDefault = true;
+    if (v.bridgeId !== undefined) info.bridgeId = v.bridgeId;
     result.set(id, info);
   }
   return result;

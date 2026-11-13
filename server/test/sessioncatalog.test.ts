@@ -21,8 +21,8 @@ const DONE = JSON.stringify({
 });
 
 type Calls = { readdir: number; stat: number; lines: number; tail: number };
-function fakeFs(calls: Calls): TranscriptFs {
-  const files: Record<string, string[]> = { [FILE]: [FIRST, WRITE, DONE] };
+function fakeFs(calls: Calls, lines: string[] = [FIRST, WRITE, DONE]): TranscriptFs {
+  const files: Record<string, string[]> = { [FILE]: lines };
   return {
     async readdir(dir) {
       calls.readdir++;
@@ -75,6 +75,71 @@ describe("SessionCatalog", () => {
     const json = JSON.parse(JSON.stringify(list));
     expect(Object.keys(json[0])).toEqual(["id", "root", "startedAt", "lastActiveAt", "name", "live", "branch"]);
     expect(Object.keys(json[0].live)).toEqual(["remoteControl", "status"]);
+  });
+
+  describe.skipIf(win)("the name of a running session", () => {
+    const TITLE = JSON.stringify({ type: "custom-title", customTitle: "Real title" });
+    const nameOfList = async (lines: string[], info: { nameIsDefault?: boolean }) => {
+      const live = async () => new Map([[ID1, { remoteControl: true, name: "proj-91", ...info }]]);
+      return (await new SessionCatalog({ fs: fakeFs(none(), lines), live }).instance({ path: PATH, home: HOME }).list())[0].name;
+    };
+    test("a default live name loses to a title in the transcript", async () => {
+      expect(await nameOfList([FIRST, TITLE, WRITE, DONE], { nameIsDefault: true })).toBe("Real title");
+    });
+    test("a default live name loses to the first prompt", async () => {
+      expect(await nameOfList([FIRST, WRITE, DONE], { nameIsDefault: true })).toBe("hello there");
+    });
+    test("a live name that someone set still wins", async () => {
+      expect(await nameOfList([FIRST, TITLE, WRITE, DONE], {})).toBe("proj-91");
+    });
+    test("a default live name is the last resort", async () => {
+      expect(await nameOfList([JSON.stringify({ type: "user", cwd: "/work/proj", timestamp: "2026-01-01T00:00:00.000Z", message: { content: "<local-command-caveat>x</local-command-caveat>" } }), WRITE, DONE], { nameIsDefault: true })).toBe("proj-91");
+    });
+  });
+
+  describe.skipIf(win)("a chain made by /clear", () => {
+    const ID2 = "22222222-2222-2222-2222-222222222222";
+    const FILE2 = "/h/.claude/projects/-work-proj/" + ID2 + ".jsonl";
+    const first = (t: string, text: string) => JSON.stringify({ type: "user", cwd: "/work/proj", timestamp: t, gitBranch: "main", message: { content: text } });
+    function twoFs(): TranscriptFs {
+      const files: Record<string, string[]> = { [FILE]: [first("2026-01-01T00:00:00.000Z", "Out theming is rudimentary")], [FILE2]: [first("2026-01-01T02:00:00.000Z", "better parity please")] };
+      const mt: Record<string, number> = { [FILE]: 1000, [FILE2]: 2000 };
+      return {
+        async readdir(dir) {
+          return dir === "/h/.claude/projects" ? ["-work-proj"] : Object.keys(files).map((f) => f.split("/").pop()!);
+        },
+        async stat(p) {
+          if (!files[p]) throw new Error("ENOENT");
+          return { mtimeMs: mt[p] };
+        },
+        async *lines(p) {
+          for (const l of files[p] ?? []) yield l;
+        },
+        async tail(p) {
+          return files[p] ?? [];
+        },
+      };
+    }
+    const liveOf = (bridge: string | undefined) => async () => new Map([[ID2, { remoteControl: true, name: "proj-91", nameIsDefault: true, ...(bridge ? { bridgeId: bridge } : {}) }]]);
+
+    test("sessions that shared a bridge id show as one, with the first name and start", async () => {
+      const cat = new SessionCatalog({ fs: twoFs(), live: liveOf("cse_1") });
+      await cat.chains.observe([["cse_1", ID1]]);
+      const list = await cat.instance({ path: PATH, home: HOME }).list();
+      expect(list.length).toBe(1);
+      expect(list[0].id).toBe(ID2);
+      expect(list[0].name).toBe("Out theming is rudimentary");
+      expect(list[0].startedAt).toBe("2026-01-01T00:00:00.000Z");
+      expect(list[0].earlier).toEqual([ID1]);
+      expect(list[0].live?.remoteControl).toBe(true);
+    });
+
+    test("without a shared bridge id both sessions stay", async () => {
+      const cat = new SessionCatalog({ fs: twoFs(), live: liveOf("cse_1") });
+      const list = await cat.instance({ path: PATH, home: HOME }).list();
+      expect(list.map((s) => s.id).sort()).toEqual([ID1, ID2]);
+      expect(list.every((s) => s.earlier === undefined)).toBe(true);
+    });
   });
 
   test.skipIf(win)("find() returns a Session whose touched() reads its own file and does not scan", async () => {
