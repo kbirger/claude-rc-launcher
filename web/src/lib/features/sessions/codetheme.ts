@@ -21,7 +21,7 @@ export const codeTheme: Extension = EditorView.theme({
   "&.cm-focused": { outline: "none" },
   // The scroller is the scroll box of the code: it scrolls in both directions inside the pane, and a fling at its end does not drag the page.
   // --pane-max is set by FilePreview. The 2 px are the border of the box around the editor. A short file is as tall as its text.
-  ".cm-scroller": { fontFamily: "ui-monospace, monospace", lineHeight: "1.45", overflow: "auto", overscrollBehavior: "contain" },
+  ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.45", overflow: "auto", overscrollBehavior: "contain" },
   ".cm-content": { padding: "0.75rem" },
   ".cm-line": { padding: "0" },
   // A marked control or bidirectional character. The box and the red text use the destructive color, which has at least 3:1 against the card in every palette.

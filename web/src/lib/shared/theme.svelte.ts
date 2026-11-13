@@ -1,11 +1,12 @@
-import { applyToDocument, loadChoice, saveMode, saveTheme, type Mode, type ThemeName } from "./theme";
+import { applyToDocument, resolveDark, loadChoice, saveMode, saveTheme, type Mode, type ThemeName } from "./theme";
 
 const dark = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : undefined;
 
-/** The palette and the light/dark/system choice. Read `appearance.theme` and `appearance.mode` in components. */
-export const appearance = $state<{ theme: ThemeName; mode: Mode }>({ theme: "default", mode: "system" });
+/** The palette and the light/dark/system choice. `dark` is the result: whether the page is dark now. */
+export const appearance = $state<{ theme: ThemeName; mode: Mode; dark: boolean }>({ theme: "default", mode: "system", dark: false });
 
 function apply() {
+  appearance.dark = resolveDark(appearance.mode, dark?.matches ?? false);
   applyToDocument(appearance.theme, appearance.mode, dark?.matches ?? false);
 }
 

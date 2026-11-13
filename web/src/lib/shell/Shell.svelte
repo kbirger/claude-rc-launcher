@@ -116,7 +116,7 @@
 </script>
 
 <header>
-  <h1><Logo /><span class="name">Claude RC</span></h1>
+  <h1><a class="home" href="/instances" aria-label="Claude RC: home"><Logo /></a></h1>
   {#if hosts.length > 1}
     <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} />
   {/if}
@@ -163,14 +163,11 @@
   .column { max-width: 720px; margin: 0 auto; padding: 16px 16px calc(6.5rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
   .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
-  h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; gap: 2px; font-size: 0.7rem; line-height: 1.1; margin: 0; flex: none; }
+  h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; margin: 0; flex: none; min-width: 44px; }
+  .home { display: flex; flex-direction: column; align-items: center; flex: 1 1 0; min-height: 0; min-width: 44px; border-radius: 8px; }
   .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted-foreground); font-size: 0.9rem; }
   .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--primary); }
-  @media (max-width: 480px) {
-    .name { display: none; }
-    h1 { min-width: 44px; }
-  }
   @media (max-width: 480px) {
     .user { display: none; }
   }

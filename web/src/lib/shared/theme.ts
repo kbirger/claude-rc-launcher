@@ -1,4 +1,4 @@
-export const THEMES = ["default", "ayu", "tokyonight"] as const;
+export const THEMES = ["default", "claude", "ayu", "tokyonight"] as const;
 export type ThemeName = (typeof THEMES)[number];
 export const MODES = ["system", "light", "dark"] as const;
 export type Mode = (typeof MODES)[number];
@@ -9,11 +9,8 @@ const MODE_KEY = "mode";
 export const isTheme = (v: unknown): v is ThemeName => THEMES.includes(v as ThemeName);
 export const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode);
 
-/** Ayu and Tokyo Night only exist as dark palettes, so they are dark whatever the mode says. */
-export const modeApplies = (theme: ThemeName): boolean => theme === "default";
-
-export function resolveDark(theme: ThemeName, mode: Mode, systemDark: boolean): boolean {
-  if (!modeApplies(theme)) return true;
+/** Every palette has a light and a dark variant, so only the mode decides. */
+export function resolveDark(mode: Mode, systemDark: boolean): boolean {
   return mode === "dark" || (mode === "system" && systemDark);
 }
 
@@ -61,5 +58,5 @@ export function applyToDocument(theme: ThemeName, mode: Mode, systemDark: boolea
   const root = document.documentElement;
   if (theme === "default") delete root.dataset.theme;
   else root.dataset.theme = theme;
-  root.classList.toggle("dark", resolveDark(theme, mode, systemDark));
+  root.classList.toggle("dark", resolveDark(mode, systemDark));
 }
