@@ -10,7 +10,7 @@
   const left = [
     { href: "/nodes", label: "Nodes", icon: Server },
   ];
-  const right = [{ href: "/", label: "Instances", icon: Home }];
+  const right = [{ href: "/instances", label: "Instances", icon: Home }];
   const link = (active: boolean) =>
     cn("flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-xs transition-colors", active ? "text-primary" : "text-muted-foreground hover:text-foreground");
 </script>

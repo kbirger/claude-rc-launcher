@@ -11,7 +11,7 @@
   import { ApiError } from "../../shared/http";
   import type { UpdateEntry } from "./api";
   import { updateHostMutation } from "./mutations";
-  import type { HostInfo } from "../hosts";
+  import { versionsText, type HostInfo } from "../hosts";
   import UpdateOutput from "./UpdateOutput.svelte";
   import { panelOpenByDefault } from "./updateoutput";
   import { windowsNames } from "./updatewarn";
@@ -46,7 +46,7 @@
   // The latest release is the same for every machine, so it is shown once.
   const latest = $derived(hosts.find((h) => h.id === "local")?.target ?? hosts.find((h) => h.target)?.target);
   const key = $derived(items.map(bannerKey).join("|"));
-  const actionable = $derived(items.some((i) => i.kind !== "latest-unknown" && i.kind !== "hub-local-build" && i.kind !== "updating"));
+  const actionable = $derived(items.some((i) => i.kind !== "latest-unknown" && i.kind !== "hub-local-build" && i.kind !== "updating" && i.kind !== "nodes-after-hub"));
 
   async function run(id: string, release?: string) {
     if (onrun) return onrun(id, release);
@@ -119,9 +119,26 @@
             <span>Updating {item.name}{item.step ? `: ${item.step}` : "..."}</span>
             <UpdateOutput host={item.host} open={panelOpenByDefault(lastEntry(updates, item.host))} />
           {:else if item.kind === "node-update"}
-            <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.</span>
-            {#if windowsNames(item.hosts, hosts).length}<span class="text-xs text-muted-foreground">The update restarts the sessions on {windowsNames(item.hosts, hosts).join(", ")}.</span>{/if}
-            {@render action("Update all nodes", "nodes", () => updateNodes(item.hosts))}
+            {#if full}
+              <!-- One row for each node, so that every out-of-date node shows with its own versions and its own button. -->
+              <span>Out of date nodes:</span>
+              <ul class="m-0 flex w-full list-none flex-col gap-1 p-0">
+                {#each item.hosts as n (n.id)}
+                  {@const h = hosts.find((x) => x.id === n.id)}
+                  <li class="flex flex-wrap items-center justify-between gap-x-3">
+                    <span class="min-w-0 [overflow-wrap:anywhere]">{n.name}{#if h}<span class="text-xs text-muted-foreground"> · {versionsText(h)}</span>{/if}</span>
+                    <Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} onclick={() => updateNodes([n])}><ArrowUp size={16} aria-hidden="true" />Update to {n.target}</Button>
+                  </li>
+                {/each}
+              </ul>
+              {#if windowsNames(item.hosts, hosts).length}<span class="text-xs text-muted-foreground">The update restarts the sessions on {windowsNames(item.hosts, hosts).join(", ")}.</span>{/if}
+              {#if item.hosts.length > 1}{@render action("Update all nodes", "nodes", () => updateNodes(item.hosts))}{/if}
+            {:else}
+              <span>Out of date: {item.hosts.map((h) => h.name).join(", ")}.</span>
+              {@render action(item.hosts.length > 1 ? "Update all nodes" : "Update node", "nodes", () => updateNodes(item.hosts))}
+            {/if}
+          {:else if item.kind === "nodes-after-hub"}
+            <span class="muted">Also behind the latest release: {item.hosts.join(", ")}. Update the hub first, then these nodes.</span>
           {:else if item.kind === "hub-local-build"}
             <span class="muted">The hub runs an unversioned build, so it is not compared with the latest release.</span>
           {:else if item.kind === "by-hand"}

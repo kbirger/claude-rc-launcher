@@ -3,12 +3,14 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
   import * as Card from "#lib/components/ui/card/index.js";
   import { isUnsupported } from "./api";
-  import { liveBadges, sessionDetail, sessionsHref, sessionTitle, worktreeName } from "./format";
+  import { liveBadges, sessionDetail, sessionMatches, sessionsHref, sessionTitle, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
 
   let { host, instance, now }: { host: string; instance: string; now: number } = $props();
 
   const q = createQuery(() => sessionsQuery(host, instance));
+  let filter = $state("");
+  const shown = $derived((q.data ?? []).filter((s) => sessionMatches(s, filter)));
 </script>
 
 {#if q.isPending}
@@ -20,8 +22,16 @@
 {:else if !q.data?.length}
   <p class="text-muted-foreground">No sessions yet for this instance.</p>
 {:else}
+  <input
+    type="search"
+    bind:value={filter}
+    placeholder="Filter by name, id, branch or folder"
+    aria-label="Filter sessions"
+    class="mb-3 h-11 w-full rounded-lg border bg-card px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+  />
+  {#if !shown.length}<p class="text-muted-foreground">No session matches "{filter}".</p>{/if}
   <ul class="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-3 p-0">
-    {#each q.data as s (s.id)}
+    {#each shown as s (s.id)}
       {@const wt = worktreeName(s.root)}
       <li class="min-w-0">
         <a href={sessionsHref({ host, instance, session: s.id })} class="block min-h-11 min-w-0 no-underline">

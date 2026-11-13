@@ -176,3 +176,8 @@ test("a node whose service definition is older than required gets a reinstall it
   ]);
   expect(items.filter((i) => i.kind === "reinstall-service")).toEqual([{ kind: "reinstall-service", hosts: ["A"] }]);
 });
+
+test("with a stale hub, nodes behind the latest release are named as waiting for the hub", () => {
+  const items = model([hub({ stale: true, target: "1.3.0" }), node({ version: "1.1.0" }), node({ id: "n2", name: "node two", version: "1.3.0" })]);
+  expect(items).toEqual([{ kind: "hub-update", target: "1.3.0" }, { kind: "nodes-after-hub", hosts: ["node one"] }]);
+});

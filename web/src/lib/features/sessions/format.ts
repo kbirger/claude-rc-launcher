@@ -38,6 +38,14 @@ export function ago(iso: string, now: number): string {
   return "now";
 }
 
+/** The calendar date and time of an instant, for a reader's locale ("Nov 12, 2:05 PM"). The year shows only when it is not the year of `now`. */
+export function shortDate(iso: string, now: number): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit" });
+}
+
 const WT = "/.claude/worktrees/";
 /** The work tree folder name when the session root is a work tree. */
 export const worktreeName = (root: string): string | undefined =>
@@ -88,9 +96,17 @@ export function splitPath(path: string): { name: string; dir: string } {
 /** The session name, or undefined when it has none (the list then shows a placeholder). */
 export const sessionTitle = (s: Session): string | undefined => s.name || undefined;
 
-/** Detail parts of a session row: short id, last active time, and the branch unless it is unset or a detached "HEAD". */
+/** True when every word of `query` (split on spaces, any case) is in the name, id, branch, folder or work tree of the session. An empty query matches all. */
+export function sessionMatches(s: Session, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [s.name, s.id, s.branch, s.root, worktreeName(s.root)].filter(Boolean).join("\n").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/** Detail parts of a session row: short id, last active time (relative, then the date), and the branch unless it is unset or a detached "HEAD". */
 export function sessionDetail(s: Session, now: number): string[] {
-  const out = [s.id.slice(0, 8), ago(s.lastActiveAt, now)];
+  const out = [s.id.slice(0, 8), `${ago(s.lastActiveAt, now)} · ${shortDate(s.lastActiveAt, now)}`];
   if (s.branch && s.branch !== "HEAD") out.push(s.branch);
   return out;
 }
