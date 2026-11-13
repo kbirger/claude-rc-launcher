@@ -3,6 +3,7 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import * as Popover from "#lib/components/ui/popover/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
+  import Circle from "@tabler/icons-svelte/icons/circle";
   import Check from "@tabler/icons-svelte/icons/circle-check";
   import Pencil from "@tabler/icons-svelte/icons/pencil";
   import { cn } from "#lib/utils.js";
@@ -101,14 +102,15 @@
         {/if}
       </div>
       <div class="ml-auto flex flex-none items-center gap-1">
-        <Button variant="ghost" size="sm" class={cn("h-8 px-2 hover:border-border", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
-          <Check aria-hidden="true" />{h.id === selected ? "Active" : "Use"}
-        </Button>
         {#if renamable(h) && editing !== h.id}
           <Button variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => edit(h)} aria-label="Rename {h.name}">
             <Pencil aria-hidden="true" />Rename
           </Button>
         {/if}
+        <!-- One button for the state of the node in the app: Active (the node in use), Use (it can be used), or Unavailable (it is not running). -->
+        <Button variant="ghost" size="sm" class={cn("h-8 min-w-24 px-2 hover:border-border", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
+          {#if h.id === selected}<Check aria-hidden="true" />Active{:else if h.status === "ok"}<Circle aria-hidden="true" />Use{:else}<Circle aria-hidden="true" />Unavailable{/if}
+        </Button>
       </div>
     </li>
   {/each}

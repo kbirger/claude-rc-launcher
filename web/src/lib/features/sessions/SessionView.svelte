@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
+  import { replaceState } from "$app/navigation";
+  import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import ArrowLeft from "@tabler/icons-svelte/icons/arrow-left";
   import { Badge } from "#lib/components/ui/badge/index.js";
@@ -24,12 +25,17 @@
   const instanceName = $derived(instances.data?.find((x) => x.id === instance)?.name);
   const href = (v: "touched" | "folder", extra: { path?: string; file?: string } = {}) =>
     sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
-  // A tab change is a navigation, like the links it replaced: it adds a history entry, keeps host, instance and session,
-  // and drops path, file and abs. reset: false leaves the focus on the tab, so the arrow keys keep working.
+  // The tab is state of this page, not a navigation: a click adds no history entry, so Back does not walk through the tabs.
+  // The address follows the tab (replaced, not added), so a reload or a Back from a file lands on the same tab.
+  // A real navigation (a link, Back) changes `view`, and the tab follows it.
+  let current = $state(untrack(() => view));
+  $effect(() => { current = view; });
   // What each tab shows, in words. It sits under the tabs and follows the selected one.
   const help = { touched: "Files that Claude wrote or edited in this session.", folder: "Every file in the folder of this session, also files that Claude did not touch." };
   const pick = (v: string) => {
-    if (v === "touched" || v === "folder") void goto(href(v), { reset: false });
+    if (v !== "touched" && v !== "folder") return;
+    current = v;
+    replaceState(href(v, v === "folder" ? { path } : {}), {});
   };
 </script>
 
@@ -57,16 +63,16 @@
   {#if abs}
     <FilePreview {host} {instance} {session} file={abs} abs back={href("touched")} backLabel="Back to touched files" />
   {:else if file}
-    <FilePreview {host} {instance} {session} {file} back={view === "folder" ? href("folder", { path }) : href("touched")} backLabel={view === "folder" ? "Back to folder" : "Back to touched files"} />
+    <FilePreview {host} {instance} {session} {file} back={current === "folder" ? href("folder", { path }) : href("touched")} backLabel={current === "folder" ? "Back to folder" : "Back to touched files"} />
   {:else}
     <h3 class="m-0 text-sm font-semibold">Files</h3>
-    <Tabs.Root value={view} onValueChange={pick}>
-      <Tabs.List aria-label="Session files" class="w-full">
+    <Tabs.Root value={current} onValueChange={pick}>
+      <Tabs.List aria-label="Session files" class="group-data-horizontal/tabs:h-auto w-full">
         <Tabs.Trigger value="touched" class="h-11 text-sm">Touched</Tabs.Trigger>
         <Tabs.Trigger value="folder" class="h-11 text-sm">Folder</Tabs.Trigger>
       </Tabs.List>
-      <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[view]}</p>
-      <Tabs.Content value={view} class="min-w-0">
+      <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[current]}</p>
+      <Tabs.Content value={current} class="min-w-0">
         {#if q.isPending}
           <p class="text-muted-foreground">Loading session...</p>
         {:else if isUnsupported(q.error)}
@@ -75,7 +81,7 @@
           <p class="error">Could not load the session: {q.error.message}</p>
         {:else if !s}
           <p class="error">Session not found.</p>
-        {:else if view === "folder"}
+        {:else if current === "folder"}
           <FileBrowser {host} {instance} {session} {path} {hidden} {now} />
         {:else}
           <TouchedList {host} {instance} {session} root={s.root} {now} />

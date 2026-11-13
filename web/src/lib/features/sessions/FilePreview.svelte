@@ -60,27 +60,25 @@
   const PANE = "min-w-0 max-h-[var(--pane-max)] overflow-auto overscroll-contain";
 </script>
 
-<!-- One small row of controls above the pane: Rendered or Source (markdown), a Wrap switch (every CodeView) and Download. -->
+<!-- One small row of controls above the pane, all as tall as each other: Rendered or Source (markdown) with the Wrap switch next to it, and Download on the right. -->
 {#snippet controls(markdown: boolean, showWrap: boolean)}
   <div class="flex flex-wrap items-center gap-2">
     {#if markdown}
-      <ToggleGroup.Root type="single" variant="outline" size="sm" aria-label="Markdown view" value={rendered ? "rendered" : "source"} onValueChange={(v) => { if (v) rendered = v === "rendered"; }}>
-        <ToggleGroup.Item value="rendered" class="px-2.5"><Eye aria-hidden="true" />Rendered</ToggleGroup.Item>
-        <ToggleGroup.Item value="source" class="px-2.5"><Code aria-hidden="true" />Source</ToggleGroup.Item>
+      <ToggleGroup.Root type="single" variant="outline" size="default" aria-label="Markdown view" value={rendered ? "rendered" : "source"} onValueChange={(v) => { if (v) rendered = v === "rendered"; }}>
+        <ToggleGroup.Item value="rendered" class="h-8 px-2.5"><Eye aria-hidden="true" />Rendered</ToggleGroup.Item>
+        <ToggleGroup.Item value="source" class="h-8 px-2.5"><Code aria-hidden="true" />Source</ToggleGroup.Item>
       </ToggleGroup.Root>
     {/if}
-    <div class="ml-auto flex items-center gap-2">
-      {#if showWrap}
-        <Toggle variant="outline" size="sm" bind:pressed={wrap} aria-label="Wrap long lines" title="Wrap long lines"><TextWrap aria-hidden="true" />Wrap</Toggle>
-      {/if}
-      {@render download()}
-    </div>
+    {#if showWrap}
+      <Toggle variant="outline" class="h-8 px-2.5" bind:pressed={wrap} aria-label="Wrap long lines" title="Wrap long lines"><TextWrap aria-hidden="true" />Wrap</Toggle>
+    {/if}
+    <div class="ml-auto">{@render download()}</div>
   </div>
 {/snippet}
 
 {#snippet download()}
   {#if q.data}
-    <Button size="sm" variant="outline" class="border-primary/40 text-primary hover:bg-primary/10 hover:text-primary" href={downloadUrl(host, instance, session, file, { abs })} download={name}><Download aria-hidden="true" />Download</Button>
+    <Button variant="outline" class="h-8 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary" href={downloadUrl(host, instance, session, file, { abs })} download={name}><Download aria-hidden="true" />Download</Button>
   {/if}
 {/snippet}
 
@@ -96,21 +94,19 @@
 {/snippet}
 
 <div class="grid gap-3" style="--pane-max: max(150px, calc(100dvh - {paneTop}px - 6.5rem - env(safe-area-inset-bottom) - 1px))">
-  <!-- One row: Back, then the name and the size. The room above the pane is what the pane does not get. -->
-  <div class="flex items-center gap-3">
-    <Button class="flex-none text-muted-foreground hover:border-border" variant="ghost" size="sm" href={back}><ArrowLeft aria-hidden="true" />{backLabel}</Button>
-    {#if q.data}
-      {@const p = q.data}
-      <div class="grid min-w-0 gap-0.5">
-        <div class="font-semibold [overflow-wrap:anywhere]">{p.name}</div>
-        {#if abs}
-          <div class="text-sm text-muted-foreground [overflow-wrap:anywhere]">{file}</div>
-          <div class="text-sm text-muted-foreground">outside the session folder</div>
-        {/if}
-        <div class="text-sm text-muted-foreground">{humanSize(p.size)}</div>
-      </div>
-    {/if}
-  </div>
+  <!-- Back on a row of its own, then the name and the size under it. -->
+  <Button class="-ml-2 h-8 w-fit px-2 text-muted-foreground hover:border-border" variant="ghost" size="sm" href={back}><ArrowLeft aria-hidden="true" />{backLabel}</Button>
+  {#if q.data}
+    {@const p = q.data}
+    <div class="grid min-w-0 gap-0.5">
+      <div class="font-semibold [overflow-wrap:anywhere]">{p.name}</div>
+      {#if abs}
+        <div class="text-sm text-muted-foreground [overflow-wrap:anywhere]">{file}</div>
+        <div class="text-sm text-muted-foreground">outside the session folder</div>
+      {/if}
+      <div class="text-sm text-muted-foreground">{humanSize(p.size)}</div>
+    </div>
+  {/if}
   {#if q.isPending}
     <p class="text-muted-foreground">Loading file...</p>
   {:else if q.error}

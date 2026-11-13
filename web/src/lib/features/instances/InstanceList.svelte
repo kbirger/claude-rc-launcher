@@ -2,7 +2,7 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import * as Card from "#lib/components/ui/card/index.js";
-  import * as Sheet from "#lib/components/ui/sheet/index.js";
+  import ChevronDown from "@tabler/icons-svelte/icons/chevron-down";
   import FileText from "@tabler/icons-svelte/icons/file-text";
   import Pause from "@tabler/icons-svelte/icons/player-pause";
   import Play from "@tabler/icons-svelte/icons/player-play";
@@ -20,8 +20,8 @@
 
   // The model holds the state and the rules. This file draws it. App remounts the list (#key) when the host changes.
   const model = createInstancesModel({ host: untrack(() => host), client: useQueryClient(), startError: () => startError });
-  // The instance whose logs are open in the flyout.
-  let logsFor = $state<{ id: string; name: string } | null>(null);
+  // The instances whose logs are open in the card.
+  let open = $state<Record<string, true>>({});
   const now = $derived(model.now);
 
   function uptime(state: string, startedAt: string | null): string {
@@ -33,6 +33,13 @@
     if (d > 0) return `up ${d}d ${h}h`;
     if (h > 0) return `up ${h}h ${m}m`;
     return `up ${m}m`;
+  }
+
+  function toggleLogs(id: string) {
+    if (id in open) {
+      const { [id]: _, ...rest } = open;
+      open = rest;
+    } else open = { ...open, [id]: true };
   }
 
   function stop(i: Instance) {
@@ -65,15 +72,15 @@
                 <p class="m-0 text-xs text-muted-foreground">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
               {/if}
               <div class="-ml-2 flex flex-wrap items-center gap-1">
-                <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => (logsFor = { id: i.id, name: r.name })} aria-haspopup="dialog">
-                  <FileText aria-hidden="true" />Logs
+                <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
+                  <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
                 </Button>
                 <SessionsLink {host} instance={i.id} />
               </div>
             {/if}
           </div>
           {#if i}
-            <div class="flex flex-none flex-col gap-1">
+            <div class="flex flex-none items-center gap-1">
               {#if isPaused(i.state)}
                 <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
                   <Play aria-hidden="true" />
@@ -89,17 +96,10 @@
             </div>
           {/if}
         </Card.Content>
+        {#if i && i.id in open}
+          <Card.Content><InstanceLogs {host} id={i.id} /></Card.Content>
+        {/if}
       </Card.Root>
     </li>
   {/each}
 </ul>
-
-<Sheet.Root open={logsFor !== null} onOpenChange={(o) => { if (!o) logsFor = null; }}>
-  <Sheet.Content side="bottom" class="mx-auto max-h-[85dvh] w-full max-w-2xl overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]">
-    <Sheet.Header>
-      <Sheet.Title>Logs: {logsFor?.name}</Sheet.Title>
-      <Sheet.Description class="sr-only">The last lines of the log of this instance.</Sheet.Description>
-    </Sheet.Header>
-    <div class="px-4">{#if logsFor}<InstanceLogs {host} id={logsFor.id} />{/if}</div>
-  </Sheet.Content>
-</Sheet.Root>

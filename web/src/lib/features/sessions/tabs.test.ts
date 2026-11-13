@@ -6,7 +6,8 @@ import { createQueryClient } from "#lib/shared/query";
 import SessionViewHarness from "./SessionViewHarness.svelte";
 
 const goto = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock("$app/navigation", () => ({ goto }));
+const replaceState = vi.hoisted(() => vi.fn());
+vi.mock("$app/navigation", () => ({ goto, replaceState }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   listSessions: async () => [{ id: "s1", root: "/proj", startedAt: "2026-11-12T10:00:00Z", lastActiveAt: "2026-11-12T10:00:00Z" }],
@@ -15,7 +16,7 @@ vi.mock("./api", async (orig) => ({
 }));
 
 const open: Array<() => void> = [];
-afterEach(() => { for (const u of open.splice(0)) u(); goto.mockClear(); });
+afterEach(() => { for (const u of open.splice(0)) u(); goto.mockClear(); replaceState.mockClear(); });
 
 async function show(view: "touched" | "folder", path = "") {
   const target = document.createElement("div");
@@ -51,26 +52,32 @@ test("view=folder selects Folder and shows the folder listing", async () => {
   expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("readme.md");
 });
 
-test("a click on the other tab navigates with the same address the old link had", async () => {
+test("a click on the other tab switches the tab and the content without a navigation", async () => {
   const t = await show("touched");
   trigger(t, "Folder").click();
   flushSync();
-  expect(goto).toHaveBeenCalledTimes(1);
-  expect(goto).toHaveBeenCalledWith("/sessions?host=h&instance=i&session=s1&view=folder", expect.objectContaining({ reset: false }));
+  expect(goto).not.toHaveBeenCalled();
+  expect(trigger(t, "Folder").getAttribute("aria-selected")).toBe("true");
+  await vi.waitFor(() => expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("readme.md"));
+  // The address follows the tab, replaced and not added.
+  expect(replaceState).toHaveBeenCalledWith("/sessions?host=h&instance=i&session=s1&view=folder", {});
 });
 
-test("going back to Touched drops the folder path", async () => {
+test("going back to Touched shows the touched list", async () => {
   const t = await show("folder", "src/lib");
   trigger(t, "Touched").click();
   flushSync();
-  expect(goto).toHaveBeenCalledWith("/sessions?host=h&instance=i&session=s1&view=touched", expect.anything());
+  expect(goto).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("a.ts"));
+  expect(replaceState).toHaveBeenCalledWith("/sessions?host=h&instance=i&session=s1&view=touched", {});
 });
 
-test("a click on the active tab does not navigate", async () => {
+test("a click on the active tab changes nothing", async () => {
   const t = await show("touched");
   trigger(t, "Touched").click();
   flushSync();
   expect(goto).not.toHaveBeenCalled();
+  expect(replaceState).not.toHaveBeenCalled();
 });
 
 test("the arrow keys move between the tabs", async () => {
@@ -79,5 +86,6 @@ test("the arrow keys move between the tabs", async () => {
   touched.focus();
   touched.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
   flushSync();
-  expect(goto).toHaveBeenCalledWith("/sessions?host=h&instance=i&session=s1&view=folder", expect.anything());
+  expect(trigger(t, "Folder").getAttribute("aria-selected")).toBe("true");
+  expect(goto).not.toHaveBeenCalled();
 });
