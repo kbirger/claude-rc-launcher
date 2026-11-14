@@ -64,8 +64,8 @@ test("a filter chip shows only the rules of that file, and All shows everything 
   chip(t, "Local").click();
   flushSync();
   expect(rows(t).map((r) => r.textContent)).toEqual([expect.stringContaining("ONLY_LOCAL")]);
-  expect(chip(t, "Local").getAttribute("aria-pressed")).toBe("true");
-  expect(chip(t, "All").getAttribute("aria-pressed")).toBe("false");
+  expect(chip(t, "Local").getAttribute("aria-selected")).toBe("true");
+  expect(chip(t, "All").getAttribute("aria-selected")).toBe("false");
   chip(t, "All").click();
   flushSync();
   expect(rows(t)).toHaveLength(2);
@@ -145,12 +145,12 @@ test("a rule in a writable file has a remove that opens the remove sheet", () =>
 
 test("a rule from managed or a read-only file has no remove", () => {
   show([wlayer("managed", [rule("deny", "Bash(rm *)", { scope: "managed" })], { writable: false }), wlayer("user", [rule("allow", "A")], { writable: false })]);
-  expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Remove")).toBe(false);
+  expect([...document.querySelectorAll("button")].some((b) => b.getAttribute("aria-label")?.startsWith("Remove "))).toBe(false);
 });
 
 test("a rule in two files has one remove for each file, and each sheet shows only its own file", () => {
   show([wlayer("local", [rule("allow", "X", { scope: "local" })]), wlayer("user", [rule("allow", "X")])]);
-  expect([...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Remove")).toHaveLength(2);
+  expect([...document.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Remove "))).toHaveLength(2);
   press("Remove X from User settings");
   expect([...document.querySelectorAll<HTMLInputElement>("input[name=file]")].map((r) => r.value)).toEqual(["user"]);
   expect(body()).toContain("from Allow in /p/user.json");
@@ -163,4 +163,19 @@ test("closing the sheet unmounts it, and the next open starts fresh", () => {
   expect(document.querySelector("input[aria-label='Rule']")).toBeNull();
   press("Remove B from User settings");
   expect(document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!.value).toBe("B");
+});
+
+test("the file filter is a tab list, and the selected tab is marked", () => {
+  const t = show([layer({ scope: "local", rules: [rule("allow", "A", { scope: "local" })] }), layer({ scope: "user", rules: [rule("allow", "B")] })]);
+  expect(t.querySelector('[role="tablist"][aria-label="Filter by file"]')).not.toBeNull();
+  expect([...t.querySelectorAll('[role="tab"]')].map((b) => b.textContent?.trim())).toEqual(["All", "Local", "User"]);
+  expect(chip(t, "All").getAttribute("aria-selected")).toBe("true");
+});
+
+test("the remove control of a rule is an icon button with no text, in the same row as the rule", () => {
+  show([wlayer("user", [rule("allow", "Bash(ls *)")])]);
+  const x = document.querySelector<HTMLButtonElement>('button[aria-label^="Remove Bash(ls *)"]')!;
+  expect(x.textContent?.trim()).toBe("");
+  expect(x.querySelector("svg")).not.toBeNull();
+  expect(x.closest("[data-rule]")).not.toBeNull();
 });

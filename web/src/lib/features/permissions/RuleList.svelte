@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import * as Tabs from "#lib/components/ui/tabs/index.js";
+  import XIcon from "@lucide/svelte/icons/x";
   import { cn } from "#lib/utils.js";
   import type { Layer } from "./api";
   import { flatRules, scopeBadge, scopeLabel } from "./format";
@@ -29,12 +31,14 @@
 <div class="grid min-w-0 gap-3">
   <Button type="button" variant="outline" size="touch" onclick={() => (sheet = { mode: "add" })}>Add rule</Button>
   {#if withRules.length > 0}
-    <div class="flex flex-wrap gap-1.5" role="group" aria-label="Filter by file">
-      <Button type="button" variant={active === null ? "secondary" : "outline"} size="sm" class="h-9 rounded-full px-3" aria-pressed={active === null} onclick={() => (only = null)}>All</Button>
-      {#each withRules as l (l.scope)}
-        <Button type="button" variant={active === l.scope ? "secondary" : "outline"} size="sm" class="h-9 rounded-full px-3" aria-pressed={active === l.scope} onclick={() => (only = l.scope)}>{scopeBadge(l.scope)}</Button>
-      {/each}
-    </div>
+    <Tabs.Root value={active ?? "all"} onValueChange={(v) => (only = v === "all" ? null : v)}>
+      <Tabs.List aria-label="Filter by file" class="group-data-horizontal/tabs:h-auto w-full flex-wrap">
+        <Tabs.Trigger value="all" class="h-11 text-sm">All</Tabs.Trigger>
+        {#each withRules as l (l.scope)}
+          <Tabs.Trigger value={l.scope} class="h-11 text-sm">{scopeBadge(l.scope)}</Tabs.Trigger>
+        {/each}
+      </Tabs.List>
+    </Tabs.Root>
   {:else}
     <p class="m-0 text-sm text-muted-foreground">No permission rules in these files.</p>
   {/if}
@@ -44,16 +48,21 @@
       <h4 class="m-0 text-xs font-semibold text-muted-foreground uppercase">{g.title} ({g.rules.length})</h4>
       <ul class="m-0 min-w-0 list-none p-0">
         {#each g.rules as r (r.raw)}
-          <li data-rule class="min-w-0 border-b py-2 last:border-b-0">
-            <code class={cn(wrap, "font-mono text-xs")}>{r.raw}</code>
-            <span class="mt-1 flex flex-wrap gap-1">
-              {#each r.scopes as s (s)}
-                {@const file = removable(s)}
-                <Badge variant="outline">{scopeBadge(s)}</Badge>
-                {#if file}<Button type="button" variant="ghost" size="sm" class="h-9 px-2 text-xs" aria-label="Remove {r.raw} from {scopeLabel(s)}" onclick={() => (sheet = { mode: "remove", layer: file, initial: { raw: r.raw, list: g.list } })}>Remove</Button>{/if}
-              {/each}
-            </span>
-            {#if r.shadowedBy}<span class="mt-1 block text-xs text-muted-foreground">overridden by {r.shadowedBy.list} in {r.shadowedBy.scope}</span>{/if}
+          <li data-rule class="flex min-w-0 items-center gap-2 border-b py-2 last:border-b-0">
+            <div class="min-w-0 flex-1">
+              <code class={cn(wrap, "font-mono text-xs")}>{r.raw}</code>
+              <span class="mt-1 flex flex-wrap gap-1">
+                {#each r.scopes as s (s)}<Badge variant="outline">{scopeBadge(s)}</Badge>{/each}
+              </span>
+              {#if r.shadowedBy}<span class="mt-1 block text-xs text-muted-foreground">overridden by {r.shadowedBy.list} in {r.shadowedBy.scope}</span>{/if}
+            </div>
+            <!-- One X for each file that holds the rule and can be changed. The label names the file. -->
+            {#each r.scopes as s (s)}
+              {@const file = removable(s)}
+              {#if file}
+                <Button type="button" variant="ghost" size="icon-touch" class="shrink-0 text-muted-foreground" aria-label="Remove {r.raw} from {scopeLabel(s)}" title="Remove from {scopeLabel(s)}" onclick={() => (sheet = { mode: "remove", layer: file, initial: { raw: r.raw, list: g.list } })}><XIcon aria-hidden="true" /></Button>
+              {/if}
+            {/each}
           </li>
         {/each}
       </ul>
