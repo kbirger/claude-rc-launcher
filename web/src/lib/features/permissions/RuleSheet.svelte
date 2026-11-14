@@ -57,9 +57,11 @@
     try {
       const edit = { scope: layer.scope as "user" | "project" | "local", list, rule: trimmed, expectedHash: layer.hash ?? null };
       if (mode === "add") {
-        const out = await add.mutateAsync(canNudge && nudge && live === true ? { ...edit, nudge: true } : edit);
-        if (out.nudge) {
-          result = out.nudge;
+        const asked = canNudge && nudge && live === true;
+        const out = await add.mutateAsync(asked ? { ...edit, nudge: true } : edit);
+        // An older node ignores the flag and answers without a `nudge` key.
+        if (out.nudge || asked) {
+          result = out.nudge ?? { sent: false, reason: "unsupported" };
           return;
         }
       } else {
@@ -135,7 +137,7 @@
         </label>
         {#if live !== true}<p class="m-0 text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
       {/if}
-      {#if result}<p class="m-0 text-sm {wrap}" role="status">{result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}
+      {#if result}<p class="m-0 text-sm {wrap}" role="status">Rule saved. {result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}
       {#if error}<p class="m-0 text-sm text-destructive {wrap}" role="alert">{error}</p>{/if}
     </div>
     <Sheet.Footer class="px-4">

@@ -118,3 +118,7 @@ test("nudgeFailure has a text for each reason", () => {
   expect(nudgeFailure("not_live")).toBe("The session is not running, so it was not told.");
   for (const t of texts) expect(t).not.toMatch(/receiv/i);
 });
+
+test("nudgeFailure says the node did not trust the socket", () => {
+  expect(nudgeFailure("socket_refused")).toBe("The node did not trust the session's socket, so the session was not told.");
+});

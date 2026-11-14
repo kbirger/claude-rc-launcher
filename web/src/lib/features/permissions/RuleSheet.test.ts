@@ -266,3 +266,23 @@ test("the result text never says received", async () => {
     document.body.innerHTML = "";
   }
 });
+
+test("the status says the rule was saved, for sent and for a failure", async () => {
+  for (const nudge of [{ sent: true }, { sent: false, reason: "not_live" }]) {
+    answer = { scope: "user", nudge };
+    show({ call: call(), live: true });
+    button("Save")!.click();
+    await vi.waitFor(() => expect(document.querySelector("[role=status]")).not.toBeNull());
+    expect(document.querySelector("[role=status]")!.textContent).toMatch(/^Rule saved\. /);
+    for (const u of open.splice(0)) u();
+    document.body.innerHTML = "";
+  }
+});
+
+test("an answer without a nudge key to a nudge request shows unsupported and keeps the sheet open", async () => {
+  show({ call: call(), live: true });
+  button("Save")!.click();
+  await vi.waitFor(() => expect(document.querySelector("[role=status]")).not.toBeNull());
+  expect(document.querySelector("[role=status]")!.textContent).toBe("Rule saved. This node cannot tell a session to try again.");
+  expect(closed()).toBe(false);
+});

@@ -76,7 +76,7 @@ export const NUDGE_SENT = "Sent to the session. It may still wait for you to app
 export const NOT_LIVE_NOTE = "The session is not running.";
 const NUDGE_FAILURES = {
   not_live: "The session is not running, so it was not told.",
-  socket_refused: "The session refused the message, so it was not told.",
+  socket_refused: "The node did not trust the session's socket, so the session was not told.",
   send_failed: "The message could not be sent, so the session was not told.",
   unsupported: "This node cannot tell a session to try again.",
 } as const;
