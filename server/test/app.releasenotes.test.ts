@@ -51,7 +51,17 @@ describe("GET /api/release-notes", () => {
   });
 
   test("needs the same login as /api/latest", async () => {
-    const r = await withList({ between: async () => notes }).request("/api/release-notes?from=0.8.0&to=0.9.0");
-    expect(r.status).toBe(401);
+    const app = createApp({ cfg, instances: {} as any, userAuth: oidcUserAuth(cfg, oidc),
+      latest: { get: async () => ({ version: "1", checkedAt: "x" }), peek: () => undefined },
+      releaseList: { between: async () => notes } });
+    const url = "/api/release-notes?from=0.8.0&to=0.9.0";
+    const ref = await app.request("/api/latest");
+    const r = await app.request(url);
+    expect(ref.status).toBe(401);
+    expect(r.status).toBe(ref.status);
+    expect(await r.text()).toBe(await ref.text());
+    const ok = await app.request(url, { headers: { cookie } });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual(notes);
   });
 });
