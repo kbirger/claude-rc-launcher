@@ -8,13 +8,15 @@ import RuleSheetHarness from "./RuleSheetHarness.svelte";
 const realFetch = globalThis.fetch;
 let sent: { url: string; method?: string; body: any }[] = [];
 let status = 200;
+let answer: Record<string, unknown> = { scope: "user" };
 const open: Array<() => void> = [];
 beforeEach(() => {
   sent = [];
   status = 200;
+  answer = { scope: "user" };
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     sent.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    return new Response(JSON.stringify(status === 200 ? { scope: "user" } : { error: "changed" }), { status, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(status === 200 ? answer : { error: "changed" }), { status, headers: { "content-type": "application/json" } });
   }) as any;
 });
 afterEach(() => {
@@ -83,9 +85,8 @@ test("a call starts the rule at the first suggestion, the others are chips with 
   expect(field().value).toBe("Bash(git push *)");
 });
 
-test("the note about trying again shows when a call is given, and the call text only in a closed details", () => {
+test("the call text shows only in a closed details", () => {
   show({ call: call() });
-  expect(text()).toContain("The session needs a message to try again.");
   const d = document.querySelector("details");
   expect(d?.open).toBe(false);
   expect(d?.textContent).toContain("secret denial text");
@@ -188,4 +189,80 @@ test("the body follows a file switch: scope and hash of the picked file", async 
   button("Save")!.click();
   await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
   expect(sent[0]!.body).toEqual({ scope: "project", list: "allow", rule: "Bash(ls)", expectedHash: "hash-project" });
+});
+
+const box = () => document.querySelector<HTMLInputElement>("input[type=checkbox]");
+
+test("shows the checkbox on for a live session", () => {
+  show({ call: call(), live: true });
+  expect(text()).toContain("Tell the session to try again");
+  expect(box()!.checked).toBe(true);
+  expect(box()!.disabled).toBe(false);
+  expect(text()).not.toContain("The session is not running.");
+});
+
+test("shows it off and disabled for a session that is not live", () => {
+  show({ call: call(), live: false });
+  expect(box()!.checked).toBe(false);
+  expect(box()!.disabled).toBe(true);
+  expect(text()).toContain("The session is not running.");
+});
+
+test("has no checkbox in remove mode", () => {
+  show({ mode: "remove", call: call(), live: true, initial: { raw: "Read", list: "deny" } });
+  expect(box()).toBeNull();
+});
+
+test("has no checkbox without a blocked call", () => {
+  show({ live: true });
+  expect(box()).toBeNull();
+});
+
+test("save sends nudge true when the box is on", async () => {
+  show({ call: call(), live: true });
+  button("Save")!.click();
+  await vi.waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]!.body.nudge).toBe(true);
+});
+
+test("save sends no nudge when the box is off", async () => {
+  show({ call: call(), live: true });
+  box()!.click();
+  flushSync();
+  button("Save")!.click();
+  await vi.waitFor(() => expect(sent).toHaveLength(1));
+  expect("nudge" in sent[0]!.body).toBe(false);
+  await vi.waitFor(() => expect(closed()).toBe(true));
+});
+
+test("shows the sent text and keeps the sheet open", async () => {
+  answer = { scope: "user", nudge: { sent: true } };
+  show({ call: call(), live: true });
+  button("Save")!.click();
+  await vi.waitFor(() => expect(text()).toContain("Sent to the session. It may still wait for you to approve the message."));
+  expect(closed()).toBe(false);
+  expect(document.querySelector("[role=status]")).not.toBeNull();
+  button("Close")!.click();
+  flushSync();
+  expect(closed()).toBe(true);
+});
+
+test("shows the failure text when the answer says not_live", async () => {
+  answer = { scope: "user", nudge: { sent: false, reason: "not_live" } };
+  show({ call: call(), live: true });
+  button("Save")!.click();
+  await vi.waitFor(() => expect(text()).toContain("The session is not running, so it was not told."));
+  expect(closed()).toBe(false);
+});
+
+test("the result text never says received", async () => {
+  for (const nudge of [{ sent: true }, { sent: false, reason: "not_live" }, { sent: false, reason: "socket_refused" }, { sent: false, reason: "send_failed" }, { sent: false, reason: "unsupported" }]) {
+    answer = { scope: "user", nudge };
+    show({ call: call(), live: true });
+    button("Save")!.click();
+    await vi.waitFor(() => expect(document.querySelector("[role=status]")).not.toBeNull());
+    expect(document.body.textContent).not.toMatch(/receiv/i);
+    for (const u of open.splice(0)) u();
+    document.body.innerHTML = "";
+  }
 });

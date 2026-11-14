@@ -5,14 +5,14 @@
   import { untrack } from "svelte";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
-  import type { BlockedCall, Layer } from "./api";
-  import { blockWarning, confirmWords, listLabel, RELOAD_MESSAGE, RETRY_NOTE, scopeBadge, scopeWarning, summaryOf } from "./format";
+  import type { BlockedCall, Layer, NudgeResult } from "./api";
+  import { blockWarning, confirmWords, listLabel, NOT_LIVE_NOTE, NUDGE_LABEL, NUDGE_SENT, nudgeFailure, RELOAD_MESSAGE, scopeBadge, scopeWarning, summaryOf } from "./format";
   import { addRuleMutation, removeRuleMutation } from "./mutations";
   import { suggestRules } from "./suggest";
 
   // Confirms one change to one file. Mount it fresh for each change: it reads `initial` and `call` once, when it is created.
   // Without a `session` it uses the user routes and offers only the user file.
-  let { open = $bindable(false), host, instance, session, layers, mode, initial, call }: {
+  let { open = $bindable(false), host, instance, session, layers, mode, initial, call, live }: {
     open: boolean;
     host: string;
     instance: string;
@@ -21,6 +21,8 @@
     mode: "add" | "remove";
     initial?: { raw: string; list: "allow" | "ask" | "deny" };
     call?: BlockedCall;
+    /** Whether the session runs. Decides the default of the "try again" box. */
+    live?: boolean;
   } = $props();
 
   const client = useQueryClient();
@@ -39,6 +41,9 @@
   let picked = $state<string | null>(null);
   let understood = $state(false);
   let error = $state<string | null>(null);
+  let nudge = $state(untrack(() => live === true));
+  let result = $state<NudgeResult | null>(null);
+  const canNudge = $derived(mode === "add" && call !== undefined && session !== undefined);
 
   // The chosen file, or the first one offered. A file that left the list (the data changed) cannot stay chosen.
   const layer = $derived(offered.find((l) => l.scope === picked) ?? offered[0]);
@@ -50,7 +55,16 @@
     if (!layer || trimmed === "" || mutation.isPending) return;
     error = null;
     try {
-      await mutation.mutateAsync({ scope: layer.scope as "user" | "project" | "local", list, rule: trimmed, expectedHash: layer.hash ?? null });
+      const edit = { scope: layer.scope as "user" | "project" | "local", list, rule: trimmed, expectedHash: layer.hash ?? null };
+      if (mode === "add") {
+        const out = await add.mutateAsync(canNudge && nudge && live === true ? { ...edit, nudge: true } : edit);
+        if (out.nudge) {
+          result = out.nudge;
+          return;
+        }
+      } else {
+        await remove.mutateAsync(edit);
+      }
       open = false;
     } catch (e) {
       error = e instanceof ApiError && e.status === 409 ? RELOAD_MESSAGE : e instanceof Error ? e.message : "The change failed.";
@@ -115,16 +129,26 @@
         <p class="m-0 text-sm {wrap}" data-testid="confirm">{words[0]} <code class="font-mono text-xs {wrap}">{trimmed}</code> {words[1]} <code class="font-mono text-xs {wrap}">{layer.path}</code></p>
       {/if}
       {#each warnings as w (w)}<p class="m-0 text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
-      {#if call && mode === "add"}<p class="m-0 text-sm text-muted-foreground">{RETRY_NOTE}</p>{/if}
+      {#if canNudge && !result}
+        <label class="flex min-h-11 items-center gap-2 text-sm {wrap}">
+          <input type="checkbox" bind:checked={nudge} disabled={live !== true} class="size-4 w-auto shrink-0 accent-primary" />{NUDGE_LABEL}
+        </label>
+        {#if live !== true}<p class="m-0 text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
+      {/if}
+      {#if result}<p class="m-0 text-sm {wrap}" role="status">{result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}
       {#if error}<p class="m-0 text-sm text-destructive {wrap}" role="alert">{error}</p>{/if}
     </div>
     <Sheet.Footer class="px-4">
+      {#if result}
+        <Button type="button" size="touch" onclick={() => (open = false)}>Close</Button>
+      {:else}
       {#if needsTap}
         <Button type="button" variant="outline" size="touch" onclick={() => (understood = true)}>I understand, you rejected this call</Button>
       {:else}
         <Button type="button" size="touch" variant={mode === "remove" ? "destructive" : "default"} disabled={!layer || trimmed === "" || mutation.isPending} onclick={save}>{mode === "add" ? "Save" : "Remove"}</Button>
       {/if}
       <Button type="button" variant="outline" size="touch" onclick={() => (open = false)}>Cancel</Button>
+      {/if}
     </Sheet.Footer>
   </Sheet.Content>
 </Sheet.Root>

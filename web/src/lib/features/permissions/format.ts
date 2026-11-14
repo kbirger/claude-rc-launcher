@@ -71,7 +71,16 @@ export const permissionsHref = (host: string, instance: string): string => `/per
 
 export const CLASSIFIER_WARNING = "The auto mode classifier denied this call. An allow rule may not change that.";
 export const RELOAD_MESSAGE = "The file changed. Reload.";
-export const RETRY_NOTE = "The session needs a message to try again.";
+export const NUDGE_LABEL = "Tell the session to try again";
+export const NUDGE_SENT = "Sent to the session. It may still wait for you to approve the message.";
+export const NOT_LIVE_NOTE = "The session is not running.";
+const NUDGE_FAILURES = {
+  not_live: "The session is not running, so it was not told.",
+  socket_refused: "The session refused the message, so it was not told.",
+  send_failed: "The message could not be sent, so the session was not told.",
+  unsupported: "This node cannot tell a session to try again.",
+} as const;
+export const nudgeFailure = (reason: keyof typeof NUDGE_FAILURES): string => NUDGE_FAILURES[reason];
 
 /** A warning about the file that the edit changes. */
 export function scopeWarning(scope: string): string | undefined {

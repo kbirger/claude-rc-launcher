@@ -9,7 +9,7 @@
 
   type View = "permissions" | "blocked";
   // `view` is the selected tab. The page owns it (the address follows it), so a click is passed up.
-  let { host, instance, session, view, now, onpick }: { host: string; instance: string; session: string; view: View; now: number; onpick: (v: View) => void } = $props();
+  let { host, instance, session, view, now, live, onpick }: { host: string; instance: string; session: string; view: View; now: number; live?: boolean; onpick: (v: View) => void } = $props();
 
   const rules = createQuery(() => sessionPermissionsQuery(host, instance, session));
   // The same query as BlockedList: one request, shared.
@@ -32,7 +32,7 @@
   <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[view]}</p>
   <Tabs.Content value={view} class="min-w-0">
     {#if view === "blocked"}
-      <BlockedList {host} {instance} {session} {now} layers={rules.data?.layers} />
+      <BlockedList {host} {instance} {session} {now} {live} layers={rules.data?.layers} />
     {:else if rules.isPending}
       <p class="text-muted-foreground">Loading permissions...</p>
     {:else if isUnsupported(rules.error)}

@@ -84,3 +84,10 @@ test("an error answer throws an ApiError with its status", async () => {
   expect(e).toBeInstanceOf(ApiError);
   expect(e.status).toBe(409);
 });
+
+test("addRule sends nudge true in the body", async () => {
+  stub(200, { scope: "user", nudge: { sent: true } });
+  const out = await addRule("h", "i", SID, { ...edit, nudge: true });
+  expect(JSON.parse(String(calls[0]!.init?.body)).nudge).toBe(true);
+  expect(out.nudge).toEqual({ sent: true });
+});

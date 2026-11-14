@@ -78,7 +78,7 @@
   {:else if file}
     <FilePreview {host} {instance} {session} {file} back={current === "folder" ? href("folder", { path }) : href(current)} backLabel={current === "folder" ? "Back to folder" : current === "changed" ? "Back to changed files" : "Back to touched files"} />
   {:else if inPermissions}
-    <SessionPermissions {host} {instance} {session} view={current === "blocked" ? "blocked" : "permissions"} {now} onpick={pick} />
+    <SessionPermissions {host} {instance} {session} view={current === "blocked" ? "blocked" : "permissions"} {now} live={s?.live !== undefined} onpick={pick} />
   {:else}
     <h3 class="m-0 text-sm font-semibold">Files</h3>
     <Tabs.Root value={current} onValueChange={pick}>

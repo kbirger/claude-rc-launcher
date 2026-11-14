@@ -10,7 +10,7 @@
   import RuleSheet from "./RuleSheet.svelte";
 
   // `layers` are the permission files of the session (the page already loads them). Undefined means not loaded yet: Allow waits. The sheet is mounted only while it is open.
-  let { host, instance, session, now, layers }: { host: string; instance: string; session: string; now: number; layers?: Layer[] } = $props();
+  let { host, instance, session, now, layers, live }: { host: string; instance: string; session: string; now: number; layers?: Layer[]; live?: boolean } = $props();
 
   let sheetCall = $state<BlockedCall | null>(null);
   // A deny rule or a safety check cannot be fixed with an allow rule, so those calls have no button.
@@ -54,6 +54,6 @@
 
 {#if sheetCall}
   {#key sheetCall.id}
-    <RuleSheet bind:open={() => true, (v) => { if (!v) sheetCall = null; }} {host} {instance} {session} layers={layers ?? []} mode="add" call={sheetCall} />
+    <RuleSheet bind:open={() => true, (v) => { if (!v) sheetCall = null; }} {host} {instance} {session} layers={layers ?? []} mode="add" call={sheetCall} {live} />
   {/key}
 {/if}

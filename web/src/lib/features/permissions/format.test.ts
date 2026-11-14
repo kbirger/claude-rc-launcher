@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Layer, Rule } from "./api";
-import { confirmWords, deniedBy, flatRules, probablyFixed, scopeBadge, scopeWarning, blockWarning, CLASSIFIER_WARNING, RELOAD_MESSAGE } from "./format";
+import { confirmWords, deniedBy, flatRules, probablyFixed, scopeBadge, scopeWarning, blockWarning, CLASSIFIER_WARNING, RELOAD_MESSAGE, nudgeFailure } from "./format";
 
 const rule = (list: Rule["list"], raw: string, scope: string, extra: Partial<Rule> = {}): Rule => ({ raw, list, tool: raw.split("(")[0]!, scope, ...extra });
 const layer = (scope: Layer["scope"], rules: Rule[], state: Layer["state"] = "ok"): Layer => ({ scope, path: `/${scope}.json`, writable: false, state, rules, warnings: [] });
@@ -109,4 +109,12 @@ test("deniedBy finds the deny rule that matches the call and its file, else unde
   const layers = [rl("user", [rule("deny", "Bash(rm *)", "user")]), rl("project", [rule("allow", "Bash(rm -rf x)", "project")])];
   expect(deniedBy(bash("rm -rf x"), layers)).toEqual({ raw: "Bash(rm *)", scope: "user" });
   expect(deniedBy(bash("ls"), layers)).toBeUndefined();
+});
+
+test("nudgeFailure has a text for each reason", () => {
+  const reasons = ["not_live", "socket_refused", "send_failed", "unsupported"] as const;
+  const texts = reasons.map(nudgeFailure);
+  expect(new Set(texts).size).toBe(4);
+  expect(nudgeFailure("not_live")).toBe("The session is not running, so it was not told.");
+  for (const t of texts) expect(t).not.toMatch(/receiv/i);
 });
