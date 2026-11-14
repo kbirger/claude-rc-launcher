@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { onError } from "../src/app";
 import { HttpError, type Instances } from "../src/instances";
 import { permissionsApi } from "../src/permissionsapi";
+import type { nudge as nudgeFn } from "../src/nudge";
 import { SessionCatalog } from "../src/sessioncatalog";
 import type { TranscriptFs } from "../src/transcriptfs";
 
@@ -34,7 +35,7 @@ const use = (id: string, command: string, at: string) =>
 const denied = (id: string, text: string) =>
   JSON.stringify({ type: "user", timestamp: "2026-11-14T10:00:09.000Z", message: { content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: true }] } });
 
-function build(o: { sessions?: Record<string, { cwd: string; extra?: string[] }>; home?: boolean; identity?: object; log?: (l: string) => void; isRoot?: () => boolean } = {}) {
+function build(o: { sessions?: Record<string, { cwd: string; extra?: string[] }>; home?: boolean; identity?: object; log?: (l: string) => void; isRoot?: () => boolean; nudge?: typeof nudgeFn } = {}) {
   const inst = {
     claudeHome: async (id: string) => {
       if (id !== ID) throw new HttpError(404, "instance not found");
@@ -44,7 +45,7 @@ function build(o: { sessions?: Record<string, { cwd: string; extra?: string[] }>
   if (o.home === false) delete (inst as { claudeHome?: unknown }).claudeHome;
   const sessions = new SessionCatalog({ fs: transcripts(o.sessions ?? { [SID]: { cwd: root } }), platform: "darwin" });
   const app = new Hono();
-  app.route("/instances/:id", permissionsApi({ instances: inst, sessions, ...(o.log ? { log: o.log } : {}), isRoot: o.isRoot ?? (() => false) }));
+  app.route("/instances/:id", permissionsApi({ instances: inst, sessions, ...(o.log ? { log: o.log } : {}), isRoot: o.isRoot ?? (() => false), ...(o.nudge ? { nudge: o.nudge } : {}) }));
   app.onError(onError);
   return app;
 }
@@ -195,7 +196,7 @@ describe("rule edit routes", () => {
     const app = build({ log: (l) => lines.push(l) });
     await send(app, "POST", "/permissions/rules", { scope: "user", list: "allow", rule: "Bash(git *)", expectedHash: await hashOf(app, "/permissions", "user") });
     await send(app, "POST", "/permissions/rules", { scope: "user", list: "allow", rule: "Bash(a\nb)", expectedHash: null });
-    expect(lines[0]).toBe(`audit caller=unknown instance=${ID} scope=user action=add list=allow rule="Bash(git *)" status=200`);
+    expect(lines[0]).toBe(`audit caller=unknown instance=${ID} scope=user action=add list=allow rule="Bash(git *)" status=200 nudge=off`);
     expect(lines.join("\n")).not.toContain("Bash(rm *)");
     const bad = await send(app, "POST", "/permissions/rules", { scope: "user", list: "allow", rule: "Bash(a\nb)", expectedHash: null });
     expect(bad.status).toBe(400);
@@ -211,7 +212,7 @@ describe("rule edit routes", () => {
     expect((await send(app, "POST", "/permissions/rules", { scope: "user x=1", list: "allow z=2", rule: "Bash", expectedHash: null })).status).toBe(400);
     expect(lines.length).toBe(2);
     for (const l of lines) {
-      expect(l).toBe(`audit caller=unknown instance=${ID} scope=? action=add list=? rule="Bash" status=400`);
+      expect(l).toBe(`audit caller=unknown instance=${ID} scope=? action=add list=? rule="Bash" status=400 nudge=off`);
     }
   });
 });
@@ -247,5 +248,122 @@ describe("a root node and the default user", () => {
     expect(body.layers[0]!.state).toBe("ok");
     const s = (await (await get(app, `/sessions/${SID}/permissions`)).json()) as { layers: { scope: string; state: string }[] };
     expect(s.layers.filter((l) => l.scope !== "project").map((l) => l.state)).toEqual(["ok", "ok"]);
+  });
+});
+
+describe("the nudge flag", () => {
+  const p = `/sessions/${SID}/permissions/rules`;
+  const SECRET = "/run/secret-sock-path-xyz";
+  const edit = async (app: Hono, extra: object = {}, scope = "user") => ({ scope, list: "allow", rule: "Bash(git *)", expectedHash: await hashOf(app, `/sessions/${SID}/permissions`, scope), ...extra });
+  const fake = () => {
+    const calls: any[] = [];
+    const fn = (async (o: any) => (calls.push(o), { sent: true })) as unknown as typeof nudgeFn;
+    return { calls, fn };
+  };
+
+  test("add with nudge true calls nudge after the write and returns it under the nudge key", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    const r = await send(app, "POST", p, await edit(app, { nudge: true }));
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { rules: unknown[]; nudge: unknown };
+    expect(body.nudge).toEqual({ sent: true });
+    expect(body.rules).toBeArray();
+    expect(n.calls.length).toBe(1);
+    expect(JSON.parse(await readFile(userFile(), "utf8")).permissions.allow).toContain("Bash(git *)");
+    expect(n.calls[0].sessionId).toBe(SID);
+    expect(n.calls[0].home).toBe(dir);
+  });
+  test("an add without the flag, or with false, has no nudge key and never calls nudge", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    const a = await send(app, "POST", p, await edit(app));
+    expect("nudge" in ((await a.json()) as object)).toBe(false);
+    const b = await send(app, "POST", p, await edit(app, { rule: "Bash(ls)", nudge: false }));
+    expect("nudge" in ((await b.json()) as object)).toBe(false);
+    expect(n.calls).toEqual([]);
+  });
+  test("the nudge message holds the rule, the list, and the file path", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    await send(app, "POST", p, await edit(app, { nudge: true }));
+    const m = n.calls[0].message as string;
+    expect(m).toContain('"Bash(git *)"');
+    expect(m).toContain("allow list");
+    expect(m).toContain(userFile());
+  });
+  test("a 409 add with nudge true never calls nudge", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    const r = await send(app, "POST", p, await edit(app, { nudge: true, expectedHash: "0".repeat(64) }));
+    expect(r.status).toBe(409);
+    expect("nudge" in ((await r.json()) as object)).toBe(false);
+    expect(n.calls).toEqual([]);
+  });
+  test("a 400 add never calls nudge", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    expect((await send(app, "POST", p, await edit(app, { nudge: true, list: "nope" }))).status).toBe(400);
+    expect(n.calls).toEqual([]);
+  });
+  test("a remove with nudge true never calls nudge", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    const r = await send(app, "DELETE", p, { scope: "user", list: "allow", rule: "Bash(ls *)", expectedHash: await hashOf(app, `/sessions/${SID}/permissions`, "user"), nudge: true });
+    expect(r.status).toBe(200);
+    expect("nudge" in ((await r.json()) as object)).toBe(false);
+    expect(n.calls).toEqual([]);
+  });
+  test("the user route refuses nudge true with 400", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    const r = await send(app, "POST", "/permissions/rules", { scope: "user", list: "allow", rule: "Bash(git *)", expectedHash: null, nudge: true });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe("nudge needs a session");
+    expect(n.calls).toEqual([]);
+  });
+  test("nudge with a non boolean value gives 400", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    for (const v of ["true", 1, null, {}]) expect((await send(app, "POST", p, await edit(app, { nudge: v }))).status).toBe(400);
+    expect(n.calls).toEqual([]);
+  });
+  test("a throw inside nudge is send_failed and the add stays 200", async () => {
+    const lines: string[] = [];
+    const app = build({ log: (l) => lines.push(l), nudge: (async () => { throw new Error(SECRET); }) as unknown as typeof nudgeFn });
+    const r = await send(app, "POST", p, await edit(app, { nudge: true }));
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { nudge: unknown }).nudge).toEqual({ sent: false, reason: "send_failed" });
+    expect(lines[0]).toEndWith("status=200 nudge=send_failed");
+    expect(lines.join("\n")).not.toContain(SECRET);
+  });
+  test("the answer and the audit line hold no socket path", async () => {
+    const lines: string[] = [];
+    // The real nudge runs, with a fake find and a fake send. A fake send that fails would leak a path only if the code did.
+    const { nudge } = await import("../src/nudge");
+    const fn = ((o: any) => nudge({ ...o, platform: "linux", find: async () => SECRET, send: async () => {} })) as typeof nudgeFn;
+    const app = build({ log: (l) => lines.push(l), nudge: fn });
+    const r = await send(app, "POST", p, await edit(app, { nudge: true }));
+    const text = await r.text();
+    expect(text).not.toContain(SECRET);
+    expect(lines.join("\n")).not.toContain(SECRET);
+  });
+  test("audit line ends with nudge=sent", async () => {
+    const lines: string[] = [];
+    const app = build({ log: (l) => lines.push(l), nudge: fake().fn });
+    await send(app, "POST", p, await edit(app, { nudge: true }));
+    expect(lines[0]).toEndWith(" status=200 nudge=sent");
+  });
+  test("audit line ends with nudge=off for a failed add", async () => {
+    const lines: string[] = [];
+    const app = build({ log: (l) => lines.push(l), nudge: fake().fn });
+    await send(app, "POST", p, await edit(app, { nudge: true, expectedHash: "0".repeat(64) }));
+    expect(lines[0]).toEndWith(" status=409 nudge=off");
+  });
+  test("audit line carries the reason when the session is not live", async () => {
+    const lines: string[] = [];
+    const app = build({ log: (l) => lines.push(l), nudge: (async () => ({ sent: false, reason: "not_live" })) as unknown as typeof nudgeFn });
+    await send(app, "POST", p, await edit(app, { nudge: true }));
+    expect(lines[0]).toEndWith(" nudge=not_live");
   });
 });

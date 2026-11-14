@@ -460,7 +460,7 @@ describe("audit", () => {
     const app = createApp({ cfg, instances, userAuth, hostClients: new Map() });
     const r = await app.request(`/api/hosts/local/instances/${ID}/permissions/rules`, { method: "POST", headers: JSON_H, body: JSON.stringify({ scope: "user", list: "allow", rule: "Bash(git *)", expectedHash: null }) });
     expect(r.status).toBe(200);
-    expect(logged.filter((l) => l.includes("rule="))).toEqual([`audit caller=kir instance=${ID} scope=user action=add list=allow rule="Bash(git *)" status=200`]);
+    expect(logged.filter((l) => l.includes("rule="))).toEqual([`audit caller=kir instance=${ID} scope=user action=add list=allow rule="Bash(git *)" status=200 nudge=off`]);
   });
   test("local writes are audited with host=local", async () => {
     const app = hub([], new Map());

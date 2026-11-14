@@ -100,7 +100,40 @@ describe("hub session JSON routes", () => {
       } finally {
         console.log = orig;
       }
-      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200`]);
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200 nudge=off`]);
+    });
+    const sp = `${sbase}/sessions/${SID}/permissions/rules`;
+    test("forwards nudge true in the body", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (m: string, p: string, o: any) => (calls.push(o), { status: 200, body: {} })) as any });
+      expect((await post(app, "POST", sp, { ...good, nudge: true })).status).toBe(200);
+      expect(calls[0].json).toEqual({ ...good, nudge: true });
+    });
+    test("omits the key when the flag is false or missing", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (m: string, p: string, o: any) => (calls.push(o), { status: 200, body: {} })) as any });
+      await post(app, "POST", sp, { ...good, nudge: false });
+      await post(app, "POST", sp, good);
+      expect(calls.map((c) => "nudge" in c.json)).toEqual([false, false]);
+    });
+    test("audit line ends with nudge=on", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+      try {
+        const app = build({ call: (async () => ({ status: 200, body: {} })) as any });
+        await post(app, "POST", sp, { ...good, nudge: true });
+      } finally {
+        console.log = orig;
+      }
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=add instance=${ID} scope=user list=allow rule="Bash(git *)" status=200 nudge=on`]);
+    });
+    test("refuses a non boolean flag with 400 before any forward, and nudge true on the user route", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (...a: any[]) => (calls.push(a), { status: 200, body: {} })) as any });
+      for (const v of ["true", 1, null]) expect((await post(app, "POST", sp, { ...good, nudge: v })).status).toBe(400);
+      expect((await post(app, "POST", routes[0]![1], { ...good, nudge: true })).status).toBe(400);
+      expect(calls).toEqual([]);
     });
     test("a hostile scope, list or instance id writes no audit line", async () => {
       const logs: string[] = [];

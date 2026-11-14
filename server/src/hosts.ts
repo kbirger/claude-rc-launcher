@@ -319,17 +319,17 @@ export function hostsApi(o: {
   remote.get("/instances/:id/permissions", forwardJson((c, k) => k.call("GET", `/api/instances/${instanceId(c)}/permissions`, { timeoutMs: requestTimeoutMs })));
   remote.get("/instances/:id/sessions/:sid/permissions", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/permissions`, { timeoutMs: requestTimeoutMs })));
   // Rule edits. The hub checks the body, forwards it as it is, and writes its own audit line (no file content, no text of a blocked call).
-  const ruleEdit = (method: "POST" | "DELETE", scopes: readonly ("user" | "project" | "local")[], path: (c: Context) => string) =>
+  const ruleEdit = (method: "POST" | "DELETE", scopes: readonly ("user" | "project" | "local")[], path: (c: Context) => string, allowNudge = false) =>
     forwardJson(async (c, k) => {
-      const e = parseRuleEdit(await readJson(c), scopes);
+      const e = parseRuleEdit(await readJson(c), scopes, { allowNudge });
       const u = c.get("user" as never) as User | undefined;
       const rawUser = String(u?.username ?? u?.sub ?? "unknown");
       const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
       const iid = instanceId(c);
       const line = (status: number) =>
-        `audit user=${who} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${iid} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status}`;
+        `audit user=${who} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${iid} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status} nudge=${e.nudge ? "on" : "off"}`;
       try {
-        const r = await k.call(method, path(c), { json: { scope: e.scope, list: e.list, rule: e.rule, expectedHash: e.expectedHash }, timeoutMs: requestTimeoutMs });
+        const r = await k.call(method, path(c), { json: { scope: e.scope, list: e.list, rule: e.rule, expectedHash: e.expectedHash, ...(e.nudge ? { nudge: true } : {}) }, timeoutMs: requestTimeoutMs });
         console.log(line(r.status === 200 || (r.status >= 400 && r.status <= 599) ? r.status : 502));
         return r;
       } catch (err) {
@@ -343,8 +343,8 @@ export function hostsApi(o: {
   const sessionRules = (c: Context) => `${sessionsBase(c)}/${sessionId(c)}/permissions/rules`;
   remote.post("/instances/:id/permissions/rules", ruleEdit("POST", USER_ONLY, userRules));
   remote.delete("/instances/:id/permissions/rules", ruleEdit("DELETE", USER_ONLY, userRules));
-  remote.post("/instances/:id/sessions/:sid/permissions/rules", ruleEdit("POST", SESSION_SCOPES, sessionRules));
-  remote.delete("/instances/:id/sessions/:sid/permissions/rules", ruleEdit("DELETE", SESSION_SCOPES, sessionRules));
+  remote.post("/instances/:id/sessions/:sid/permissions/rules", ruleEdit("POST", SESSION_SCOPES, sessionRules, true));
+  remote.delete("/instances/:id/sessions/:sid/permissions/rules", ruleEdit("DELETE", SESSION_SCOPES, sessionRules, true));
   remote.get("/instances/:id/sessions/:sid/blocked", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/blocked`, { timeoutMs: requestTimeoutMs })));
   remote.get("/instances/:id/sessions/:sid/changed", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/changed`, { timeoutMs: requestTimeoutMs })));
   remote.get(
