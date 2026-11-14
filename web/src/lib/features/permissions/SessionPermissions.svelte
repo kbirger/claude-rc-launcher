@@ -32,7 +32,7 @@
   <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[view]}</p>
   <Tabs.Content value={view} class="min-w-0">
     {#if view === "blocked"}
-      <BlockedList {host} {instance} {session} {now} />
+      <BlockedList {host} {instance} {session} {now} layers={rules.data?.layers ?? []} />
     {:else if rules.isPending}
       <p class="text-muted-foreground">Loading permissions...</p>
     {:else if isUnsupported(rules.error)}
@@ -40,7 +40,7 @@
     {:else if rules.error}
       <p class="error">Could not load the permissions: {rules.error.message}</p>
     {:else if rules.data}
-      <RuleList layers={rules.data.layers} />
+      <RuleList layers={rules.data.layers} {host} {instance} {session} />
     {/if}
   </Tabs.Content>
 </Tabs.Root>

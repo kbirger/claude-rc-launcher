@@ -56,6 +56,14 @@ function splitCommand(command: string): string[] {
   return parts;
 }
 
+/** The commands of a shell command line, for matching. A line that cannot be split safely is one command. Empty for control characters. */
+export function bashParts(command: string): string[] {
+  if (CONTROL.test(command)) return [];
+  const whole = command.trim();
+  if (!whole) return [];
+  return UNSPLITTABLE.test(whole) ? [whole] : splitCommand(command);
+}
+
 function bashSuggestions(command: string): Suggestion[] {
   if (CONTROL.test(command)) return [];
   const out: Suggestion[] = [];

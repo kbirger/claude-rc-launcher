@@ -3,11 +3,18 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { cn } from "#lib/utils.js";
   import { ago } from "../../shared/time";
-  import { isUnsupported } from "./api";
-  import { reasonLabel, reasonVariant, summaryOf } from "./format";
+  import { Button } from "#lib/components/ui/button/index.js";
+  import { isUnsupported, type BlockedCall, type Layer } from "./api";
+  import { deniedBy, probablyFixed, reasonLabel, reasonVariant, scopeLabel, summaryOf } from "./format";
   import { blockedQuery } from "./queries";
+  import RuleSheet from "./RuleSheet.svelte";
 
-  let { host, instance, session, now }: { host: string; instance: string; session: string; now: number } = $props();
+  // `layers` are the permission files of the session (the page already loads them). The sheet is mounted only while it is open.
+  let { host, instance, session, now, layers = [] }: { host: string; instance: string; session: string; now: number; layers?: Layer[] } = $props();
+
+  let sheetCall = $state<BlockedCall | null>(null);
+  // A deny rule or a safety check cannot be fixed with an allow rule, so those calls have no button.
+  const canAllow = (c: BlockedCall) => c.reason === "needs_approval" || c.reason === "user_rejected" || c.reason === "classifier";
 
   const q = createQuery(() => blockedQuery(host, instance, session));
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
@@ -31,8 +38,22 @@
           <span>{c.tool}</span>
           <span aria-hidden="true">·</span>
           <span>{ago(c.at, now)}</span>
+          {#if canAllow(c) && probablyFixed(c, layers)}<Badge variant="secondary">probably fixed</Badge>{/if}
         </span>
+        {#if c.reason === "deny_rule"}
+          {@const d = deniedBy(c, layers)}
+          <span class={cn(wrap, "text-xs text-muted-foreground")}>{d ? `Denied by ${d.raw} in ${scopeLabel(d.scope)}` : "Denied by a deny rule"}</span>
+        {/if}
+        {#if canAllow(c)}
+          <Button type="button" variant="outline" size="touch" class="mt-1 self-start" onclick={() => (sheetCall = c)}>Allow...</Button>
+        {/if}
       </li>
     {/each}
   </ul>
+{/if}
+
+{#if sheetCall}
+  {#key sheetCall.id}
+    <RuleSheet bind:open={() => true, (v) => { if (!v) sheetCall = null; }} {host} {instance} {session} {layers} mode="add" call={sheetCall} />
+  {/key}
 {/if}

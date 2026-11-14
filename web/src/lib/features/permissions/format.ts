@@ -1,4 +1,5 @@
 // Small helpers for the permission screens. They only use values the API gave.
+import { bashParts, suggestRules } from "./suggest";
 import type { BlockedCall, BlockReason, Layer, LayerScope, Rule } from "./api";
 
 const SCOPE_LABELS: Record<LayerScope, string> = {
@@ -86,3 +87,43 @@ export const listLabel = (list: Rule["list"]): string => list[0]!.toUpperCase() 
 
 export const confirmLine = (mode: "add" | "remove", rule: string, list: Rule["list"], path: string): string =>
   mode === "add" ? `Add \`${rule}\` to ${listLabel(list)} in \`${path}\`` : `Remove \`${rule}\` from ${listLabel(list)} in \`${path}\``;
+
+// Matching is exact text, plus the simple prefix form `Bash(prefix *)`. It does not know the other wildcards or the rules of
+// Claude Code for compound commands, so "probably fixed" is a hint and not a promise.
+const BASH_RULE = /^Bash\(([\s\S]*)\)$/;
+function bashRuleCovers(raw: string, part: string): boolean {
+  if (part.includes("*")) return false;
+  const body = BASH_RULE.exec(raw)?.[1];
+  if (body === undefined) return false;
+  if (body === part) return true;
+  if (!body.endsWith(" *")) return false;
+  const prefix = body.slice(0, -2);
+  return prefix !== "" && !prefix.includes("*") && (part === prefix || part.startsWith(`${prefix} `));
+}
+
+/** The pieces of a call that a rule must cover: each command of a Bash line, or each exact suggestion. */
+function units(call: BlockedCall): Array<(raw: string) => boolean> {
+  if (call.tool === "Bash") return typeof call.input.command === "string" ? bashParts(call.input.command).map((part) => (raw: string) => bashRuleCovers(raw, part)) : [];
+  return suggestRules(call).filter((s) => !s.broad).map((s) => (raw: string) => raw === s.raw);
+}
+
+const rulesOf = (layers: Layer[], list: Rule["list"]) => layers.flatMap((l) => l.rules.filter((r) => r.list === list).map((r) => ({ raw: r.raw, scope: l.scope })));
+
+/** The deny rule that matches the call, with its file. Undefined when none is found. */
+export function deniedBy(call: BlockedCall, layers: Layer[]): { raw: string; scope: string } | undefined {
+  const us = units(call);
+  return rulesOf(layers, "deny").find((r) => us.some((u) => u(r.raw)));
+}
+
+/**
+ * True when an allow rule in a file that loaded fine covers every command of the call, and no deny or ask rule in any file
+ * matches it. The call may then work on the next try, so the Allow button stays.
+ */
+export function probablyFixed(call: BlockedCall, layers: Layer[]): boolean {
+  const us = units(call);
+  if (us.length === 0) return false;
+  const allow = rulesOf(layers.filter((l) => l.state === "ok"), "allow");
+  if (!us.every((u) => allow.some((r) => u(r.raw)))) return false;
+  const stop = [...rulesOf(layers, "deny"), ...rulesOf(layers, "ask")];
+  return !stop.some((r) => us.some((u) => u(r.raw)));
+}
