@@ -95,8 +95,14 @@ test("probablyFixed: a compound command needs every part allowed", () => {
 
 test("probablyFixed: a file tool matches its exact rule only", () => {
   const edit = { ...bash(""), tool: "Edit", input: { file_path: "/p/a.ts" } };
-  expect(probablyFixed(edit, [rl("user", [rule("allow", "Edit(/p/a.ts)", "user")])])).toBe(true);
-  expect(probablyFixed(edit, [rl("user", [rule("allow", "Edit(/p/b.ts)", "user")])])).toBe(false);
+  expect(probablyFixed(edit, [rl("user", [rule("allow", "Edit(//p/a.ts)", "user")])])).toBe(true);
+  expect(probablyFixed(edit, [rl("user", [rule("allow", "Edit(//p/b.ts)", "user")])])).toBe(false);
+});
+
+test("a deny rule in the absolute form is found for a file tool, and the single-slash form is not", () => {
+  const edit = { ...bash(""), tool: "Edit", input: { file_path: "/p/a.ts" } };
+  expect(deniedBy(edit, [rl("user", [rule("deny", "Edit(//p/a.ts)", "user")])])).toEqual({ raw: "Edit(//p/a.ts)", scope: "user" });
+  expect(deniedBy(edit, [rl("user", [rule("deny", "Edit(/p/a.ts)", "user")])])).toBeUndefined();
 });
 
 test("deniedBy finds the deny rule that matches the call and its file, else undefined", () => {

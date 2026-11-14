@@ -8,7 +8,19 @@ const FILE_TOOLS = new Set(["Edit", "Write", "Read", "NotebookEdit"]);
 const NO_PREFIX = new Set([
   "sudo", "doas", "su", "env", "bash", "sh", "zsh", "fish", "dash", "ksh", "eval", "exec", "source", ".", "xargs", "nohup", "time", "timeout", "nice",
   "ionice", "watch", "command", "builtin", "setsid", "stdbuf", "ssh", "python", "python3", "node", "deno", "perl", "ruby", "php", "lua", "awk", "find", "script",
+  // Shell keywords: the rest of the line is a command, or part of a block.
+  "for", "while", "until", "if", "case", "do", "then", "done", "fi", "esac", "select", "function",
+  // Runners: they start any program.
+  "npx", "bunx", "uvx", "pipx", "pnpm", "yarn", "tsx", "make", "parallel", "tmux", "screen", "systemd-run", "flock", "strace", "gdb", "chroot", "busybox",
+  // Other shells.
+  "pwsh", "powershell", "csh", "tcsh",
 ]);
+/** The command name for the denylist: the basename of the first word, without a trailing version (`python3.12` is `python`). */
+const commandName = (word: string): string => {
+  const base = word.slice(word.lastIndexOf("/") + 1);
+  return base.replace(/[\d.]+$/, "") || base;
+};
+const noPrefix = (word: string): boolean => NO_PREFIX.has(word) || NO_PREFIX.has(commandName(word)) || /^[{}(]/.test(word);
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const UNSPLITTABLE = /\$\(|`|<\(|>\(|^\(/;
 
@@ -81,7 +93,7 @@ function bashSuggestions(command: string): Suggestion[] {
   for (const part of splitCommand(command)) {
     add(withStar(`Bash(${part})`, `Exactly: ${part}`));
     const words = part.split(/\s+/);
-    if (NO_PREFIX.has(words[0]!) || ENV_ASSIGNMENT.test(words[0]!)) continue;
+    if (noPrefix(words[0]!) || ENV_ASSIGNMENT.test(words[0]!)) continue;
     const n = TWO_WORD.has(words[0]!) && words.length > 1 ? 2 : 1;
     if (n === 2 && words[1]!.startsWith("-")) continue;
     if (words.length > n) {
@@ -103,7 +115,11 @@ export function suggestRules(call: BlockedCall): Suggestion[] {
   if (FILE_TOOLS.has(tool)) {
     // A bare Edit, Write or Read allows every path, so without a usable path there is no suggestion.
     const p = tool === "NotebookEdit" ? (input.notebook_path ?? input.file_path) : input.file_path;
-    return typeof p === "string" && p && !CONTROL.test(p) ? [withStar(`${tool}(${p})`, `Only ${p}`)] : [];
+    // No control character at all, newline included: a rule is one line of text.
+    if (typeof p !== "string" || !p || /[\u0000-\u001f\u007f]/.test(p)) return [];
+    // Claude Code reads `/path` as relative to the settings file's folder. An absolute path needs two slashes.
+    const rulePath = p.startsWith("/") && !p.startsWith("//") ? `/${p}` : p;
+    return [withStar(`${tool}(${rulePath})`, `Only ${p}`)];
   }
   if (tool === "WebFetch") {
     try {
