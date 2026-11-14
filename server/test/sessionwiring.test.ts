@@ -86,3 +86,29 @@ describe("node app wiring of the refused state folders", () => {
     expect(((await r.json()) as { path: string }[]).map((t) => t.path)).toEqual([join(outside, "ok.txt")]);
   });
 });
+
+describe("permissions routes in the node app", () => {
+  const base = `/api/instances/${ID}`;
+  test("they need the node login", async () => {
+    const a = app();
+    expect((await a.request(`${base}/permissions`)).status).toBe(401);
+    expect((await a.request(`${base}/sessions/${SID}/permissions`)).status).toBe(401);
+    expect((await a.request(`${base}/sessions/${SID}/blocked`)).status).toBe(401);
+  });
+  test("the user, session and blocked routes answer for the real session folder", async () => {
+    await mkdir(join(dir, "home", ".claude"), { recursive: true });
+    await writeFile(join(dir, "home", ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["Bash(ls *)"] } }));
+    const a = app();
+    const user = (await (await a.request(`${base}/permissions`, { headers: ok })).json()) as { layers: { scope: string; rules: { raw: string }[] }[] };
+    expect(user.layers.map((l) => l.scope)).toEqual(["user"]);
+    expect(user.layers[0]!.rules.map((r) => r.raw)).toEqual(["Bash(ls *)"]);
+    const s = await a.request(`${base}/sessions/${SID}/permissions`, { headers: ok });
+    expect(s.status).toBe(200);
+    const scopes = ((await s.json()) as { layers: { scope: string }[] }).layers.map((l) => l.scope);
+    expect(scopes).toContain("project");
+    expect(scopes.at(-1)).toBe("user");
+    const b = await a.request(`${base}/sessions/${SID}/blocked`, { headers: ok });
+    expect(b.status).toBe(200);
+    expect(await b.json()).toEqual([]);
+  });
+});
