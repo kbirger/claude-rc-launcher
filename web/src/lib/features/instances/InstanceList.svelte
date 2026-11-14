@@ -55,54 +55,60 @@
 <ul class="m-0 grid list-none gap-3 p-0">
   {#each model.rows as r (r.key)}
     {@const i = r.instance}
+    {#snippet title()}{r.name}{/snippet}
+    {#snippet status()}
+      {#if r.pending}
+        <Badge variant="outline" class="flex-none text-warning">{r.pending}...</Badge>
+      {:else if i}
+        <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={cn("flex-none", stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : "")}>{stateLabel(i.state)}</Badge>
+      {/if}
+    {/snippet}
+    {#snippet subtitle()}
+      {#if i}
+        <p class="m-0 font-mono [overflow-wrap:anywhere]">{i.path}</p>
+        {#if i.user || uptime(i.state, i.startedAt)}
+          <p class="m-0">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
+        {/if}
+      {/if}
+    {/snippet}
+    {#snippet actions()}
+      {#if i}
+        <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
+          <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
+        </Button>
+        <SessionsLink {host} instance={i.id} />
+        <PermissionsLink {host} instance={i.id} />
+      {/if}
+    {/snippet}
+    {#snippet actionsEnd()}
+      {#if i}
+        {#if isPaused(i.state)}
+          <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
+            <Play aria-hidden="true" />
+          </Button>
+        {:else}
+          <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
+            <Pause aria-hidden="true" />
+          </Button>
+        {/if}
+      {/if}
+    {/snippet}
+    {#snippet logs()}
+      {#if i}<div class="w-full"><InstanceLogs {host} id={i.id} /></div>{/if}
+    {/snippet}
     <li>
+      <!-- A starting row has no instance yet: it passes no subtitle, strip, or menu, so the card draws none. -->
       <EntityCard
+        {title}
+        {status}
         pending={r.pending}
+        subtitle={i ? subtitle : undefined}
+        actions={i ? actions : undefined}
+        actionsEnd={i ? actionsEnd : undefined}
+        children={i && i.id in open ? logs : undefined}
         overflowLabel="More actions for {r.name}"
         overflow={i ? [{ label: "Stop", icon: Stop, destructive: true, disabled: !!r.pending, onselect: () => stop(i) }] : []}
-      >
-        {#snippet title()}{r.name}{/snippet}
-        {#snippet status()}
-          {#if r.pending}
-            <Badge variant="outline" class="flex-none text-warning">{r.pending}...</Badge>
-          {:else if i}
-            <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={cn("flex-none", stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : "")}>{stateLabel(i.state)}</Badge>
-          {/if}
-        {/snippet}
-        {#snippet subtitle()}
-          {#if i}
-            <p class="m-0 font-mono [overflow-wrap:anywhere]">{i.path}</p>
-            {#if i.user || uptime(i.state, i.startedAt)}
-              <p class="m-0">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
-            {/if}
-          {/if}
-        {/snippet}
-        {#snippet actions()}
-          {#if i}
-            <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
-              <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
-            </Button>
-            <SessionsLink {host} instance={i.id} />
-            <PermissionsLink {host} instance={i.id} />
-          {/if}
-        {/snippet}
-        {#snippet actionsEnd()}
-          {#if i}
-            {#if isPaused(i.state)}
-              <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
-                <Play aria-hidden="true" />
-              </Button>
-            {:else}
-              <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
-                <Pause aria-hidden="true" />
-              </Button>
-            {/if}
-          {/if}
-        {/snippet}
-      </EntityCard>
-      {#if i && i.id in open}
-        <div class="mt-2"><InstanceLogs {host} id={i.id} /></div>
-      {/if}
+      />
     </li>
   {/each}
 </ul>

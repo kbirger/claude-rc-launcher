@@ -115,6 +115,10 @@ test("a pending instance has the overflow item disabled", async () => {
   openMenu();
   await until(() => items().length === 1);
   expect(items()[0]!.hasAttribute("data-disabled")).toBe(true);
+  items()[0]!.click();
+  flushSync();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(stops).toEqual(["a"]);
 });
 
 test("Logs opens the log panel", async () => {
@@ -124,4 +128,26 @@ test("Logs opens the log panel", async () => {
   flushSync();
   await until(() => !!t.querySelector("pre"));
   expect(t.querySelector("pre")!.textContent).toBe("LOG LINE");
+  expect(t.querySelector('[data-slot="entity-card"]')!.contains(t.querySelector("pre"))).toBe(true);
+});
+
+test("a starting row has no subtitle, no action strip, and no menu", async () => {
+  list = [];
+  stopHangs = true;
+  const client = createQueryClient();
+  const target = document.createElement("div");
+  document.body.append(target);
+  const c = mount(InstanceListHarness, { target, props: { host: "h", client } });
+  open.push(() => unmount(c));
+  flushSync();
+  // A start that never answers keeps the "starting" row.
+  client.getMutationCache().build(client, { mutationKey: ["instances", "h", "start"], mutationFn: () => new Promise(() => {}) }).execute({ path: "/w/new" });
+  await until(() => !!target.querySelector("h3"));
+  expect(target.querySelector("h3")!.textContent).toBe("new");
+  expect(target.textContent).toContain("starting...");
+  expect(target.querySelector('[data-slot="entity-card-actions"]')).toBeNull();
+  expect(target.querySelector("button")).toBeNull();
+  const card = target.querySelector('[data-slot="entity-card"]')!;
+  expect(card.querySelectorAll("div:empty").length).toBe(0);
+  expect(card.querySelector(".text-xs.text-muted-foreground")).toBeNull();
 });

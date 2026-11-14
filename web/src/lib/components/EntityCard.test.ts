@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
+import Stop from "@tabler/icons-svelte/icons/player-stop";
 import EntityCardHarness from "./EntityCardHarness.svelte";
 
 const open: Array<() => void> = [];
@@ -172,4 +173,10 @@ test("selected adds the primary border class and pending adds the dim class", ()
   expect(pend.className).not.toContain("border-dashed");
   expect(starting.className).toContain("opacity-60");
   expect(starting.className).toContain("border-dashed");
+});
+
+test("an overflow item with a Tabler icon draws the svg inside the menu item", () => {
+  show({ overflow: [{ label: "Stop", icon: Stop, onselect() {} }] });
+  openMenu();
+  expect(items()[0].querySelector("svg")).not.toBeNull();
 });
