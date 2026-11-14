@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, liveBadges, joinPath, lastSegments, relativeTo, sessionDetail, sessionMatches, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName, splitPath } from "./format";
+import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionDetail, sessionMatches, sessionState, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName, splitPath } from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -152,32 +152,23 @@ test("touchedRows links every written row: inside files by relative path, the re
   expect(rows[1]!.rel).toBeUndefined();
 });
 
-test("liveBadges shows live and the status, busy as active and idle muted", () => {
-  expect(liveBadges({ ...sess, live: { status: "busy", remoteControl: false } })).toEqual([{ label: "live · busy", class: "text-success" }]);
-  expect(liveBadges({ ...sess, live: { status: "idle", remoteControl: false } })).toEqual([{ label: "live · idle", class: "text-muted-foreground" }]);
+test("sessionState is live for a running session, and busy only for the busy status", () => {
+  expect(sessionState({ ...sess, live: { status: "busy", remoteControl: false } })).toEqual({ live: true, busy: true, label: "live", title: "Running, busy", remoteControl: false });
+  expect(sessionState({ ...sess, live: { status: "idle", remoteControl: false } })).toEqual({ live: true, busy: false, label: "live", title: "Running, idle", remoteControl: false });
 });
 
-test("liveBadges adds Remote Control when the session is attached to it", () => {
-  expect(liveBadges({ ...sess, live: { status: "idle", remoteControl: true } })).toEqual([
-    { label: "live · idle", class: "text-muted-foreground" },
-    { label: "Remote Control", class: "" },
-  ]);
+test("sessionState carries the Remote Control flag", () => {
+  expect(sessionState({ ...sess, live: { status: "idle", remoteControl: true } }).remoteControl).toBe(true);
 });
 
-test("liveBadges gives nothing for a session that is not running", () => {
-  expect(liveBadges(sess)).toEqual([]);
+test("sessionState is offline for a session that is not running", () => {
+  expect(sessionState(sess)).toEqual({ live: false, busy: false, label: "offline", title: "Not running", remoteControl: false });
 });
 
-test("liveBadges shows only live for a status other than busy or idle", () => {
-  expect(liveBadges({ ...sess, live: { status: "x".repeat(32), remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
-  expect(liveBadges({ ...sess, live: { status: "", remoteControl: true } })).toEqual([
-    { label: "live", class: "text-muted-foreground" },
-    { label: "Remote Control", class: "" },
-  ]);
-});
-
-test("liveBadges shows only live when the node sends no status", () => {
-  expect(liveBadges({ ...sess, live: { remoteControl: false } })).toEqual([{ label: "live", class: "text-muted-foreground" }]);
+test("sessionState names no status for a value other than busy or idle, or for none", () => {
+  expect(sessionState({ ...sess, live: { status: "x".repeat(32), remoteControl: false } }).title).toBe("Running");
+  expect(sessionState({ ...sess, live: { status: "", remoteControl: true } })).toMatchObject({ live: true, title: "Running", remoteControl: true });
+  expect(sessionState({ ...sess, live: { remoteControl: false } }).title).toBe("Running");
 });
 
 test("splitPath gives the last name and the folder above it", () => {

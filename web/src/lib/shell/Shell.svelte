@@ -162,7 +162,8 @@
   /* One column for everything under the header (the header spans the full width). */
   .column { max-width: 720px; margin: 0 auto; padding: 16px 16px calc(6.5rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
   .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
+  /* The header floats: it stays pinned at the top of the screen while the page scrolls under it. */
+  header { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
   h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; margin: 0; flex: none; min-width: 44px; }
   .home { display: flex; flex-direction: column; align-items: center; flex: 1 1 0; min-height: 0; min-width: 44px; border-radius: 8px; }
   .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted-foreground); font-size: 0.9rem; }

@@ -36,7 +36,8 @@ async function show(which: "touched" | "folder" | "list", path = "") {
   return target;
 }
 const bad = (e: Element) => /\b(truncate|whitespace-nowrap|line-clamp-\d)\b/.test(e.className.toString());
-const noClip = (t: HTMLElement) => expect([...t.querySelectorAll("*")].filter(bad)).toEqual([]);
+// A badge holds one short fixed word (live, offline), never text from the user, so it may stay on one line. The session name in the list is cut with an ellipsis on purpose.
+const noClip = (t: HTMLElement) => expect([...t.querySelectorAll("*")].filter((e) => bad(e) && e.getAttribute("data-slot") !== "badge" && !e.hasAttribute("data-session-title"))).toEqual([]);
 
 test("Touched rows show the name in bold and the folder below it, both wrapping", async () => {
   const t = await show("touched");
@@ -71,8 +72,11 @@ test("Folder entries and the breadcrumb wrap", async () => {
   expect(t.querySelector('nav[aria-label="Folder"] [aria-current="page"]')!.textContent).toBe("q");
 });
 
-test("Session rows wrap the title and the details", async () => {
+test("Session rows cut the title to one line and wrap the details", async () => {
   const t = await show("list");
   noClip(t);
   expect(t.textContent).toContain(long);
+  const title = t.querySelector("[data-session-title]")!;
+  expect(title.className).toContain("truncate");
+  expect(title.getAttribute("title")).toBe(long);
 });
