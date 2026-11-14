@@ -1,4 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
+import { connect } from "node:net";
+import { asUser, type Identity } from "./asuser";
+import { findSessionSocket } from "./livesessions";
 
 /**
  * Checks that `path` is the user's own unix socket before anything connects to it. It must be a socket (not a link, a
@@ -16,5 +19,86 @@ export async function checkSocket(
     return (await (o.realpath ?? realpath)(path)) === path ? "ok" : "refused";
   } catch {
     return "refused";
+  }
+}
+
+export type NudgeResult = { sent: true } | { sent: false; reason: "not_live" | "socket_refused" | "send_failed" | "unsupported" };
+
+/** The fixed text sent to the session. The rule goes in as JSON with line separators escaped, so the text is one line. */
+export function nudgeMessage(e: { list: "allow" | "ask" | "deny"; rule: string; path: string }): string {
+  const rule = JSON.stringify(e.rule).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return `The user added the rule ${rule} to the ${e.list} list in ${e.path}. You can try the blocked action again. Do not change any settings.`;
+}
+
+/** Connects to a unix socket, writes `line` and a newline, and ends. Rejects at the timeout or on any socket error. */
+export function sendLine(socket: string, line: string, o: { timeoutMs?: number } = {}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const c = connect(socket);
+    const finish = (err?: Error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      c.destroy();
+      err ? reject(err) : resolve();
+    };
+    const timer = setTimeout(() => finish(new Error("timeout")), o.timeoutMs ?? 3000);
+    c.on("error", (e) => finish(e));
+    c.on("connect", () => c.end(line + "\n", () => finish()));
+  });
+}
+
+async function sendAsUser(socket: string, line: string, identity: Identity): Promise<void> {
+  const w = asUser(identity, process.execPath, ["nudge-send", socket]);
+  const proc = Bun.spawn([w.cmd, ...w.args], { env: w.env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+  const timer = setTimeout(() => proc.kill(), 3000);
+  try {
+    proc.stdin.write(line + "\n");
+    await proc.stdin.end();
+    if ((await proc.exited) !== 0) throw new Error("send failed");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Sends `message` as a user turn to the live session's socket. Never returns or logs the socket path. */
+export async function nudge(o: {
+  home: string;
+  sessionId: string;
+  message: string;
+  identity?: Identity;
+  platform?: NodeJS.Platform;
+  find?: typeof findSessionSocket;
+  send?: (socket: string, line: string, identity?: Identity) => Promise<void>;
+}): Promise<NudgeResult> {
+  if ((o.platform ?? process.platform) === "win32") return { sent: false, reason: "unsupported" };
+  const socket = await (o.find ?? findSessionSocket)({ home: o.home, sessionId: o.sessionId });
+  if (!socket) return { sent: false, reason: "not_live" };
+  const self = process.getuid!();
+  const owner = o.identity?.uid ?? self;
+  if ((await checkSocket(socket, owner)) !== "ok") return { sent: false, reason: "socket_refused" };
+  const line = JSON.stringify({ type: "user", message: { role: "user", content: o.message } });
+  const asOther = o.identity?.uid !== undefined && o.identity.uid !== self;
+  const send = o.send ?? (asOther ? (s: string, l: string) => sendAsUser(s, l, o.identity!) : (s: string, l: string) => sendLine(s, l));
+  try {
+    await send(socket, line, o.identity);
+    return { sent: true };
+  } catch {
+    return { sent: false, reason: "send_failed" };
+  }
+}
+
+/** Child entry for `nudge-send <socket>`: reads one line from stdin and sends it. Prints one fixed word on failure. */
+export async function runNudgeSend(argv: string[], stdin: () => Promise<string>): Promise<number> {
+  try {
+    const socket = argv[1];
+    if (!socket) throw new Error("no socket");
+    const line = (await stdin()).split("\n")[0];
+    if (!line) throw new Error("no line");
+    await sendLine(socket, line);
+    return 0;
+  } catch {
+    console.log("failed");
+    return 1;
   }
 }
