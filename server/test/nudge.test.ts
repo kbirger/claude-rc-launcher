@@ -4,7 +4,9 @@ import { mkdtemp, rm, symlink, writeFile, mkdir } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkSocket, nudge, nudgeMessage, runNudgeSend, sendLine } from "../src/nudge";
+import { chmod, chown } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { checkSocket, nudge, nudgeMessage, runNudgeSend, sendAsUser, sendLine } from "../src/nudge";
 
 let dir: string;
 let sock: string;
@@ -91,16 +93,73 @@ describe("sendLine", () => {
     expect(got.join("")).toBe("hello\n");
   });
   test("sendLine rejects at the timeout", async () => {
+    const p = join(dir, "slow.sock");
+    const conns: import("node:net").Socket[] = [];
+    const s = createServer((c) => { c.pause(); conns.push(c); });
+    await new Promise<void>((r) => s.listen(p, r));
+    const t0 = Date.now();
+    try {
+      await expect(sendLine(p, "x".repeat(8 * 1024 * 1024), { timeoutMs: 100 })).rejects.toThrow("timeout");
+      expect(Date.now() - t0).toBeLessThan(1000);
+    } finally {
+      conns.forEach((c) => c.destroy());
+      s.close();
+    }
+  });
+  test("sendLine rejects on a connect error", async () => {
     await expect(sendLine(join(dir, "none.sock"), "x", { timeoutMs: 100 })).rejects.toBeDefined();
   });
 });
 
+const canAsUser = process.getuid!() === 0 && existsSync("/usr/bin/setpriv") && existsSync("/usr/bin/python3");
+describe.skipIf(!canAsUser)("sendAsUser", () => {
+  const ident = { home: "/tmp", path: "/usr/bin:/bin", uid: 65534, gid: 65534 };
+  let d2: string;
+  beforeAll(async () => {
+    d2 = await mkdtemp(join(tmpdir(), "nudge-asuser-"));
+    await chmod(d2, 0o755);
+    await writeFile(
+      join(d2, "child.py"),
+      "import socket,sys\nline=sys.stdin.readline()\ns=socket.socket(socket.AF_UNIX)\ns.connect(sys.argv[2])\ns.sendall(line.encode())\ns.close()\n",
+    );
+    await chmod(join(d2, "child.py"), 0o644);
+  });
+  afterAll(() => rm(d2, { recursive: true, force: true }));
+
+  test("sendAsUser delivers the line as the instance user and resolves", async () => {
+    const got: string[] = [];
+    const p = join(d2, "u.sock");
+    const s = await listen(p, got);
+    await chown(p, 65534, 65534);
+    try {
+      await sendAsUser(p, "hello", ident, { argv0: ["/usr/bin/python3", join(d2, "child.py")] });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(got.join("")).toBe("hello\n");
+    } finally {
+      s.close();
+    }
+  });
+  test("sendAsUser kills a child that never ends and rejects", async () => {
+    const t0 = Date.now();
+    await expect(sendAsUser("/nowhere", "x", ident, { argv0: ["/bin/sh", "-c", "sleep 1000", "sh"], timeoutMs: 300 })).rejects.toBeDefined();
+    expect(Date.now() - t0).toBeLessThan(2500);
+  });
+});
 describe("nudge", () => {
   const base = { home: "/h", sessionId: "s", message: "hi" };
   test("nudge gives unsupported on win32 and never calls find", async () => {
     let called = false;
     const r = await nudge({ ...base, platform: "win32", find: async () => { called = true; return undefined; } });
     expect(r).toEqual({ sent: false, reason: "unsupported" });
+    expect(called).toBe(false);
+  });
+  test("nudge gives unsupported on darwin", async () => {
+    expect(await nudge({ ...base, platform: "darwin", find: async () => sock })).toEqual({ sent: false, reason: "unsupported" });
+  });
+  test("nudge gives send_failed for a uid without a gid and never sends", async () => {
+    let called = false;
+    const r = await nudge({ ...base, identity: { home: "/h", path: "/bin", uid: uid + 1 }, find: async () => sock, send: async () => { called = true; } });
+    expect(r).toEqual({ sent: false, reason: "send_failed" });
     expect(called).toBe(false);
   });
   test("nudge gives not_live when find gives undefined", async () => {
@@ -137,13 +196,15 @@ describe("runNudgeSend", () => {
     const got: string[] = [];
     const p = join(dir, "s3.sock");
     const s = await listen(p, got);
-    const code = await runNudgeSend(["nudge-send", p], async () => "the line\n");
+    const code = await runNudgeSend(["nudge-send", p], async () => "the line\n", () => {});
     await new Promise((r) => setTimeout(r, 50));
     s.close();
     expect(code).toBe(0);
     expect(got.join("")).toBe("the line\n");
   });
   test("runNudgeSend returns 1 for a missing argument", async () => {
-    expect(await runNudgeSend(["nudge-send"], async () => "x")).toBe(1);
+    const out: string[] = [];
+    expect(await runNudgeSend(["nudge-send"], async () => "x", (m) => out.push(m))).toBe(1);
+    expect(out).toEqual(["failed"]);
   });
 });

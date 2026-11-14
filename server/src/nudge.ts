@@ -48,16 +48,26 @@ export function sendLine(socket: string, line: string, o: { timeoutMs?: number }
   });
 }
 
-async function sendAsUser(socket: string, line: string, identity: Identity): Promise<void> {
-  const w = asUser(identity, process.execPath, ["nudge-send", socket]);
+/** Runs the send child as the instance user. `argv0` is the child command before "nudge-send <socket>". Kills it at the timeout. */
+export async function sendAsUser(
+  socket: string,
+  line: string,
+  identity: Identity,
+  o: { argv0?: string[]; timeoutMs?: number } = {},
+): Promise<void> {
+  const argv0 = o.argv0 ?? [process.execPath];
+  const w = asUser(identity, argv0[0], [...argv0.slice(1), "nudge-send", socket]);
   const proc = Bun.spawn([w.cmd, ...w.args], { env: w.env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
-  const timer = setTimeout(() => proc.kill(), 3000);
+  let exited = false;
+  void proc.exited.then(() => { exited = true; });
+  const timer = setTimeout(() => proc.kill("SIGKILL"), o.timeoutMs ?? 3000);
   try {
     proc.stdin.write(line + "\n");
     await proc.stdin.end();
     if ((await proc.exited) !== 0) throw new Error("send failed");
   } finally {
     clearTimeout(timer);
+    if (!exited) proc.kill("SIGKILL");
   }
 }
 
@@ -71,10 +81,12 @@ export async function nudge(o: {
   find?: typeof findSessionSocket;
   send?: (socket: string, line: string, identity?: Identity) => Promise<void>;
 }): Promise<NudgeResult> {
-  if ((o.platform ?? process.platform) === "win32") return { sent: false, reason: "unsupported" };
+  if ((o.platform ?? process.platform) !== "linux") return { sent: false, reason: "unsupported" };
   const socket = await (o.find ?? findSessionSocket)({ home: o.home, sessionId: o.sessionId });
   if (!socket) return { sent: false, reason: "not_live" };
   const self = process.getuid!();
+  // A uid without a gid must never fall back to connecting as the server user.
+  if (o.identity?.uid !== undefined && o.identity.uid !== self && o.identity.gid === undefined) return { sent: false, reason: "send_failed" };
   const owner = o.identity?.uid ?? self;
   if ((await checkSocket(socket, owner)) !== "ok") return { sent: false, reason: "socket_refused" };
   const line = JSON.stringify({ type: "user", message: { role: "user", content: o.message } });
@@ -89,7 +101,7 @@ export async function nudge(o: {
 }
 
 /** Child entry for `nudge-send <socket>`: reads one line from stdin and sends it. Prints one fixed word on failure. */
-export async function runNudgeSend(argv: string[], stdin: () => Promise<string>): Promise<number> {
+export async function runNudgeSend(argv: string[], stdin: () => Promise<string>, print: (m: string) => void = console.log): Promise<number> {
   try {
     const socket = argv[1];
     if (!socket) throw new Error("no socket");
@@ -98,7 +110,7 @@ export async function runNudgeSend(argv: string[], stdin: () => Promise<string>)
     await sendLine(socket, line);
     return 0;
   } catch {
-    console.log("failed");
+    print("failed");
     return 1;
   }
 }
