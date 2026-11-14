@@ -45,8 +45,8 @@ Date: 2026-11-14. These came from the task reviews and the final review of Phase
 
 - The Windows named pipe is not built. It needs the peer token from the `.key` file. We must decide first whether the node may read that file. On Windows the nudge answers `unsupported`.
 - A busy session: no test covers what happens when the session is busy while the nudge arrives.
-- A remove does not send a nudge. This is on purpose, because a removed rule does not unblock anything. The hub DELETE log line still says `nudge=on` for a remove. It should say `off`.
-- The live check on 2026-11-14 used a fake socket server, not a real `claude` session. The throwaway home had no credentials and we did not copy any. The node sent one line, the fake session got it, and the rule was in the file. Two refusal checks gave `socket_refused` with no connect: a symlink to a real socket, and a socket owned by another uid. The nudge is still not tried with a real session. Do that before a release.
+- A remove does not send a nudge. This is on purpose, because a removed rule does not unblock anything. A remove with `nudge` now gives 400 on the node and on the hub.
+- The live check on 2026-11-14 used a fake socket server, not a real `claude` session. The throwaway home had no credentials and we did not copy any. The node sent one line, the fake session got it, and the rule was in the file. Two refusal checks gave `socket_refused` with no connect: a symlink to a real socket, and a socket owned by another uid. The real `claude` loop through the node route, including a Remote Control session, is still to run before release.
 
 ## Phase 3: review minors from Tasks 1 to 4
 
@@ -54,8 +54,6 @@ Date: 2026-11-14. These came from the task reviews and the final review of Phase
 - `checkSocket` refuses a path that is not canonical. A socket under a folder that is a symlink is refused, even when the user owns it.
 - No test covers a reused pid for `findSessionSocket`.
 - The audit `nudge` reason is not passed through `known()`. Today the reason comes from a fixed set, so this is safe, but the code does not show it.
-- `nudgeMessage` does not quote the settings file path. A path with odd characters goes into the text as it is.
-- The header comment of `permissionsapi.ts` is stale. It does not say that the body takes `nudge` or that the audit line has a `nudge` field.
 - When the node runs from source, the as-user send cannot work. `process.execPath` is `bun` then, so the child cannot start the packaged `nudge-send` entry.
 - The kill test child runs `sh -c sleep`. Use `exec sleep` so the kill reaches the sleep itself.
 - The sheet reads the default value of the nudge once, at mount. A later change of the default does not show.

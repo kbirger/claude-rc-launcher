@@ -43,7 +43,8 @@
   let error = $state<string | null>(null);
   let nudge = $state(untrack(() => live === true));
   let result = $state<NudgeResult | null>(null);
-  const canNudge = $derived(mode === "add" && call !== undefined && session !== undefined);
+  // A nudge only makes sense for a rule on the allow list. The box keeps its state while it is hidden.
+  const canNudge = $derived(mode === "add" && call !== undefined && session !== undefined && list === "allow");
 
   // The chosen file, or the first one offered. A file that left the list (the data changed) cannot stay chosen.
   const layer = $derived(offered.find((l) => l.scope === picked) ?? offered[0]);

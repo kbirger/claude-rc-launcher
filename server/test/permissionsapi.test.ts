@@ -283,14 +283,24 @@ describe("the nudge flag", () => {
     expect("nudge" in ((await b.json()) as object)).toBe(false);
     expect(n.calls).toEqual([]);
   });
-  test("the nudge message holds the rule, the list, and the file path", async () => {
+  test("the nudge message holds the list and the quoted file path and never the rule", async () => {
     const n = fake();
     const app = build({ nudge: n.fn });
-    await send(app, "POST", p, await edit(app, { nudge: true }));
+    await send(app, "POST", p, await edit(app, { nudge: true, rule: "Bash(zzmarker9 *)" }));
     const m = n.calls[0].message as string;
-    expect(m).toContain('"Bash(git *)"');
+    expect(m).not.toContain("zzmarker9");
     expect(m).toContain("allow list");
-    expect(m).toContain(userFile());
+    expect(m).toContain(JSON.stringify(userFile()));
+  });
+  test("nudge true with a list other than allow gives 400 and never calls nudge", async () => {
+    const n = fake();
+    const app = build({ nudge: n.fn });
+    for (const list of ["ask", "deny"]) {
+      const r = await send(app, "POST", p, await edit(app, { nudge: true, list }));
+      expect(r.status).toBe(400);
+      expect(((await r.json()) as { error: string }).error).toBe("nudge needs the allow list");
+    }
+    expect(n.calls).toEqual([]);
   });
   test("a 409 add with nudge true never calls nudge", async () => {
     const n = fake();
@@ -306,12 +316,12 @@ describe("the nudge flag", () => {
     expect((await send(app, "POST", p, await edit(app, { nudge: true, list: "nope" }))).status).toBe(400);
     expect(n.calls).toEqual([]);
   });
-  test("a remove with nudge true never calls nudge", async () => {
+  test("a remove with nudge true gives 400 and never calls nudge", async () => {
     const n = fake();
     const app = build({ nudge: n.fn });
     const r = await send(app, "DELETE", p, { scope: "user", list: "allow", rule: "Bash(ls *)", expectedHash: await hashOf(app, `/sessions/${SID}/permissions`, "user"), nudge: true });
-    expect(r.status).toBe(200);
-    expect("nudge" in ((await r.json()) as object)).toBe(false);
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe("nudge is not for a remove");
     expect(n.calls).toEqual([]);
   });
   test("the user route refuses nudge true with 400", async () => {
@@ -341,7 +351,7 @@ describe("the nudge flag", () => {
     const lines: string[] = [];
     // The real nudge runs, with a fake find and a fake send. A fake send that fails would leak a path only if the code did.
     const { nudge } = await import("../src/nudge");
-    const fn = ((o: any) => nudge({ ...o, platform: "linux", find: async () => SECRET, send: async () => {} })) as typeof nudgeFn;
+    const fn = ((o: any) => nudge({ ...o, platform: "linux", isRoot: () => false, find: async () => SECRET, send: async () => {} })) as typeof nudgeFn;
     const app = build({ log: (l) => lines.push(l), nudge: fn });
     const r = await send(app, "POST", p, await edit(app, { nudge: true }));
     const text = await r.text();

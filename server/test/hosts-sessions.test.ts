@@ -135,6 +135,13 @@ describe("hub session JSON routes", () => {
       expect((await post(app, "POST", routes[0]![1], { ...good, nudge: true })).status).toBe(400);
       expect(calls).toEqual([]);
     });
+    test("refuses nudge on a remove or with a list other than allow, before any forward", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (...a: any[]) => (calls.push(a), { status: 200, body: {} })) as any });
+      expect((await post(app, "DELETE", sp, { ...good, nudge: true, expectedHash: "ab" })).status).toBe(400);
+      expect((await post(app, "POST", sp, { ...good, list: "deny", nudge: true })).status).toBe(400);
+      expect(calls).toEqual([]);
+    });
     test("a hostile scope, list or instance id writes no audit line", async () => {
       const logs: string[] = [];
       const orig = console.log;

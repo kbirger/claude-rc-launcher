@@ -24,10 +24,10 @@ export async function checkSocket(
 
 export type NudgeResult = { sent: true } | { sent: false; reason: "not_live" | "socket_refused" | "send_failed" | "unsupported" };
 
-/** The fixed text sent to the session. The rule goes in as JSON with line separators escaped, so the text is one line. */
-export function nudgeMessage(e: { list: "allow" | "ask" | "deny"; rule: string; path: string }): string {
-  const rule = JSON.stringify(e.rule).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  return `The user added the rule ${rule} to the ${e.list} list in ${e.path}. You can try the blocked action again. Do not change any settings.`;
+/** The fixed text sent to the session. It never holds the rule. The path is JSON-quoted with line separators escaped, so the text is one line. */
+export function nudgeMessage(e: { list: "allow" | "ask" | "deny"; path: string }): string {
+  const path = JSON.stringify(e.path).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return `The user added a rule to the ${e.list} list in ${path}. You can try the blocked action again. Do not change any settings.`;
 }
 
 /** Connects to a unix socket, writes `line` and a newline, and ends. Rejects at the timeout or on any socket error. */
@@ -48,26 +48,39 @@ export function sendLine(socket: string, line: string, o: { timeoutMs?: number }
   });
 }
 
-/** Runs the send child as the instance user. `argv0` is the child command before "nudge-send <socket>". Kills it at the timeout. */
+/**
+ * Runs the send child as the instance user. `argv0` is the child command before "nudge-send". The socket path and the line
+ * go to the child on stdin (two lines), so the path is not in the command line. Kills it at the timeout. A failure logs one
+ * fixed line (no path, no pid, no message) and rejects.
+ */
 export async function sendAsUser(
   socket: string,
   line: string,
   identity: Identity,
-  o: { argv0?: string[]; timeoutMs?: number } = {},
+  o: { argv0?: string[]; timeoutMs?: number; log?: (l: string) => void } = {},
 ): Promise<void> {
   const argv0 = o.argv0 ?? [process.execPath];
-  const w = asUser(identity, argv0[0], [...argv0.slice(1), "nudge-send", socket]);
-  const proc = Bun.spawn([w.cmd, ...w.args], { env: w.env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+  const log = o.log ?? ((l: string) => console.log(l));
+  let code: number | undefined;
+  let proc: ReturnType<typeof Bun.spawn> | undefined;
   let exited = false;
-  void proc.exited.then(() => { exited = true; });
-  const timer = setTimeout(() => proc.kill("SIGKILL"), o.timeoutMs ?? 3000);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    proc.stdin.write(line + "\n");
-    await proc.stdin.end();
-    if ((await proc.exited) !== 0) throw new Error("send failed");
+    const w = asUser(identity, argv0[0], [...argv0.slice(1), "nudge-send"]);
+    proc = Bun.spawn([w.cmd, ...w.args], { env: w.env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+    const child = proc;
+    void child.exited.then(() => { exited = true; });
+    timer = setTimeout(() => child.kill("SIGKILL"), o.timeoutMs ?? 3000);
+    child.stdin!.write(socket + "\n" + line + "\n");
+    await child.stdin!.end();
+    code = await child.exited;
+    if (code !== 0) throw new Error("send failed");
+  } catch (e) {
+    log(code === undefined ? "nudge child failed" : `nudge child failed exit=${code}`);
+    throw e;
   } finally {
     clearTimeout(timer);
-    if (!exited) proc.kill("SIGKILL");
+    if (proc && !exited) proc.kill("SIGKILL");
   }
 }
 
@@ -80,8 +93,14 @@ export async function nudge(o: {
   platform?: NodeJS.Platform;
   find?: typeof findSessionSocket;
   send?: (socket: string, line: string, identity?: Identity) => Promise<void>;
+  /** Tests: replace the root check. */
+  isRoot?: () => boolean;
+  /** Where the fixed child failure line goes. Defaults to console.log. */
+  log?: (line: string) => void;
 }): Promise<NudgeResult> {
   if ((o.platform ?? process.platform) !== "linux") return { sent: false, reason: "unsupported" };
+  // On a root node a missing uid must never fall back to connecting as root in this process.
+  if ((o.isRoot ?? (() => process.getuid!() === 0))() && o.identity?.uid === undefined) return { sent: false, reason: "send_failed" };
   const socket = await (o.find ?? findSessionSocket)({ home: o.home, sessionId: o.sessionId });
   if (!socket) return { sent: false, reason: "not_live" };
   const self = process.getuid!();
@@ -91,7 +110,7 @@ export async function nudge(o: {
   if ((await checkSocket(socket, owner)) !== "ok") return { sent: false, reason: "socket_refused" };
   const line = JSON.stringify({ type: "user", message: { role: "user", content: o.message } });
   const asOther = o.identity?.uid !== undefined && o.identity.uid !== self;
-  const send = o.send ?? (asOther ? (s: string, l: string) => sendAsUser(s, l, o.identity!) : (s: string, l: string) => sendLine(s, l));
+  const send = o.send ?? (asOther ? (s: string, l: string) => sendAsUser(s, l, o.identity!, o.log ? { log: o.log } : {}) : (s: string, l: string) => sendLine(s, l));
   try {
     await send(socket, line, o.identity);
     return { sent: true };
@@ -100,12 +119,11 @@ export async function nudge(o: {
   }
 }
 
-/** Child entry for `nudge-send <socket>`: reads one line from stdin and sends it. Prints one fixed word on failure. */
-export async function runNudgeSend(argv: string[], stdin: () => Promise<string>, print: (m: string) => void = console.log): Promise<number> {
+/** Child entry for `nudge-send`: reads two lines from stdin (the socket path, then the line) and sends the line. Prints one fixed word on failure. */
+export async function runNudgeSend(_argv: string[], stdin: () => Promise<string>, print: (m: string) => void = console.log): Promise<number> {
   try {
-    const socket = argv[1];
+    const [socket, line] = (await stdin()).split("\n");
     if (!socket) throw new Error("no socket");
-    const line = (await stdin()).split("\n")[0];
     if (!line) throw new Error("no line");
     await sendLine(socket, line);
     return 0;

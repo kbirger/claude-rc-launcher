@@ -321,7 +321,7 @@ export function hostsApi(o: {
   // Rule edits. The hub checks the body, forwards it as it is, and writes its own audit line (no file content, no text of a blocked call).
   const ruleEdit = (method: "POST" | "DELETE", scopes: readonly ("user" | "project" | "local")[], path: (c: Context) => string, allowNudge = false) =>
     forwardJson(async (c, k) => {
-      const e = parseRuleEdit(await readJson(c), scopes, { allowNudge });
+      const e = parseRuleEdit(await readJson(c), scopes, { allowNudge, remove: method === "DELETE" });
       const u = c.get("user" as never) as User | undefined;
       const rawUser = String(u?.username ?? u?.sub ?? "unknown");
       const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);

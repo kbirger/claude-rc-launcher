@@ -72,13 +72,14 @@ function listen(path: string, got: string[]): Promise<Server> {
 }
 
 describe("nudgeMessage", () => {
-  test("nudgeMessage has no newline for a rule with a quote, a backslash, and a unicode line separator", () => {
-    const m = nudgeMessage({ list: "allow", rule: 'Bash("a\\b\u2028c\n")', path: "/p/settings.json" });
-    expect(m).not.toMatch(/[\n\r\u2028\u2029]/);
+  test("nudgeMessage names the list and the quoted path and never the rule", () => {
+    const m = nudgeMessage({ list: "allow", path: "/p/s.json" });
+    expect(m).toBe('The user added a rule to the allow list in "/p/s.json". You can try the blocked action again. Do not change any settings.');
   });
-  test("nudgeMessage names the list, the rule, and the path", () => {
-    const m = nudgeMessage({ list: "deny", rule: "Bash(ls)", path: "/p/s.json" });
-    expect(m).toBe('The user added the rule "Bash(ls)" to the deny list in /p/s.json. You can try the blocked action again. Do not change any settings.');
+  test("nudgeMessage stays one line for a path with a newline and line separators", () => {
+    const m = nudgeMessage({ list: "allow", path: "/p/a\nb\u2028c\u2029d\"e.json" });
+    expect(m).not.toMatch(/[\n\r\u2028\u2029]/);
+    expect(m).toContain('"/p/a\\nb\\u2028c\\u2029d\\"e.json"');
   });
 });
 
@@ -120,7 +121,7 @@ describe.skipIf(!canAsUser)("sendAsUser", () => {
     await chmod(d2, 0o755);
     await writeFile(
       join(d2, "child.py"),
-      "import socket,sys\nline=sys.stdin.readline()\ns=socket.socket(socket.AF_UNIX)\ns.connect(sys.argv[2])\ns.sendall(line.encode())\ns.close()\n",
+      "import socket,sys\nsock=sys.stdin.readline().strip()\nline=sys.stdin.readline()\nopen(sys.argv[1],'w').write(' '.join(sys.argv))\ns=socket.socket(socket.AF_UNIX)\ns.connect(sock)\ns.sendall(line.encode())\ns.close()\n",
     );
     await chmod(join(d2, "child.py"), 0o644);
   });
@@ -132,9 +133,36 @@ describe.skipIf(!canAsUser)("sendAsUser", () => {
     const s = await listen(p, got);
     await chown(p, 65534, 65534);
     try {
-      await sendAsUser(p, "hello", ident, { argv0: ["/usr/bin/python3", join(d2, "child.py")] });
+      const argvFile = join(d2, "argv.txt");
+      await chmod(d2, 0o777);
+      await sendAsUser(p, "hello", ident, { argv0: ["/usr/bin/python3", join(d2, "child.py"), argvFile] });
       await new Promise((r) => setTimeout(r, 100));
       expect(got.join("")).toBe("hello\n");
+      const argv = await Bun.file(argvFile).text();
+      expect(argv).toContain("nudge-send");
+      expect(argv).not.toContain(p);
+    } finally {
+      s.close();
+    }
+  });
+  test("sendAsUser logs one fixed line with the exit code when the child exits non-zero", async () => {
+    const lines: string[] = [];
+    const secret = "/nowhere/secret.sock";
+    await expect(sendAsUser(secret, "SECRETMSG", ident, { argv0: ["/bin/sh", "-c", "exit 3", "sh"], log: (l) => lines.push(l) })).rejects.toBeDefined();
+    expect(lines).toEqual(["nudge child failed exit=3"]);
+  });
+  test("nudge logs one fixed line, no path and no message, when the as-user child fails, and answers send_failed", async () => {
+    const lines: string[] = [];
+    const p = join(d2, "n.sock");
+    const s = await listen(p, []);
+    await chown(p, 65534, 65534);
+    try {
+      const r = await nudge({ home: "/h", sessionId: "s", message: "SECRETMSG", identity: ident, find: async () => p, log: (l) => lines.push(l) });
+      expect(r).toEqual({ sent: false, reason: "send_failed" });
+      expect(lines.length).toBe(1);
+      expect(lines[0]).toStartWith("nudge child failed");
+      expect(lines[0]).not.toContain(p);
+      expect(lines[0]).not.toContain("SECRETMSG");
     } finally {
       s.close();
     }
@@ -146,7 +174,7 @@ describe.skipIf(!canAsUser)("sendAsUser", () => {
   });
 });
 describe("nudge", () => {
-  const base = { home: "/h", sessionId: "s", message: "hi" };
+  const base = { home: "/h", sessionId: "s", message: "hi", isRoot: () => false };
   test("nudge gives unsupported on win32 and never calls find", async () => {
     let called = false;
     const r = await nudge({ ...base, platform: "win32", find: async () => { called = true; return undefined; } });
@@ -161,6 +189,21 @@ describe("nudge", () => {
     const r = await nudge({ ...base, identity: { home: "/h", path: "/bin", uid: uid + 1 }, find: async () => sock, send: async () => { called = true; } });
     expect(r).toEqual({ sent: false, reason: "send_failed" });
     expect(called).toBe(false);
+  });
+  test("nudge on a root node with no uid in the identity sends nothing and gives send_failed", async () => {
+    let sent = false;
+    let found = false;
+    const opts = { ...base, isRoot: () => true, find: async () => { found = true; return sock; }, send: async () => { sent = true; } };
+    expect(await nudge({ ...opts, identity: { home: "/h", path: "/bin" } })).toEqual({ sent: false, reason: "send_failed" });
+    expect(await nudge(opts)).toEqual({ sent: false, reason: "send_failed" });
+    expect(sent).toBe(false);
+    expect(found).toBe(false);
+  });
+  test("nudge on a root node with a root identity (uid 0, gid 0) still sends", async () => {
+    let sent = false;
+    const r = await nudge({ ...base, isRoot: () => true, identity: { home: "/h", path: "/bin", uid, gid: 0 }, find: async () => sock, send: async () => { sent = true; } });
+    expect(r).toEqual({ sent: true });
+    expect(sent).toBe(true);
   });
   test("nudge gives not_live when find gives undefined", async () => {
     expect(await nudge({ ...base, find: async () => undefined })).toEqual({ sent: false, reason: "not_live" });
@@ -196,15 +239,15 @@ describe("runNudgeSend", () => {
     const got: string[] = [];
     const p = join(dir, "s3.sock");
     const s = await listen(p, got);
-    const code = await runNudgeSend(["nudge-send", p], async () => "the line\n", () => {});
+    const code = await runNudgeSend(["nudge-send"], async () => `${p}\nthe line\n`, () => {});
     await new Promise((r) => setTimeout(r, 50));
     s.close();
     expect(code).toBe(0);
     expect(got.join("")).toBe("the line\n");
   });
-  test("runNudgeSend returns 1 for a missing argument", async () => {
+  test("runNudgeSend returns 1 for a missing line", async () => {
     const out: string[] = [];
-    expect(await runNudgeSend(["nudge-send"], async () => "x", (m) => out.push(m))).toBe(1);
+    expect(await runNudgeSend(["nudge-send"], async () => "/only/a/socket\n", (m) => out.push(m))).toBe(1);
     expect(out).toEqual(["failed"]);
   });
 });

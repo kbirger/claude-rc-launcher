@@ -286,3 +286,37 @@ test("an answer without a nudge key to a nudge request shows unsupported and kee
   expect(document.querySelector("[role=status]")!.textContent).toBe("Rule saved. This node cannot tell a session to try again.");
   expect(closed()).toBe(false);
 });
+
+const pickList = (l: string) => { document.querySelector<HTMLInputElement>(`input[name=list][value=${l}]`)!.click(); flushSync(); };
+
+test("the box is hidden and no nudge is sent when the list is not allow", async () => {
+  show({ call: call(), live: true });
+  expect(box()).not.toBeNull();
+  pickList("deny");
+  expect(box()).toBeNull();
+  button("Save")!.click();
+  await vi.waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]!.body.list).toBe("deny");
+  expect("nudge" in sent[0]!.body).toBe(false);
+});
+
+test("the box returns with its previous state when the list goes back to allow", () => {
+  show({ call: call(), live: true });
+  box()!.click();
+  flushSync();
+  expect(box()!.checked).toBe(false);
+  pickList("ask");
+  expect(box()).toBeNull();
+  pickList("allow");
+  expect(box()!.checked).toBe(false);
+  box()!.click();
+  flushSync();
+  pickList("deny");
+  pickList("allow");
+  expect(box()!.checked).toBe(true);
+});
+
+test("the box is not shown when the sheet starts on a list other than allow", () => {
+  show({ call: call(), live: true, initial: { raw: "Bash(ls)", list: "ask" } });
+  expect(box()).toBeNull();
+});

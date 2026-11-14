@@ -9,9 +9,12 @@
  *   GET /sessions/:sid/blocked       the blocked tool calls of the session transcript, newest first.
  *   POST|DELETE /permissions/rules                 add or remove one rule in the user file.
  *   POST|DELETE /sessions/:sid/permissions/rules   the same in the user, project or local file of the session.
- * The body of an edit is { scope, list, rule, expectedHash }. The answer is the updated Layer. A failed edit is
- * { error } with the status of its SettingsError. Every edit writes one audit line (caller, instance, scope, action, list,
- * rule, status). The rule is written with JSON.stringify. The line never holds file content or text of a blocked call.
+ * The body of an edit is { scope, list, rule, expectedHash } and, on a session route, an optional nudge: true. The nudge
+ * is for an add to the allow list only (a remove or another list gives 400). After the write the node tells the live
+ * session to try again, and the answer is the updated Layer plus { nudge: result }. The answer is the updated Layer. A
+ * failed edit is { error } with the status of its SettingsError. Every edit writes one audit line (caller, instance,
+ * scope, action, list, rule, status, nudge). The nudge field is off, sent, or the reason it was not sent. The rule is
+ * written with JSON.stringify. The line never holds file content or text of a blocked call.
  */
 import { Hono, type Context } from "hono";
 import { HttpError, type Instances } from "./instances";
@@ -39,7 +42,7 @@ export type RuleEdit = { scope: LayerScope; list: RuleList; rule: string; expect
  * The body of an edit. `scopes` is the set that the route accepts. The rule gets the same checks as in SettingsFile
  * (list, length, control characters, shape), so a bad rule is refused before anything is forwarded.
  */
-export function parseRuleEdit<S extends LayerScope>(body: unknown, scopes: readonly S[], o: { allowNudge?: boolean } = {}): RuleEdit & { scope: S } {
+export function parseRuleEdit<S extends LayerScope>(body: unknown, scopes: readonly S[], o: { allowNudge?: boolean; remove?: boolean } = {}): RuleEdit & { scope: S } {
   if (!isObject(body)) throw new HttpError(400, "body must be an object");
   const { scope, list, rule, expectedHash } = body;
   const nudge = body.nudge === undefined ? false : body.nudge;
@@ -49,6 +52,8 @@ export function parseRuleEdit<S extends LayerScope>(body: unknown, scopes: reado
   if (expectedHash !== null && typeof expectedHash !== "string") throw new HttpError(400, "expectedHash must be a string or null");
   if (typeof nudge !== "boolean") throw new HttpError(400, "nudge must be true or false");
   if (nudge && !o.allowNudge) throw new HttpError(400, "nudge needs a session");
+  if (nudge && o.remove) throw new HttpError(400, "nudge is not for a remove");
+  if (nudge && list !== "allow") throw new HttpError(400, "nudge needs the allow list");
   try {
     checkRule(list, rule);
   } catch (e) {
@@ -84,7 +89,7 @@ export function permissionsApi(deps: PermissionsApiDeps): Hono {
     let status = 500;
     let nudgeValue = "off";
     try {
-      const e = parseRuleEdit(body, scopes, { allowNudge });
+      const e = parseRuleEdit(body, scopes, { allowNudge, remove: action === "remove" });
       const file = await fileOf(e.scope);
       if (!file) throw e.scope === "managed" || e.scope === "legacy-local" ? new HttpError(403, `the ${e.scope} settings file is read-only`) : new HttpError(404, "settings file not found");
       const layer = action === "add" ? await file.addRule({ list: e.list, raw: e.rule, expectedHash: e.expectedHash }) : await file.removeRule({ list: e.list, raw: e.rule, expectedHash: e.expectedHash ?? "" });
@@ -111,7 +116,7 @@ export function permissionsApi(deps: PermissionsApiDeps): Hono {
       if (path === null) return { sent: false, reason: "send_failed" };
       const h = await home(c);
       const session = await sessionOf(c);
-      return await (deps.nudge ?? realNudge)({ home: h.home, sessionId: session.id, message: nudgeMessage({ list: e.list, rule: e.rule, path }), ...(h.identity ? { identity: h.identity } : {}) });
+      return await (deps.nudge ?? realNudge)({ home: h.home, sessionId: session.id, message: nudgeMessage({ list: e.list, path }), ...(h.identity ? { identity: h.identity } : {}) });
     } catch {
       return { sent: false, reason: "send_failed" };
     }
