@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
-  import * as Card from "#lib/components/ui/card/index.js";
+  import EntityCard from "#lib/components/EntityCard.svelte";
   import ChevronDown from "@tabler/icons-svelte/icons/chevron-down";
   import FileText from "@tabler/icons-svelte/icons/file-text";
   import Pause from "@tabler/icons-svelte/icons/player-pause";
@@ -56,49 +56,53 @@
   {#each model.rows as r (r.key)}
     {@const i = r.instance}
     <li>
-      <Card.Root size="sm" class={cn("gap-2", r.pending && "opacity-60", r.pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50")}>
-        <Card.Content class="flex flex-col gap-1.5">
-          <div class="flex items-start justify-between gap-2">
-            <h3 class="m-0 text-base leading-tight font-semibold [overflow-wrap:anywhere]">{r.name}</h3>
-            {#if r.pending}
-              <Badge variant="outline" class="flex-none text-warning">{r.pending}...</Badge>
-            {:else if i}
-              <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={cn("flex-none", stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : "")}>{stateLabel(i.state)}</Badge>
-            {/if}
-          </div>
-          {#if i}
-            <p class="m-0 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{i.path}</p>
-            {#if i.user || uptime(i.state, i.startedAt)}
-              <p class="m-0 text-xs text-muted-foreground">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
-            {/if}
-            <!-- One action row. -mx-2 cancels the ghost buttons' inner padding, so the first and last icons line up with the text edges. -->
-            <div class="-mx-2 mt-1 flex flex-wrap items-center gap-1">
-              <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
-                <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
-              </Button>
-              <SessionsLink {host} instance={i.id} />
-              <PermissionsLink {host} instance={i.id} />
-              <div class="ml-auto flex items-center gap-1">
-                {#if isPaused(i.state)}
-                  <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
-                    <Play aria-hidden="true" />
-                  </Button>
-                {:else}
-                  <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
-                    <Pause aria-hidden="true" />
-                  </Button>
-                {/if}
-                <Button variant="ghost" size="icon" class="text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={!!r.pending} onclick={() => stop(i)} aria-label="Stop {r.name}" title="Stop: removes the instance">
-                  <Stop aria-hidden="true" />
-                </Button>
-              </div>
-            </div>
+      <EntityCard
+        pending={r.pending}
+        overflowLabel="More actions for {r.name}"
+        overflow={i ? [{ label: "Stop", icon: Stop, destructive: true, disabled: !!r.pending, onselect: () => stop(i) }] : []}
+      >
+        {#snippet title()}{r.name}{/snippet}
+        {#snippet status()}
+          {#if r.pending}
+            <Badge variant="outline" class="flex-none text-warning">{r.pending}...</Badge>
+          {:else if i}
+            <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={cn("flex-none", stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : "")}>{stateLabel(i.state)}</Badge>
           {/if}
-        </Card.Content>
-        {#if i && i.id in open}
-          <Card.Content><InstanceLogs {host} id={i.id} /></Card.Content>
-        {/if}
-      </Card.Root>
+        {/snippet}
+        {#snippet subtitle()}
+          {#if i}
+            <p class="m-0 font-mono [overflow-wrap:anywhere]">{i.path}</p>
+            {#if i.user || uptime(i.state, i.startedAt)}
+              <p class="m-0">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
+            {/if}
+          {/if}
+        {/snippet}
+        {#snippet actions()}
+          {#if i}
+            <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
+              <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
+            </Button>
+            <SessionsLink {host} instance={i.id} />
+            <PermissionsLink {host} instance={i.id} />
+          {/if}
+        {/snippet}
+        {#snippet actionsEnd()}
+          {#if i}
+            {#if isPaused(i.state)}
+              <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
+                <Play aria-hidden="true" />
+              </Button>
+            {:else}
+              <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
+                <Pause aria-hidden="true" />
+              </Button>
+            {/if}
+          {/if}
+        {/snippet}
+      </EntityCard>
+      {#if i && i.id in open}
+        <div class="mt-2"><InstanceLogs {host} id={i.id} /></div>
+      {/if}
     </li>
   {/each}
 </ul>

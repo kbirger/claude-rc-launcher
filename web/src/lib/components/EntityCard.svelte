@@ -1,7 +1,7 @@
 <script lang="ts" module>
-  import type { Component } from "svelte";
+  import type { Component, SvelteComponent } from "svelte";
 
-  export type OverflowItem = { label: string; icon?: Component; onselect: () => void; destructive?: boolean; disabled?: boolean };
+  export type OverflowItem = { label: string; icon?: Component<any> | (new (...args: any[]) => SvelteComponent<any>); onselect: () => void; destructive?: boolean; disabled?: boolean };
 </script>
 
 <script lang="ts">
