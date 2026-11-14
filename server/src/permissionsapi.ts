@@ -26,6 +26,8 @@ export type PermissionsApiDeps = {
   sessions: SessionCatalog;
   /** Where the audit lines go (tests replace it). Defaults to console.log. */
   log?: (line: string) => void;
+  /** Tests: replace the root check of the writer. */
+  isRoot?: () => boolean;
 };
 
 export type RuleEdit = { scope: LayerScope; list: RuleList; rule: string; expectedHash: string | null };
@@ -56,6 +58,7 @@ const NODE_SCOPES: readonly LayerScope[] = ["user", "project", "local", "legacy-
 export function permissionsApi(deps: PermissionsApiDeps): Hono {
   const { home, sessionOf } = sessionLookup(deps.instances, deps.sessions);
   const log = deps.log ?? ((l: string) => console.log(l));
+  const rootOpt = deps.isRoot ? { isRoot: deps.isRoot } : {};
   const r = new Hono();
 
   /**
@@ -92,12 +95,12 @@ export function permissionsApi(deps: PermissionsApiDeps): Hono {
   }
   const userFile = async (c: Context) => {
     const h = await home(c);
-    return ClaudeSettings.forHome({ home: h.home, ownerUid: h.identity?.uid }).file("user");
+    return ClaudeSettings.forHome({ home: h.home, ownerUid: h.identity?.uid, ...rootOpt }).file("user");
   };
   const sessionFile = async (c: Context, scope: LayerScope) => {
     const h = await home(c);
     const session = await sessionOf(c);
-    return (await session.settings({ ownerUid: h.identity?.uid })).file(scope);
+    return (await session.settings({ ownerUid: h.identity?.uid, ...rootOpt })).file(scope);
   };
   r.post("/permissions/rules", (c) => edit(c, "add", ["user"], () => userFile(c)));
   r.delete("/permissions/rules", (c) => edit(c, "remove", ["user"], () => userFile(c)));
@@ -106,13 +109,13 @@ export function permissionsApi(deps: PermissionsApiDeps): Hono {
 
   r.get("/permissions", async (c) => {
     const h = await home(c);
-    return c.json(await ClaudeSettings.forHome({ home: h.home, ownerUid: h.identity?.uid }).layers());
+    return c.json(await ClaudeSettings.forHome({ home: h.home, ownerUid: h.identity?.uid, ...rootOpt }).layers());
   });
 
   r.get("/sessions/:sid/permissions", async (c) => {
     const h = await home(c);
     const session = await sessionOf(c);
-    return c.json(await session.permissions({ ownerUid: h.identity?.uid }));
+    return c.json(await session.permissions({ ownerUid: h.identity?.uid, ...rootOpt }));
   });
 
   r.get("/sessions/:sid/blocked", async (c) => c.json(await (await sessionOf(c)).blocked()));

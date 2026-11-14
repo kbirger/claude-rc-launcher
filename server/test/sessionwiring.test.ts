@@ -52,7 +52,8 @@ function app() {
   const cfg = { mode: "node", name: "pi", roots: [dir], stateDir: state, node: { tls: { stateDir: tlsState } } } as unknown as Config;
   const instances: any = {
     list: async () => [],
-    claudeHome: async (id: string) => ({ path: work, home: join(dir, "home") }),
+    // As root a write needs the owner (the service user), so the stub names this process as that user.
+    claudeHome: async (id: string) => ({ path: work, home: join(dir, "home"), identity: { home: join(dir, "home"), path: "/usr/bin", uid: process.getuid?.(), gid: process.getgid?.() } }),
   };
   return createNodeApp({ cfg, instances, auth });
 }

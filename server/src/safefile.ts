@@ -138,6 +138,8 @@ export async function writeUserFile(file: string, bytes: Buffer, o: WriteOpts = 
   if (bytes.length > MAX_FILE_BYTES) throw new FileRefused("it is too large");
   const chown = o.chown ?? ((fh, uid, gid) => fh.chown(uid, gid));
   const isRoot = o.isRoot ?? (() => process.getuid?.() === 0);
+  // Fail closed: a root process that does not know the owner would leave a root-owned file in the user's folder.
+  if (isRoot() && (o.ownerUid === undefined || o.gid === undefined)) throw new FileRefused("the owner of the file is not known");
 
   // The queue key: the real path of the file, or of its folder plus the name when the file does not exist yet.
   let key: string;

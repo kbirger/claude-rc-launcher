@@ -215,12 +215,12 @@ export class Session {
   }
 
   /** The settings layers that apply to this session. It runs the real-root check first (a failed check is a 404). */
-  async permissions(o: { ownerUid?: number }): Promise<PermissionLayers> {
+  async permissions(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
     return (await this.open()).permissions(o);
   }
 
   /** The settings files that apply to this session. It runs the real-root check first (a failed check is a 404). */
-  async settings(o: { ownerUid?: number }): Promise<ClaudeSettings> {
+  async settings(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
     return (await this.open()).settings(o);
   }
 

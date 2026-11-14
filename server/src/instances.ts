@@ -72,16 +72,18 @@ export class InstanceService implements Instances {
   private userDir: UserDirectory;
   private trust: TrustStore;
   private canSwitchUser: boolean;
+  private isRoot: () => boolean;
 
   constructor(
     private cfg: Config,
     private run: Runner,
     private resolvePath: (p: string, roots: string[]) => Promise<string> = resolveWithinRoots,
-    deps: { users?: UserDirectory; trust?: TrustStore; canSwitchUser?: boolean } = {},
+    deps: { users?: UserDirectory; trust?: TrustStore; canSwitchUser?: boolean; isRoot?: () => boolean } = {},
   ) {
     this.userDir = deps.users ?? passwdDirectory();
     this.trust = deps.trust ?? fileTrust();
     // A user-scope unit has no User= line, so it can never run as another user.
+    this.isRoot = deps.isRoot ?? (() => process.getuid?.() === 0);
     this.canSwitchUser = cfg.scope === "system" && (deps.canSwitchUser ?? process.getuid?.() === 0);
   }
 
@@ -193,6 +195,15 @@ export class InstanceService implements Instances {
     const identity: Identity = { home: t.runAs.home, path: t.runAs.path };
     if (t.uid !== undefined) identity.uid = t.uid;
     if (t.gid !== undefined) identity.gid = t.gid;
+    // The default user has no uid in the target. A root node still needs it: a file written for this user must be owned by
+    // it, never by root, and the owner check on a real file behind a symlink needs it too. Same lookup as trustIds().
+    if (identity.uid === undefined && t.isDefault && this.isRoot()) {
+      const ids = await this.trustIds(t);
+      if (ids.uid !== undefined && ids.gid !== undefined) {
+        identity.uid = ids.uid;
+        identity.gid = ids.gid;
+      }
+    }
     return { path: managed.path, home: t.runAs.home, identity };
   }
 

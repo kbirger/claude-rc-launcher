@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Hono } from "hono";
@@ -34,7 +34,7 @@ const use = (id: string, command: string, at: string) =>
 const denied = (id: string, text: string) =>
   JSON.stringify({ type: "user", timestamp: "2026-11-14T10:00:09.000Z", message: { content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: true }] } });
 
-function build(o: { sessions?: Record<string, { cwd: string; extra?: string[] }>; home?: boolean; identity?: object; log?: (l: string) => void } = {}) {
+function build(o: { sessions?: Record<string, { cwd: string; extra?: string[] }>; home?: boolean; identity?: object; log?: (l: string) => void; isRoot?: () => boolean } = {}) {
   const inst = {
     claudeHome: async (id: string) => {
       if (id !== ID) throw new HttpError(404, "instance not found");
@@ -44,7 +44,7 @@ function build(o: { sessions?: Record<string, { cwd: string; extra?: string[] }>
   if (o.home === false) delete (inst as { claudeHome?: unknown }).claudeHome;
   const sessions = new SessionCatalog({ fs: transcripts(o.sessions ?? { [SID]: { cwd: root } }), platform: "darwin" });
   const app = new Hono();
-  app.route("/instances/:id", permissionsApi({ instances: inst, sessions, ...(o.log ? { log: o.log } : {}) }));
+  app.route("/instances/:id", permissionsApi({ instances: inst, sessions, ...(o.log ? { log: o.log } : {}), isRoot: o.isRoot ?? (() => false) }));
   app.onError(onError);
   return app;
 }
@@ -213,5 +213,39 @@ describe("rule edit routes", () => {
     for (const l of lines) {
       expect(l).toBe(`audit caller=unknown instance=${ID} scope=? action=add list=? rule="Bash" status=400`);
     }
+  });
+});
+
+describe("a root node and the default user", () => {
+  const me = process.getuid!();
+  const gid = process.getgid!();
+  const base = { home: "/x", path: "/usr/bin" };
+  const rule = (scope: string, expectedHash: string | null) => ({ scope, list: "allow", rule: "Bash(git *)", expectedHash });
+
+  test("an identity with no uid is refused with 403 and the file is not touched (user route)", async () => {
+    const app = build({ identity: base, isRoot: () => true });
+    const before = await readFile(userFile(), "utf8");
+    const r = await send(app, "POST", "/permissions/rules", rule("user", await hashOf(app, "/permissions", "user")));
+    expect(r.status).toBe(403);
+    expect(await readFile(userFile(), "utf8")).toBe(before);
+  });
+  test("an identity with no uid makes no .claude folder (session route, new project file)", async () => {
+    const app = build({ identity: base, isRoot: () => true });
+    const r = await send(app, "POST", `/sessions/${SID}/permissions/rules`, rule("project", null));
+    expect(r.status).toBe(403);
+    expect(await stat(join(root, ".claude", "settings.json")).catch(() => null)).toBeNull();
+  });
+  test("an identity with a uid and gid writes, and the file keeps the owner", async () => {
+    const app = build({ identity: { ...base, uid: me, gid }, isRoot: () => true });
+    const r = await send(app, "POST", "/permissions/rules", rule("user", await hashOf(app, "/permissions", "user")));
+    expect(r.status).toBe(200);
+    expect((await stat(userFile())).uid).toBe(me);
+  });
+  test("the real files of the service user still read with its uid in the identity", async () => {
+    const app = build({ identity: { ...base, uid: me, gid }, isRoot: () => true });
+    const body = (await (await get(app, "/permissions")).json()) as { layers: { state: string }[] };
+    expect(body.layers[0]!.state).toBe("ok");
+    const s = (await (await get(app, `/sessions/${SID}/permissions`)).json()) as { layers: { scope: string; state: string }[] };
+    expect(s.layers.filter((l) => l.scope !== "project").map((l) => l.state)).toEqual(["ok", "ok"]);
   });
 });

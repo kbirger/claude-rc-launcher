@@ -1,7 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
-import { readUserFile, writeUserFile } from "./safefile";
+import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 import type { SystemUser } from "./users";
 
 export type TrustOwner = Pick<SystemUser, "home"> & { uid?: number; gid?: number };
@@ -92,6 +92,12 @@ export function fileTrust(o: {
 
       // The mode comes from the file that was read. The owner is always the target user from passwd,
       // never the owner of what was found at the path. The shared writer does the temp file and the rename.
-      await writeUserFile(file, Buffer.from(JSON.stringify(doc, null, 2) + "\n"), { ownerUid: user.uid, gid: user.gid, checkOwner: false, chown, isRoot });
+      try {
+        await writeUserFile(file, Buffer.from(JSON.stringify(doc, null, 2) + "\n"), { ownerUid: user.uid, gid: user.gid, checkOwner: false, chown, isRoot });
+      } catch (e) {
+        if (e instanceof FileRefused) throw new HttpError(500, `cannot write the user's .claude.json: ${e.reason}`);
+        if (e instanceof FileConflict) throw new HttpError(500, "cannot write the user's .claude.json: it changed while it was written");
+        throw e;
+      }
   }
 }

@@ -271,7 +271,7 @@ async function status(p: Promise<unknown>): Promise<number | undefined> {
 
 describe("SettingsFile.addRule and removeRule", () => {
   const userPath = () => join(home, ".claude", "settings.json");
-  const file = () => new SettingsFile("user", userPath());
+  const file = () => new SettingsFile("user", userPath(), { isRoot: () => false });
 
   test("an add, then a read, shows the rule with a new hash", async () => {
     await put(userPath(), perms({ allow: ["Read"] }));
@@ -439,5 +439,33 @@ describe("SettingsFile folder step", () => {
     });
     expect(await status(add(f))).toBe(403);
     expect(n).toBe(0);
+  });
+
+  test("a failed check after mkdir removes the folder it made, and only that one", async () => {
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid: me, isRoot: () => true, chown: async () => {}, verifyPath: async () => "/elsewhere" });
+    expect(await status(add(f))).toBe(403);
+    expect(await lstat(join(home, ".claude")).catch(() => null)).toBeNull();
+    expect((await lstat(home)).isDirectory()).toBe(true);
+  });
+
+  test("a failed chown after mkdir removes the folder it made", async () => {
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid: me, isRoot: () => true, chown: async () => { throw new Error("boom"); } });
+    expect(await status(add(f))).toBe(403);
+    expect(await lstat(join(home, ".claude")).catch(() => null)).toBeNull();
+  });
+
+  test("as root with no known owner a new file is refused with 403 and no folder is made", async () => {
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), { isRoot: () => true, chown: async () => { throw new Error("chown must not run"); } });
+    expect(await status(add(f))).toBe(403);
+    expect(await lstat(join(home, ".claude")).catch(() => null)).toBeNull();
+  });
+
+  test("as root with no known owner an existing file is refused with 403 and stays unchanged", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(join(home, ".claude", "settings.json"), "{}");
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), { isRoot: () => true });
+    const layer = await f.read();
+    expect(await status(f.addRule({ list: "allow", raw: "Read", expectedHash: layer.hash! }))).toBe(403);
+    expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toBe("{}");
   });
 });

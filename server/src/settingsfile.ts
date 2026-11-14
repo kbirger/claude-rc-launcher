@@ -15,7 +15,7 @@
  * The layers are listed with the highest precedence first: managed, local, legacy-local, project, user.
  */
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readlink, realpath, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readlink, realpath, rmdir, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { markShadowed, parseRule, rulesOf, withRule, withoutRule, type MarkedRule, type RuleList } from "./permrules";
 import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
@@ -131,12 +131,17 @@ export class SettingsFile {
     if (await lstat(dir).then(() => true, () => false)) return; // the write checks an existing entry (a symlink is refused)
     const parent = await lstat(dirname(dir)).catch(() => null);
     if (!parent || !parent.isDirectory()) throw new SettingsError(403, "its folder is not a real folder");
+    const isRoot = this.opts.isRoot ?? (() => process.getuid?.() === 0);
+    // Fail closed: a root node that does not know the owner would leave a root-owned folder in the user's tree.
+    if (isRoot() && this.opts.ownerUid === undefined) throw new SettingsError(403, "the owner of the folder is not known");
     if (this.opts.ownerUid !== undefined && parent.uid !== this.opts.ownerUid) throw new SettingsError(403, "its folder is owned by another user");
     try {
       await mkdir(dir, { mode: 0o700 });
     } catch {
       throw new SettingsError(403, "its folder cannot be made");
     }
+    // What mkdir made, by device and inode. A failed check below removes this folder, and only if it is still this one.
+    const made = await lstat(dir, { bigint: true }).catch(() => null);
     let fh: FileHandle | undefined;
     try {
       fh = await open(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -147,11 +152,13 @@ export class SettingsFile {
         const opened = await (this.opts.verifyPath ?? ((h: FileHandle) => readlink(`/proc/self/fd/${h.fd}`)))(fh);
         if (opened !== expected) throw new Error("not at the expected place");
       }
-      const isRoot = this.opts.isRoot ?? (() => process.getuid?.() === 0);
       if (isRoot() && this.opts.ownerUid !== undefined) {
         await (this.opts.chown ?? ((h, uid, gid) => h.chown(uid, gid)))(fh, this.opts.ownerUid, parent.gid);
       }
     } catch {
+      // rmdir only removes an empty folder and never follows a symlink. The identity check keeps it off anything else.
+      const now = made ? await lstat(dir, { bigint: true }).catch(() => null) : null;
+      if (made && now && now.isDirectory() && now.dev === made.dev && now.ino === made.ino) await rmdir(dir).catch(() => {});
       throw new SettingsError(403, "its folder is not safe to use");
     } finally {
       await fh?.close().catch(() => {});
@@ -201,7 +208,7 @@ export class SettingsFile {
       gid = undefined;
     }
     try {
-      await writeUserFile(target, Buffer.from(next.text, "utf8"), { ...ownerOpt, ...(gid !== undefined ? { gid } : {}), expectedHash, follow: true });
+      await writeUserFile(target, Buffer.from(next.text, "utf8"), { ...ownerOpt, ...(gid !== undefined ? { gid } : {}), expectedHash, follow: true, ...(this.opts.isRoot ? { isRoot: this.opts.isRoot } : {}) });
     } catch (e) {
       if (e instanceof FileConflict) throw new SettingsError(409, "the file changed since it was read");
       if (e instanceof FileRefused) throw new SettingsError(403, e.reason);
@@ -255,8 +262,8 @@ export class ClaudeSettings {
   ) {}
 
   /** The user file of one home folder. */
-  static forHome(o: { home: string; ownerUid?: number }): ClaudeSettings {
-    return new ClaudeSettings([new SettingsFile("user", join(o.home, ".claude", "settings.json"), { ownerUid: o.ownerUid })]);
+  static forHome(o: { home: string; ownerUid?: number; isRoot?: () => boolean }): ClaudeSettings {
+    return new ClaudeSettings([new SettingsFile("user", join(o.home, ".claude", "settings.json"), { ownerUid: o.ownerUid, ...(o.isRoot ? { isRoot: o.isRoot } : {}) })]);
   }
 
   /** The file of one scope, if this set has one. */
@@ -268,21 +275,22 @@ export class ClaudeSettings {
    * All the files that apply to a session. `root` is the checked real root of the session folder (Session.open).
    * `managedPath` replaces the Linux managed file path (tests).
    */
-  static async forSession(o: { home: string; root: string; ownerUid?: number; platform?: NodeJS.Platform; managedPath?: string }): Promise<ClaudeSettings> {
+  static async forSession(o: { home: string; root: string; ownerUid?: number; isRoot?: () => boolean; platform?: NodeJS.Platform; managedPath?: string }): Promise<ClaudeSettings> {
     const { home, root, ownerUid } = o;
     const platform = o.platform ?? process.platform;
     const found = await findGitRoot(root, home, ownerUid);
     const files: SettingsFile[] = [];
+    const own = { ownerUid, ...(o.isRoot ? { isRoot: o.isRoot } : {}) };
     if (platform === "linux") files.push(new SettingsFile("managed", o.managedPath ?? MANAGED_PATH_LINUX, {}));
     files.push(
       "root" in found
-        ? new SettingsFile("local", join(found.root, ".claude", "settings.local.json"), { ownerUid })
+        ? new SettingsFile("local", join(found.root, ".claude", "settings.local.json"), own)
         : new SettingsFile("local", null, { unknownReason: found.reason }),
     );
     // The file in the session folder is also read when it is not the same file as the local file.
-    if (!("root" in found) || found.root !== root) files.push(new SettingsFile("legacy-local", join(root, ".claude", "settings.local.json"), { ownerUid }));
-    files.push(new SettingsFile("project", join(root, ".claude", "settings.json"), { ownerUid }));
-    files.push(new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid }));
+    if (!("root" in found) || found.root !== root) files.push(new SettingsFile("legacy-local", join(root, ".claude", "settings.local.json"), own));
+    files.push(new SettingsFile("project", join(root, ".claude", "settings.json"), own));
+    files.push(new SettingsFile("user", join(home, ".claude", "settings.json"), own));
     return new ClaudeSettings(files);
   }
 

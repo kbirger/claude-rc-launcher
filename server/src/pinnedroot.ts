@@ -72,14 +72,14 @@ export class PinnedRoot {
    * folder (the home folder, the git root above it), so they are not read through the file opener of this class.
    * Only the checked real root comes from here.
    */
-  async permissions(o: { ownerUid?: number }): Promise<PermissionLayers> {
+  async permissions(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
     return (await this.settings(o)).layers();
   }
 
   /** The settings files that apply to this session (see settingsfile.ts). A route edits a rule through one of them. */
-  settings(o: { ownerUid?: number }): Promise<ClaudeSettings> {
+  settings(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
     const catalog = this.session.instance.catalog;
-    return ClaudeSettings.forSession({ home: this.session.instance.home, root: this.real, platform: catalog.platform, ...(o.ownerUid !== undefined ? { ownerUid: o.ownerUid } : {}) });
+    return ClaudeSettings.forSession({ home: this.session.instance.home, root: this.real, platform: catalog.platform, ...(o.ownerUid !== undefined ? { ownerUid: o.ownerUid } : {}), ...(o.isRoot ? { isRoot: o.isRoot } : {}) });
   }
 
   /** One folder of the session folder. */

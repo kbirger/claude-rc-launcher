@@ -148,11 +148,13 @@ describe("readUserFile with follow", () => {
 describe("writeUserFile", () => {
   const me = process.getuid!();
   const gid = process.getgid!();
+  // These tests also run as root, where a write without a known owner is refused (tested below), so they say "not root".
+  const write = (f: string, b: Buffer, o: Parameters<typeof writeUserFile>[2] = {}) => writeUserFile(f, b, { isRoot: () => false, ...o });
   const leftovers = async () => (await readdir(dir)).filter((n) => n.endsWith(".tmp"));
 
   test("a new file gets mode 0600", async () => {
     const f = join(dir, "n.json");
-    const r = await writeUserFile(f, Buffer.from("{}"));
+    const r = await write(f, Buffer.from("{}"));
     expect((await stat(f)).mode & 0o777).toBe(0o600);
     expect(r.realPath).toBe(await realpath(f));
     expect(r.hash).toMatch(/^[0-9a-f]{64}$/);
@@ -162,7 +164,7 @@ describe("writeUserFile", () => {
     const f = join(dir, "e.json");
     await writeFile(f, "{}");
     await chmod(f, 0o640);
-    await writeUserFile(f, Buffer.from('{"a":1}'));
+    await write(f, Buffer.from('{"a":1}'));
     expect((await stat(f)).mode & 0o777).toBe(0o640);
     expect(await readFile(f, "utf8")).toBe('{"a":1}');
   });
@@ -176,13 +178,31 @@ describe("writeUserFile", () => {
     expect(calls).toEqual([[me, gid]]);
   });
 
+  test("as root a write with no known owner or group is refused and nothing is written", async () => {
+    const chown = async () => { throw new Error("chown must not run"); };
+    for (const o of [{}, { ownerUid: me }, { gid }]) {
+      const f = join(dir, "r.json");
+      await expect(writeUserFile(f, Buffer.from("x"), { ...o, chown, isRoot: () => true })).rejects.toBeInstanceOf(FileRefused);
+      expect(await lstat(f).catch(() => null)).toBeNull();
+    }
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("checkOwner false skips the owner refusal, and checkOwner true refuses a file of another owner", async () => {
+    const f = join(dir, "o.json");
+    await writeFile(f, "{}");
+    await expect(write(f, Buffer.from("a"), { ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
+    await write(f, Buffer.from("a"), { ownerUid: me + 1, checkOwner: false });
+    expect(await readFile(f, "utf8")).toBe("a");
+  });
+
   test("a stale hash gives FileConflict and leaves the file and the folder unchanged", async () => {
     const f = join(dir, "s.json");
     await writeFile(f, "old");
     const stale = (await readUserFile(f)) as { hash: string };
     await writeFile(f, "newer");
     const before = await readdir(dir);
-    await expect(writeUserFile(f, Buffer.from("mine"), { expectedHash: stale.hash })).rejects.toBeInstanceOf(FileConflict);
+    await expect(write(f, Buffer.from("mine"), { expectedHash: stale.hash })).rejects.toBeInstanceOf(FileConflict);
     expect(await readFile(f, "utf8")).toBe("newer");
     expect(await readdir(dir)).toEqual(before);
   });
@@ -190,7 +210,7 @@ describe("writeUserFile", () => {
   test("expectedHash null against an existing file gives FileConflict", async () => {
     const f = join(dir, "x.json");
     await writeFile(f, "{}");
-    await expect(writeUserFile(f, Buffer.from("a"), { expectedHash: null })).rejects.toBeInstanceOf(FileConflict);
+    await expect(write(f, Buffer.from("a"), { expectedHash: null })).rejects.toBeInstanceOf(FileConflict);
     expect(await leftovers()).toEqual([]);
   });
 
@@ -199,7 +219,7 @@ describe("writeUserFile", () => {
     await writeFile(real, "old");
     const l = join(dir, "link.json");
     await symlink(real, l);
-    const r = await writeUserFile(l, Buffer.from("new"), { follow: true });
+    const r = await write(l, Buffer.from("new"), { follow: true });
     expect((await lstat(l)).isSymbolicLink()).toBe(true);
     expect(await readFile(real, "utf8")).toBe("new");
     expect(r.realPath).toBe(await realpath(real));
@@ -210,17 +230,17 @@ describe("writeUserFile", () => {
     await writeFile(real, "old");
     const l = join(dir, "link.json");
     await symlink(real, l);
-    await expect(writeUserFile(l, Buffer.from("new"), { follow: true, ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
+    await expect(write(l, Buffer.from("new"), { follow: true, ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
     expect(await readFile(real, "utf8")).toBe("old");
   });
 
   test("a real folder of another owner gives FileRefused", async () => {
-    await expect(writeUserFile(join(dir, "f.json"), Buffer.from("a"), { ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
+    await expect(write(join(dir, "f.json"), Buffer.from("a"), { ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
     expect(await readdir(dir)).toEqual([]);
   });
 
   test("content over the cap gives FileRefused", async () => {
-    await expect(writeUserFile(join(dir, "big"), Buffer.alloc(MAX_FILE_BYTES + 1))).rejects.toBeInstanceOf(FileRefused);
+    await expect(write(join(dir, "big"), Buffer.alloc(MAX_FILE_BYTES + 1))).rejects.toBeInstanceOf(FileRefused);
     expect(await readdir(dir)).toEqual([]);
   });
 
@@ -228,7 +248,7 @@ describe("writeUserFile", () => {
     const f = join(dir, "h.json");
     await writeFile(f, "old");
     await link(f, join(dir, "h2.json"));
-    await expect(writeUserFile(f, Buffer.from("new"))).rejects.toBeInstanceOf(FileRefused);
+    await expect(write(f, Buffer.from("new"))).rejects.toBeInstanceOf(FileRefused);
     expect(await readFile(f, "utf8")).toBe("old");
   });
 
@@ -237,8 +257,8 @@ describe("writeUserFile", () => {
     await writeFile(f, "old");
     const h = ((await readUserFile(f)) as { hash: string }).hash;
     const res = await Promise.allSettled([
-      writeUserFile(f, Buffer.from("one"), { expectedHash: h }),
-      writeUserFile(f, Buffer.from("two"), { expectedHash: h }),
+      write(f, Buffer.from("one"), { expectedHash: h }),
+      write(f, Buffer.from("two"), { expectedHash: h }),
     ]);
     expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const bad = res.find((r) => r.status === "rejected") as PromiseRejectedResult;
