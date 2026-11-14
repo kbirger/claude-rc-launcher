@@ -40,24 +40,91 @@ const text = () => document.body.textContent ?? "";
 const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes(label)) as HTMLButtonElement | undefined;
 const field = () => document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!;
 const type = (v: string) => { const f = field(); f.value = v; f.dispatchEvent(new Event("input", { bubbles: true })); flushSync(); };
+const group = (name: string) => document.querySelector(`[aria-label='${name}']`);
+const items = (name: string) => [...(group(name)?.querySelectorAll<HTMLElement>("[data-slot=toggle-group-item]") ?? [])];
+const labels = (name: string) => items(name).map((i) => i.textContent?.trim());
+const pickFile = (label: string) => { items("File").find((i) => i.textContent?.trim() === label)!.click(); flushSync(); };
 const closed = () => document.querySelector("[data-testid=open]")?.textContent === "closed";
 
 test("only writable files in state ok or missing are offered, and a link shows its real path", () => {
-  show({ layers: [layer("user"), layer("project", { writable: false }), layer("local", { state: "missing", hash: undefined }), layer("legacy-local", { state: "invalid", reason: "bad json" }), layer("managed", { state: "unknown-path", path: null, reason: "Claude Code keeps this file somewhere else" })] });
-  const radios = [...document.querySelectorAll<HTMLInputElement>("input[name=file]")];
-  expect(radios.map((r) => r.value)).toEqual(["user", "local"]);
-  expect(text()).toContain("/p/user.json");
+  show({ layers: [layer("user"), layer("project", { writable: false }), layer("local", { state: "missing", hash: undefined }), layer("legacy-local", { state: "invalid", reason: "bad json" }), layer("managed", { state: "unknown-path", path: null, reason: "Claude Code keeps this file somewhere else" })], initial: { raw: "Bash(ls)", list: "allow" } });
+  expect(labels("File")).toEqual(["User", "Local"]);
+  expect(text()).toContain("in /p/user.json");
   expect(text()).toContain("Claude Code keeps this file somewhere else");
 });
 
-test("a link file shows the resolved path too", () => {
-  show({ layers: [layer("user", { resolvedPath: "/real/user.json" })] });
-  expect(text()).toContain("/real/user.json");
+test("a link file shows one Link to line right under the confirm line", () => {
+  show({ layers: [layer("user", { resolvedPath: "/real/user.json" })], initial: { raw: "Bash(ls)", list: "allow" } });
+  expect(text()).toContain("Link to /real/user.json");
+  expect(text().match(/Link to/g)).toHaveLength(1);
+  expect(document.querySelector("[data-testid=confirm]")!.nextElementSibling!.textContent).toBe("Link to /real/user.json");
+});
+
+test("no Link to line when the real path is the path", () => {
+  show({ layers: [layer("user", { resolvedPath: "/p/user.json" })], initial: { raw: "Bash(ls)", list: "allow" } });
+  expect(text()).not.toContain("Link to");
+});
+
+test("the file selector holds only short labels, no paths and no Link to", () => {
+  show({ layers: [layer("user", { resolvedPath: "/real/user.json" }), layer("project")] });
+  const g = group("File")!;
+  expect(g).not.toBeNull();
+  expect(g.textContent).not.toContain("/p/");
+  expect(g.textContent).not.toContain("/real/");
+  expect(g.textContent).not.toContain("Link to");
+});
+
+test("one offered file shows no selector", () => {
+  show({ layers: [layer("user"), layer("project", { writable: false })], initial: { raw: "Bash(ls)", list: "allow" } });
+  expect(group("File")).toBeNull();
+  expect(text()).toContain("in /p/user.json");
+});
+
+test("the chosen file is exposed on the selector, and a change to empty is ignored", async () => {
+  show({ initial: { raw: "Bash(ls)", list: "allow" } });
+  const user = items("File")[0]!;
+  const [, project] = items("File");
+  expect(user.getAttribute("aria-checked")).toBe("true");
+  user.click();
+  flushSync();
+  expect(items("File")[0]!.getAttribute("aria-checked")).toBe("true");
+  project!.click();
+  flushSync();
+  expect(items("File")[1]!.getAttribute("aria-checked")).toBe("true");
+  items("File")[1]!.click();
+  flushSync();
+  expect(items("File")[1]!.getAttribute("aria-checked")).toBe("true");
+  button("Save")!.click();
+  await vi.waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]!.body.scope).toBe("project");
+});
+
+test("the list selector never goes empty", () => {
+  show({ initial: { raw: "Bash(ls)", list: "ask" } });
+  expect(labels("List")).toEqual(["Allow", "Ask", "Deny"]);
+  const ask = () => items("List")[1]!;
+  expect(ask().getAttribute("aria-checked")).toBe("true");
+  ask().click();
+  flushSync();
+  expect(ask().getAttribute("aria-checked")).toBe("true");
+});
+
+test("the list selector is disabled in remove mode", () => {
+  show({ mode: "remove", initial: { raw: "Read", list: "deny" } });
+  expect(items("List")).toHaveLength(3);
+  expect(items("List").every((i) => i.hasAttribute("disabled") || i.getAttribute("aria-disabled") === "true" || i.getAttribute("data-disabled") !== null)).toBe(true);
+});
+
+test("a file that cannot be changed is a plain note without a border box", () => {
+  show({ layers: [layer("user"), layer("managed", { state: "unknown-path", path: null, reason: "Somewhere else" })], session: "s1" });
+  const note = [...document.querySelectorAll("p")].find((p) => p.textContent?.includes("Somewhere else"))!;
+  expect(note.className).not.toContain("border");
 });
 
 test("without a session only the user file is offered", () => {
-  show({ session: undefined });
-  expect([...document.querySelectorAll<HTMLInputElement>("input[name=file]")].map((r) => r.value)).toEqual(["user"]);
+  show({ session: undefined, initial: { raw: "Bash(ls)", list: "allow" } });
+  expect(group("File")).toBeNull();
+  expect(text()).toContain("in /p/user.json");
 });
 
 test("the confirm line shows the exact path and rule", () => {
@@ -68,9 +135,7 @@ test("the confirm line shows the exact path and rule", () => {
 test("the user and project warnings show for the chosen file", () => {
   show({});
   expect(text()).toContain("This applies to every project of this user.");
-  const project = document.querySelector<HTMLInputElement>("input[name=file][value=project]")!;
-  project.click();
-  flushSync();
+  pickFile("Project");
   expect(text()).toContain("This changes a file that git tracks. You must commit it.");
   expect(text()).not.toContain("This applies to every project of this user.");
 });
@@ -167,13 +232,6 @@ test("the confirm line shows the rule and the path in code elements, with no bac
   expect(document.querySelector("[data-testid=confirm]")!.textContent).not.toContain("`");
 });
 
-test("the file radio is a small fixed control, so the path keeps the width", () => {
-  show({});
-  const radio = document.querySelector<HTMLInputElement>("input[name=file]")!;
-  expect(radio.className).toContain("size-4");
-  expect(radio.className).toContain("shrink-0");
-});
-
 test("a save from a blocked call sends exactly scope, list, rule and expectedHash, never the call text", async () => {
   show({ call: call() });
   button("Save")!.click();
@@ -184,8 +242,7 @@ test("a save from a blocked call sends exactly scope, list, rule and expectedHas
 
 test("the body follows a file switch: scope and hash of the picked file", async () => {
   show({ initial: { raw: "Bash(ls)", list: "allow" } });
-  document.querySelector<HTMLInputElement>("input[name=file][value=project]")!.click();
-  flushSync();
+  pickFile("Project");
   button("Save")!.click();
   await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
   expect(sent[0]!.body).toEqual({ scope: "project", list: "allow", rule: "Bash(ls)", expectedHash: "hash-project" });
@@ -287,7 +344,7 @@ test("an answer without a nudge key to a nudge request shows unsupported and kee
   expect(closed()).toBe(false);
 });
 
-const pickList = (l: string) => { document.querySelector<HTMLInputElement>(`input[name=list][value=${l}]`)!.click(); flushSync(); };
+const pickList = (l: string) => { items("List").find((i) => i.textContent?.trim().toLowerCase() === l)!.click(); flushSync(); };
 
 test("the box is hidden and no nudge is sent when the list is not allow", async () => {
   show({ call: call(), live: true });

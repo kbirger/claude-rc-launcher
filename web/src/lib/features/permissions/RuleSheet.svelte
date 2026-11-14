@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { ToggleGroup, ToggleGroupItem } from "#lib/components/ui/toggle-group/index.js";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
@@ -89,30 +90,23 @@
         </details>
       {/if}
 
-      <fieldset class="m-0 grid min-w-0 gap-1.5 border-0 p-0">
-        <legend class="mb-1 text-sm font-medium">File</legend>
-        {#each offered as l (l.scope)}
-          <label class="flex min-h-11 items-start gap-2 rounded-md border p-2 text-sm {wrap}">
-            <input type="radio" name="file" value={l.scope} checked={layer === l} onchange={() => (picked = l.scope)} class="mt-1 size-4 w-auto shrink-0 accent-primary" />
-            <span class="grid min-w-0 flex-1">
-              <span>{scopeBadge(l.scope)}</span>
-              <code class="text-xs {wrap} break-all">{l.path}</code>
-              {#if l.resolvedPath && l.resolvedPath !== l.path}<span class="text-xs text-muted-foreground {wrap}">Link to <code>{l.resolvedPath}</code></span>{/if}
-            </span>
-          </label>
-        {/each}
-        {#each blocked as l (l.scope)}
-          <p class="m-0 rounded-md border p-2 text-sm text-muted-foreground {wrap}">{scopeBadge(l.scope)}: {l.reason ?? "The node cannot tell where Claude Code keeps this file."} It cannot be changed here.</p>
-        {/each}
-        {#if offered.length === 0 && blocked.length === 0}<p class="m-0 text-sm text-muted-foreground">No file can be changed here.</p>{/if}
-      </fieldset>
+      {#if offered.length > 1}
+        <ToggleGroup type="single" variant="outline" aria-label="File" class="w-full" bind:value={() => layer?.scope ?? "", (v) => { if (v) picked = v; }}>
+          {#each offered as l (l.scope)}
+            <ToggleGroupItem value={l.scope} class="h-11 min-w-0 flex-1">{scopeBadge(l.scope)}</ToggleGroupItem>
+          {/each}
+        </ToggleGroup>
+      {/if}
+      {#each blocked as l (l.scope)}
+        <p class="m-0 text-sm text-muted-foreground {wrap}">{scopeBadge(l.scope)}: {l.reason ?? "The node cannot tell where Claude Code keeps this file."} It cannot be changed here.</p>
+      {/each}
+      {#if offered.length === 0 && blocked.length === 0}<p class="m-0 text-sm text-muted-foreground">No file can be changed here.</p>{/if}
 
-      <fieldset class="m-0 flex flex-wrap gap-1.5 border-0 p-0" disabled={mode === "remove"}>
-        <legend class="mb-1 text-sm font-medium">List</legend>
+      <ToggleGroup type="single" variant="outline" aria-label="List" class="w-full" disabled={mode === "remove"} bind:value={() => list, (v) => { if (v) list = v as typeof list; }}>
         {#each LISTS as l (l)}
-          <label class="flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-sm"><input type="radio" name="list" value={l} checked={list === l} onchange={() => (list = l)} class="size-4 w-auto shrink-0 accent-primary" />{listLabel(l)}</label>
+          <ToggleGroupItem value={l} class="h-11 min-w-0 flex-1">{listLabel(l)}</ToggleGroupItem>
         {/each}
-      </fieldset>
+      </ToggleGroup>
 
       <label class="grid gap-1 text-sm font-medium">Rule
         <input aria-label="Rule" class="h-11 min-w-0 rounded-md border bg-background px-3 font-mono text-sm" bind:value={rule} readonly={mode === "remove"} autocapitalize="off" autocomplete="off" spellcheck="false" />
@@ -130,11 +124,12 @@
       {#if layer && trimmed}
         {@const words = confirmWords(mode, list)}
         <p class="m-0 text-sm {wrap}" data-testid="confirm">{words[0]} <code class="font-mono text-xs {wrap}">{trimmed}</code> {words[1]} <code class="font-mono text-xs {wrap}">{layer.path}</code></p>
+        {#if layer.resolvedPath && layer.resolvedPath !== layer.path}<p class="m-0 text-xs text-muted-foreground {wrap}">Link to {layer.resolvedPath}</p>{/if}
       {/if}
       {#each warnings as w (w)}<p class="m-0 text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
       {#if canNudge && !result}
-        <label class="flex min-h-11 items-center gap-2 text-sm {wrap}">
-          <input type="checkbox" bind:checked={nudge} disabled={live !== true} class="size-4 w-auto shrink-0 accent-primary" />{NUDGE_LABEL}
+        <label class="flex min-h-11 items-center gap-3 text-sm {wrap}">
+          <input type="checkbox" bind:checked={nudge} disabled={live !== true} class="size-5 w-auto shrink-0 accent-primary" />{NUDGE_LABEL}
         </label>
         {#if live !== true}<p class="m-0 text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
       {/if}

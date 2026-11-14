@@ -133,7 +133,7 @@ test("the Add rule button opens the sheet in add mode with every writable file",
   show([wlayer("user", []), wlayer("project", []), wlayer("managed", [], { writable: false })]);
   press("Add rule");
   expect(body()).toContain("Add a rule");
-  expect([...document.querySelectorAll<HTMLInputElement>("input[name=file]")].map((r) => r.value)).toEqual(["user", "project"]);
+  expect([...document.querySelectorAll("[aria-label=File] [data-slot=toggle-group-item]")].map((i) => i.textContent?.trim())).toEqual(["User", "Project"]);
 });
 
 test("a rule in a writable file has a remove that opens the remove sheet", () => {
@@ -152,7 +152,7 @@ test("a rule in two files has one remove for each file, and each sheet shows onl
   show([wlayer("local", [rule("allow", "X", { scope: "local" })]), wlayer("user", [rule("allow", "X")])]);
   expect([...document.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Remove "))).toHaveLength(2);
   press("Remove X from User settings");
-  expect([...document.querySelectorAll<HTMLInputElement>("input[name=file]")].map((r) => r.value)).toEqual(["user"]);
+  expect(document.querySelector("[aria-label=File]")).toBeNull();
   expect(body()).toContain("from Allow in /p/user.json");
 });
 
