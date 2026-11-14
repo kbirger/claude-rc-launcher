@@ -23,12 +23,28 @@
     const todo = releases.filter((r) => r.body.trim() && !(r.version in rendered));
     if (todo.length === 0) return;
     let live = true;
-    import("../sessions/markdown").then(({ renderMarkdown }) => {
-      if (!live) return;
-      const next = { ...rendered };
-      for (const r of todo) next[r.version] = renderMarkdown(r.body);
-      rendered = next;
-    });
+    import("../sessions/markdown").then(
+      ({ renderMarkdown }) => {
+        if (!live) return;
+        const next = { ...rendered };
+        // One body that cannot be rendered falls back to plain text. The others still render.
+        for (const r of todo) {
+          try {
+            next[r.version] = renderMarkdown(r.body);
+          } catch {
+            next[r.version] = undefined;
+          }
+        }
+        rendered = next;
+      },
+      () => {
+        // The chunk did not load (offline, or a stale chunk after a hub update): every body shows as plain text.
+        if (!live) return;
+        const next = { ...rendered };
+        for (const r of todo) next[r.version] = undefined;
+        rendered = next;
+      },
+    );
     return () => { live = false; };
   });
   const date = (iso: string): string => (Number.isNaN(Date.parse(iso)) ? iso : new Date(iso).toLocaleDateString());
