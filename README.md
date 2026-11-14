@@ -259,9 +259,35 @@ checkout, or a run from source, prints `dev`. Neither binary needs a login, a ne
 
 ### Publishing a release (maintainers)
 
-Push a tag. The `Release` workflow tests, builds the Linux server binaries, the command-line client, the Windows node
-binary and its installer zip, adds `SHA256SUMS`, and publishes them. `install.ps1` is also published as a separate
-asset, because the one-line Windows install (`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name:
+Start the `Release` workflow by hand. It runs only from the `main` branch.
+
+1. Open the Actions tab of the repository, choose `Release`, and select Run workflow. Or run
+   `gh workflow run release.yml -f dry_run=true`.
+2. Run it with `dry_run` on first. The default is on. The run prints the next version and the release notes in the job
+   log and in the job summary. It builds and publishes nothing.
+3. Read the version and the notes. If they are right, run the workflow again with `dry_run` off. Or run
+   `gh workflow run release.yml -f dry_run=false`.
+
+The real run tests, builds the Linux server binaries, the command-line client, the Windows node binary and its
+installer zip, adds `SHA256SUMS`, creates the tag, and publishes the release with the notes. `install.ps1` is also
+published as a separate asset, because the one-line Windows install
+(`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name.
+
+[git-cliff](https://git-cliff.org) works out the version and the notes from the commit messages since the last tag.
+The rules are in `cliff.toml`.
+
+- A `feat` commit raises the minor number. A `fix` commit raises the patch number.
+- A breaking change (`!` after the type, or `BREAKING CHANGE:` in the message) raises the major number. While the
+  version is below 1.0, it raises the minor number.
+- If no commit deserves a new version, the run prints "Nothing to release" and stops.
+- To choose the version yourself, fill in the `version` input, for example `1.0.0`. A leading `v` is allowed.
+
+The notes list `feat` commits as Features, `fix` as Fixes, and `perf` as Performance. Other commits, and commits with no
+type, are listed as Other. The types `docs`, `test`, `chore`, `ci`, `build` and `style` are left out. If nothing is left,
+the notes say "No user-visible changes."
+
+As a fallback, you can push a tag. The same workflow runs, builds, and publishes. The notes for that release come from
+the commits since the previous tag:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
