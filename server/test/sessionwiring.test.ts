@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
@@ -94,6 +94,20 @@ describe("permissions routes in the node app", () => {
     expect((await a.request(`${base}/permissions`)).status).toBe(401);
     expect((await a.request(`${base}/sessions/${SID}/permissions`)).status).toBe(401);
     expect((await a.request(`${base}/sessions/${SID}/blocked`)).status).toBe(401);
+  });
+  test("the four edit routes need the node login and JSON, and answer for the real session folder", async () => {
+    const a = app();
+    const urls = [`${base}/permissions/rules`, `${base}/sessions/${SID}/permissions/rules`];
+    for (const url of urls) {
+      for (const method of ["POST", "DELETE"]) {
+        expect((await a.request(url, { method, headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+        expect((await a.request(url, { method, headers: { ...ok, "content-type": "text/plain" }, body: "{}" })).status).toBe(415);
+      }
+    }
+    const body = JSON.stringify({ scope: "user", list: "allow", rule: "Bash(ls *)", expectedHash: null });
+    const r = await a.request(urls[1]!, { method: "POST", headers: { ...ok, "content-type": "application/json" }, body });
+    expect(r.status).toBe(200);
+    expect(JSON.parse(await readFile(join(dir, "home", ".claude", "settings.json"), "utf8")).permissions.allow).toEqual(["Bash(ls *)"]);
   });
   test("the user, session and blocked routes answer for the real session folder", async () => {
     await mkdir(join(dir, "home", ".claude"), { recursive: true });

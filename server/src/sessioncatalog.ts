@@ -12,7 +12,7 @@ import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
 import { openDownload, previewIn } from "./sessionfs";
 import { blockedIn, type BlockedCall } from "./blocked";
-import type { PermissionLayers } from "./settingsfile";
+import type { ClaudeSettings, PermissionLayers } from "./settingsfile";
 import { touchedIn, type TouchedFile } from "./touched";
 import { SESSION_ID } from "./transcript";
 import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
@@ -217,6 +217,11 @@ export class Session {
   /** The settings layers that apply to this session. It runs the real-root check first (a failed check is a 404). */
   async permissions(o: { ownerUid?: number }): Promise<PermissionLayers> {
     return (await this.open()).permissions(o);
+  }
+
+  /** The settings files that apply to this session. It runs the real-root check first (a failed check is a 404). */
+  async settings(o: { ownerUid?: number }): Promise<ClaudeSettings> {
+    return (await this.open()).settings(o);
   }
 
   /** Runs the real-root check and gives the checked root. A failed check is a 404. */

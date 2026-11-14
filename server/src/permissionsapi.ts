@@ -1,24 +1,103 @@
 /*
- * The HTTP routes that show the permission rules and the blocked tool calls. They are a thin layer over
- * ClaudeSettings (settingsfile.ts) and Session.permissions and Session.blocked (sessioncatalog.ts). Phase 1 only reads.
+ * The HTTP routes that show and edit the permission rules, and show the blocked tool calls. They are a thin layer over
+ * ClaudeSettings (settingsfile.ts) and Session.permissions, Session.settings and Session.blocked (sessioncatalog.ts).
  * See docs/superpowers/specs/2026-11-14-permissions-design.md.
  *
  * Mount at `/instances/:id`:
  *   GET /permissions                 the user settings file of the instance (the home folder of its user).
  *   GET /sessions/:sid/permissions   every settings layer that applies to the session, highest precedence first.
  *   GET /sessions/:sid/blocked       the blocked tool calls of the session transcript, newest first.
+ *   POST|DELETE /permissions/rules                 add or remove one rule in the user file.
+ *   POST|DELETE /sessions/:sid/permissions/rules   the same in the user, project or local file of the session.
+ * The body of an edit is { scope, list, rule, expectedHash }. The answer is the updated Layer. A failed edit is
+ * { error } with the status of its SettingsError. Every edit writes one audit line (caller, instance, scope, action, list,
+ * rule, status). The rule is written with JSON.stringify. The line never holds file content or text of a blocked call.
  */
-import { Hono } from "hono";
-import type { Instances } from "./instances";
+import { Hono, type Context } from "hono";
+import { HttpError, type Instances } from "./instances";
+import { isObject, readJson } from "./requests";
 import { sessionLookup } from "./sessionapi";
 import type { SessionCatalog } from "./sessioncatalog";
-import { ClaudeSettings } from "./settingsfile";
+import { checkRule, ClaudeSettings, SettingsError, type LayerScope } from "./settingsfile";
+import type { RuleList } from "./permrules";
 
-export type PermissionsApiDeps = { instances: Instances; sessions: SessionCatalog };
+export type PermissionsApiDeps = {
+  instances: Instances;
+  sessions: SessionCatalog;
+  /** Where the audit lines go (tests replace it). Defaults to console.log. */
+  log?: (line: string) => void;
+};
+
+export type RuleEdit = { scope: LayerScope; list: RuleList; rule: string; expectedHash: string | null };
+
+/**
+ * The body of an edit. `scopes` is the set that the route accepts. The rule gets the same checks as in SettingsFile
+ * (list, length, control characters, shape), so a bad rule is refused before anything is forwarded.
+ */
+export function parseRuleEdit<S extends LayerScope>(body: unknown, scopes: readonly S[]): RuleEdit & { scope: S } {
+  if (!isObject(body)) throw new HttpError(400, "body must be an object");
+  const { scope, list, rule, expectedHash } = body;
+  if (typeof scope !== "string" || !(scopes as readonly string[]).includes(scope)) throw new HttpError(400, `scope must be one of ${scopes.join(", ")}`);
+  if (typeof list !== "string") throw new HttpError(400, "list must be allow, ask or deny");
+  if (typeof rule !== "string") throw new HttpError(400, "rule must be a string");
+  if (expectedHash !== null && typeof expectedHash !== "string") throw new HttpError(400, "expectedHash must be a string or null");
+  try {
+    checkRule(list, rule);
+  } catch (e) {
+    if (e instanceof SettingsError) throw new HttpError(400, e.message);
+    throw e;
+  }
+  return { scope: scope as S, list: list as RuleList, rule, expectedHash };
+}
+
+/** The scopes that the node reads from a body. Whether the file can be written is decided by SettingsFile (managed is 403). */
+const NODE_SCOPES: readonly LayerScope[] = ["user", "project", "local", "legacy-local", "managed"];
 
 export function permissionsApi(deps: PermissionsApiDeps): Hono {
   const { home, sessionOf } = sessionLookup(deps.instances, deps.sessions);
+  const log = deps.log ?? ((l: string) => console.log(l));
   const r = new Hono();
+
+  /**
+   * Runs one edit and writes its audit line. The line is written once the body names a scope, list and rule as strings,
+   * also when the edit fails. A SettingsError or HttpError becomes its status with { error }.
+   */
+  async function edit(c: Context, action: "add" | "remove", scopes: readonly LayerScope[], fileOf: (scope: LayerScope) => Promise<ReturnType<ClaudeSettings["file"]>>) {
+    const body = await readJson(c);
+    const f = isObject(body) ? body : {};
+    const shown = (v: unknown) => (typeof v === "string" ? v : "?");
+    const caller = String(c.get("caller" as never) ?? "unknown");
+    let status = 500;
+    try {
+      const e = parseRuleEdit(body, scopes);
+      const file = await fileOf(e.scope);
+      if (!file) throw e.scope === "managed" || e.scope === "legacy-local" ? new HttpError(403, `the ${e.scope} settings file is read-only`) : new HttpError(404, "settings file not found");
+      const layer = action === "add" ? await file.addRule({ list: e.list, raw: e.rule, expectedHash: e.expectedHash }) : await file.removeRule({ list: e.list, raw: e.rule, expectedHash: e.expectedHash ?? "" });
+      status = 200;
+      return c.json(layer);
+    } catch (err) {
+      if (err instanceof SettingsError || err instanceof HttpError) {
+        status = err.status;
+        return c.json({ error: err.message }, err.status as 400);
+      }
+      throw err;
+    } finally {
+      log(`audit caller=${caller} instance=${c.req.param("id") ?? ""} scope=${shown(f.scope)} action=${action} list=${shown(f.list)} rule=${JSON.stringify(shown(f.rule))} status=${status}`);
+    }
+  }
+  const userFile = async (c: Context) => {
+    const h = await home(c);
+    return ClaudeSettings.forHome({ home: h.home, ownerUid: h.identity?.uid }).file("user");
+  };
+  const sessionFile = async (c: Context, scope: LayerScope) => {
+    const h = await home(c);
+    const session = await sessionOf(c);
+    return (await session.settings({ ownerUid: h.identity?.uid })).file(scope);
+  };
+  r.post("/permissions/rules", (c) => edit(c, "add", ["user"], () => userFile(c)));
+  r.delete("/permissions/rules", (c) => edit(c, "remove", ["user"], () => userFile(c)));
+  r.post("/sessions/:sid/permissions/rules", (c) => edit(c, "add", NODE_SCOPES, (s) => sessionFile(c, s)));
+  r.delete("/sessions/:sid/permissions/rules", (c) => edit(c, "remove", NODE_SCOPES, (s) => sessionFile(c, s)));
 
   r.get("/permissions", async (c) => {
     const h = await home(c);

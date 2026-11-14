@@ -55,7 +55,7 @@ const WRITABLE_SCOPES: readonly LayerScope[] = ["user", "project", "local"];
 const MAX_RULE_CHARS = 2000;
 const RULE_LISTS: readonly string[] = ["allow", "ask", "deny"];
 
-function checkRule(list: string, raw: unknown): asserts raw is string {
+export function checkRule(list: string, raw: unknown): asserts raw is string {
   if (!RULE_LISTS.includes(list)) throw new SettingsError(400, "the list must be allow, ask or deny");
   if (typeof raw !== "string" || raw.length === 0) throw new SettingsError(400, "the rule is empty");
   if (raw.length > MAX_RULE_CHARS) throw new SettingsError(400, `the rule is longer than ${MAX_RULE_CHARS} characters`);

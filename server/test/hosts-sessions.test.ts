@@ -48,6 +48,65 @@ describe("hub session JSON routes", () => {
     expect((await app.request(`${base}/nope/permissions`)).status).toBe(400);
     expect((await app.request(`${base}/nope/blocked`)).status).toBe(400);
   });
+  describe("rule edit routes", () => {
+    const sbase = `/api/hosts/nas/instances/${ID}`;
+    const post = (app: Hono, method: string, p: string, body: unknown) =>
+      app.request(p, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const good = { scope: "user", list: "allow", rule: "Bash(git *)", expectedHash: null };
+    const routes: [string, string, string][] = [
+      ["POST", `${sbase}/permissions/rules`, `/api/instances/${ID}/permissions/rules`],
+      ["DELETE", `${sbase}/permissions/rules`, `/api/instances/${ID}/permissions/rules`],
+      ["POST", `${sbase}/sessions/${SID}/permissions/rules`, `/api/instances/${ID}/sessions/${SID}/permissions/rules`],
+      ["DELETE", `${sbase}/sessions/${SID}/permissions/rules`, `/api/instances/${ID}/sessions/${SID}/permissions/rules`],
+    ];
+    test("the four routes forward the body and the status", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 409, body: { error: "changed" } })) as any });
+      for (const [m, url] of routes) {
+        const r = await post(app, m, url, good);
+        expect(r.status).toBe(409);
+        expect(await r.json()).toEqual({ error: "changed" });
+      }
+      expect(calls.map((c) => [c[0], c[1]])).toEqual(routes.map(([m, , node]) => [m, node]));
+      expect(calls[0][2].json).toEqual(good);
+    });
+    test("an invalid body is 400 and nothing is forwarded", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (...a: any[]) => (calls.push(a), { status: 200, body: {} })) as any });
+      const bad: unknown[] = [
+        { ...good, scope: "managed" },
+        { ...good, scope: "legacy-local" },
+        { ...good, list: "nope" },
+        { ...good, rule: 5 },
+        { ...good, rule: "" },
+        { ...good, rule: "a\nb" },
+        { ...good, rule: "(x)" },
+        { ...good, rule: "B".repeat(2001) },
+        { ...good, expectedHash: 5 },
+        { scope: "user", list: "allow", rule: "Bash" },
+        [],
+      ];
+      for (const [m, url] of routes) for (const b of bad) expect((await post(app, m, url, b)).status).toBe(400);
+      expect((await app.request(routes[0]![1], { method: "POST", headers: { "content-type": "application/json" }, body: "{" })).status).toBe(400);
+      expect(calls).toEqual([]);
+    });
+    test("the audit line has the hub user and the rule, as one line", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+      try {
+        const app = build({ call: (async () => ({ status: 200, body: {} })) as any });
+        await post(app, "DELETE", `${sbase}/sessions/${SID}/permissions/rules`, { ...good, scope: "local", list: "deny", rule: "Bash(rm *)", expectedHash: "ab" });
+      } finally {
+        console.log = orig;
+      }
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200`]);
+    });
+    test("a HostError gives 502", async () => {
+      const app = build({ call: (async () => { throw new HostError("nas", "timeout"); }) as any });
+      expect((await post(app, "POST", routes[0]![1], good)).status).toBe(502);
+    });
+  });
   test("rejects bad ids and bad paths with 400", async () => {
     const app = build({});
     expect((await app.request(`/api/hosts/nas/instances/zz/sessions`)).status).toBe(400);

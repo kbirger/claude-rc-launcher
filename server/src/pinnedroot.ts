@@ -73,9 +73,13 @@ export class PinnedRoot {
    * Only the checked real root comes from here.
    */
   async permissions(o: { ownerUid?: number }): Promise<PermissionLayers> {
+    return (await this.settings(o)).layers();
+  }
+
+  /** The settings files that apply to this session (see settingsfile.ts). A route edits a rule through one of them. */
+  settings(o: { ownerUid?: number }): Promise<ClaudeSettings> {
     const catalog = this.session.instance.catalog;
-    const settings = await ClaudeSettings.forSession({ home: this.session.instance.home, root: this.real, platform: catalog.platform, ...(o.ownerUid !== undefined ? { ownerUid: o.ownerUid } : {}) });
-    return settings.layers();
+    return ClaudeSettings.forSession({ home: this.session.instance.home, root: this.real, platform: catalog.platform, ...(o.ownerUid !== undefined ? { ownerUid: o.ownerUid } : {}) });
   }
 
   /** One folder of the session folder. */
