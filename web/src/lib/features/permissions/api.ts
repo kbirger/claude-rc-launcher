@@ -39,3 +39,13 @@ export const getBlocked = (host: string, instance: string, session: string) => r
 
 /** True when the node has no permissions feature (404 or 501). */
 export const isUnsupported = (e: unknown): boolean => e instanceof ApiError && (e.status === 404 || e.status === 501);
+
+export type RuleEdit = { scope: "user" | "project" | "local"; list: "allow" | "ask" | "deny"; rule: string; expectedHash: string | null };
+
+const rulesUrl = (host: string, instance: string, session: string | undefined) =>
+  `${session === undefined ? instanceBase(host, instance) : sessionBase(host, instance, session)}/permissions/rules`;
+
+/** Adds a rule to one file. `expectedHash` is the hash of the file as the page saw it (null when the file does not exist). A changed file answers 409. */
+export const addRule = (host: string, instance: string, session: string | undefined, e: RuleEdit) => request<Layer>("POST", rulesUrl(host, instance, session), e);
+
+export const removeRule = (host: string, instance: string, session: string | undefined, e: RuleEdit) => request<Layer>("DELETE", rulesUrl(host, instance, session), e);

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Layer, Rule } from "./api";
-import { flatRules, scopeBadge } from "./format";
+import { confirmLine, flatRules, scopeBadge, scopeWarning, blockWarning, CLASSIFIER_WARNING, RELOAD_MESSAGE } from "./format";
 
 const rule = (list: Rule["list"], raw: string, scope: string, extra: Partial<Rule> = {}): Rule => ({ raw, list, tool: raw.split("(")[0]!, scope, ...extra });
 const layer = (scope: Layer["scope"], rules: Rule[], state: Layer["state"] = "ok"): Layer => ({ scope, path: `/${scope}.json`, writable: false, state, rules, warnings: [] });
@@ -41,4 +41,23 @@ test("a scope filter keeps only the rules that the file holds, and still lists a
 test("scopeBadge gives a short label for each scope", () => {
   expect(["user", "project", "local", "legacy-local", "managed"].map(scopeBadge)).toEqual(["User", "Project", "Local", "Local (older)", "Managed"]);
   expect(scopeBadge("other")).toBe("other");
+});
+
+test("the file warnings", () => {
+  expect(scopeWarning("user")).toBe("This applies to every project of this user.");
+  expect(scopeWarning("project")).toBe("This changes a file that git tracks. You must commit it.");
+  expect(scopeWarning("local")).toBeUndefined();
+});
+
+test("the block warnings: the classifier text, and nothing for the other reasons", () => {
+  expect(blockWarning("classifier")).toBe(CLASSIFIER_WARNING);
+  expect(CLASSIFIER_WARNING).toBe("The auto mode classifier denied this call. An allow rule may not change that.");
+  expect(blockWarning("needs_approval")).toBeUndefined();
+  expect(blockWarning("user_rejected")).toBeUndefined();
+  expect(RELOAD_MESSAGE).toBe("The file changed. Reload.");
+});
+
+test("the confirm line names the rule, the list and the path", () => {
+  expect(confirmLine("add", "Bash(ls)", "allow", "/p/.claude/settings.json")).toBe("Add `Bash(ls)` to Allow in `/p/.claude/settings.json`");
+  expect(confirmLine("remove", "Bash(ls)", "deny", "/x")).toBe("Remove `Bash(ls)` from Deny in `/x`");
 });

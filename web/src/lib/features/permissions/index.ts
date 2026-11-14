@@ -5,3 +5,7 @@ export { permissionsHref } from "./format";
 export { default as PermissionsLink } from "./PermissionsLink.svelte";
 export { default as PermissionsPage } from "./PermissionsPage.svelte";
 export { default as SessionPermissions } from "./SessionPermissions.svelte";
+export type { RuleEdit } from "./api";
+export { addRule, removeRule } from "./api";
+export { addRuleMutation, removeRuleMutation } from "./mutations";
+export { default as RuleSheet } from "./RuleSheet.svelte";

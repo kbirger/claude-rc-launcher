@@ -67,3 +67,22 @@ export function summaryOf(c: Pick<BlockedCall, "tool" | "input">): string {
 }
 
 export const permissionsHref = (host: string, instance: string): string => `/permissions?${new URLSearchParams({ host, instance })}`;
+
+export const CLASSIFIER_WARNING = "The auto mode classifier denied this call. An allow rule may not change that.";
+export const RELOAD_MESSAGE = "The file changed. Reload.";
+export const RETRY_NOTE = "The session needs a message to try again.";
+
+/** A warning about the file that the edit changes. */
+export function scopeWarning(scope: string): string | undefined {
+  if (scope === "user") return "This applies to every project of this user.";
+  if (scope === "project") return "This changes a file that git tracks. You must commit it.";
+  return undefined;
+}
+
+/** A warning about the call that was blocked. The user_rejected case is an extra tap, not a text. */
+export const blockWarning = (reason: BlockReason): string | undefined => (reason === "classifier" ? CLASSIFIER_WARNING : undefined);
+
+export const listLabel = (list: Rule["list"]): string => list[0]!.toUpperCase() + list.slice(1);
+
+export const confirmLine = (mode: "add" | "remove", rule: string, list: Rule["list"], path: string): string =>
+  mode === "add" ? `Add \`${rule}\` to ${listLabel(list)} in \`${path}\`` : `Remove \`${rule}\` from ${listLabel(list)} in \`${path}\``;
