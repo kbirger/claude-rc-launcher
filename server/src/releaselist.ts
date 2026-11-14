@@ -18,6 +18,7 @@ export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; 
   let cached: { list: ReleaseNote[]; at: number } | undefined;
   let failedAt: number | undefined;
   let inflight: Promise<ReleaseNote[] | undefined> | undefined;
+  let forcedAt: number | undefined;
 
   async function load(): Promise<ReleaseNote[]> {
     let res: Response;
@@ -85,12 +86,20 @@ export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; 
         const f = releaseOf(normalizeVersion(from));
         const t = releaseOf(normalizeVersion(to));
         if (f === undefined || t === undefined || compareVersions(f, t) >= 0) return { releases: [], complete: true };
-        const all = await list();
+        const before = cached?.at;
+        let all = await list();
+        // A cached list can be older than the release `to` (a node updated right after a publish). Refresh once, but not
+        // more often than the failure backoff, so a `to` that GitHub never lists cannot make a call to GitHub for every request.
+        const stale = all !== undefined && all[0] !== undefined && compareVersions(all[0].version, t) < 0;
+        if (stale && cached?.at === before && (forcedAt === undefined || now() - forcedAt >= failBackoffMs) && (failedAt === undefined || now() - failedAt >= failBackoffMs)) {
+          forcedAt = now();
+          all = await (inflight ?? (inflight = refresh()));
+        }
         if (!all) return { releases: [], complete: false };
         const releases = all.filter((r) => compareVersions(r.version, f) > 0 && compareVersions(r.version, t) <= 0);
         const newest = all[0];
         const oldest = all[all.length - 1];
-        const complete = newest !== undefined && oldest !== undefined && compareVersions(oldest.version, f) <= 0 && compareVersions(newest.version, f) >= 0;
+        const complete = newest !== undefined && oldest !== undefined && compareVersions(oldest.version, f) <= 0 && compareVersions(newest.version, f) >= 0 && compareVersions(newest.version, t) >= 0;
         return { releases, complete };
       } catch {
         return { releases: [], complete: false };

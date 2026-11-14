@@ -98,4 +98,39 @@ describe("createReleaseList", () => {
     expect(await down.list.between("0.22.3", "0.22.1")).toEqual({ releases: [], complete: true });
     expect(down.urls.length).toBe(0);
   });
+
+  test("a to above the newest cached release forces one refresh, and the new release makes the answer complete", async () => {
+    const s = setup();
+    await s.list.between("0.22.0", "0.22.3");
+    s.advance(10_000);
+    s.set([{ tag_name: "v0.23.0" }, ...four]);
+    const r = await s.list.between("0.22.3", "0.23.0");
+    expect(r.releases.map((x) => x.version)).toEqual(["0.23.0"]);
+    expect(r.complete).toBe(true);
+    expect(s.urls.length).toBe(2);
+  });
+
+  test("a to that stays unlisted gives complete false and does not fetch again inside 60 seconds", async () => {
+    const s = setup();
+    await s.list.between("0.22.0", "0.22.3");
+    s.advance(10_000);
+    const r = await s.list.between("0.22.1", "0.24.0");
+    expect(r.releases.map((x) => x.version)).toEqual(["0.22.3", "0.22.2"]);
+    expect(r.complete).toBe(false);
+    expect(s.urls.length).toBe(2);
+    s.advance(30_000);
+    expect((await s.list.between("0.22.1", "0.24.0")).complete).toBe(false);
+    expect(s.urls.length).toBe(2);
+    s.advance(31_000);
+    await s.list.between("0.22.1", "0.24.0");
+    expect(s.urls.length).toBe(3);
+  });
+
+  test("a to at or below the newest release makes no extra fetch", async () => {
+    const s = setup();
+    await s.list.between("0.22.0", "0.22.3");
+    await s.list.between("0.22.0", "0.22.2");
+    await s.list.between("0.22.1", "0.22.3");
+    expect(s.urls.length).toBe(1);
+  });
 });
