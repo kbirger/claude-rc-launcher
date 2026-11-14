@@ -273,6 +273,8 @@ installer zip, adds `SHA256SUMS`, creates the tag, and publishes the release wit
 published as a separate asset, because the one-line Windows install
 (`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name.
 
+A version with a hyphen, such as `1.0.0-rc.1`, is published as a pre-release and not as the latest release, so hubs do not offer it as an update.
+
 [git-cliff](https://git-cliff.org) works out the version and the notes from the commit messages since the last tag.
 The rules are in `cliff.toml`.
 

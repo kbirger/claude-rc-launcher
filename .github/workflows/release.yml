@@ -77,7 +77,7 @@ jobs:
           else
             tag="$GITHUB_REF_NAME"
             prev="$(git describe --tags --abbrev=0 --match 'v*' "$tag^" 2>/dev/null || true)"
-            cliff_args=(--latest)
+            cliff_args=(--current)
           fi
           if out="$(bunx git-cliff --config cliff.toml "${cliff_args[@]}")"; then
             if [ -z "${out//[[:space:]]/}" ]; then
@@ -94,7 +94,8 @@ jobs:
             echo
             cat "$notes"
           } | tee -a "$summary"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "true" ]; then
+          # A dispatch run publishes only when dry_run is exactly false. Any other value is a dry run.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" != "false" ]; then
             echo "Dry run: nothing is built or published."
             echo "Dry run: nothing is built or published." >> "$summary"
             echo "publish=false" >> "$GITHUB_OUTPUT"
@@ -140,4 +141,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         # On a dispatch run the tag does not exist yet. gh creates it at this commit.
-        run: gh release create "$RELEASE_TAG" dist/* --notes-file "$RUNNER_TEMP/notes.md" --title "$RELEASE_TAG" --target "$GITHUB_SHA"
+        # A version with a hyphen (1.0.0-rc.1) is a pre-release. It must not become the latest release, because every hub reads releases/latest.
+        run: |
+          flags=()
+          case "$RELEASE_TAG" in
+            *-*) flags=(--prerelease --latest=false) ;;
+          esac
+          gh release create "$RELEASE_TAG" dist/* --notes-file "$RUNNER_TEMP/notes.md" --title "$RELEASE_TAG" --target "$GITHUB_SHA" "${flags[@]}"
