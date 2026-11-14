@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
-  import { ToggleGroup, ToggleGroupItem } from "#lib/components/ui/toggle-group/index.js";
+  import * as Tabs from "#lib/components/ui/tabs/index.js";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
@@ -91,22 +91,26 @@
       {/if}
 
       {#if offered.length > 1}
-        <ToggleGroup type="single" variant="outline" aria-label="File" class="w-full" bind:value={() => layer?.scope ?? "", (v) => { if (v) picked = v; }}>
-          {#each offered as l (l.scope)}
-            <ToggleGroupItem value={l.scope} class="h-11 min-w-0 flex-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground">{scopeBadge(l.scope)}</ToggleGroupItem>
-          {/each}
-        </ToggleGroup>
+        <Tabs.Root value={layer?.scope ?? ""} onValueChange={(v) => { if (v) picked = v; }}>
+          <Tabs.List aria-label="File" class="group-data-horizontal/tabs:h-auto w-full">
+            {#each offered as l (l.scope)}
+              <Tabs.Trigger value={l.scope} class="h-11 text-sm">{scopeBadge(l.scope)}</Tabs.Trigger>
+            {/each}
+          </Tabs.List>
+        </Tabs.Root>
       {/if}
       {#each blocked as l (l.scope)}
         <p class="m-0 text-sm text-muted-foreground {wrap}">{scopeBadge(l.scope)}: {l.reason ?? "The node cannot tell where Claude Code keeps this file."} It cannot be changed here.</p>
       {/each}
       {#if offered.length === 0 && blocked.length === 0}<p class="m-0 text-sm text-muted-foreground">No file can be changed here.</p>{/if}
 
-      <ToggleGroup type="single" variant="outline" aria-label="List" class="w-full" disabled={mode === "remove"} bind:value={() => list, (v) => { if (v) list = v as typeof list; }}>
-        {#each LISTS as l (l)}
-          <ToggleGroupItem value={l} class="h-11 min-w-0 flex-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground">{listLabel(l)}</ToggleGroupItem>
-        {/each}
-      </ToggleGroup>
+      <Tabs.Root value={list} onValueChange={(v) => { if (v) list = v as typeof list; }}>
+        <Tabs.List aria-label="List" class="group-data-horizontal/tabs:h-auto w-full">
+          {#each LISTS as l (l)}
+            <Tabs.Trigger value={l} class="h-11 text-sm" disabled={mode === "remove"}>{listLabel(l)}</Tabs.Trigger>
+          {/each}
+        </Tabs.List>
+      </Tabs.Root>
 
       <label class="grid gap-1 text-sm font-medium">Rule
         <input aria-label="Rule" class="h-11 min-w-0 rounded-md border bg-background px-3 font-mono text-sm" bind:value={rule} readonly={mode === "remove"} autocapitalize="off" autocomplete="off" spellcheck="false" />

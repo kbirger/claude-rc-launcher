@@ -38,8 +38,8 @@ const trigger = (t: HTMLElement, name: string) => [...t.querySelectorAll<HTMLEle
 
 test("the tabs render Touched, Changed and Folder in a named tab list", async () => {
   const t = await show("touched");
-  expect(t.querySelector('[role="tablist"]')!.getAttribute("aria-label")).toBe("Session files");
-  expect(t.querySelectorAll('[role="tab"]')).toHaveLength(3);
+  expect(t.querySelectorAll('[aria-label="Session files"] [role="tab"]')).toHaveLength(3);
+  expect(t.querySelectorAll('[aria-label="Session sections"] [role="tab"]')).toHaveLength(2);
   expect(t.querySelector('[role="tabpanel"]')).not.toBeNull();
   // At least 44 px high: h-11 on each trigger.
   for (const e of t.querySelectorAll('[role="tab"]')) expect(e.className).toContain("h-11");
@@ -120,7 +120,8 @@ test("view=blocked selects Blocked and lists the blocked calls", async () => {
 
 test("the section buttons switch between Files and Permissions without a navigation", async () => {
   const t = await show("touched");
-  const button = (name: string) => [...t.querySelectorAll<HTMLElement>('nav[aria-label="Session sections"] button, nav[aria-label="Session sections"] a')].find((e) => e.textContent?.trim() === name)!;
+  const button = (name: string) => [...t.querySelectorAll<HTMLElement>('[aria-label="Session sections"] [role="tab"]')].find((e) => e.textContent?.trim() === name)!;
+  expect(button("Files").getAttribute("aria-selected")).toBe("true");
   button("Permissions").click();
   flushSync();
   expect(goto).not.toHaveBeenCalled();

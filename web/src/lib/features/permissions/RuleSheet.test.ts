@@ -41,7 +41,7 @@ const button = (label: string) => [...document.querySelectorAll("button")].find(
 const field = () => document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!;
 const type = (v: string) => { const f = field(); f.value = v; f.dispatchEvent(new Event("input", { bubbles: true })); flushSync(); };
 const group = (name: string) => document.querySelector(`[aria-label='${name}']`);
-const items = (name: string) => [...(group(name)?.querySelectorAll<HTMLElement>("[data-slot=toggle-group-item]") ?? [])];
+const items = (name: string) => [...(group(name)?.querySelectorAll<HTMLElement>("[role=tab]") ?? [])];
 const labels = (name: string) => items(name).map((i) => i.textContent?.trim());
 const pickFile = (label: string) => { items("File").find((i) => i.textContent?.trim() === label)!.click(); flushSync(); };
 const closed = () => document.querySelector("[data-testid=open]")?.textContent === "closed";
@@ -84,16 +84,16 @@ test("the chosen file is exposed on the selector, and a change to empty is ignor
   show({ initial: { raw: "Bash(ls)", list: "allow" } });
   const user = items("File")[0]!;
   const [, project] = items("File");
-  expect(user.getAttribute("aria-checked")).toBe("true");
+  expect(user.getAttribute("aria-selected")).toBe("true");
   user.click();
   flushSync();
-  expect(items("File")[0]!.getAttribute("aria-checked")).toBe("true");
+  expect(items("File")[0]!.getAttribute("aria-selected")).toBe("true");
   project!.click();
   flushSync();
-  expect(items("File")[1]!.getAttribute("aria-checked")).toBe("true");
+  expect(items("File")[1]!.getAttribute("aria-selected")).toBe("true");
   items("File")[1]!.click();
   flushSync();
-  expect(items("File")[1]!.getAttribute("aria-checked")).toBe("true");
+  expect(items("File")[1]!.getAttribute("aria-selected")).toBe("true");
   button("Save")!.click();
   await vi.waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]!.body.scope).toBe("project");
@@ -103,16 +103,16 @@ test("the list selector never goes empty", () => {
   show({ initial: { raw: "Bash(ls)", list: "ask" } });
   expect(labels("List")).toEqual(["Allow", "Ask", "Deny"]);
   const ask = () => items("List")[1]!;
-  expect(ask().getAttribute("aria-checked")).toBe("true");
+  expect(ask().getAttribute("aria-selected")).toBe("true");
   ask().click();
   flushSync();
-  expect(ask().getAttribute("aria-checked")).toBe("true");
+  expect(ask().getAttribute("aria-selected")).toBe("true");
 });
 
 test("the list selector is disabled in remove mode", () => {
   show({ mode: "remove", initial: { raw: "Read", list: "deny" } });
   expect(items("List")).toHaveLength(3);
-  expect(items("List").every((i) => i.hasAttribute("disabled") || i.getAttribute("aria-disabled") === "true" || i.getAttribute("data-disabled") !== null)).toBe(true);
+  expect(items("List").every((i) => (i as HTMLButtonElement).disabled)).toBe(true);
 });
 
 test("a file that cannot be changed is a plain note without a border box", () => {
@@ -378,8 +378,8 @@ test("the box is not shown when the sheet starts on a list other than allow", ()
   expect(box()).toBeNull();
 });
 
-test("only the chosen item of each selector has the on state", () => {
+test("only the chosen item of each selector is selected", () => {
   show({ initial: { raw: "Bash(ls)", list: "ask" } });
-  expect(items("File").map((i) => i.getAttribute("data-state"))).toEqual(["on", "off", "off"]);
-  expect(items("List").map((i) => i.getAttribute("data-state"))).toEqual(["off", "on", "off"]);
+  expect(items("File").map((i) => i.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+  expect(items("List").map((i) => i.getAttribute("aria-selected"))).toEqual(["false", "true", "false"]);
 });

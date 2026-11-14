@@ -66,11 +66,13 @@
         </div>
       </header>
     {/if}
-    <!-- Two sections. Buttons and not tabs: five tabs do not fit on a phone, and the file tabs keep their own tab list. -->
-    <nav aria-label="Session sections" class="flex gap-2">
-      <Button variant={inPermissions ? "ghost" : "secondary"} size="sm" class="h-11 flex-1" aria-current={inPermissions ? undefined : "page"} onclick={() => pick(inPermissions ? "touched" : current)}>Files</Button>
-      <Button variant={inPermissions ? "secondary" : "ghost"} size="sm" class="h-11 flex-1" aria-current={inPermissions ? "page" : undefined} onclick={() => pick(inPermissions ? current : "permissions")}>Permissions</Button>
-    </nav>
+    <!-- Two sections. The selection follows the URL; a change navigates, and the file tabs below keep their own tab list. -->
+    <Tabs.Root value={inPermissions ? "permissions" : "files"} onValueChange={(v) => pick(v === "permissions" ? "permissions" : "touched")}>
+      <Tabs.List aria-label="Session sections" class="group-data-horizontal/tabs:h-auto w-full">
+        <Tabs.Trigger value="files" class="h-11 text-sm">Files</Tabs.Trigger>
+        <Tabs.Trigger value="permissions" class="h-11 text-sm">Permissions</Tabs.Trigger>
+      </Tabs.List>
+    </Tabs.Root>
   {/if}
 
   {#if abs}

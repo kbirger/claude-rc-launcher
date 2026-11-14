@@ -133,7 +133,7 @@ test("the Add rule button opens the sheet in add mode with every writable file",
   show([wlayer("user", []), wlayer("project", []), wlayer("managed", [], { writable: false })]);
   press("Add rule");
   expect(body()).toContain("Add a rule");
-  expect([...document.querySelectorAll("[aria-label=File] [data-slot=toggle-group-item]")].map((i) => i.textContent?.trim())).toEqual(["User", "Project"]);
+  expect([...document.querySelectorAll("[aria-label=File] [role=tab]")].map((i) => i.textContent?.trim())).toEqual(["User", "Project"]);
 });
 
 test("a rule in a writable file has a remove that opens the remove sheet", () => {
