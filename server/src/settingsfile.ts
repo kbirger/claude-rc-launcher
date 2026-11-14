@@ -14,8 +14,9 @@
  *   managed       /etc/claude-code/managed-settings.json on Linux (read-only)
  * The layers are listed with the highest precedence first: managed, local, legacy-local, project, user.
  */
-import { chown, lstat, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readlink, realpath, type FileHandle } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { markShadowed, parseRule, rulesOf, withRule, withoutRule, type MarkedRule, type RuleList } from "./permrules";
 import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 
@@ -67,7 +68,14 @@ export class SettingsFile {
   constructor(
     readonly scope: LayerScope,
     readonly path: string | null,
-    private readonly opts: { unknownReason?: string; ownerUid?: number } = {},
+    private readonly opts: {
+      unknownReason?: string;
+      ownerUid?: number;
+      /** Tests: replace the root check, the chown and the handle-path lookup of the folder step. */
+      isRoot?: () => boolean;
+      chown?: (fh: FileHandle, uid: number, gid: number) => Promise<void>;
+      verifyPath?: (fh: FileHandle) => Promise<string>;
+    } = {},
   ) {}
 
   private get writable(): boolean {
@@ -112,16 +120,41 @@ export class SettingsFile {
     });
   }
 
+  /**
+   * Makes the `.claude` folder of a new file, one level only. The parent must be a real folder (lstat: not a symlink) of the
+   * instance user. The new folder is opened with O_DIRECTORY|O_NOFOLLOW and checked through the handle: a folder, made by
+   * this process, at the expected place (/proc/self/fd on Linux). Only then does a root node chown it, through the handle,
+   * so a path that the user swaps for a symlink in between is never followed. Anything wrong gives 403. Nothing that this
+   * function did not create is removed or changed. A parent that is swapped after its check is a gap that we accept.
+   */
   private async makeFolder(dir: string): Promise<void> {
-    if (await lstat(dir).then(() => true, () => false)) return;
+    if (await lstat(dir).then(() => true, () => false)) return; // the write checks an existing entry (a symlink is refused)
     const parent = await lstat(dirname(dir)).catch(() => null);
-    if (!parent || !parent.isDirectory()) return; // the write refuses it
-    if (this.opts.ownerUid !== undefined && parent.uid !== this.opts.ownerUid) return;
+    if (!parent || !parent.isDirectory()) throw new SettingsError(403, "its folder is not a real folder");
+    if (this.opts.ownerUid !== undefined && parent.uid !== this.opts.ownerUid) throw new SettingsError(403, "its folder is owned by another user");
     try {
       await mkdir(dir, { mode: 0o700 });
-      if (process.getuid?.() === 0 && this.opts.ownerUid !== undefined) await chown(dir, this.opts.ownerUid, parent.gid);
     } catch {
-      // the write refuses a missing folder
+      throw new SettingsError(403, "its folder cannot be made");
+    }
+    let fh: FileHandle | undefined;
+    try {
+      fh = await open(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      const st = await fh.stat();
+      if (!st.isDirectory() || st.uid !== process.getuid?.()) throw new Error("not the folder that was made");
+      if (process.platform === "linux") {
+        const expected = join(await realpath(dirname(dir)), basename(dir));
+        const opened = await (this.opts.verifyPath ?? ((h: FileHandle) => readlink(`/proc/self/fd/${h.fd}`)))(fh);
+        if (opened !== expected) throw new Error("not at the expected place");
+      }
+      const isRoot = this.opts.isRoot ?? (() => process.getuid?.() === 0);
+      if (isRoot() && this.opts.ownerUid !== undefined) {
+        await (this.opts.chown ?? ((h, uid, gid) => h.chown(uid, gid)))(fh, this.opts.ownerUid, parent.gid);
+      }
+    } catch {
+      throw new SettingsError(403, "its folder is not safe to use");
+    } finally {
+      await fh?.close().catch(() => {});
     }
   }
 

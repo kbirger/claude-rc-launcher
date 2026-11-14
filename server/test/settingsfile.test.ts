@@ -381,3 +381,63 @@ describe("SettingsFile.addRule and removeRule", () => {
     expect(s.file("project")).toBeUndefined();
   });
 });
+
+describe("SettingsFile folder step", () => {
+  const me = process.getuid?.() ?? 0;
+  const add = (f: SettingsFile) => f.addRule({ list: "allow", raw: "Read", expectedHash: null });
+
+  test("a missing .claude folder is created and the chown goes through a handle, not a path", async () => {
+    const calls: { target: unknown; uid: number; gid: number }[] = [];
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), {
+      ownerUid: me,
+      isRoot: () => true,
+      chown: async (fh, uid, gid) => void calls.push({ target: fh, uid, gid }),
+    });
+    expect((await add(f)).state).toBe("ok");
+    expect(calls).toHaveLength(1);
+    expect(typeof calls[0]!.target).toBe("object");
+    expect(typeof (calls[0]!.target as { fd: number }).fd).toBe("number");
+    expect(calls[0]!.uid).toBe(me);
+    expect((await lstat(join(home, ".claude"))).isDirectory()).toBe(true);
+  });
+
+  test("no chown when the node is not root", async () => {
+    let n = 0;
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid: me, isRoot: () => false, chown: async () => void n++ });
+    await add(f);
+    expect(n).toBe(0);
+  });
+
+  test("a symlinked parent is refused with 403 and nothing is made behind the link", async () => {
+    const real = join(home, "real");
+    await mkdir(real);
+    await symlink(real, join(home, "link"));
+    expect(await status(add(new SettingsFile("project", join(home, "link", ".claude", "settings.json"), { ownerUid: me })))).toBe(403);
+    expect(await lstat(join(real, ".claude")).catch(() => null)).toBeNull();
+  });
+
+  test("a parent owned by another uid is refused with 403 and no folder is made", async () => {
+    expect(await status(add(new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid: me + 1 })))).toBe(403);
+    expect(await lstat(join(home, ".claude")).catch(() => null)).toBeNull();
+  });
+
+  test("a .claude that is a dangling symlink is refused with 403 and its target is not made", async () => {
+    const gone = join(home, "gone");
+    await symlink(gone, join(home, ".claude"));
+    expect(await status(add(new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid: me })))).toBe(403);
+    expect(await lstat(gone).catch(() => null)).toBeNull();
+  });
+
+  test("a failed check after mkdir refuses the write and does not chown", async () => {
+    let n = 0;
+    const f = new SettingsFile("user", join(home, ".claude", "settings.json"), {
+      ownerUid: me,
+      isRoot: () => true,
+      chown: async () => void n++,
+      // the handle must be at the expected place: pretend it is not
+      verifyPath: async () => "/elsewhere",
+    });
+    expect(await status(add(f))).toBe(403);
+    expect(n).toBe(0);
+  });
+});
