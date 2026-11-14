@@ -44,7 +44,7 @@ On 2026-11-14 a throwaway `claude -p` session in default permission mode had a `
 - A message on the inbox socket starts a new turn in an idle session. The wire format is an optional auth line, then `{"type":"user","message":{"role":"user","content":"..."}}`. On Linux the auth line is optional, so the node does not need the token.
 - The denial text for a call that needs approval is in the transcript as a `tool_result` with `is_error: true`.
 
-Not proven: whether an allow rule clears a denial made by the auto mode classifier. The first task of Phase 2 is to test it.
+Still not proven: whether an allow rule clears a denial made by the auto mode classifier. On 2026-11-14 the Phase 2 spike ran three throwaway `claude -p --permission-mode auto` sessions in a temp git folder, asking for a force push to a local bare repo, a `curl | bash` against a closed local port, and a vague request to rewrite a shared branch. The classifier never denied any of them, so there was no denial to clear. The result is inconclusive, and the interface keeps its warning that a classifier denial may stay in place after the user adds an allow rule.
 
 ## Approaches considered
 
