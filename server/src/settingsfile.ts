@@ -2,7 +2,7 @@
  * The Claude Code settings files that hold permission rules. See docs/superpowers/specs/2026-11-14-permissions-design.md.
  *
  * SettingsFile is one file. ClaudeSettings is the set of files that apply to one home folder or to one session.
- * This file only READS in Phase 1. A user controls the files and the folders around them, so every read goes through
+ * A user controls the files and the folders around them, so every read goes through
  * readUserFile (no hard link, no FIFO, size cap). It follows a symlink to the real file and requires the real file to be
  * owned by the instance user, so a link cannot name another user's file.
  *
@@ -14,10 +14,10 @@
  *   managed       /etc/claude-code/managed-settings.json on Linux (read-only)
  * The layers are listed with the highest precedence first: managed, local, legacy-local, project, user.
  */
-import { lstat } from "node:fs/promises";
+import { chown, lstat, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { markShadowed, rulesOf, type MarkedRule } from "./permrules";
-import { readUserFile } from "./safefile";
+import { markShadowed, parseRule, rulesOf, withRule, withoutRule, type MarkedRule, type RuleList } from "./permrules";
+import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 
 export type LayerScope = "user" | "project" | "local" | "legacy-local" | "managed";
 
@@ -25,7 +25,7 @@ export type Layer = {
   scope: LayerScope;
   /** Null when the node cannot tell where Claude Code puts the file. */
   path: string | null;
-  /** False for every layer in Phase 1. */
+  /** True for user, project and local when the path is known. False for managed and legacy-local. */
   writable: boolean;
   state: "ok" | "missing" | "invalid" | "unknown-path";
   /** For `invalid` and `unknown-path`. */
@@ -42,15 +42,40 @@ export type PermissionLayers = { layers: Layer[] };
 
 export const MANAGED_PATH_LINUX = "/etc/claude-code/managed-settings.json";
 
+/** A failed edit. `status` is the HTTP status that a route maps it to. */
+export class SettingsError extends Error {
+  constructor(readonly status: 400 | 403 | 404 | 409 | 422, message: string) {
+    super(message);
+    this.name = "SettingsError";
+  }
+}
+
+const WRITABLE_SCOPES: readonly LayerScope[] = ["user", "project", "local"];
+const MAX_RULE_CHARS = 2000;
+const RULE_LISTS: readonly string[] = ["allow", "ask", "deny"];
+
+function checkRule(list: string, raw: unknown): asserts raw is string {
+  if (!RULE_LISTS.includes(list)) throw new SettingsError(400, "the list must be allow, ask or deny");
+  if (typeof raw !== "string" || raw.length === 0) throw new SettingsError(400, "the rule is empty");
+  if (raw.length > MAX_RULE_CHARS) throw new SettingsError(400, `the rule is longer than ${MAX_RULE_CHARS} characters`);
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(raw)) throw new SettingsError(400, "the rule has a control character");
+  if (!parseRule(raw)) throw new SettingsError(400, "the rule is malformed: use Tool or Tool(specifier)");
+}
+
 export class SettingsFile {
   constructor(
     readonly scope: LayerScope,
     readonly path: string | null,
-    private readonly opts: { writable?: boolean; unknownReason?: string; ownerUid?: number } = {},
+    private readonly opts: { unknownReason?: string; ownerUid?: number } = {},
   ) {}
 
+  private get writable(): boolean {
+    return this.path !== null && WRITABLE_SCOPES.includes(this.scope);
+  }
+
   private layer(state: Layer["state"], extra: Partial<Layer> = {}): Layer {
-    return { scope: this.scope, path: this.path, writable: this.opts.writable ?? false, state, rules: [], warnings: [], ...extra };
+    return { scope: this.scope, path: this.path, writable: this.writable, state, rules: [], warnings: [], ...extra };
   }
 
   /** Never throws. A bad file gives state `invalid` with a reason. */
@@ -70,6 +95,86 @@ export class SettingsFile {
     if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return this.layer("invalid", { reason: "it is not a JSON object" });
     const { rules, warnings } = rulesOf(doc as Record<string, unknown>);
     return this.layer("ok", { hash: r.hash, ...(r.realPath !== undefined && r.realPath !== path ? { resolvedPath: r.realPath } : {}), warnings, rules: rules.map((rule) => ({ ...rule, scope: this.scope })) });
+  }
+
+  async addRule(o: { list: RuleList; raw: string; expectedHash: string | null }): Promise<Layer> {
+    checkRule(o.list, o.raw);
+    return this.edit(o.expectedHash, (text) => withRule(text, o.list, o.raw));
+  }
+
+  async removeRule(o: { list: RuleList; raw: string; expectedHash: string }): Promise<Layer> {
+    checkRule(o.list, o.raw);
+    return this.edit(o.expectedHash, (text) => {
+      if (text === null) throw new SettingsError(404, "the file does not exist");
+      const r = withoutRule(text, o.list, o.raw);
+      if (!r.changed) throw new SettingsError(404, "the rule is not in the file");
+      return r;
+    });
+  }
+
+  private async makeFolder(dir: string): Promise<void> {
+    if (await lstat(dir).then(() => true, () => false)) return;
+    const parent = await lstat(dirname(dir)).catch(() => null);
+    if (!parent || !parent.isDirectory()) return; // the write refuses it
+    if (this.opts.ownerUid !== undefined && parent.uid !== this.opts.ownerUid) return;
+    try {
+      await mkdir(dir, { mode: 0o700 });
+      if (process.getuid?.() === 0 && this.opts.ownerUid !== undefined) await chown(dir, this.opts.ownerUid, parent.gid);
+    } catch {
+      // the write refuses a missing folder
+    }
+  }
+
+  /**
+   * Reads the file, applies `change` to its text and writes the result to the real file behind the path (a symlink stays).
+   * `expectedHash` is what the caller saw. It is checked here for a clear error and again inside the write, which is
+   * the check that cannot race. Returns the layer read back after the write.
+   */
+  private async edit(expectedHash: string | null, change: (text: string | null) => { text: string; changed: boolean }): Promise<Layer> {
+    const path = this.path;
+    if (path === null) throw new SettingsError(403, this.opts.unknownReason ?? "the path is not known");
+    if (!this.writable) throw new SettingsError(403, `the ${this.scope} settings file is read-only`);
+    const ownerOpt = this.opts.ownerUid !== undefined ? { ownerUid: this.opts.ownerUid } : {};
+    const r = await readUserFile(path, { follow: true, ...ownerOpt });
+    if (r.kind === "invalid") throw new SettingsError(422, `the file cannot be edited: ${r.reason}`);
+    let text: string | null = null;
+    if (r.kind === "ok") {
+      text = r.bytes.toString("utf8");
+      let doc: unknown;
+      try {
+        doc = JSON.parse(text);
+      } catch {
+        throw new SettingsError(422, "the file cannot be edited: it is not valid JSON");
+      }
+      if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new SettingsError(422, "the file cannot be edited: it is not a JSON object");
+    }
+    if ((r.kind === "ok" ? r.hash : null) !== expectedHash) throw new SettingsError(409, "the file changed since it was read");
+    let next: { text: string; changed: boolean };
+    try {
+      next = change(text);
+    } catch (e) {
+      if (e instanceof SettingsError) throw e;
+      throw new SettingsError(422, `the file cannot be edited: ${(e as Error).message}`);
+    }
+    if (!next.changed) return this.read();
+    const target = r.kind === "ok" && r.realPath !== undefined ? r.realPath : path;
+    // A new file may need its `.claude` folder (one level only, never a path). As root the folder goes to the instance user.
+    if (r.kind === "missing") await this.makeFolder(dirname(target));
+    // A new file gets the group of its folder. The folder is the instance user's (the write checks that).
+    let gid: number | undefined;
+    try {
+      gid = (await lstat(dirname(target))).gid;
+    } catch {
+      gid = undefined;
+    }
+    try {
+      await writeUserFile(target, Buffer.from(next.text, "utf8"), { ...ownerOpt, ...(gid !== undefined ? { gid } : {}), expectedHash, follow: true });
+    } catch (e) {
+      if (e instanceof FileConflict) throw new SettingsError(409, "the file changed since it was read");
+      if (e instanceof FileRefused) throw new SettingsError(403, e.reason);
+      throw e;
+    }
+    return this.read();
   }
 }
 
@@ -121,6 +226,11 @@ export class ClaudeSettings {
     return new ClaudeSettings([new SettingsFile("user", join(o.home, ".claude", "settings.json"), { ownerUid: o.ownerUid })]);
   }
 
+  /** The file of one scope, if this set has one. */
+  file(scope: LayerScope): SettingsFile | undefined {
+    return this.files.find((f) => f.scope === scope);
+  }
+
   /**
    * All the files that apply to a session. `root` is the checked real root of the session folder (Session.open).
    * `managedPath` replaces the Linux managed file path (tests).
@@ -130,7 +240,7 @@ export class ClaudeSettings {
     const platform = o.platform ?? process.platform;
     const found = await findGitRoot(root, home, ownerUid);
     const files: SettingsFile[] = [];
-    if (platform === "linux") files.push(new SettingsFile("managed", o.managedPath ?? MANAGED_PATH_LINUX, { writable: false }));
+    if (platform === "linux") files.push(new SettingsFile("managed", o.managedPath ?? MANAGED_PATH_LINUX, {}));
     files.push(
       "root" in found
         ? new SettingsFile("local", join(found.root, ".claude", "settings.local.json"), { ownerUid })

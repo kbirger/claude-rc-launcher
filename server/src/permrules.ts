@@ -72,3 +72,55 @@ export function markShadowed(layers: { scope: string; rules: Rule[] }[]): Marked
   }
   return out;
 }
+
+/** The indent of the first indented line: "\t", or the number of spaces. Two spaces when there is none. */
+export function detectIndent(text: string): string | number {
+  const m = /^([ \t]+)\S/m.exec(text);
+  if (!m) return 2;
+  const ws = m[1]!;
+  return ws.startsWith("\t") ? "\t" : ws.length;
+}
+
+function parseDoc(text: string): Record<string, unknown> {
+  const doc: unknown = JSON.parse(text);
+  if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new Error("the settings document is not a JSON object");
+  return doc as Record<string, unknown>;
+}
+
+/** The permissions object and the list in it. Creates them when `create` is true. Throws when one has the wrong type. */
+function listOf(doc: Record<string, unknown>, list: RuleList, create: boolean): unknown[] | undefined {
+  let perms = doc.permissions;
+  if (perms === undefined) {
+    if (!create) return undefined;
+    perms = doc.permissions = {};
+  }
+  if (typeof perms !== "object" || perms === null || Array.isArray(perms)) throw new Error("permissions is not an object");
+  const p = perms as Record<string, unknown>;
+  let arr = p[list];
+  if (arr === undefined) {
+    if (!create) return undefined;
+    arr = p[list] = [];
+  }
+  if (!Array.isArray(arr)) throw new Error(`permissions.${list} is not an array`);
+  return arr;
+}
+
+/** Adds `raw` to a list. Keeps unknown keys, key order and the indent. A rule that is already there gives `changed: false`. */
+export function withRule(text: string | null, list: RuleList, raw: string): { text: string; changed: boolean } {
+  if (text === null) return { text: JSON.stringify({ permissions: { [list]: [raw] } }, null, 2) + "\n", changed: true };
+  const doc = parseDoc(text);
+  const arr = listOf(doc, list, false);
+  if (arr?.includes(raw)) return { text, changed: false };
+  listOf(doc, list, true)!.push(raw);
+  return { text: JSON.stringify(doc, null, detectIndent(text)) + "\n", changed: true };
+}
+
+/** Removes `raw` from a list. The list stays, even when empty. A rule that is not there gives `changed: false`. */
+export function withoutRule(text: string, list: RuleList, raw: string): { text: string; changed: boolean } {
+  const doc = parseDoc(text);
+  const arr = listOf(doc, list, false);
+  if (!arr?.includes(raw)) return { text, changed: false };
+  const kept = arr.filter((e) => e !== raw);
+  (doc.permissions as Record<string, unknown>)[list] = kept;
+  return { text: JSON.stringify(doc, null, detectIndent(text)) + "\n", changed: true };
+}

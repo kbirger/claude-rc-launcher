@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatRule, markShadowed, parseRule, rulesOf, type Rule } from "../src/permrules";
+import { detectIndent, formatRule, markShadowed, parseRule, rulesOf, withRule, withoutRule, type Rule } from "../src/permrules";
 
 describe("parseRule", () => {
   test("a rule with a specifier", () => {
@@ -87,5 +87,70 @@ describe("markShadowed", () => {
   test("deny and ask rules are never marked", () => {
     const out = markShadowed([{ scope: "a", rules: [r("deny", "Bash(x)"), r("ask", "Bash(x)")] }]);
     expect(out.every((x) => x.shadowedBy === undefined)).toBe(true);
+  });
+});
+
+describe("withRule and withoutRule", () => {
+  test("a 4-space file keeps 4 spaces after an add", () => {
+    const t = '{\n    "permissions": {\n        "allow": [\n            "Read"\n        ]\n    }\n}\n';
+    const r = withRule(t, "allow", "Bash(ls *)");
+    expect(r.changed).toBe(true);
+    expect(r.text).toBe('{\n    "permissions": {\n        "allow": [\n            "Read",\n            "Bash(ls *)"\n        ]\n    }\n}\n');
+  });
+  test("a tab-indented file keeps tabs", () => {
+    const r = withRule('{\n\t"permissions": {\n\t\t"allow": ["Read"]\n\t}\n}\n', "allow", "Edit");
+    expect(r.text).toContain('\n\t"permissions": {\n\t\t"allow": [\n\t\t\t"Read",');
+    expect(detectIndent('{\n\t"a": 1\n}')).toBe("\t");
+  });
+  test("indent defaults to 2", () => {
+    expect(detectIndent("{}")).toBe(2);
+    expect(detectIndent('{"a":1}')).toBe(2);
+  });
+  test("unknown keys and key order stay", () => {
+    const t = '{"z": 1, "permissions": {"deny": ["X"], "extra": true, "allow": []}, "a": {"b": 2}}';
+    const doc = JSON.parse(withRule(t, "allow", "Read").text);
+    expect(Object.keys(doc)).toEqual(["z", "permissions", "a"]);
+    expect(Object.keys(doc.permissions)).toEqual(["deny", "extra", "allow"]);
+    expect(doc.permissions.deny).toEqual(["X"]);
+    expect(doc.permissions.extra).toBe(true);
+    expect(doc.a).toEqual({ b: 2 });
+  });
+  test("a missing permissions key is created", () => {
+    const doc = JSON.parse(withRule('{"model":"x"}', "ask", "Bash").text);
+    expect(doc).toEqual({ model: "x", permissions: { ask: ["Bash"] } });
+  });
+  test("a missing list is created", () => {
+    expect(JSON.parse(withRule('{"permissions":{"allow":["A"]}}', "deny", "B").text).permissions).toEqual({ allow: ["A"], deny: ["B"] });
+  });
+  test("a duplicate gives changed false and the same text", () => {
+    const t = '{"permissions":{"allow":["Read"]}}';
+    expect(withRule(t, "allow", "Read")).toEqual({ text: t, changed: false });
+  });
+  test("withRule(null) gives a two-space document with a trailing newline", () => {
+    expect(withRule(null, "allow", "Read")).toEqual({ text: '{\n  "permissions": {\n    "allow": [\n      "Read"\n    ]\n  }\n}\n', changed: true });
+  });
+  test("the text ends with a newline", () => {
+    expect(withRule("{}", "allow", "Read").text.endsWith("}\n")).toBe(true);
+  });
+  test("removing the last rule leaves an empty list", () => {
+    const r = withoutRule('{"permissions":{"allow":["Read"]}}', "allow", "Read");
+    expect(r.changed).toBe(true);
+    expect(JSON.parse(r.text)).toEqual({ permissions: { allow: [] } });
+  });
+  test("removing an absent rule gives changed false", () => {
+    const t = '{"permissions":{"allow":["Read"]}}';
+    expect(withoutRule(t, "allow", "Edit")).toEqual({ text: t, changed: false });
+    expect(withoutRule("{}", "allow", "Edit")).toEqual({ text: "{}", changed: false });
+  });
+  test("removal keeps the other rules and lists", () => {
+    const doc = JSON.parse(withoutRule('{"permissions":{"allow":["A","B"],"deny":["A"]}}', "allow", "A").text);
+    expect(doc.permissions).toEqual({ allow: ["B"], deny: ["A"] });
+  });
+  test("a root that is not an object throws", () => {
+    expect(() => withRule("[]", "allow", "Read")).toThrow();
+    expect(() => withoutRule("5", "allow", "Read")).toThrow();
+  });
+  test("a list that is not an array throws", () => {
+    expect(() => withRule('{"permissions":{"allow":"x"}}', "allow", "Read")).toThrow();
   });
 });

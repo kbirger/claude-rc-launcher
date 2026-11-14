@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ClaudeSettings, SettingsFile } from "../src/settingsfile";
+import { ClaudeSettings, SettingsError, SettingsFile } from "../src/settingsfile";
 
 let home: string;
 beforeEach(async () => {
@@ -26,7 +26,7 @@ describe("SettingsFile.read", () => {
     expect(l.scope).toBe("user");
     expect(l.state).toBe("ok");
     expect(l.path).toBe(p);
-    expect(l.writable).toBe(false);
+    expect(l.writable).toBe(true);
     expect(l.hash).toMatch(/^[0-9a-f]{64}$/);
     expect(l.rules.map((r) => r.raw)).toEqual(["Bash(ls *)", "Read"]);
     expect(l.rules[0]!.scope).toBe("user");
@@ -238,5 +238,146 @@ describe("a home folder reached through a symlink", () => {
     const { layers } = await ClaudeSettings.forHome({ home: viaLink }).layers();
     expect(layers[0]).toMatchObject({ state: "ok" });
     expect(layers[0]!.rules.map((r) => r.raw)).toEqual(["A"]);
+  });
+});
+
+describe("writable", () => {
+  test("user, project and local with a path are writable, managed and legacy-local are not", async () => {
+    const root = join(home, "proj");
+    await mkdir(join(root, ".git"), { recursive: true });
+    const sub = join(root, "sub");
+    await mkdir(sub);
+    const s = await ClaudeSettings.forSession({ home, root: sub, platform: "linux", managedPath: join(home, "m.json") });
+    const { layers } = await s.layers();
+    expect(Object.fromEntries(layers.map((l) => [l.scope, l.writable]))).toEqual({ managed: false, local: true, "legacy-local": false, project: true, user: true });
+  });
+  test("a local layer with an unknown path is not writable", async () => {
+    const root = join(home, "nogit");
+    await mkdir(root);
+    const { layers } = await (await ClaudeSettings.forSession({ home, root, platform: "linux" })).layers();
+    expect(layers.find((l) => l.scope === "local")!.writable).toBe(false);
+  });
+});
+
+async function status(p: Promise<unknown>): Promise<number | undefined> {
+  try {
+    await p;
+  } catch (e) {
+    if (e instanceof SettingsError) return e.status;
+    throw e;
+  }
+  return undefined;
+}
+
+describe("SettingsFile.addRule and removeRule", () => {
+  const userPath = () => join(home, ".claude", "settings.json");
+  const file = () => new SettingsFile("user", userPath());
+
+  test("an add, then a read, shows the rule with a new hash", async () => {
+    await put(userPath(), perms({ allow: ["Read"] }));
+    const before = await file().read();
+    const l = await file().addRule({ list: "allow", raw: "Bash(ls *)", expectedHash: before.hash! });
+    expect(l.rules.map((r) => r.raw)).toEqual(["Read", "Bash(ls *)"]);
+    expect(l.hash).not.toBe(before.hash);
+    expect((await file().read()).hash).toBe(l.hash);
+  });
+
+  test("a stale expectedHash gives 409 and the file stays unchanged", async () => {
+    await put(userPath(), perms({ allow: ["Read"] }));
+    const before = await readFile(userPath(), "utf8");
+    expect(await status(file().addRule({ list: "allow", raw: "Edit", expectedHash: "0".repeat(64) }))).toBe(409);
+    expect(await readFile(userPath(), "utf8")).toBe(before);
+  });
+
+  test("expectedHash null creates a missing file", async () => {
+    const l = await file().addRule({ list: "deny", raw: "Bash(rm *)", expectedHash: null });
+    expect(l.state).toBe("ok");
+    expect(l.rules.map((r) => [r.list, r.raw])).toEqual([["deny", "Bash(rm *)"]]);
+    expect(await readFile(userPath(), "utf8")).toBe('{\n  "permissions": {\n    "deny": [\n      "Bash(rm *)"\n    ]\n  }\n}\n');
+  });
+
+  test("expectedHash null on an existing file gives 409", async () => {
+    await put(userPath(), perms({ allow: ["Read"] }));
+    expect(await status(file().addRule({ list: "allow", raw: "Edit", expectedHash: null }))).toBe(409);
+  });
+
+  test("managed, legacy-local and unknown-path give 403", async () => {
+    const p = join(home, "x.json");
+    await put(p, perms({}));
+    expect(await status(new SettingsFile("managed", p).addRule({ list: "allow", raw: "Read", expectedHash: null }))).toBe(403);
+    expect(await status(new SettingsFile("legacy-local", p).addRule({ list: "allow", raw: "Read", expectedHash: null }))).toBe(403);
+    expect(await status(new SettingsFile("local", null).addRule({ list: "allow", raw: "Read", expectedHash: null }))).toBe(403);
+    expect(await status(new SettingsFile("managed", p).removeRule({ list: "allow", raw: "Read", expectedHash: "x" }))).toBe(403);
+  });
+
+  test("an invalid file gives 422 and is not overwritten", async () => {
+    await put(userPath(), "{ nope");
+    expect(await status(file().addRule({ list: "allow", raw: "Read", expectedHash: null }))).toBe(422);
+    expect(await readFile(userPath(), "utf8")).toBe("{ nope");
+    await put(userPath(), '{"permissions":{"allow":"x"}}');
+    const h = (await file().read()).hash!;
+    expect(await status(file().addRule({ list: "allow", raw: "Read", expectedHash: h }))).toBe(422);
+  });
+
+  test("bad rule text gives 400", async () => {
+    await put(userPath(), perms({}));
+    const h = (await file().read()).hash!;
+    for (const raw of ["", "(x)", "Bash(ls", "Bash\n", "Ba\u0000sh", "A".repeat(2001)]) {
+      expect(await status(file().addRule({ list: "allow", raw, expectedHash: h }))).toBe(400);
+    }
+    expect(await status(file().addRule({ list: "nope" as "allow", raw: "Read", expectedHash: h }))).toBe(400);
+  });
+
+  test("a rule of 2000 characters is accepted", async () => {
+    const raw = "A".repeat(2000);
+    const l = await file().addRule({ list: "allow", raw, expectedHash: null });
+    expect(l.rules[0]!.raw).toBe(raw);
+  });
+
+  test("a symlinked file stays a symlink after an add and the target changes", async () => {
+    const real = join(home, "dotfiles", "settings.json");
+    await put(real, perms({ allow: ["Read"] }));
+    await mkdir(dirname(userPath()), { recursive: true });
+    await symlink(real, userPath());
+    const before = await file().read();
+    expect(before.resolvedPath).toBeDefined();
+    const l = await file().addRule({ list: "allow", raw: "Edit", expectedHash: before.hash! });
+    expect((await lstat(userPath())).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(await readFile(real, "utf8")).permissions.allow).toEqual(["Read", "Edit"]);
+    expect(l.rules.map((r) => r.raw)).toEqual(["Read", "Edit"]);
+  });
+
+  test("a duplicate add changes nothing and returns the layer", async () => {
+    await put(userPath(), perms({ allow: ["Read"] }));
+    const before = await file().read();
+    const l = await file().addRule({ list: "allow", raw: "Read", expectedHash: before.hash! });
+    expect(l.hash).toBe(before.hash);
+  });
+
+  test("a remove drops the rule and keeps the empty list", async () => {
+    await put(userPath(), perms({ allow: ["Read"], deny: ["Bash"] }));
+    const before = await file().read();
+    const l = await file().removeRule({ list: "allow", raw: "Read", expectedHash: before.hash! });
+    expect(l.rules.map((r) => r.raw)).toEqual(["Bash"]);
+    expect(JSON.parse(await readFile(userPath(), "utf8")).permissions).toEqual({ allow: [], deny: ["Bash"] });
+  });
+
+  test("removing an absent rule gives 404, a stale hash on a missing file gives 409", async () => {
+    await put(userPath(), perms({ allow: ["Read"] }));
+    const h = (await file().read()).hash!;
+    expect(await status(file().removeRule({ list: "allow", raw: "Edit", expectedHash: h }))).toBe(404);
+    await rm(userPath());
+    expect(await status(file().removeRule({ list: "allow", raw: "Edit", expectedHash: h }))).toBe(409);
+  });
+
+  test("a remove with a stale hash gives 409", async () => {
+    await put(userPath(), perms({ allow: ["Read"] }));
+    expect(await status(file().removeRule({ list: "allow", raw: "Read", expectedHash: "1".repeat(64) }))).toBe(409);
+  });
+
+  test("ClaudeSettings.file finds a file by scope", async () => {
+    const s = ClaudeSettings.forHome({ home });
+    expect(s.file("user")?.path).toBe(userPath());
+    expect(s.file("project")).toBeUndefined();
   });
 });
