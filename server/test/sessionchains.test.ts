@@ -19,6 +19,17 @@ describe("SessionChains", () => {
     expect(await c.chainOf(C)).toEqual([C]);
   });
 
+  test("a link and a bridge id join into one chain, also through other ids", async () => {
+    const c = new SessionChains();
+    await c.link(A, B);
+    await c.observe([["cse_1", B], ["cse_1", C]]);
+    expect((await c.chainOf(A)).sort()).toEqual([A, B, C]);
+    expect((await c.chainOf(C)).sort()).toEqual([A, B, C]);
+    await c.link(A, A);
+    await c.link("bad", A);
+    expect((await c.chainOf("dddddddd-dddd-dddd-dddd-dddddddddddd")).length).toBe(1);
+  });
+
   test("a bad session id or an empty bridge id is ignored", async () => {
     const c = new SessionChains();
     await c.observe([["", A], ["cse_1", "../x"]]);
