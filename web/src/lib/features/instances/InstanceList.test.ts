@@ -129,6 +129,8 @@ test("Logs opens the log panel", async () => {
   await until(() => !!t.querySelector("pre"));
   expect(t.querySelector("pre")!.textContent).toBe("LOG LINE");
   expect(t.querySelector('[data-slot="entity-card"]')!.contains(t.querySelector("pre"))).toBe(true);
+  // The panel sits under the action strip, so opening it does not push the buttons down.
+  expect(t.querySelector('[data-slot="entity-card-actions"]')!.compareDocumentPosition(t.querySelector("pre")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 test("a starting row has no subtitle, no action strip, and no menu", async () => {

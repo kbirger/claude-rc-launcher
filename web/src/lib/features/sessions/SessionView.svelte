@@ -66,7 +66,7 @@
         </div>
       </header>
     {/if}
-    <!-- Two sections. The selection follows the URL; a change navigates, and the file tabs below keep their own tab list. -->
+    <!-- The tabs are page state, and a pick replaces the address. -->
     <Tabs.Root value={inPermissions ? "permissions" : "files"} onValueChange={(v) => pick(v === "permissions" ? "permissions" : "touched")}>
       <Tabs.List aria-label="Session sections" class="group-data-horizontal/tabs:h-auto w-full">
         <Tabs.Trigger value="files" class="h-11 text-sm">Files</Tabs.Trigger>

@@ -12,7 +12,7 @@
   import * as DropdownMenu from "#lib/components/ui/dropdown-menu/index.js";
   import { cn } from "#lib/utils.js";
 
-  // The common card of the list screens. The header has the title (left) and the status (right). Under it come the subtitle, the content, and the action strip.
+  // The common card of the list screens. The header has the title (left) and the status (right). Under it come the subtitle, the content, the action strip, and the footer.
   // `actions` sits on the left of the strip. `actionsEnd` and the overflow menu sit on the right.
   let {
     title,
@@ -21,6 +21,7 @@
     subtitle,
     status,
     children,
+    footer,
     actions,
     actionsEnd,
     overflow = [],
@@ -36,6 +37,7 @@
     subtitle?: Snippet;
     status?: Snippet;
     children?: Snippet;
+    footer?: Snippet;
     actions?: Snippet;
     actionsEnd?: Snippet;
     overflow?: OverflowItem[];
@@ -49,12 +51,11 @@
   const hasStrip = $derived(!!actions || !!actionsEnd || overflow.length > 0);
 </script>
 
-<!-- With selected and pending="starting" together, the dashed muted border wins over the primary border. -->
+<!-- With selected and pending="starting" together, the dashed muted border wins over the primary ring. -->
 <Card.Root
   {size}
   data-slot="entity-card"
-  
-  class={cn("gap-2", selected && "ring-0 border border-primary", pending && "opacity-60", pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50", className)}
+  class={cn("gap-2", selected && "ring-2 ring-primary", pending && "opacity-60", pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50", className)}
 >
   <Card.Content class="flex flex-col gap-1.5">
     <div class="flex items-start justify-between gap-2">
@@ -67,7 +68,7 @@
         {/if}
         {#if titleAside}{@render titleAside()}{/if}
       </div>
-      {#if status}<div class="flex flex-none items-center">{@render status()}</div>{/if}
+      {#if status}<div class="flex min-h-7 flex-none items-center">{@render status()}</div>{/if}
     </div>
     {#if subtitle}<div class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{@render subtitle()}</div>{/if}
     {#if children}<div class="flex flex-wrap items-center gap-1.5">{@render children()}</div>{/if}
@@ -88,7 +89,7 @@
               </DropdownMenu.Trigger>
               <DropdownMenu.Content align="end" class="w-auto min-w-40">
                 {#each overflow as item, n (n)}
-                  <DropdownMenu.Item variant={item.destructive ? "destructive" : "default"} disabled={item.disabled} onSelect={item.onselect}>
+                  <DropdownMenu.Item class="min-h-11" variant={item.destructive ? "destructive" : "default"} disabled={item.disabled} onSelect={item.onselect}>
                     {#if item.icon}{@const Icon = item.icon}<Icon aria-hidden="true" />{/if}
                     {item.label}
                   </DropdownMenu.Item>
@@ -99,5 +100,6 @@
         </div>
       </div>
     {/if}
+    {#if footer}{@render footer()}{/if}
   </Card.Content>
 </Card.Root>

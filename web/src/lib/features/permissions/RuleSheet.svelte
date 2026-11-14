@@ -26,6 +26,7 @@
     live?: boolean;
   } = $props();
 
+  const uid = $props.id();
   const client = useQueryClient();
   const add = createMutation(() => addRuleMutation(host, instance, session, client));
   const remove = createMutation(() => removeRuleMutation(host, instance, session, client));
@@ -91,8 +92,9 @@
       {/if}
 
       {#if offered.length > 1}
-        <Tabs.Root value={layer?.scope ?? ""} onValueChange={(v) => { if (v) picked = v; }}>
-          <Tabs.List aria-label="File" class="group-data-horizontal/tabs:h-auto w-full">
+        <span id="{uid}-file" class="text-sm font-medium">File</span>
+        <Tabs.Root value={layer?.scope ?? ""} onValueChange={(v) => (picked = v)}>
+          <Tabs.List aria-labelledby="{uid}-file" class="group-data-horizontal/tabs:h-auto w-full">
             {#each offered as l (l.scope)}
               <Tabs.Trigger value={l.scope} class="h-11 text-sm">{scopeBadge(l.scope)}</Tabs.Trigger>
             {/each}
@@ -104,8 +106,9 @@
       {/each}
       {#if offered.length === 0 && blocked.length === 0}<p class="m-0 text-sm text-muted-foreground">No file can be changed here.</p>{/if}
 
-      <Tabs.Root value={list} onValueChange={(v) => { if (v) list = v as typeof list; }}>
-        <Tabs.List aria-label="List" class="group-data-horizontal/tabs:h-auto w-full">
+      <span id="{uid}-list" class="text-sm font-medium">List</span>
+      <Tabs.Root value={list} onValueChange={(v) => (list = v as typeof list)}>
+        <Tabs.List aria-labelledby="{uid}-list" class="group-data-horizontal/tabs:h-auto w-full">
           {#each LISTS as l (l)}
             <Tabs.Trigger value={l} class="h-11 text-sm" disabled={mode === "remove"}>{listLabel(l)}</Tabs.Trigger>
           {/each}

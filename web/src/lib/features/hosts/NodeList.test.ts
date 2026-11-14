@@ -43,7 +43,7 @@ test("an agent role pill is not primary", () => {
 
 test("the selected node has the selected style and Active", () => {
   const t = show({ selected: "n1" });
-  expect(t.querySelector('[data-slot="entity-card"]')!.className).toContain("border-primary");
+  expect(t.querySelector('[data-slot="entity-card"]')!.className).toContain("ring-primary");
   const active = byText("Active")!;
   expect(active.disabled).toBe(true);
   expect(active.getAttribute("aria-pressed")).toBe("true");
@@ -129,4 +129,46 @@ test("the card draws no empty strip pieces: a node with no rename has only the e
   const t = show({});
   const strip = t.querySelector('[data-slot="entity-card-actions"]')!;
   expect(strip.children.length).toBe(1);
+});
+
+test("Escape in the name field cancels the rename and leaves edit mode", () => {
+  const onrename = vi.fn();
+  const t = show({ onrename });
+  btn("Rename node-one")!.click();
+  flushSync();
+  const input = t.querySelector('input[aria-label="Node name"]') as HTMLInputElement;
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  flushSync();
+  expect(t.querySelector("input")).toBeNull();
+  expect(t.querySelector("h3")?.textContent).toBe("node-one");
+  expect(btn("Rename node-one")).not.toBeNull();
+  expect(onrename).not.toHaveBeenCalled();
+});
+
+test("a Save that succeeds leaves edit mode", async () => {
+  const onrename = vi.fn().mockResolvedValue(undefined);
+  const t = show({ onrename });
+  btn("Rename node-one")!.click();
+  flushSync();
+  const input = t.querySelector("input") as HTMLInputElement;
+  input.value = "fresh";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  flushSync();
+  (t.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await tick();
+  flushSync();
+  expect(onrename).toHaveBeenCalledWith("n1", "fresh");
+  expect(t.querySelector("input")).toBeNull();
+  expect(btn("Rename node-one")).not.toBeNull();
+});
+
+test("a cancelled confirm does not call onupdate", async () => {
+  const onupdate = vi.fn();
+  const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+  show({ onupdate, latest: "1.1.0" });
+  btn("Update node-one")!.click();
+  await tick();
+  flushSync();
+  expect(confirmSpy).toHaveBeenCalled();
+  expect(onupdate).not.toHaveBeenCalled();
 });

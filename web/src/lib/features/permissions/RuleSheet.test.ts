@@ -40,7 +40,7 @@ const text = () => document.body.textContent ?? "";
 const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes(label)) as HTMLButtonElement | undefined;
 const field = () => document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!;
 const type = (v: string) => { const f = field(); f.value = v; f.dispatchEvent(new Event("input", { bubbles: true })); flushSync(); };
-const group = (name: string) => document.querySelector(`[aria-label='${name}']`);
+const group = (name: string) => [...document.querySelectorAll("[aria-labelledby]")].find((e) => document.getElementById(e.getAttribute("aria-labelledby")!)?.textContent === name) ?? null;
 const items = (name: string) => [...(group(name)?.querySelectorAll<HTMLElement>("[role=tab]") ?? [])];
 const labels = (name: string) => items(name).map((i) => i.textContent?.trim());
 const pickFile = (label: string) => { items("File").find((i) => i.textContent?.trim() === label)!.click(); flushSync(); };
@@ -80,7 +80,7 @@ test("one offered file shows no selector", () => {
   expect(text()).toContain("in /p/user.json");
 });
 
-test("the chosen file is exposed on the selector, and a change to empty is ignored", async () => {
+test("the chosen file is exposed on the selector", async () => {
   show({ initial: { raw: "Bash(ls)", list: "allow" } });
   const user = items("File")[0]!;
   const [, project] = items("File");
@@ -99,14 +99,19 @@ test("the chosen file is exposed on the selector, and a change to empty is ignor
   expect(sent[0]!.body.scope).toBe("project");
 });
 
-test("the list selector never goes empty", () => {
+test("each selector has a visible label, and one file hides the file label too", () => {
   show({ initial: { raw: "Bash(ls)", list: "ask" } });
+  const file = [...document.querySelectorAll("span")].find((e) => e.textContent === "File")!;
+  const list = [...document.querySelectorAll("span")].find((e) => e.textContent === "List")!;
+  expect(file.className).toContain("font-medium");
+  expect(group("File")!.getAttribute("aria-labelledby")).toBe(file.id);
+  expect(group("List")!.getAttribute("aria-labelledby")).toBe(list.id);
   expect(labels("List")).toEqual(["Allow", "Ask", "Deny"]);
-  const ask = () => items("List")[1]!;
-  expect(ask().getAttribute("aria-selected")).toBe("true");
-  ask().click();
-  flushSync();
-  expect(ask().getAttribute("aria-selected")).toBe("true");
+  expect(items("List")[1]!.getAttribute("aria-selected")).toBe("true");
+  document.body.innerHTML = "";
+  show({ layers: [layer("user")], initial: { raw: "Bash(ls)", list: "allow" } });
+  expect([...document.querySelectorAll("span")].some((e) => e.textContent === "File")).toBe(false);
+  expect([...document.querySelectorAll("span")].some((e) => e.textContent === "List")).toBe(true);
 });
 
 test("the list selector is disabled in remove mode", () => {

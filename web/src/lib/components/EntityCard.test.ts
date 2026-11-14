@@ -159,20 +159,41 @@ test("a form inside titleEditor is not inside an h3", () => {
   expect(q('[data-testid="aside"]')).not.toBeNull();
 });
 
-test("selected adds the primary border class and pending adds the dim class", () => {
+test("selected adds a ring, not a border, and pending adds the dim class", () => {
   const cards = () => [...document.querySelectorAll('[data-slot="entity-card"]')] as HTMLElement[];
   show();
   show({ selected: true });
   show({ pending: "stopping" });
   show({ pending: "starting" });
   const [plain, sel, pend, starting] = cards();
-  expect(plain.className).not.toContain("border-primary");
+  expect(plain.className).not.toContain("ring-primary");
   expect(plain.className).not.toContain("opacity-60");
-  expect(sel.className).toContain("border-primary");
+  expect(sel.className).toContain("ring-primary");
+  expect(sel.className).not.toContain("border-primary");
   expect(pend.className).toContain("opacity-60");
   expect(pend.className).not.toContain("border-dashed");
   expect(starting.className).toContain("opacity-60");
   expect(starting.className).toContain("border-dashed");
+});
+
+test("the footer renders after the action strip, and draws nothing when absent", () => {
+  show({ slots: ["actions", "footer"] });
+  const f = q('[data-testid="footer"]')!;
+  expect(f).not.toBeNull();
+  expect(strip()!.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(strip()!.contains(f)).toBe(false);
+  expect(f.closest('[data-slot="card-content"]')).not.toBeNull();
+  document.body.innerHTML = "";
+  show({ slots: ["actions"] });
+  expect(q('[data-testid="footer"]')).toBeNull();
+  const content = q('[data-slot="card-content"]')!;
+  expect(content.lastElementChild).toBe(strip());
+});
+
+test("an overflow item is at least 44 px high", () => {
+  show({ overflow: [{ label: "Rename", onselect() {} }] });
+  openMenu();
+  expect(items()[0].className).toContain("min-h-11");
 });
 
 test("an overflow item with a Tabler icon draws the svg inside the menu item", () => {

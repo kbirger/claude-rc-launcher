@@ -105,7 +105,7 @@
         subtitle={i ? subtitle : undefined}
         actions={i ? actions : undefined}
         actionsEnd={i ? actionsEnd : undefined}
-        children={i && i.id in open ? logs : undefined}
+        footer={i && i.id in open ? logs : undefined}
         overflowLabel="More actions for {r.name}"
         overflow={i ? [{ label: "Stop", icon: Stop, destructive: true, disabled: !!r.pending, onselect: () => stop(i) }] : []}
       />
