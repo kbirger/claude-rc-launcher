@@ -1,6 +1,6 @@
 # Permissions: audit, edit, and fix blocked tool calls
 
-Date: 2026-11-14. Status: draft, waiting for approval. Related notes: the spike results in the project memory `permissions-spike-results`.
+Date: 2026-11-14. Status: phase 1 released as a manual build (PR 9); phase 2 (edit) built on branch feat/permissions, not yet released. Related notes: the spike results in the project memory `permissions-spike-results`.
 
 ## Intent
 
