@@ -453,6 +453,15 @@ describe("audit", () => {
     await get(app, "/api/hosts/nas/instances");
     expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=nas POST /api/hosts/nas/instances 201"]);
   });
+  test("a rule edit on the local host has one node line with the hub user and the rule", async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "hub-local-"));
+    const cfg = { name: "box", hosts: [], roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config;
+    const instances = { ...localSvc, claudeHome: async () => ({ path: "/srv/p", home, identity: { home, path: "/usr/bin", uid: process.getuid?.(), gid: process.getgid?.() } }) };
+    const app = createApp({ cfg, instances, userAuth, hostClients: new Map() });
+    const r = await app.request(`/api/hosts/local/instances/${ID}/permissions/rules`, { method: "POST", headers: JSON_H, body: JSON.stringify({ scope: "user", list: "allow", rule: "Bash(git *)", expectedHash: null }) });
+    expect(r.status).toBe(200);
+    expect(logged.filter((l) => l.includes("rule="))).toEqual([`audit caller=kir instance=${ID} scope=user action=add list=allow rule="Bash(git *)" status=200`]);
+  });
   test("local writes are audited with host=local", async () => {
     const app = hub([], new Map());
     await app.request("/api/hosts/local/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/srv/p" }) });

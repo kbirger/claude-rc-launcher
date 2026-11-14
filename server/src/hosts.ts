@@ -211,6 +211,12 @@ export function hostsApi(o: {
     });
   }
 
+  // The local instance API is the node API. It names its caller in the audit line of a rule edit: here that is the hub user.
+  app.use("/local/*", async (c, next) => {
+    const u = c.get("user" as never) as User | undefined;
+    c.set("caller" as never, String(u?.username ?? u?.sub ?? "unknown") as never);
+    await next();
+  });
   app.route("/local", local);
 
   const remote = new Hono();
