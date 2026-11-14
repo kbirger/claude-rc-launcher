@@ -12,7 +12,8 @@
   // A failed or running entry has no range, so the query stays off and the section shows nothing.
   const q = createQuery(() => ({ ...releaseNotesQuery(range?.from ?? "", range?.to ?? ""), enabled: range !== undefined }));
   const ready = $derived(q.data?.complete ? q.data.releases : undefined);
-  const unavailable = $derived(q.isError || (q.data !== undefined && !q.data.complete));
+  // A complete answer with no releases has nothing to show (a version that could not be read, a dev build), so it gets the same line and link.
+  const unavailable = $derived(q.isError || (q.data !== undefined && (!q.data.complete || q.data.releases.length === 0)));
 
   // The release text is untrusted. It only reaches the page through renderMarkdown and FormattedText. The markdown chunk loads when the first body needs it.
   // `undefined` means that the guard refused the body, so it shows as plain text. `null` means that it is not rendered yet.

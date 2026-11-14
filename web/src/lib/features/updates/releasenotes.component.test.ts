@@ -59,6 +59,15 @@ test('complete false shows "The notes are not available. Open the release page."
   expect(t.querySelector("[data-release]")).toBeNull();
 });
 
+test("an empty complete answer shows the not-available line with the link, not a bare heading", async () => {
+  answer = async () => ({ complete: true, releases: [] });
+  const t = show(entry());
+  await settle(t, "The notes are not available. Open the release page.");
+  expect(t.querySelector("a")?.getAttribute("href")).toBe("https://github.com/kbirger/claude-rc-launcher/releases/tag/v0.24.0");
+  expect(t.querySelector("[data-release]")).toBeNull();
+  expect(t.querySelectorAll("h3").length).toBe(1);
+});
+
 test("a failed call shows the same text and link, and no error banner", async () => {
   answer = async () => { throw new Error("boom"); };
   const t = show(entry());
