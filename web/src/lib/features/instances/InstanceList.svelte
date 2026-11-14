@@ -10,6 +10,7 @@
   import { cn } from "#lib/utils.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
+  import { PermissionsLink } from "#lib/features/permissions";
   import { SessionsLink } from "#lib/features/sessions";
   import InstanceLogs from "./InstanceLogs.svelte";
   import { createInstancesModel } from "./model.svelte";
@@ -76,6 +77,7 @@
                 <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
               </Button>
               <SessionsLink {host} instance={i.id} />
+              <PermissionsLink {host} instance={i.id} />
               <div class="ml-auto flex items-center gap-1">
                 {#if isPaused(i.state)}
                   <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">

@@ -9,13 +9,17 @@
   import FileBrowser from "./FileBrowser.svelte";
   import FilePreview from "./FilePreview.svelte";
   import TouchedList from "./TouchedList.svelte";
+  import { SessionPermissions } from "../permissions";
   import { isUnsupported } from "./api";
   import { ago, sessionsHref, sessionTitle, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
   import { instancesQuery } from "../instances/queries";
 
+  // `touched`, `changed` and `folder` are the tabs of the Files section. `permissions` and `blocked` are the tabs of the Permissions section.
+  type View = "touched" | "changed" | "folder" | "permissions" | "blocked";
+  const VIEWS: readonly string[] = ["touched", "changed", "folder", "permissions", "blocked"];
   // `abs`: a touched file opened by its absolute path (it may be outside the session folder). It wins over `file`.
-  type Props = { host: string; instance: string; session: string; view: "touched" | "changed" | "folder"; path: string; hidden: boolean; file: string; abs?: string; now: number };
+  type Props = { host: string; instance: string; session: string; view: View; path: string; hidden: boolean; file: string; abs?: string; now: number };
   let { host, instance, session, view, path, hidden, file, abs = "", now }: Props = $props();
 
   const q = createQuery(() => sessionsQuery(host, instance));
@@ -23,7 +27,7 @@
   // The name of the instance, for the way back. The instance list is cached by the page before this one.
   const instances = createQuery(() => instancesQuery(host));
   const instanceName = $derived(instances.data?.find((x) => x.id === instance)?.name);
-  const href = (v: "touched" | "changed" | "folder", extra: { path?: string; file?: string } = {}) =>
+  const href = (v: View, extra: { path?: string; file?: string } = {}) =>
     sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
   // The tab is state of this page, not a navigation: a click adds no history entry, so Back does not walk through the tabs.
   // The address follows the tab (replaced, not added), so a reload or a Back from a file lands on the same tab.
@@ -33,10 +37,14 @@
   // What each tab shows, in words. It sits under the tabs and follows the selected one.
   const help = { touched: "Files that Claude wrote or edited in this session.", changed: "Files that git shows as changed in the folder since the session started. This includes files that commands made.", folder: "Every file in the folder of this session, also files that Claude did not touch." };
   const pick = (v: string) => {
-    if (v !== "touched" && v !== "changed" && v !== "folder") return;
-    current = v;
-    replaceState(href(v, v === "folder" ? { path } : {}), {});
+    if (!VIEWS.includes(v)) return;
+    const next = v as View;
+    current = next;
+    replaceState(href(next, next === "folder" ? { path } : {}), {});
   };
+  const inPermissions = $derived(current === "permissions" || current === "blocked");
+  // The file tabs only render in the Files section, where `current` is one of the three file views.
+  const fileView = $derived(current === "changed" || current === "folder" ? current : "touched");
 </script>
 
 <div class="grid grid-cols-[minmax(0,1fr)] gap-3">
@@ -58,12 +66,19 @@
         </div>
       </header>
     {/if}
+    <!-- Two sections. Buttons and not tabs: five tabs do not fit on a phone, and the file tabs keep their own tab list. -->
+    <nav aria-label="Session sections" class="flex gap-2">
+      <Button variant={inPermissions ? "ghost" : "secondary"} size="sm" class="h-11 flex-1" aria-current={inPermissions ? undefined : "page"} onclick={() => pick(inPermissions ? "touched" : current)}>Files</Button>
+      <Button variant={inPermissions ? "secondary" : "ghost"} size="sm" class="h-11 flex-1" aria-current={inPermissions ? "page" : undefined} onclick={() => pick(inPermissions ? current : "permissions")}>Permissions</Button>
+    </nav>
   {/if}
 
   {#if abs}
     <FilePreview {host} {instance} {session} file={abs} abs back={href("touched")} backLabel="Back to touched files" />
   {:else if file}
     <FilePreview {host} {instance} {session} {file} back={current === "folder" ? href("folder", { path }) : href(current)} backLabel={current === "folder" ? "Back to folder" : current === "changed" ? "Back to changed files" : "Back to touched files"} />
+  {:else if inPermissions}
+    <SessionPermissions {host} {instance} {session} view={current === "blocked" ? "blocked" : "permissions"} {now} onpick={pick} />
   {:else}
     <h3 class="m-0 text-sm font-semibold">Files</h3>
     <Tabs.Root value={current} onValueChange={pick}>
@@ -72,7 +87,7 @@
         <Tabs.Trigger value="changed" class="h-11 text-sm">Changed</Tabs.Trigger>
         <Tabs.Trigger value="folder" class="h-11 text-sm">Folder</Tabs.Trigger>
       </Tabs.List>
-      <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[current]}</p>
+      <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[fileView]}</p>
       <Tabs.Content value={current} class="min-w-0">
         {#if q.isPending}
           <p class="text-muted-foreground">Loading session...</p>

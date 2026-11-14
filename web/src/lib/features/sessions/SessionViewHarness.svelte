@@ -3,7 +3,7 @@
   import { QueryClientProvider, type QueryClient } from "@tanstack/svelte-query";
   import SessionView from "./SessionView.svelte";
 
-  type Props = { view: "touched" | "folder"; client: QueryClient; path?: string };
+  type Props = { view: "touched" | "changed" | "folder" | "permissions" | "blocked"; client: QueryClient; path?: string };
   let { view, client, path = "" }: Props = $props();
 </script>
 

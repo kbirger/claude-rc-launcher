@@ -16,10 +16,16 @@ vi.mock("./api", async (orig) => ({
   listFiles: async () => ({ path: "", parent: null, entries: [{ name: "readme.md", kind: "file", size: 5, mtime: "2026-11-12T10:00:00Z" }] }),
 }));
 
+vi.mock("../permissions/api", async (orig) => ({
+  ...(await orig<typeof import("../permissions/api")>()),
+  getSessionPermissions: async () => ({ layers: [{ scope: "user", path: "/h/.claude/settings.json", writable: false, state: "ok", rules: [{ raw: "Bash(ls *)", list: "allow", tool: "Bash", specifier: "ls *", scope: "user" }], warnings: [] }] }),
+  getBlocked: async () => [{ id: "t1", at: "2026-11-14T10:00:00Z", tool: "Bash", input: { command: "touch x" }, reason: "needs_approval", text: "touch needs approval" }],
+}));
+
 const open: Array<() => void> = [];
 afterEach(() => { for (const u of open.splice(0)) u(); goto.mockClear(); replaceState.mockClear(); });
 
-async function show(view: "touched" | "changed" | "folder", path = "") {
+async function show(view: "touched" | "changed" | "folder" | "permissions" | "blocked", path = "") {
   const target = document.createElement("div");
   document.body.append(target);
   const c = mount(SessionViewHarness, { target, props: { view, path, client: createQueryClient() } });
@@ -28,7 +34,7 @@ async function show(view: "touched" | "changed" | "folder", path = "") {
   flushSync();
   return target;
 }
-const trigger = (t: HTMLElement, name: string) => [...t.querySelectorAll<HTMLElement>('[role="tab"]')].find((e) => e.textContent?.trim() === name)!;
+const trigger = (t: HTMLElement, name: string) => [...t.querySelectorAll<HTMLElement>('[role="tab"]')].find((e) => e.textContent?.trim().startsWith(name))!;
 
 test("the tabs render Touched, Changed and Folder in a named tab list", async () => {
   const t = await show("touched");
@@ -97,4 +103,30 @@ test("the arrow keys move between the tabs", async () => {
   flushSync();
   expect(trigger(t, "Changed").getAttribute("aria-selected")).toBe("true");
   expect(goto).not.toHaveBeenCalled();
+});
+
+test("view=permissions shows the Permissions section with the Rules tab selected", async () => {
+  const t = await show("permissions");
+  expect(trigger(t, "Rules").getAttribute("aria-selected")).toBe("true");
+  expect(trigger(t, "Blocked").getAttribute("aria-selected")).toBe("false");
+  expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("Bash(ls *)");
+});
+
+test("view=blocked selects Blocked and lists the blocked calls", async () => {
+  const t = await show("blocked");
+  expect(trigger(t, "Blocked").getAttribute("aria-selected")).toBe("true");
+  expect(t.querySelector('[role="tabpanel"]')!.textContent).toContain("touch x");
+});
+
+test("the section buttons switch between Files and Permissions without a navigation", async () => {
+  const t = await show("touched");
+  const button = (name: string) => [...t.querySelectorAll<HTMLElement>('nav[aria-label="Session sections"] button, nav[aria-label="Session sections"] a')].find((e) => e.textContent?.trim() === name)!;
+  button("Permissions").click();
+  flushSync();
+  expect(goto).not.toHaveBeenCalled();
+  expect(replaceState).toHaveBeenCalledWith("/sessions?host=h&instance=i&session=s1&view=permissions", {});
+  await vi.waitFor(() => expect(trigger(t, "Rules")).toBeDefined());
+  button("Files").click();
+  flushSync();
+  expect(replaceState).toHaveBeenLastCalledWith("/sessions?host=h&instance=i&session=s1&view=touched", {});
 });
