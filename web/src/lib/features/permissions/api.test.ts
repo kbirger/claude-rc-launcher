@@ -1,0 +1,54 @@
+import { afterEach, beforeEach, expect, test } from "vitest";
+import { ApiError } from "../../shared/http";
+import { getBlocked, getSessionPermissions, getUserPermissions, isUnsupported } from "./api";
+
+const realFetch = globalThis.fetch;
+const realLoc = (globalThis as any).location;
+let calls: { url: string; init?: RequestInit }[] = [];
+
+function stub(status: number, body: unknown) {
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  }) as any;
+}
+
+beforeEach(() => {
+  calls = [];
+  (globalThis as any).location = { href: "/" };
+});
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  (globalThis as any).location = realLoc;
+});
+
+const SID = "11111111-2222-3333-4444-555555555555";
+
+test("getUserPermissions uses encoded path segments and GET", async () => {
+  stub(200, { layers: [] });
+  await getUserPermissions("a/b", "i d");
+  expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/instances/i%20d/permissions");
+  expect(calls[0]!.init?.method).toBe("GET");
+});
+
+test("getSessionPermissions and getBlocked use the session paths", async () => {
+  stub(200, { layers: [] });
+  await getSessionPermissions("h", "i", SID);
+  stub(200, []);
+  await getBlocked("h", "i", SID);
+  expect(calls[0]!.url).toBe(`/api/hosts/h/instances/i/sessions/${SID}/permissions`);
+  expect(calls[1]!.url).toBe(`/api/hosts/h/instances/i/sessions/${SID}/blocked`);
+});
+
+test("the answers are passed through", async () => {
+  const layers = [{ scope: "user", path: "/h/.claude/settings.json", writable: false, state: "ok", rules: [], warnings: [] }];
+  stub(200, { layers });
+  expect(await getSessionPermissions("h", "i", SID)).toEqual({ layers });
+});
+
+test("isUnsupported is true for 404 and 501 only", () => {
+  expect(isUnsupported(new ApiError(404, "x"))).toBe(true);
+  expect(isUnsupported(new ApiError(501, "x"))).toBe(true);
+  expect(isUnsupported(new ApiError(500, "x"))).toBe(false);
+  expect(isUnsupported(new Error("x"))).toBe(false);
+});
