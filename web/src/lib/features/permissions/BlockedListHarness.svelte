@@ -4,7 +4,7 @@
   import type { Layer } from "./api";
   import BlockedList from "./BlockedList.svelte";
 
-  let { client, layers = [] }: { client: QueryClient; layers?: Layer[] } = $props();
+  let { client, layers }: { client: QueryClient; layers?: Layer[] } = $props();
 </script>
 
 <QueryClientProvider {client}>

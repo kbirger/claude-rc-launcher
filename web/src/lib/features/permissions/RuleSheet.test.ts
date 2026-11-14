@@ -60,7 +60,7 @@ test("without a session only the user file is offered", () => {
 
 test("the confirm line shows the exact path and rule", () => {
   show({ initial: { raw: "Bash(ls)", list: "allow" } });
-  expect(text()).toContain("Add `Bash(ls)` to Allow in `/p/user.json`");
+  expect(text()).toContain("Add Bash(ls) to Allow in /p/user.json");
 });
 
 test("the user and project warnings show for the chosen file", () => {
@@ -152,9 +152,40 @@ test("after success the sheet closes and the queries are invalidated", async () 
 
 test("remove mode sends DELETE and shows the Remove line", async () => {
   show({ mode: "remove", initial: { raw: "Read", list: "deny" } });
-  expect(text()).toContain("Remove `Read` from Deny in `/p/user.json`");
+  expect(text()).toContain("Remove Read from Deny in /p/user.json");
   button("Remove")!.click();
   await vi.waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]!.method).toBe("DELETE");
   expect(sent[0]!.body.list).toBe("deny");
+});
+
+test("the confirm line shows the rule and the path in code elements, with no backticks", () => {
+  show({ initial: { raw: "Bash(ls)", list: "allow" } });
+  const codes = [...document.querySelectorAll("[data-testid=confirm] code")].map((c) => c.textContent);
+  expect(codes).toEqual(["Bash(ls)", "/p/user.json"]);
+  expect(document.querySelector("[data-testid=confirm]")!.textContent).not.toContain("`");
+});
+
+test("the file radio is a small fixed control, so the path keeps the width", () => {
+  show({});
+  const radio = document.querySelector<HTMLInputElement>("input[name=file]")!;
+  expect(radio.className).toContain("size-4");
+  expect(radio.className).toContain("shrink-0");
+});
+
+test("a save from a blocked call sends exactly scope, list, rule and expectedHash, never the call text", async () => {
+  show({ call: call() });
+  button("Save")!.click();
+  await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
+  expect(Object.keys(sent[0]!.body).sort()).toEqual(["expectedHash", "list", "rule", "scope"]);
+  expect(JSON.stringify(sent[0]!.body)).not.toContain("secret denial text");
+});
+
+test("the body follows a file switch: scope and hash of the picked file", async () => {
+  show({ initial: { raw: "Bash(ls)", list: "allow" } });
+  document.querySelector<HTMLInputElement>("input[name=file][value=project]")!.click();
+  flushSync();
+  button("Save")!.click();
+  await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
+  expect(sent[0]!.body).toEqual({ scope: "project", list: "allow", rule: "Bash(ls)", expectedHash: "hash-project" });
 });

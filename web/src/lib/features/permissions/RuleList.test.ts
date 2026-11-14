@@ -140,7 +140,7 @@ test("a rule in a writable file has a remove that opens the remove sheet", () =>
   show([wlayer("user", [rule("allow", "Bash(ls *)")])]);
   press("Remove Bash(ls *) from User settings");
   expect(body()).toContain("Remove a rule");
-  expect(body()).toContain("Remove `Bash(ls *)` from Allow in `/p/user.json`");
+  expect(body()).toContain("Remove Bash(ls *) from Allow in /p/user.json");
 });
 
 test("a rule from managed or a read-only file has no remove", () => {
@@ -153,7 +153,7 @@ test("a rule in two files has one remove for each file, and each sheet shows onl
   expect([...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Remove")).toHaveLength(2);
   press("Remove X from User settings");
   expect([...document.querySelectorAll<HTMLInputElement>("input[name=file]")].map((r) => r.value)).toEqual(["user"]);
-  expect(body()).toContain("from Allow in `/p/user.json`");
+  expect(body()).toContain("from Allow in /p/user.json");
 });
 
 test("closing the sheet unmounts it, and the next open starts fresh", () => {

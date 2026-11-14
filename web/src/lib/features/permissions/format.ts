@@ -85,8 +85,8 @@ export const blockWarning = (reason: BlockReason): string | undefined => (reason
 
 export const listLabel = (list: Rule["list"]): string => list[0]!.toUpperCase() + list.slice(1);
 
-export const confirmLine = (mode: "add" | "remove", rule: string, list: Rule["list"], path: string): string =>
-  mode === "add" ? `Add \`${rule}\` to ${listLabel(list)} in \`${path}\`` : `Remove \`${rule}\` from ${listLabel(list)} in \`${path}\``;
+/** The words around the rule and the path in the confirm line: "Add RULE to Allow in PATH" or "Remove RULE from Deny in PATH". */
+export const confirmWords = (mode: "add" | "remove", list: Rule["list"]): [string, string] => (mode === "add" ? ["Add", `to ${listLabel(list)} in`] : ["Remove", `from ${listLabel(list)} in`]);
 
 // Matching is exact text, plus the simple prefix form `Bash(prefix *)`. It does not know the other wildcards or the rules of
 // Claude Code for compound commands, so "probably fixed" is a hint and not a promise.

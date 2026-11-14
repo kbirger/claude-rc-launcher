@@ -13,11 +13,11 @@ afterEach(() => { for (const u of open.splice(0)) u(); document.body.innerHTML =
 
 const call = (o: Partial<BlockedCall>): BlockedCall => ({ id: "t", at: "2026-11-14T10:00:00Z", tool: "Bash", input: {}, reason: "needs_approval", text: "x", ...o });
 
-async function show(calls: BlockedCall[], layers: Layer[] = []) {
+async function show(calls: BlockedCall[], layers: Layer[] | null = []) {
   data.calls = calls;
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(BlockedListHarness, { target, props: { client: createQueryClient(), layers } });
+  const c = mount(BlockedListHarness, { target, props: { client: createQueryClient(), layers: layers ?? undefined } });
   open.push(() => { unmount(c); target.remove(); });
   await vi.waitFor(() => expect(target.textContent).not.toContain("Loading"));
   flushSync();
@@ -102,4 +102,9 @@ test("a deny rule call shows the rule and its file, or says a deny rule", async 
   const [a, b] = [...t.querySelectorAll("li")];
   expect(a!.textContent).toContain("Denied by Bash(rm *) in User settings");
   expect(b!.textContent).toContain("Denied by a deny rule");
+});
+
+test("the Allow button is disabled until the layers have loaded", async () => {
+  const t = await show([call({ input: { command: "ls" } })], null);
+  expect((btn(t, "Allow...") as HTMLButtonElement).disabled).toBe(true);
 });

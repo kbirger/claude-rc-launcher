@@ -9,8 +9,8 @@
   import { blockedQuery } from "./queries";
   import RuleSheet from "./RuleSheet.svelte";
 
-  // `layers` are the permission files of the session (the page already loads them). The sheet is mounted only while it is open.
-  let { host, instance, session, now, layers = [] }: { host: string; instance: string; session: string; now: number; layers?: Layer[] } = $props();
+  // `layers` are the permission files of the session (the page already loads them). Undefined means not loaded yet: Allow waits. The sheet is mounted only while it is open.
+  let { host, instance, session, now, layers }: { host: string; instance: string; session: string; now: number; layers?: Layer[] } = $props();
 
   let sheetCall = $state<BlockedCall | null>(null);
   // A deny rule or a safety check cannot be fixed with an allow rule, so those calls have no button.
@@ -38,14 +38,14 @@
           <span>{c.tool}</span>
           <span aria-hidden="true">·</span>
           <span>{ago(c.at, now)}</span>
-          {#if canAllow(c) && probablyFixed(c, layers)}<Badge variant="secondary">probably fixed</Badge>{/if}
+          {#if canAllow(c) && probablyFixed(c, layers ?? [])}<Badge variant="secondary">probably fixed</Badge>{/if}
         </span>
         {#if c.reason === "deny_rule"}
-          {@const d = deniedBy(c, layers)}
+          {@const d = deniedBy(c, layers ?? [])}
           <span class={cn(wrap, "text-xs text-muted-foreground")}>{d ? `Denied by ${d.raw} in ${scopeLabel(d.scope)}` : "Denied by a deny rule"}</span>
         {/if}
         {#if canAllow(c)}
-          <Button type="button" variant="outline" size="touch" class="mt-1 self-start" onclick={() => (sheetCall = c)}>Allow...</Button>
+          <Button type="button" variant="outline" size="touch" class="mt-1 self-start" disabled={layers === undefined} onclick={() => (sheetCall = c)}>Allow...</Button>
         {/if}
       </li>
     {/each}
@@ -54,6 +54,6 @@
 
 {#if sheetCall}
   {#key sheetCall.id}
-    <RuleSheet bind:open={() => true, (v) => { if (!v) sheetCall = null; }} {host} {instance} {session} {layers} mode="add" call={sheetCall} />
+    <RuleSheet bind:open={() => true, (v) => { if (!v) sheetCall = null; }} {host} {instance} {session} layers={layers ?? []} mode="add" call={sheetCall} />
   {/key}
 {/if}

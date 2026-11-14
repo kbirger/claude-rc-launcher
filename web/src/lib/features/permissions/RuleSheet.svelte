@@ -6,7 +6,7 @@
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
   import type { BlockedCall, Layer } from "./api";
-  import { blockWarning, confirmLine, listLabel, RELOAD_MESSAGE, RETRY_NOTE, scopeBadge, scopeWarning, summaryOf } from "./format";
+  import { blockWarning, confirmWords, listLabel, RELOAD_MESSAGE, RETRY_NOTE, scopeBadge, scopeWarning, summaryOf } from "./format";
   import { addRuleMutation, removeRuleMutation } from "./mutations";
   import { suggestRules } from "./suggest";
 
@@ -76,10 +76,10 @@
         <legend class="mb-1 text-sm font-medium">File</legend>
         {#each offered as l (l.scope)}
           <label class="flex min-h-11 items-start gap-2 rounded-md border p-2 text-sm {wrap}">
-            <input type="radio" name="file" value={l.scope} checked={layer === l} onchange={() => (picked = l.scope)} class="mt-1" />
-            <span class="grid min-w-0">
+            <input type="radio" name="file" value={l.scope} checked={layer === l} onchange={() => (picked = l.scope)} class="mt-1 size-4 w-auto shrink-0 accent-primary" />
+            <span class="grid min-w-0 flex-1">
               <span>{scopeBadge(l.scope)}</span>
-              <code class="text-xs {wrap}">{l.path}</code>
+              <code class="text-xs {wrap} break-all">{l.path}</code>
               {#if l.resolvedPath && l.resolvedPath !== l.path}<span class="text-xs text-muted-foreground {wrap}">Link to <code>{l.resolvedPath}</code></span>{/if}
             </span>
           </label>
@@ -93,7 +93,7 @@
       <fieldset class="m-0 flex flex-wrap gap-1.5 border-0 p-0" disabled={mode === "remove"}>
         <legend class="mb-1 text-sm font-medium">List</legend>
         {#each LISTS as l (l)}
-          <label class="flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-sm"><input type="radio" name="list" value={l} checked={list === l} onchange={() => (list = l)} />{listLabel(l)}</label>
+          <label class="flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-sm"><input type="radio" name="list" value={l} checked={list === l} onchange={() => (list = l)} class="size-4 w-auto shrink-0 accent-primary" />{listLabel(l)}</label>
         {/each}
       </fieldset>
 
@@ -110,7 +110,10 @@
         </div>
       {/if}
 
-      {#if layer && trimmed}<p class="m-0 text-sm {wrap}" data-testid="confirm">{confirmLine(mode, trimmed, list, layer.path!)}</p>{/if}
+      {#if layer && trimmed}
+        {@const words = confirmWords(mode, list)}
+        <p class="m-0 text-sm {wrap}" data-testid="confirm">{words[0]} <code class="font-mono text-xs {wrap}">{trimmed}</code> {words[1]} <code class="font-mono text-xs {wrap}">{layer.path}</code></p>
+      {/if}
       {#each warnings as w (w)}<p class="m-0 text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
       {#if call && mode === "add"}<p class="m-0 text-sm text-muted-foreground">{RETRY_NOTE}</p>{/if}
       {#if error}<p class="m-0 text-sm text-destructive {wrap}" role="alert">{error}</p>{/if}

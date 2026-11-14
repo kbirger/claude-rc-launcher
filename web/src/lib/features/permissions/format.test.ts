@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Layer, Rule } from "./api";
-import { confirmLine, deniedBy, flatRules, probablyFixed, scopeBadge, scopeWarning, blockWarning, CLASSIFIER_WARNING, RELOAD_MESSAGE } from "./format";
+import { confirmWords, deniedBy, flatRules, probablyFixed, scopeBadge, scopeWarning, blockWarning, CLASSIFIER_WARNING, RELOAD_MESSAGE } from "./format";
 
 const rule = (list: Rule["list"], raw: string, scope: string, extra: Partial<Rule> = {}): Rule => ({ raw, list, tool: raw.split("(")[0]!, scope, ...extra });
 const layer = (scope: Layer["scope"], rules: Rule[], state: Layer["state"] = "ok"): Layer => ({ scope, path: `/${scope}.json`, writable: false, state, rules, warnings: [] });
@@ -58,8 +58,8 @@ test("the block warnings: the classifier text, and nothing for the other reasons
 });
 
 test("the confirm line names the rule, the list and the path", () => {
-  expect(confirmLine("add", "Bash(ls)", "allow", "/p/.claude/settings.json")).toBe("Add `Bash(ls)` to Allow in `/p/.claude/settings.json`");
-  expect(confirmLine("remove", "Bash(ls)", "deny", "/x")).toBe("Remove `Bash(ls)` from Deny in `/x`");
+  expect(confirmWords("add", "allow")).toEqual(["Add", "to Allow in"]);
+  expect(confirmWords("remove", "deny")).toEqual(["Remove", "from Deny in"]);
 });
 
 // probablyFixed and deniedBy

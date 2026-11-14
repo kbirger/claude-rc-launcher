@@ -32,7 +32,7 @@
   <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[view]}</p>
   <Tabs.Content value={view} class="min-w-0">
     {#if view === "blocked"}
-      <BlockedList {host} {instance} {session} {now} layers={rules.data?.layers ?? []} />
+      <BlockedList {host} {instance} {session} {now} layers={rules.data?.layers} />
     {:else if rules.isPending}
       <p class="text-muted-foreground">Loading permissions...</p>
     {:else if isUnsupported(rules.error)}
