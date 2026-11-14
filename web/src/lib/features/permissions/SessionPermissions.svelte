@@ -15,7 +15,7 @@
   // The same query as BlockedList: one request, shared.
   const blocked = createQuery(() => blockedQuery(host, instance, session));
   const help = {
-    permissions: "The permission rules that apply to this session, from every settings file, with the highest precedence first.",
+    permissions: "The permission rules that apply to this session, from every settings file. A deny rule wins over an ask rule, and an ask rule wins over an allow rule.",
     blocked: "Tool calls that Claude Code blocked in this session. A rule that allows the call can fix most of them.",
   };
   const pick = (v: string) => {

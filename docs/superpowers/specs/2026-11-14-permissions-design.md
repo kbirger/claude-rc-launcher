@@ -133,7 +133,7 @@ Instance page: Permissions            Session screen
   [Add rule]                            Edit  src/app.ts           classifier
 ```
 
-The session Permissions tab lists the merged rules, grouped by file, with a mark on a rule that another rule overrides.
+The session Permissions tab lists the rules in one list for each of Deny, Ask, and Allow, in the order that Claude Code evaluates them. The order of the files does not matter for these lists, because the lists merge across files. Each rule has a badge for the file it comes from, and the same rule in two files is one row with two badges. A rule that another rule overrides has a mark. A row of filter chips narrows the list to one file. Below the rules, each file is listed with its path, its state (missing, invalid with the reason, or place not known), and the real path when it is a symlink.
 
 ## Phases
 

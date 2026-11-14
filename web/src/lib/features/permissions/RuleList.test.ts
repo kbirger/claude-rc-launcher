@@ -18,31 +18,77 @@ function show(layers: Layer[]) {
   flushSync();
   return target;
 }
+const rows = (t: HTMLElement) => [...t.querySelectorAll<HTMLElement>("[data-rule]")];
+const chip = (t: HTMLElement, name: string) => [...t.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === name)!;
 
-test("each layer has a heading with its path", () => {
-  const t = show([layer(), layer({ scope: "project", path: "/p/.claude/settings.json" })]);
-  const headings = [...t.querySelectorAll("h4")].map((h) => h.textContent ?? "");
-  expect(headings).toHaveLength(2);
-  expect(headings[0]).toContain("/h/.claude/settings.json");
-  expect(headings[1]).toContain("/p/.claude/settings.json");
-});
-
-test("rules are grouped under Allow, Ask and Deny with a count", () => {
-  const t = show([layer({ rules: [rule("allow", "Bash(ls *)"), rule("allow", "Read"), rule("deny", "Bash(rm *)")] })]);
+test("rules are grouped Deny, Ask, Allow with a count, in that order", () => {
+  const t = show([layer({ rules: [rule("allow", "Read"), rule("allow", "Bash(ls *)"), rule("ask", "Bash(git push *)"), rule("deny", "Bash(rm *)")] })]);
   const text = t.textContent ?? "";
-  expect(text).toContain("Allow (2)");
   expect(text).toContain("Deny (1)");
-  expect(text).not.toContain("Ask (");
-  expect(text).toContain("Bash(ls *)");
-  expect(text).toContain("Bash(rm *)");
+  expect(text).toContain("Ask (1)");
+  expect(text).toContain("Allow (2)");
+  expect(text.indexOf("Deny (1)")).toBeLessThan(text.indexOf("Ask (1)"));
+  expect(text.indexOf("Ask (1)")).toBeLessThan(text.indexOf("Allow (2)"));
 });
 
-test("an invalid layer shows its reason", () => {
+test("a group with no rules is not shown", () => {
+  const t = show([layer({ rules: [rule("allow", "Read")] })]);
+  expect(t.textContent).not.toContain("Deny (");
+  expect(t.textContent).not.toContain("Ask (");
+});
+
+test("each rule has a badge for the file it comes from", () => {
+  const t = show([layer({ scope: "local", rules: [rule("allow", "A", { scope: "local" })] }), layer({ scope: "user", rules: [rule("allow", "B")] })]);
+  const [a, b] = rows(t);
+  expect(a!.textContent).toContain("A");
+  expect(a!.textContent).toContain("Local");
+  expect(b!.textContent).toContain("User");
+});
+
+test("the same rule in two files is one row with both badges", () => {
+  const t = show([layer({ scope: "local", rules: [rule("allow", "Bash(ls *)", { scope: "local" })] }), layer({ scope: "user", rules: [rule("allow", "Bash(ls *)")] })]);
+  expect(rows(t)).toHaveLength(1);
+  expect(rows(t)[0]!.textContent).toContain("Local");
+  expect(rows(t)[0]!.textContent).toContain("User");
+});
+
+test("a shadowed rule says which rule overrides it", () => {
+  const t = show([layer({ scope: "local", rules: [rule("allow", "Bash(rm *)", { scope: "local", shadowedBy: { scope: "user", list: "deny", raw: "Bash(rm *)" } })] })]);
+  expect(t.textContent).toContain("overridden by deny in user");
+});
+
+test("a filter chip shows only the rules of that file, and All shows everything again", () => {
+  const t = show([layer({ scope: "local", rules: [rule("allow", "ONLY_LOCAL", { scope: "local" })] }), layer({ scope: "user", rules: [rule("allow", "ONLY_USER")] })]);
+  expect(rows(t)).toHaveLength(2);
+  chip(t, "Local").click();
+  flushSync();
+  expect(rows(t).map((r) => r.textContent)).toEqual([expect.stringContaining("ONLY_LOCAL")]);
+  expect(chip(t, "Local").getAttribute("aria-pressed")).toBe("true");
+  expect(chip(t, "All").getAttribute("aria-pressed")).toBe("false");
+  chip(t, "All").click();
+  flushSync();
+  expect(rows(t)).toHaveLength(2);
+});
+
+test("there is a chip only for a file that has rules", () => {
+  const t = show([layer({ scope: "local", state: "missing", path: "/p/.claude/settings.local.json" }), layer({ scope: "project", state: "invalid", reason: "x" }), layer({ rules: [rule("allow", "A")] })]);
+  const names = [...t.querySelectorAll("button")].map((b) => b.textContent?.trim());
+  expect(names).toEqual(["All", "User"]);
+});
+
+test("the files are listed with their path", () => {
+  const t = show([layer({ scope: "project", path: "/p/.claude/settings.json" }), layer()]);
+  const text = t.textContent ?? "";
+  expect(text).toContain("/p/.claude/settings.json");
+  expect(text).toContain("/h/.claude/settings.json");
+});
+
+test("an invalid file shows its reason", () => {
   const t = show([layer({ state: "invalid", reason: "it is not valid JSON" })]);
   expect(t.textContent).toContain("it is not valid JSON");
 });
 
-test("an unknown-path layer shows its reason and says the place is not known", () => {
+test("an unknown-path file shows its reason and says the place is not known", () => {
   const t = show([layer({ scope: "local", path: null, state: "unknown-path", reason: "this is a git work tree" })]);
   expect(t.textContent).toContain("this is a git work tree");
   expect(t.textContent).toContain("not known");
@@ -53,9 +99,13 @@ test("a missing file says there is no file", () => {
   expect(t.textContent).toContain("No file");
 });
 
-test("a shadowed rule says which rule overrides it", () => {
-  const t = show([layer({ scope: "local", rules: [rule("allow", "Bash(rm *)", { shadowedBy: { scope: "user", list: "deny", raw: "Bash(rm *)" } })] })]);
-  expect(t.textContent).toContain("overridden by deny in user");
+test("a file that is a symlink shows where it resolves to", () => {
+  const t = show([layer({ resolvedPath: "/dotfiles/claude/settings.json" })]);
+  expect(t.textContent).toContain("Resolves to /dotfiles/claude/settings.json");
+});
+
+test("a file that is not a symlink shows no resolved place", () => {
+  expect(show([layer()]).textContent).not.toContain("Resolves to");
 });
 
 test("a warning is shown", () => {
@@ -63,12 +113,8 @@ test("a warning is shown", () => {
   expect(t.textContent).toContain("permissions.deny is not an array");
 });
 
-test("a layer whose file is a symlink shows where it resolves to", () => {
-  const t = show([layer({ resolvedPath: "/dotfiles/claude/settings.json" })]);
-  expect(t.textContent).toContain("/dotfiles/claude/settings.json");
-});
-
-test("a layer that is not a symlink shows no resolved place", () => {
-  const t = show([layer()]);
-  expect(t.textContent).not.toContain("Resolves to");
+test("with no rules at all it says so, and the files are still listed", () => {
+  const t = show([layer({ state: "missing" })]);
+  expect(t.textContent).toContain("No permission rules");
+  expect(t.textContent).toContain("/h/.claude/settings.json");
 });
