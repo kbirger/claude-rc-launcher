@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { open, readlink, type FileHandle } from "node:fs/promises";
 
 /** Larger than any real settings file. A bigger file is refused, not read. */
 export const MAX_FILE_BYTES = 1024 * 1024;
@@ -18,8 +18,12 @@ export type FileRead =
  * Reads a file that the instance user controls, without following a symlink and without blocking on a FIFO or a device.
  * As root, such a file is in another user's home, so the user decides what is at this path. This function reads bytes only.
  * Each caller parses them.
+ *
+ * `expectedPath` is the real path (no symlink in it) that the caller worked out before the open. On Linux the opened handle
+ * must really be at that path (/proc/self/fd). This closes the gap between the caller's check of the folder and the open: a
+ * folder that the user swaps for a symlink in that gap gives `invalid`. O_NOFOLLOW only covers the last name.
  */
-export async function readUserFile(file: string): Promise<FileRead> {
+export async function readUserFile(file: string, o: { expectedPath?: string } = {}): Promise<FileRead> {
   let fh: FileHandle;
   try {
     fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -30,6 +34,15 @@ export async function readUserFile(file: string): Promise<FileRead> {
     return { kind: "invalid", reason: "it cannot be opened" };
   }
   try {
+    if (o.expectedPath !== undefined && process.platform === "linux") {
+      let opened: string;
+      try {
+        opened = await readlink(`/proc/self/fd/${fh.fd}`);
+      } catch {
+        return { kind: "invalid", reason: "it cannot be verified" };
+      }
+      if (opened !== o.expectedPath) return { kind: "invalid", reason: "it is not at the expected place" };
+    }
     const st = await fh.stat();
     if (!st.isFile()) return { kind: "invalid", reason: "it is not a regular file" };
     // A hard link could be another user's file. A copy written back would then belong to this user.

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmod, link, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_FILE_BYTES, readUserFile } from "../src/safefile";
@@ -72,5 +72,23 @@ describe("readUserFile", () => {
     if (ra.kind !== "ok" || rb.kind !== "ok" || rc.kind !== "ok") throw new Error("expected ok");
     expect(ra.hash).toBe(rb.hash);
     expect(ra.hash).not.toBe(rc.hash);
+  });
+});
+
+describe("readUserFile with an expected place", () => {
+  const linux = process.platform === "linux";
+  test.skipIf(!linux)("a file that is at the expected real path is ok", async () => {
+    const f = join(await realpath(dir), "a.json");
+    await writeFile(f, "{}");
+    expect((await readUserFile(f, { expectedPath: f })).kind).toBe("ok");
+  });
+  test.skipIf(!linux)("a file that is not at the expected real path is invalid (the folder was swapped after the check)", async () => {
+    const real = await realpath(dir);
+    await mkdir(join(real, "elsewhere"));
+    await writeFile(join(real, "elsewhere", "settings.json"), "{}");
+    await symlink(join(real, "elsewhere"), join(real, "swapped"));
+    // The caller computed the expected place before the swap: <real>/swapped/settings.json was a plain folder then.
+    const r = await readUserFile(join(real, "swapped", "settings.json"), { expectedPath: join(real, "swapped", "settings.json") });
+    expect(r).toEqual({ kind: "invalid", reason: "it is not at the expected place" });
   });
 });

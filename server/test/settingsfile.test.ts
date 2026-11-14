@@ -199,3 +199,15 @@ describe("ClaudeSettings.forSession", () => {
     expect(layers.some((l) => l.scope === "managed")).toBe(false);
   });
 });
+
+describe("a home folder reached through a symlink", () => {
+  test("the user file is still read (only a symlinked .claude folder is refused)", async () => {
+    const real = join(home, "real-home");
+    await put(join(real, ".claude", "settings.json"), perms({ allow: ["A"] }));
+    const viaLink = join(home, "link-home");
+    await symlink(real, viaLink);
+    const { layers } = await ClaudeSettings.forHome({ home: viaLink }).layers();
+    expect(layers[0]).toMatchObject({ state: "ok" });
+    expect(layers[0]!.rules.map((r) => r.raw)).toEqual(["A"]);
+  });
+});

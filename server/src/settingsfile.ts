@@ -13,7 +13,7 @@
  *   managed       /etc/claude-code/managed-settings.json on Linux (read-only)
  * The layers are listed with the highest precedence first: managed, local, legacy-local, project, user.
  */
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { markShadowed, rulesOf, type MarkedRule } from "./permrules";
 import { readUserFile } from "./safefile";
@@ -67,7 +67,15 @@ export class SettingsFile {
         // Missing: reported by the read below.
       }
     }
-    const r = await readUserFile(path);
+    // The real place of the file, worked out now. readUserFile makes sure that the opened handle is really there, so a folder
+    // that the user swaps for a symlink after the checks above gives `invalid` and not another file.
+    let expectedPath: string | undefined;
+    try {
+      expectedPath = join(await realpath(parent), basename(path));
+    } catch {
+      expectedPath = undefined; // The folder is gone: the read below says missing.
+    }
+    const r = await readUserFile(path, expectedPath === undefined ? {} : { expectedPath });
     if (r.kind === "missing") return this.layer("missing");
     if (r.kind === "invalid") return this.layer("invalid", { reason: r.reason });
     let doc: unknown;
