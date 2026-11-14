@@ -2,6 +2,7 @@
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Stop from "@tabler/icons-svelte/icons/player-stop";
+import { stripLabel } from "./EntityCard.svelte";
 import EntityCardHarness from "./EntityCardHarness.svelte";
 
 const open: Array<() => void> = [];
@@ -37,6 +38,43 @@ const click = (el: HTMLElement) => {
 test("renders the title as a heading", () => {
   show();
   expect(q("h3")?.textContent).toBe("Card name");
+});
+
+test("the title is one truncated line with the full text as its title", () => {
+  show({ titleText: "Card name in full" });
+  const h = q("h3")!;
+  expect(h.className).toContain("truncate");
+  expect(h.className).toContain("min-w-0");
+  expect(h.getAttribute("title")).toBe("Card name in full");
+  expect(h.parentElement!.className).toContain("flex-1");
+  expect(h.parentElement!.className).not.toContain("flex-wrap");
+});
+
+test("titleAside does not shrink and the editor fills the row", () => {
+  show({ slots: ["titleAside", "titleEditor"] });
+  expect(q('[data-testid="aside"]')!.parentElement!.className).toContain("flex-none");
+  expect(q('[data-testid="editor"]')!.parentElement!.className).toContain("flex-1");
+});
+
+test("the strip has a fixed height and never wraps", () => {
+  show({ slots: ["actions", "actionsEnd"] });
+  expect(strip()!.className).toContain("h-11");
+  expect(strip()!.className).toContain("flex-nowrap");
+  expect(strip()!.className).not.toMatch(/(^|\s)flex-wrap/);
+  expect(strip()!.className).toContain("@container/strip");
+  const left = q('[data-testid="actions"]')!.parentElement!;
+  expect(left.className).not.toContain("flex-wrap");
+  expect(left.className).toContain("min-w-0");
+  expect(q('[data-testid="actionsEnd"]')!.parentElement!.className).toContain("flex-none");
+});
+
+test("stripLabel hides the text but keeps the accessible name", () => {
+  expect(stripLabel).toBe("sr-only @md/strip:not-sr-only");
+});
+
+test("the overflow trigger draws the vertical dots icon", () => {
+  show({ overflow: [{ label: "Rename", onselect() {} }] });
+  expect(menuButton()!.querySelector("svg")!.getAttribute("class")).toContain("tabler-icon-dots-vertical");
 });
 
 test("renders subtitle, status, content, and actions in their slots", () => {

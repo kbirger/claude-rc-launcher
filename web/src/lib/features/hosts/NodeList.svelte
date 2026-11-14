@@ -6,6 +6,7 @@
   import Check from "@tabler/icons-svelte/icons/circle-check";
   import Pencil from "@tabler/icons-svelte/icons/pencil";
   import EntityCard from "#lib/components/EntityCard.svelte";
+  import StatusDot from "#lib/components/StatusDot.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import { cn } from "#lib/utils.js";
   import type { HostInfo } from "./api";
@@ -69,7 +70,7 @@
     {#snippet titleAside()}<Pill tone={roleOf(h) === "hub" ? "primary" : "default"}>{roleOf(h)}</Pill>{/snippet}
     <!-- The health of the node is a plain dot: green (ok), orange (restarting) or red (any other status). The status is the tooltip and the label for a screen reader. -->
     {#snippet status()}
-      <span class={cn("size-2.5 flex-none rounded-full", h.status === "ok" ? "bg-success" : h.status === "restarting" ? "bg-warning" : "bg-destructive")} title={h.status} role="img" aria-label="Status: {h.status}"></span>
+      <StatusDot tone={h.status === "ok" ? "ok" : h.status === "restarting" ? "warn" : "bad"} label="Status: {h.status}" />
     {/snippet}
     <!-- One pill for each component, with its update badge, then the error texts. -->
     {#snippet content()}
@@ -118,9 +119,10 @@
         </Button>
       {/if}
     {/snippet}
-    <li>
+    <li class="min-w-0">
       <EntityCard
         {title}
+        titleText={h.name}
         titleEditor={editing === h.id ? titleEditor : undefined}
         {titleAside}
         {status}

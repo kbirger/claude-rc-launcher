@@ -34,6 +34,19 @@ test("the card shows name, role, and component pills", () => {
   expect(t.querySelector('[role="img"][aria-label="Status: ok"]')).not.toBeNull();
 });
 
+test("the node heading truncates and has the name as its title", () => {
+  const t = show({});
+  expect(t.querySelector("h3")!.className).toContain("truncate");
+  expect(t.querySelector("h3")!.getAttribute("title")).toBe("node-one");
+});
+
+test("the status dot colours", () => {
+  const dot = (s: string) => document.querySelector(`[role="img"][aria-label="Status: ${s}"]`) as HTMLElement;
+  show({ hosts: [host({ status: "restarting" }), host({ id: "n2", status: "offline" })] });
+  expect(dot("restarting").className).toContain("bg-warning");
+  expect(dot("offline").className).toContain("bg-destructive");
+});
+
 test("an agent role pill is not primary", () => {
   const t = show({});
   const first = t.querySelector('[data-slot="pill"]')!;

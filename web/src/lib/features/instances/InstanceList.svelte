@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
-  import EntityCard from "#lib/components/EntityCard.svelte";
+  import EntityCard, { stripLabel } from "#lib/components/EntityCard.svelte";
+  import StatusDot from "#lib/components/StatusDot.svelte";
   import ChevronDown from "@tabler/icons-svelte/icons/chevron-down";
   import FileText from "@tabler/icons-svelte/icons/file-text";
   import Pause from "@tabler/icons-svelte/icons/player-pause";
@@ -24,6 +24,9 @@
   // The instances whose logs are open in the card.
   let open = $state<Record<string, true>>({});
   const now = $derived(model.now);
+
+  // A paused instance is idle (grey). Any other state that is not active or failed is a warning.
+  const dotTone = (state: string) => (isPaused(state) ? "idle" : ({ ok: "ok", failed: "bad", other: "warn" } as const)[stateTone(state)]);
 
   function uptime(state: string, startedAt: string | null): string {
     if (state !== "active" || !startedAt) return "";
@@ -58,9 +61,9 @@
     {#snippet title()}{r.name}{/snippet}
     {#snippet status()}
       {#if r.pending}
-        <Badge variant="outline" class="flex-none text-warning">{r.pending}...</Badge>
+        <StatusDot tone="warn" pulse label="{r.pending}..." />
       {:else if i}
-        <Badge variant={stateTone(i.state) === "failed" ? "destructive" : "outline"} class={cn("flex-none", stateTone(i.state) === "ok" ? "text-success" : stateTone(i.state) === "other" ? "text-warning" : "")}>{stateLabel(i.state)}</Badge>
+        <StatusDot tone={dotTone(i.state)} label={stateLabel(i.state)} />
       {/if}
     {/snippet}
     {#snippet subtitle()}
@@ -73,8 +76,8 @@
     {/snippet}
     {#snippet actions()}
       {#if i}
-        <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open}>
-          <FileText aria-hidden="true" />Logs<ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
+        <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open} title="Logs">
+          <FileText aria-hidden="true" /><span class={stripLabel}>Logs</span><ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
         </Button>
         <SessionsLink {host} instance={i.id} />
         <PermissionsLink {host} instance={i.id} />
@@ -96,10 +99,11 @@
     {#snippet logs()}
       {#if i}<div class="w-full"><InstanceLogs {host} id={i.id} /></div>{/if}
     {/snippet}
-    <li>
+    <li class="min-w-0">
       <!-- A starting row has no instance yet: it passes no subtitle, strip, or menu, so the card draws none. -->
       <EntityCard
         {title}
+        titleText={r.name}
         {status}
         pending={r.pending}
         subtitle={i ? subtitle : undefined}

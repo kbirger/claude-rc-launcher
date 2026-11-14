@@ -25,6 +25,7 @@ beforeEach(() => {
       return new Response(null, { status: 204 });
     }
     if (init.method === "POST" && u.endsWith("/pause")) { pauses.push(u); return new Response(null, { status: 204 }); }
+    if (u.includes("/sessions") || u.includes("/permissions")) return new Response("[]", { status: 200 });
     if (u.includes("/logs")) return new Response(JSON.stringify({ log: "LOG LINE" }), { status: 200 });
     if (/\/instances(\?|$)/.test(u)) return new Response(JSON.stringify(list), { status: 200 });
     return new Response(JSON.stringify({ error: "no" }), { status: 404 });
@@ -60,7 +61,7 @@ const items = () => [...document.querySelectorAll('[role="menuitem"]')] as HTMLE
 test("the card shows the name, state, path, and user with uptime", async () => {
   const t = await show();
   expect(t.querySelector("h3")?.textContent).toBe("alpha");
-  expect(t.textContent).toContain("active");
+  expect(t.querySelector('[role="img"][aria-label="active"]')).not.toBeNull();
   expect(t.textContent).toContain("/work/a");
   expect(t.textContent).toContain("bob · up 3h 1m");
 });
@@ -146,10 +147,53 @@ test("a starting row has no subtitle, no action strip, and no menu", async () =>
   client.getMutationCache().build(client, { mutationKey: ["instances", "h", "start"], mutationFn: () => new Promise(() => {}) }).execute({ path: "/w/new" });
   await until(() => !!target.querySelector("h3"));
   expect(target.querySelector("h3")!.textContent).toBe("new");
-  expect(target.textContent).toContain("starting...");
+  expect(target.textContent).not.toContain("starting...");
+  const d = target.querySelector('[role="img"][aria-label="starting..."]')!;
+  expect(d.className).toContain("bg-warning");
+  expect(d.className).toContain("animate-pulse");
   expect(target.querySelector('[data-slot="entity-card-actions"]')).toBeNull();
   expect(target.querySelector("button")).toBeNull();
   const card = target.querySelector('[data-slot="entity-card"]')!;
   expect(card.querySelectorAll("div:empty").length).toBe(0);
   expect(card.querySelector(".text-xs.text-muted-foreground")).toBeNull();
+});
+
+const dot = (label: string) => document.querySelector(`[role="img"][aria-label="${label}"]`) as HTMLElement | null;
+
+test("the status is a dot: green for active, grey for paused, red for failed, orange for another state", async () => {
+  list = [inst()];
+  await show();
+  expect(dot("active")!.className).toContain("bg-success");
+  expect(document.body.querySelector("[data-slot=badge]")).toBeNull();
+  document.body.innerHTML = "";
+  list = [inst({ state: "inactive" })];
+  await show();
+  expect(dot("paused")!.className).toContain("bg-muted-foreground");
+  document.body.innerHTML = "";
+  list = [inst({ state: "failed" })];
+  await show();
+  expect(dot("failed")!.className).toContain("bg-destructive");
+  document.body.innerHTML = "";
+  list = [inst({ state: "activating" })];
+  await show();
+  expect(dot("activating")!.className).toContain("bg-warning");
+  expect(dot("activating")!.className).not.toContain("animate-pulse");
+});
+
+test("the heading truncates and has the full name as its title", async () => {
+  list = [inst({ name: "a-very-long-instance-name" })];
+  const t = await show();
+  const h = t.querySelector("h3")!;
+  expect(h.className).toContain("truncate");
+  expect(h.getAttribute("title")).toBe("a-very-long-instance-name");
+});
+
+test("a strip label is screen-reader text at narrow width, and the button keeps its name", async () => {
+  const t = await show();
+  await until(() => [...t.querySelectorAll("span")].some((s) => s.textContent === "Sessions"));
+  const label = [...t.querySelectorAll("span")].find((s) => s.textContent === "Sessions")!;
+  expect(label.className).toContain("sr-only");
+  expect(label.className).toContain("@md/strip:not-sr-only");
+  expect(label.closest("a")!.getAttribute("title")).toBe("Sessions");
+  expect(label.closest("a")!.textContent).toBe("Sessions");
 });

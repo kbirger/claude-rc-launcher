@@ -2,6 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import ShieldLock from "@tabler/icons-svelte/icons/shield-lock";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { stripLabel } from "#lib/components/EntityCard.svelte";
   import { isUnsupported } from "./api";
   import { permissionsHref } from "./format";
   import { userPermissionsQuery } from "./queries";
@@ -13,5 +14,5 @@
 </script>
 
 {#if !isUnsupported(q.error)}
-  <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" href={permissionsHref(host, instance)}><ShieldLock aria-hidden="true" />Permissions</Button>
+  <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" href={permissionsHref(host, instance)} title="Permissions"><ShieldLock aria-hidden="true" /><span class={stripLabel}>Permissions</span></Button>
 {/if}
