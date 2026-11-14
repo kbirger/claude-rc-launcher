@@ -92,3 +92,55 @@ describe("readUserFile with an expected place", () => {
     expect(r).toEqual({ kind: "invalid", reason: "it is not at the expected place" });
   });
 });
+
+describe("readUserFile with follow", () => {
+  test("a symlink to a regular file is read, and the real path is given", async () => {
+    const real = await realpath(dir);
+    await mkdir(join(real, "repo"));
+    await writeFile(join(real, "repo", "settings.json"), '{"a":1}');
+    await symlink(join(real, "repo", "settings.json"), join(real, "link.json"));
+    const r = await readUserFile(join(real, "link.json"), { follow: true });
+    expect(r.kind).toBe("ok");
+    if (r.kind !== "ok") return;
+    expect(r.bytes.toString("utf8")).toBe('{"a":1}');
+    expect(r.realPath).toBe(join(real, "repo", "settings.json"));
+  });
+  test("a folder that is a symlink is followed too", async () => {
+    const real = await realpath(dir);
+    await mkdir(join(real, "repo"));
+    await writeFile(join(real, "repo", "settings.json"), "{}");
+    await symlink(join(real, "repo"), join(real, ".claude"));
+    const r = await readUserFile(join(real, ".claude", "settings.json"), { follow: true });
+    expect(r.kind).toBe("ok");
+  });
+  test("a dangling symlink is missing", async () => {
+    await symlink(join(dir, "nowhere.json"), join(dir, "dangling.json"));
+    expect(await readUserFile(join(dir, "dangling.json"), { follow: true })).toEqual({ kind: "missing" });
+  });
+  test("a symlink loop is invalid and does not hang", async () => {
+    await symlink(join(dir, "b"), join(dir, "a"));
+    await symlink(join(dir, "a"), join(dir, "b"));
+    expect((await readUserFile(join(dir, "a"), { follow: true })).kind).toBe("invalid");
+  });
+  test("the target must be owned by ownerUid: a link to a file of another user is invalid", async () => {
+    const real = await realpath(dir);
+    await writeFile(join(real, "target.json"), "{}");
+    await symlink(join(real, "target.json"), join(real, "link.json"));
+    const me = process.getuid?.() ?? 0;
+    expect((await readUserFile(join(real, "link.json"), { follow: true, ownerUid: me })).kind).toBe("ok");
+    expect(await readUserFile(join(real, "link.json"), { follow: true, ownerUid: me + 1 })).toEqual({ kind: "invalid", reason: "owned by another user" });
+  });
+  test("a link to a FIFO is not a regular file and does not block", async () => {
+    const real = await realpath(dir);
+    execFileSync("mkfifo", [join(real, "fifo")]);
+    await symlink(join(real, "fifo"), join(real, "link"));
+    const started = Date.now();
+    expect(await readUserFile(join(real, "link"), { follow: true })).toEqual({ kind: "invalid", reason: "it is not a regular file" });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+  test("without follow a symlink is still refused", async () => {
+    await writeFile(join(dir, "t.json"), "{}");
+    await symlink(join(dir, "t.json"), join(dir, "l.json"));
+    expect(await readUserFile(join(dir, "l.json"))).toEqual({ kind: "invalid", reason: "it is a symlink" });
+  });
+});

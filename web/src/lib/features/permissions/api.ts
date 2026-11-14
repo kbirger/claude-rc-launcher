@@ -18,6 +18,8 @@ export type Layer = {
   state: "ok" | "missing" | "invalid" | "unknown-path";
   reason?: string;
   hash?: string;
+  /** The file that was really read, when it is not at `path` (a symlink in the name or in a folder). */
+  resolvedPath?: string;
   rules: Rule[];
   warnings: string[];
 };

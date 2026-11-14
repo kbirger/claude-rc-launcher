@@ -50,13 +50,42 @@ describe("SettingsFile.read", () => {
     expect((await new SettingsFile("user", p).read()).reason).toBe("it is not a JSON object");
   });
 
-  test("a .claude folder that is a symlink gives invalid", async () => {
+  test("a user file that is a symlink into a dotfiles repo is read, and the real path is shown", async () => {
+    const repo = join(home, "dotfiles", "claude");
+    await put(join(repo, "settings.json"), perms({ allow: ["Bash(ls *)"] }));
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await symlink(join(repo, "settings.json"), join(home, ".claude", "settings.json"));
+    const l = await new SettingsFile("user", join(home, ".claude", "settings.json")).read();
+    expect(l.state).toBe("ok");
+    expect(l.rules.map((r) => r.raw)).toEqual(["Bash(ls *)"]);
+    expect(l.path).toBe(join(home, ".claude", "settings.json"));
+    expect(l.resolvedPath).toBe(join(repo, "settings.json"));
+  });
+
+  test("a file that is not a symlink has no resolvedPath", async () => {
+    const p = join(home, ".claude", "settings.json");
+    await put(p, perms({ allow: ["A"] }));
+    expect((await new SettingsFile("user", p).read()).resolvedPath).toBeUndefined();
+  });
+
+  test("a .claude folder that is a symlink is followed", async () => {
     const real = join(home, "real");
-    await mkdir(real);
-    await writeFile(join(real, "settings.json"), "{}");
+    await put(join(real, "settings.json"), perms({ allow: ["A"] }));
     await symlink(real, join(home, ".claude"));
     const l = await new SettingsFile("user", join(home, ".claude", "settings.json")).read();
-    expect(l).toMatchObject({ state: "invalid", reason: "the .claude folder is a symlink" });
+    expect(l.state).toBe("ok");
+    expect(l.resolvedPath).toBe(join(real, "settings.json"));
+  });
+
+  test("a symlink to a file of another user is invalid when ownerUid is set (no read through a planted link)", async () => {
+    const target = join(home, "elsewhere", "settings.json");
+    await put(target, perms({ allow: ["SECRET_RULE"] }));
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await symlink(target, join(home, ".claude", "settings.json"));
+    const other = (process.getuid?.() ?? 0) + 1;
+    const l = await new SettingsFile("user", join(home, ".claude", "settings.json"), { ownerUid: other }).read();
+    expect(l).toMatchObject({ state: "invalid", reason: "owned by another user", rules: [] });
+    expect(JSON.stringify(l)).not.toContain("SECRET_RULE");
   });
 
   test("a file owned by another user gives invalid when ownerUid is set", async () => {

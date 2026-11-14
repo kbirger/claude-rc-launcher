@@ -62,3 +62,13 @@ test("a warning is shown", () => {
   const t = show([layer({ warnings: ["permissions.deny is not an array"] })]);
   expect(t.textContent).toContain("permissions.deny is not an array");
 });
+
+test("a layer whose file is a symlink shows where it resolves to", () => {
+  const t = show([layer({ resolvedPath: "/dotfiles/claude/settings.json" })]);
+  expect(t.textContent).toContain("/dotfiles/claude/settings.json");
+});
+
+test("a layer that is not a symlink shows no resolved place", () => {
+  const t = show([layer()]);
+  expect(t.textContent).not.toContain("Resolves to");
+});

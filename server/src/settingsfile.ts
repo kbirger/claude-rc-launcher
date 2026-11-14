@@ -3,7 +3,8 @@
  *
  * SettingsFile is one file. ClaudeSettings is the set of files that apply to one home folder or to one session.
  * This file only READS in Phase 1. A user controls the files and the folders around them, so every read goes through
- * readUserFile (no symlink, no hard link, no FIFO, size cap) and the parent folder is checked too.
+ * readUserFile (no hard link, no FIFO, size cap). It follows a symlink to the real file and requires the real file to be
+ * owned by the instance user, so a link cannot name another user's file.
  *
  * Where Claude Code keeps the files (https://code.claude.com/docs/en/settings):
  *   user          <home>/.claude/settings.json
@@ -13,8 +14,8 @@
  *   managed       /etc/claude-code/managed-settings.json on Linux (read-only)
  * The layers are listed with the highest precedence first: managed, local, legacy-local, project, user.
  */
-import { lstat, realpath } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { lstat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { markShadowed, rulesOf, type MarkedRule } from "./permrules";
 import { readUserFile } from "./safefile";
 
@@ -31,6 +32,8 @@ export type Layer = {
   reason?: string;
   /** SHA-256 of the file as read (state `ok`). A writer uses it to find out that the file changed. */
   hash?: string;
+  /** The file that was really read, when it is not at `path` (a symlink in the name or in a folder). */
+  resolvedPath?: string;
   rules: MarkedRule[];
   warnings: string[];
 };
@@ -54,28 +57,8 @@ export class SettingsFile {
   async read(): Promise<Layer> {
     const path = this.path;
     if (path === null) return this.layer("unknown-path", { reason: this.opts.unknownReason ?? "the path is not known" });
-    const parent = dirname(path);
-    try {
-      if ((await lstat(parent)).isSymbolicLink()) return this.layer("invalid", { reason: `the ${basename(parent)} folder is a symlink` });
-    } catch {
-      // A missing parent folder means a missing file. Another error shows up in the read below.
-    }
-    if (this.opts.ownerUid !== undefined) {
-      try {
-        if ((await lstat(path)).uid !== this.opts.ownerUid) return this.layer("invalid", { reason: "owned by another user" });
-      } catch {
-        // Missing: reported by the read below.
-      }
-    }
-    // The real place of the file, worked out now. readUserFile makes sure that the opened handle is really there, so a folder
-    // that the user swaps for a symlink after the checks above gives `invalid` and not another file.
-    let expectedPath: string | undefined;
-    try {
-      expectedPath = join(await realpath(parent), basename(path));
-    } catch {
-      expectedPath = undefined; // The folder is gone: the read below says missing.
-    }
-    const r = await readUserFile(path, expectedPath === undefined ? {} : { expectedPath });
+    // Symlinks are followed (a settings file kept in a dotfiles repo is common). The real file must belong to the instance user.
+    const r = await readUserFile(path, { follow: true, ...(this.opts.ownerUid !== undefined ? { ownerUid: this.opts.ownerUid } : {}) });
     if (r.kind === "missing") return this.layer("missing");
     if (r.kind === "invalid") return this.layer("invalid", { reason: r.reason });
     let doc: unknown;
@@ -86,7 +69,7 @@ export class SettingsFile {
     }
     if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return this.layer("invalid", { reason: "it is not a JSON object" });
     const { rules, warnings } = rulesOf(doc as Record<string, unknown>);
-    return this.layer("ok", { hash: r.hash, warnings, rules: rules.map((rule) => ({ ...rule, scope: this.scope })) });
+    return this.layer("ok", { hash: r.hash, ...(r.realPath !== undefined && r.realPath !== path ? { resolvedPath: r.realPath } : {}), warnings, rules: rules.map((rule) => ({ ...rule, scope: this.scope })) });
   }
 }
 

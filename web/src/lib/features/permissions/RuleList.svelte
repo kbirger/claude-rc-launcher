@@ -17,6 +17,7 @@
       <h4 class="m-0 min-w-0 text-sm font-semibold">
         {scopeLabel(l.scope)}
         <span class={cn(wrap, "block font-mono text-xs font-normal text-muted-foreground")}>{l.path ?? "no path"}</span>
+        {#if l.resolvedPath}<span class={cn(wrap, "block font-mono text-xs font-normal text-muted-foreground")}>Resolves to {l.resolvedPath}</span>{/if}
       </h4>
       {#if l.state === "invalid"}
         <p class={cn(wrap, "m-0 text-sm text-destructive")}>This file cannot be used: {l.reason}</p>
