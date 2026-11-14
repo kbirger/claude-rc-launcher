@@ -177,10 +177,23 @@ no pager. The files open by their path inside the session folder, so the same ch
 bridge id, the session ids that a running-session file showed with it, oldest first. The store is the file
 `session-chains.json` in the state folder of the node. It holds at most 1000 bridge ids and 100 session ids for each.
 
-The match is exact and it only starts when the launcher first sees the pair. A session that was cleared before the
-launcher watched it stays a separate session. There is no guess from times.
+Three sources join sessions. Each one is saved in the same store:
 
-If two or more transcripts of the folder share a bridge id, the list shows one session. It is the newest transcript.
+- **The bridge id (exact).** A running-session file shows a bridge id with the current session id. The match starts when
+  the launcher first sees the pair.
+- **The first session of the process (exact, Linux only).** A running process keeps the folder
+  `/tmp/claude-<uid>/<project>/<first session id>/tasks` open. `livesessions.ts` reads the links in `/proc/<pid>/fd`
+  and takes only the session id from the name. This links the first session of a running process to the current one,
+  also when the process has no bridge id. It is a Claude Code internal: if a version changes it, this source gives
+  nothing and the others still work. A process of another user, or a system without `/proc`, gives nothing too.
+- **The time of the `/clear` (a guess, with a safe rule).** A transcript that starts with the `/clear` command has the
+  time of that command. The old transcript gets its last write a moment after it (0.11 to 0.23 seconds in the real
+  data). `matchByTime` in `sessioncatalog.ts` joins a `/clear` transcript to the other transcript of the folder whose
+  last write is from 0.5 seconds before to 2.5 seconds after the command. If two transcripts fit, or if two `/clear`
+  transcripts want the same old one, it joins none: a wrong join is worse than a missing one. A transcript that was
+  written again after the `/clear` (for example after a resume) does not match any more.
+
+If two or more transcripts of the folder are joined, directly or through other transcripts, the list shows one session. It is the newest transcript.
 Its name is the name that someone set, or else the name of the first transcript of the chain (the Claude app names the
 connection from it). Its start time is the start of the first transcript. The ids of the others are in `earlier`.
 

@@ -101,9 +101,14 @@ describe("SessionCatalog", () => {
     const ID2 = "22222222-2222-2222-2222-222222222222";
     const FILE2 = "/h/.claude/projects/-work-proj/" + ID2 + ".jsonl";
     const first = (t: string, text: string) => JSON.stringify({ type: "user", cwd: "/work/proj", timestamp: t, gitBranch: "main", message: { content: text } });
-    function twoFs(): TranscriptFs {
-      const files: Record<string, string[]> = { [FILE]: [first("2026-01-01T00:00:00.000Z", "Out theming is rudimentary")], [FILE2]: [first("2026-01-01T02:00:00.000Z", "better parity please")] };
-      const mt: Record<string, number> = { [FILE]: 1000, [FILE2]: 2000 };
+    const CLEAR_AT = "2026-01-01T02:00:00.000Z";
+    const clearCmd = JSON.stringify({ type: "user", cwd: "/work/proj", timestamp: CLEAR_AT, message: { content: "<command-name>/clear</command-name>\n<command-message>clear</command-message>" } });
+    function twoFs(o: { cleared?: boolean; oldMtime?: number } = {}): TranscriptFs {
+      const files: Record<string, string[]> = {
+        [FILE]: [first("2026-01-01T00:00:00.000Z", "Out theming is rudimentary")],
+        [FILE2]: o.cleared ? [first("2026-01-01T02:00:00.000Z", "x"), clearCmd, first("2026-01-01T02:05:00.000Z", "better parity please")] : [first("2026-01-01T02:00:00.000Z", "better parity please")],
+      };
+      const mt: Record<string, number> = { [FILE]: o.oldMtime ?? 1000, [FILE2]: Date.parse(CLEAR_AT) + 300_000 };
       return {
         async readdir(dir) {
           return dir === "/h/.claude/projects" ? ["-work-proj"] : Object.keys(files).map((f) => f.split("/").pop()!);
@@ -132,6 +137,26 @@ describe("SessionCatalog", () => {
       expect(list[0].startedAt).toBe("2026-01-01T00:00:00.000Z");
       expect(list[0].earlier).toEqual([ID1]);
       expect(list[0].live?.remoteControl).toBe(true);
+    });
+
+    test("a /clear transcript joins the transcript whose last write was at the /clear, with no running file", async () => {
+      const cat = new SessionCatalog({ fs: twoFs({ cleared: true, oldMtime: Date.parse(CLEAR_AT) + 190 }), live: async () => new Map() });
+      const list = await cat.instance({ path: PATH, home: HOME }).list();
+      expect(list.length).toBe(1);
+      expect(list[0].id).toBe(ID2);
+      expect(list[0].earlier).toEqual([ID1]);
+    });
+
+    test("a /clear transcript with no matching last write stays separate", async () => {
+      const cat = new SessionCatalog({ fs: twoFs({ cleared: true, oldMtime: Date.parse(CLEAR_AT) - 25_000 }), live: async () => new Map() });
+      expect((await cat.instance({ path: PATH, home: HOME }).list()).length).toBe(2);
+    });
+
+    test("the first session of the running process joins the current one", async () => {
+      const live = async () => new Map([[ID2, { remoteControl: false, name: "proj-91", nameIsDefault: true, firstSessionId: ID1 }]]);
+      const list = await new SessionCatalog({ fs: twoFs(), live }).instance({ path: PATH, home: HOME }).list();
+      expect(list.map((x) => x.id)).toEqual([ID2]);
+      expect(list[0].earlier).toEqual([ID1]);
     });
 
     test("without a shared bridge id both sessions stay", async () => {

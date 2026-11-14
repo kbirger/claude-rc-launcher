@@ -35,7 +35,7 @@ function fakeFs(files: Record<string, string>, asked: string[] = [], listed = { 
 }
 
 /** No /proc: liveness falls back to `alive`. */
-const NO_PROC: ProcReads = { startTime: async () => undefined, machineId: async () => undefined, pidNamespace: async () => undefined };
+const NO_PROC: ProcReads = { startTime: async () => undefined, machineId: async () => undefined, pidNamespace: async () => undefined, firstSession: async () => undefined };
 const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
 const live = (files: Record<string, string>, pids: number[], extra: Partial<Parameters<typeof readLiveSessions>[0]> = {}) =>
   readLiveSessions({ home: HOME, fs: fakeFs(files), alive: alive(pids), proc: NO_PROC, ...extra });
@@ -89,6 +89,15 @@ describe("readLiveSessions", () => {
       expect([label, v.nameIsDefault === true]).toEqual([label, want]);
     }
     expect(JSON.stringify((await live({ "100.json": file(100, { nameSource: "user" }) }, [100])).get(S1))).not.toContain("nameSource");
+  });
+
+  test("the first session of the process is returned only when it differs from the one in the file", async () => {
+    const proc = (first: string | undefined): ProcReads => ({ ...NO_PROC, firstSession: async () => first });
+    const files = { "100.json": file(100) };
+    const run = (first: string | undefined) => readLiveSessions({ home: HOME, fs: fakeFs(files), alive: alive([100]), proc: proc(first) });
+    expect((await run(S2)).get(S1)?.firstSessionId).toBe(S2);
+    expect((await run(S1)).get(S1)?.firstSessionId).toBeUndefined();
+    expect((await run(undefined)).get(S1)?.firstSessionId).toBeUndefined();
   });
 
   test("a bad pid, a pid that does not match the file name, or a bad session id is ignored", async () => {

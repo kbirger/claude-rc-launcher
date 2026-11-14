@@ -7,12 +7,26 @@ import { within } from "./paths";
 import { encodeProjectDir, encodeUnits, MAX_ENCODED, parse, SESSION_ID, trimSeparators, WORKTREE_MARK } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 
+/** After the first record with a cwd, at most this many more records are read to find a `/clear` command. */
+const CLEAR_LOOKAHEAD = 30;
+
+/** The time (epoch ms) of a record that holds the `/clear` command that started this transcript. */
+function clearTime(r: Record<string, any>): number | undefined {
+  if (r.type !== "user" || typeof r.timestamp !== "string") return undefined;
+  const c = r.message?.content;
+  const text = typeof c === "string" ? c : Array.isArray(c) && typeof c[0]?.text === "string" ? c[0].text : "";
+  if (!text.trimStart().startsWith("<command-name>/clear</command-name>")) return undefined;
+  const t = Date.parse(r.timestamp);
+  return Number.isFinite(t) ? t : undefined;
+}
+
 /**
  * One transcript that belongs to the instance folder, as scan found it: the session id, the transcript file, its
  * modification time and size (for the name cache), the session folder from its first cwd (`root`, lexical), whether it came
  * from a work tree folder, and the branch and start time of that first record. No file of the project is read for it.
+ * `clearedAt` is set when the transcript starts with a `/clear` command: the time of that command record (epoch ms).
  */
-export type Found = { id: string; file: string; mtimeMs: number; size?: number; root: string; worktree: boolean; branch?: string; startedAt?: string };
+export type Found = { id: string; file: string; mtimeMs: number; size?: number; root: string; worktree: boolean; branch?: string; startedAt?: string; clearedAt?: number };
 
 /**
  * Find every transcript for `path`: the main folder and the work tree folders. Keep a session only when its first cwd
@@ -62,13 +76,15 @@ export async function scan(o: { home: string; path: string; fs: TranscriptFs; on
         continue;
       }
       let first: Record<string, any> | undefined;
+      let clearedAt: number | undefined;
       try {
+        let n = 0;
         for await (const line of o.fs.lines(file)) {
           const r = parse(line);
-          if (r && typeof r.cwd === "string" && r.cwd.length > 0) {
-            first = r;
-            break;
-          }
+          if (r && !first && typeof r.cwd === "string" && r.cwd.length > 0) first = r;
+          // The /clear command is written a few records after the first record with a cwd.
+          if (r && clearedAt === undefined) clearedAt = clearTime(r);
+          if (first && (clearedAt !== undefined || ++n > CLEAR_LOOKAHEAD)) break;
         }
       } catch {
         continue;
@@ -87,6 +103,7 @@ export async function scan(o: { home: string; path: string; fs: TranscriptFs; on
         worktree,
         branch: typeof first.gitBranch === "string" && first.gitBranch ? first.gitBranch : undefined,
         startedAt: typeof first.timestamp === "string" ? first.timestamp : undefined,
+        ...(clearedAt !== undefined ? { clearedAt } : {}),
       });
     }
   }

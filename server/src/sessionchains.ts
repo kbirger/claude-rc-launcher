@@ -66,11 +66,29 @@ export class SessionChains {
     await this.save();
   }
 
-  /** The session ids that share a bridge id with `id`, oldest first, `id` included. Just `[id]` when it is in no chain. */
+  /** Remember that `successor` came from `predecessor` with no bridge id to show it (a match by time, or a process link). */
+  async link(predecessor: string, successor: string): Promise<void> {
+    if (predecessor === successor || !SESSION_ID.test(predecessor) || !SESSION_ID.test(successor)) return;
+    await this.observe([[`link:${successor}`, predecessor], [`link:${successor}`, successor]]);
+  }
+
+  /**
+   * The session ids of the chain of `id`: every id that is joined to it, directly or through others, `id` included.
+   * Just `[id]` when it is in no chain. The order is the order of the store (first sight): callers sort by time if they need to.
+   */
   async chainOf(id: string): Promise<string[]> {
     await this.load();
-    for (const ids of Object.values(this.data)) if (ids.includes(id)) return [...ids];
-    return [id];
+    const chain = new Set([id]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const ids of Object.values(this.data)) {
+        if (!ids.some((i) => chain.has(i))) continue;
+        for (const i of ids) if (!chain.has(i)) (chain.add(i), (grew = true));
+      }
+    }
+    // In the order of the store, so that a chain from one bridge id keeps its order. `id` alone stays alone.
+    const ordered = [...new Set(Object.values(this.data).flat())].filter((i) => chain.has(i));
+    return ordered.length ? ordered : [id];
   }
 
   private save(): Promise<void> {

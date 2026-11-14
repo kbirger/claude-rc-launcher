@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { open, opendir, readFile, readlink, realpath } from "node:fs/promises";
+import { open, opendir, readdir, readFile, readlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { within } from "./paths";
 
@@ -15,7 +15,7 @@ import { within } from "./paths";
  * name and two characters). A missing or unknown `nameSource` counts as a name that someone set.
  */
 /** `status` is set only for a known value ("busy" or "idle"). A future value keeps the session live, with no status. */
-export type LiveInfo = { status?: "busy" | "idle"; remoteControl: boolean; name?: string; nameIsDefault?: boolean; bridgeId?: string };
+export type LiveInfo = { status?: "busy" | "idle"; remoteControl: boolean; name?: string; nameIsDefault?: boolean; bridgeId?: string; firstSessionId?: string };
 export type LiveFs = {
   /** The names in a folder, one at a time, so that the caller can stop early. */
   entries(dir: string): AsyncIterable<string>;
@@ -31,7 +31,16 @@ export type ProcReads = {
   machineId(): Promise<string | undefined>;
   /** The pid namespace inode of this process, from `readlink /proc/self/ns/pid` ("pid:[4026532689]" gives "4026532689"). */
   pidNamespace(): Promise<string | undefined>;
+  /**
+   * The id of the first session of the process, or undefined. The process keeps the folder
+   * `/tmp/claude-<uid>/<project>/<first session id>/tasks` open for its whole life (an entry of /proc/<pid>/fd).
+   * Claude Code internals: it can change with a version, and then this gives undefined.
+   */
+  firstSession(pid: number): Promise<string | undefined>;
 };
+
+const TASKS_LINK = /^\/tmp\/claude-\d+\/[^/]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/tasks(?: \(deleted\))?$/;
+const MAX_FDS = 512;
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_BYTES = 64 * 1024;
@@ -99,6 +108,22 @@ const linuxProc: ProcReads = {
       return undefined;
     }
   },
+  async firstSession(pid) {
+    try {
+      const fds = (await readdir(`/proc/${pid}/fd`)).slice(0, MAX_FDS);
+      for (const fd of fds) {
+        try {
+          const m = TASKS_LINK.exec(await readlink(`/proc/${pid}/fd/${fd}`));
+          if (m) return m[1];
+        } catch {
+          // the descriptor closed
+        }
+      }
+    } catch {
+      // another user's process, or no /proc entry
+    }
+    return undefined;
+  },
   async pidNamespace() {
     try {
       return /^pid:\[(\d+)\]$/.exec(await readlink("/proc/self/ns/pid"))?.[1];
@@ -107,7 +132,7 @@ const linuxProc: ProcReads = {
     }
   },
 };
-const noProc: ProcReads = { startTime: async () => undefined, machineId: async () => undefined, pidNamespace: async () => undefined };
+const noProc: ProcReads = { startTime: async () => undefined, machineId: async () => undefined, pidNamespace: async () => undefined, firstSession: async () => undefined };
 
 /** True when the process exists. EPERM means it exists but belongs to another user. */
 export function pidAlive(pid: number): boolean {
@@ -188,6 +213,9 @@ export async function readLiveSessions(o: {
     if (status === "busy" || status === "idle") info.status = status;
     if (typeof appName === "string" && appName.length > 0 && appName.length <= MAX_NAME) info.name = appName;
     if (typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 && bridgeSessionId.length <= MAX_BRIDGE) info.bridgeId = bridgeSessionId;
+    // Only a different id says anything: the first session of the process, when this file names a later one.
+    const first = await proc.firstSession(pid);
+    if (first !== undefined && first !== sessionId) info.firstSessionId = first;
     if (info.name !== undefined && nameSource === "derived") info.nameIsDefault = true;
     out.set(sessionId, info);
   }
@@ -198,6 +226,7 @@ export async function readLiveSessions(o: {
     if (v.name !== undefined) info.name = v.name;
     if (v.nameIsDefault) info.nameIsDefault = true;
     if (v.bridgeId !== undefined) info.bridgeId = v.bridgeId;
+    if (v.firstSessionId !== undefined) info.firstSessionId = v.firstSessionId;
     result.set(id, info);
   }
   return result;

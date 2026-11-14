@@ -92,6 +92,25 @@ export class SessionCatalog {
   }
 }
 
+/** A `/clear` starts its transcript a moment after the old one gets its last write (0.11 to 0.23 s in the real data). */
+const CLEAR_BEFORE_MS = 500;
+const CLEAR_AFTER_MS = 2500;
+
+/**
+ * Pairs (older id, newer id) for transcripts that start with `/clear`. The older transcript is the only other transcript
+ * of the folder whose last write is within a moment of the `/clear` command. A second candidate, or an older transcript
+ * that two `/clear` transcripts want, gives no pair: a wrong join is worse than a missing one.
+ */
+export function matchByTime(found: readonly Found[]): [string, string][] {
+  const wanted = new Map<string, string[]>();
+  for (const f of found) {
+    if (f.clearedAt === undefined) continue;
+    const c = found.filter((o) => o.id !== f.id && o.mtimeMs >= f.clearedAt! - CLEAR_BEFORE_MS && o.mtimeMs <= f.clearedAt! + CLEAR_AFTER_MS);
+    if (c.length === 1) wanted.set(c[0].id, [...(wanted.get(c[0].id) ?? []), f.id]);
+  }
+  return [...wanted].flatMap(([pred, succ]) => (succ.length === 1 ? [[pred, succ[0]] as [string, string]] : []));
+}
+
 export class InstanceSessions {
   constructor(
     readonly catalog: SessionCatalog,
@@ -104,8 +123,13 @@ export class InstanceSessions {
     const live = await this.catalog.readLive(this.home).catch(() => undefined);
     const fs = this.catalog.fs;
     const found = await scan({ home: this.home, path: this.path, fs });
-    // Remember which session ids ran with which Remote Control connection, then join the ones that share a connection.
-    if (live) await this.catalog.chains.observe([...live].flatMap(([id, v]) => (v.bridgeId ? [[v.bridgeId, id] as const] : [])));
+    // Remember which session ids belong together: the same Remote Control connection (exact), and the first session of
+    // a running process (exact, Linux only). Then a `/clear` that no running file showed is matched by time.
+    if (live) {
+      await this.catalog.chains.observe([...live].flatMap(([id, v]) => (v.bridgeId ? [[v.bridgeId, id] as const] : [])));
+      for (const [id, v] of live) if (v.firstSessionId) await this.catalog.chains.link(v.firstSessionId, id);
+    }
+    for (const [pred, succ] of matchByTime(found)) await this.catalog.chains.link(pred, succ);
     const byId = new Map(found.map((f) => [f.id, f]));
     const hidden = new Set<string>();
     const chainOf = new Map<string, Found[]>();
