@@ -47,7 +47,7 @@ test("renders subtitle, status, content, and actions in their slots", () => {
   expect(s.contains(q('[data-testid="actions"]'))).toBe(true);
   expect(s.contains(q('[data-testid="actionsEnd"]'))).toBe(true);
   // The status shares the header row with the title.
-  expect(q("h3")!.parentElement!.contains(q('[data-testid="status"]'))).toBe(true);
+  expect(q("h3")!.parentElement!.parentElement!.contains(q('[data-testid="status"]'))).toBe(true);
 });
 
 test("draws no action strip without actions, actionsEnd, or overflow", () => {
@@ -99,10 +99,63 @@ test("Escape closes the menu", async () => {
   openMenu();
   expect(items()).toHaveLength(1);
   (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  flushSync();
-  await new Promise((r) => setTimeout(r, 50));
-  flushSync();
-  expect(items()).toHaveLength(0);
+  await vi.waitFor(() => {
+    flushSync();
+    expect(items()).toHaveLength(0);
+  });
+});
+
+test.each(["Enter", "ArrowDown"])("the menu opens with %s on the trigger", async (key) => {
+  show({ overflow: [{ label: "Rename", onselect() {} }] });
+  const b = menuButton()!;
+  b.focus();
+  b.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  await vi.waitFor(() => {
+    flushSync();
+    expect(items()).toHaveLength(1);
+  });
+});
+
+test("after Escape the focus returns to the trigger", async () => {
+  show({ overflow: [{ label: "Rename", onselect() {} }] });
+  const b = menuButton()!;
+  b.focus();
+  b.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(items()).toHaveLength(1));
+  (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await vi.waitFor(() => {
+    flushSync();
+    expect(items()).toHaveLength(0);
+    expect(document.activeElement).toBe(menuButton());
+  });
+});
+
+test("the menu is not as narrow as the trigger", () => {
+  show({ overflow: [{ label: "Rename", onselect() {} }] });
+  openMenu();
+  const c = q('[data-slot="dropdown-menu-content"]')!;
+  expect(c.className).toContain("min-w-40");
+  expect(c.className).toContain("w-auto");
+  expect(c.className).not.toContain("w-(--bits-dropdown-menu-anchor-width)");
+});
+
+test("titleAside renders outside the heading", () => {
+  show({ slots: ["titleAside"] });
+  expect(q('[data-testid="aside"]')?.textContent).toBe("hub");
+  expect(q("h3")!.textContent).not.toContain("hub");
+  expect(q("h3")!.contains(q('[data-testid="aside"]'))).toBe(false);
+});
+
+test("titleEditor replaces the heading", () => {
+  show({ slots: ["titleEditor"] });
+  expect(q("h3")).toBeNull();
+  expect(q('[data-testid="editor"]')).not.toBeNull();
+});
+
+test("a form inside titleEditor is not inside an h3", () => {
+  show({ slots: ["titleEditor", "titleAside"] });
+  expect(q('[data-testid="editor"]')!.closest("h3")).toBeNull();
+  expect(q('[data-testid="aside"]')).not.toBeNull();
 });
 
 test("selected adds the primary border class and pending adds the dim class", () => {

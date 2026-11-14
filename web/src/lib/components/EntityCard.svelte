@@ -16,6 +16,8 @@
   // `actions` sits on the left of the strip. `actionsEnd` and the overflow menu sit on the right.
   let {
     title,
+    titleAside,
+    titleEditor,
     subtitle,
     status,
     children,
@@ -29,6 +31,8 @@
     size = "sm",
   }: {
     title: Snippet;
+    titleAside?: Snippet;
+    titleEditor?: Snippet;
     subtitle?: Snippet;
     status?: Snippet;
     children?: Snippet;
@@ -45,14 +49,24 @@
   const hasStrip = $derived(!!actions || !!actionsEnd || overflow.length > 0);
 </script>
 
+<!-- With selected and pending="starting" together, the dashed muted border wins over the primary border. -->
 <Card.Root
   {size}
   data-slot="entity-card"
+  
   class={cn("gap-2", selected && "ring-0 border border-primary", pending && "opacity-60", pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50", className)}
 >
   <Card.Content class="flex flex-col gap-1.5">
     <div class="flex items-start justify-between gap-2">
-      <h3 class="m-0 min-w-0 text-base leading-tight font-semibold [overflow-wrap:anywhere]">{@render title()}</h3>
+      <!-- titleEditor replaces the heading (a rename form). titleAside sits next to it, outside the heading (a role pill). -->
+      <div class="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        {#if titleEditor}
+          {@render titleEditor()}
+        {:else}
+          <h3 class="m-0 min-w-0 text-base leading-tight font-semibold [overflow-wrap:anywhere]">{@render title()}</h3>
+        {/if}
+        {#if titleAside}{@render titleAside()}{/if}
+      </div>
       {#if status}<div class="flex flex-none items-center">{@render status()}</div>{/if}
     </div>
     {#if subtitle}<div class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{@render subtitle()}</div>{/if}
@@ -72,8 +86,8 @@
                   </Button>
                 {/snippet}
               </DropdownMenu.Trigger>
-              <DropdownMenu.Content align="end">
-                {#each overflow as item (item.label)}
+              <DropdownMenu.Content align="end" class="w-auto min-w-40">
+                {#each overflow as item, n (n)}
                   <DropdownMenu.Item variant={item.destructive ? "destructive" : "default"} disabled={item.disabled} onSelect={item.onselect}>
                     {#if item.icon}{@const Icon = item.icon}<Icon aria-hidden="true" />{/if}
                     {item.label}
