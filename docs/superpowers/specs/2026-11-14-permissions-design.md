@@ -1,6 +1,6 @@
 # Permissions: audit, edit, and fix blocked tool calls
 
-Date: 2026-11-14. Status: phase 1 released as a manual build (PR 9); phase 2 (edit) built on branch feat/permissions, not yet released. Related notes: the spike results in the project memory `permissions-spike-results`.
+Date: 2026-11-14. Status: phase 1 released as a manual build (PR 9); phase 2 (edit) and phase 3 (the nudge to the live session) are built on branch feat/permissions and not yet released. Related notes: the spike results in the project memory `permissions-spike-results`.
 
 ## Intent
 
