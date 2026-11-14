@@ -87,7 +87,8 @@ export async function scan(o: { home: string; path: string; fs: TranscriptFs; on
           if (first && (clearedAt !== undefined || ++n > CLEAR_LOOKAHEAD)) break;
         }
       } catch {
-        continue;
+        // A read that fails after the first record with a cwd keeps the session: it was found, only the `/clear` look-ahead failed.
+        if (!first) continue;
       }
       // A relative cwd would resolve against the node's own working folder.
       if (!first || !isAbsolute(first.cwd)) continue;
