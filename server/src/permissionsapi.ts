@@ -65,8 +65,13 @@ export function permissionsApi(deps: PermissionsApiDeps): Hono {
   async function edit(c: Context, action: "add" | "remove", scopes: readonly LayerScope[], fileOf: (scope: LayerScope) => Promise<ReturnType<ClaudeSettings["file"]>>) {
     const body = await readJson(c);
     const f = isObject(body) ? body : {};
-    const shown = (v: unknown) => (typeof v === "string" ? v : "?");
-    const caller = String(c.get("caller" as never) ?? "unknown");
+    // A request value is printed bare only when it is in its known set, else as "?". The rule is JSON-quoted. The caller
+    // comes from the login, and is JSON-quoted when it has anything but plain name characters.
+    const known = (v: unknown, set: readonly string[]) => (typeof v === "string" && set.includes(v) ? v : "?");
+    const rawCaller = String(c.get("caller" as never) ?? "unknown");
+    const caller = /^[\w.@:-]+$/.test(rawCaller) ? rawCaller : JSON.stringify(rawCaller);
+    const rawId = c.req.param("id") ?? "";
+    const instance = /^[0-9a-f]{12}$/.test(rawId) ? rawId : "?";
     let status = 500;
     try {
       const e = parseRuleEdit(body, scopes);
@@ -82,7 +87,7 @@ export function permissionsApi(deps: PermissionsApiDeps): Hono {
       }
       throw err;
     } finally {
-      log(`audit caller=${caller} instance=${c.req.param("id") ?? ""} scope=${shown(f.scope)} action=${action} list=${shown(f.list)} rule=${JSON.stringify(shown(f.rule))} status=${status}`);
+      log(`audit caller=${caller} instance=${instance} scope=${known(f.scope, NODE_SCOPES)} action=${action} list=${known(f.list, ["allow", "ask", "deny"])} rule=${JSON.stringify(typeof f.rule === "string" ? f.rule : "?")} status=${status}`);
     }
   }
   const userFile = async (c: Context) => {

@@ -317,8 +317,11 @@ export function hostsApi(o: {
     forwardJson(async (c, k) => {
       const e = parseRuleEdit(await readJson(c), scopes);
       const u = c.get("user" as never) as User | undefined;
+      const rawUser = String(u?.username ?? u?.sub ?? "unknown");
+      const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
+      const iid = instanceId(c);
       const line = (status: number) =>
-        `audit user=${u?.username ?? u?.sub ?? "unknown"} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${instanceId(c)} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status}`;
+        `audit user=${who} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${iid} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status}`;
       try {
         const r = await k.call(method, path(c), { json: { scope: e.scope, list: e.list, rule: e.rule, expectedHash: e.expectedHash }, timeoutMs: requestTimeoutMs });
         console.log(line(r.status === 200 || (r.status >= 400 && r.status <= 599) ? r.status : 502));

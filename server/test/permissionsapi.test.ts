@@ -203,4 +203,15 @@ describe("rule edit routes", () => {
     expect(lines.at(-1)).toContain('rule="Bash(a\\nb)"');
     expect(lines.at(-1)).toContain("status=400");
   });
+  test("a hostile scope, list or instance cannot forge a line or a field", async () => {
+    const lines: string[] = [];
+    const app = build({ log: (l) => lines.push(l) });
+    const evil = "user\naudit caller=x instance=0123456789ab status=200 rule=a";
+    expect((await send(app, "POST", "/permissions/rules", { scope: evil, list: evil, rule: "Bash", expectedHash: null })).status).toBe(400);
+    expect((await send(app, "POST", "/permissions/rules", { scope: "user x=1", list: "allow z=2", rule: "Bash", expectedHash: null })).status).toBe(400);
+    expect(lines.length).toBe(2);
+    for (const l of lines) {
+      expect(l).toBe(`audit caller=unknown instance=${ID} scope=? action=add list=? rule="Bash" status=400`);
+    }
+  });
 });

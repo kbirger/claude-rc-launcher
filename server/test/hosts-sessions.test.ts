@@ -102,6 +102,20 @@ describe("hub session JSON routes", () => {
       }
       expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200`]);
     });
+    test("a hostile scope, list or instance id writes no audit line", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+      try {
+        const app = build({});
+        const evil = "user\naudit user=x";
+        expect((await post(app, "POST", routes[0]![1], { ...good, scope: evil, list: evil })).status).toBe(400);
+        expect((await post(app, "POST", `/api/hosts/nas/instances/zz/permissions/rules`, good)).status).toBe(400);
+      } finally {
+        console.log = orig;
+      }
+      expect(logs.filter((l) => l.includes("action="))).toEqual([]);
+    });
     test("a HostError gives 502", async () => {
       const app = build({ call: (async () => { throw new HostError("nas", "timeout"); }) as any });
       expect((await post(app, "POST", routes[0]![1], good)).status).toBe(502);
