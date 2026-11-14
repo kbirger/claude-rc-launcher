@@ -377,3 +377,9 @@ test("the box is not shown when the sheet starts on a list other than allow", ()
   show({ call: call(), live: true, initial: { raw: "Bash(ls)", list: "ask" } });
   expect(box()).toBeNull();
 });
+
+test("only the chosen item of each selector has the on state", () => {
+  show({ initial: { raw: "Bash(ls)", list: "ask" } });
+  expect(items("File").map((i) => i.getAttribute("data-state"))).toEqual(["on", "off", "off"]);
+  expect(items("List").map((i) => i.getAttribute("data-state"))).toEqual(["off", "on", "off"]);
+});

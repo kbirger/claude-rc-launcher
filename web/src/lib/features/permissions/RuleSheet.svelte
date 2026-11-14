@@ -93,7 +93,7 @@
       {#if offered.length > 1}
         <ToggleGroup type="single" variant="outline" aria-label="File" class="w-full" bind:value={() => layer?.scope ?? "", (v) => { if (v) picked = v; }}>
           {#each offered as l (l.scope)}
-            <ToggleGroupItem value={l.scope} class="h-11 min-w-0 flex-1">{scopeBadge(l.scope)}</ToggleGroupItem>
+            <ToggleGroupItem value={l.scope} class="h-11 min-w-0 flex-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground">{scopeBadge(l.scope)}</ToggleGroupItem>
           {/each}
         </ToggleGroup>
       {/if}
@@ -104,7 +104,7 @@
 
       <ToggleGroup type="single" variant="outline" aria-label="List" class="w-full" disabled={mode === "remove"} bind:value={() => list, (v) => { if (v) list = v as typeof list; }}>
         {#each LISTS as l (l)}
-          <ToggleGroupItem value={l} class="h-11 min-w-0 flex-1">{listLabel(l)}</ToggleGroupItem>
+          <ToggleGroupItem value={l} class="h-11 min-w-0 flex-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground">{listLabel(l)}</ToggleGroupItem>
         {/each}
       </ToggleGroup>
 
