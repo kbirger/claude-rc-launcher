@@ -94,7 +94,7 @@ test("the call text shows only in a closed details", () => {
 
 test("the classifier warning shows for a classifier call", () => {
   show({ call: call({ reason: "classifier" }) });
-  expect(text()).toContain("The auto mode classifier denied this call. An allow rule may not change that.");
+  expect(text()).toContain("Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.");
 });
 
 test("the edited text is what the sheet sends, with the file hash", async () => {

@@ -69,7 +69,7 @@ export function summaryOf(c: Pick<BlockedCall, "tool" | "input">): string {
 
 export const permissionsHref = (host: string, instance: string): string => `/permissions?${new URLSearchParams({ host, instance })}`;
 
-export const CLASSIFIER_WARNING = "The auto mode classifier denied this call. An allow rule may not change that.";
+export const CLASSIFIER_WARNING = "Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.";
 export const RELOAD_MESSAGE = "The file changed. Reload.";
 export const NUDGE_LABEL = "Tell the session to try again";
 export const NUDGE_SENT = "Sent to the session. It may still wait for you to approve the message.";

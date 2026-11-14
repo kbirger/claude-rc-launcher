@@ -51,7 +51,7 @@ test("the file warnings", () => {
 
 test("the block warnings: the classifier text, and nothing for the other reasons", () => {
   expect(blockWarning("classifier")).toBe(CLASSIFIER_WARNING);
-  expect(CLASSIFIER_WARNING).toBe("The auto mode classifier denied this call. An allow rule may not change that.");
+  expect(CLASSIFIER_WARNING).toBe("Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.");
   expect(blockWarning("needs_approval")).toBeUndefined();
   expect(blockWarning("user_rejected")).toBeUndefined();
   expect(RELOAD_MESSAGE).toBe("The file changed. Reload.");

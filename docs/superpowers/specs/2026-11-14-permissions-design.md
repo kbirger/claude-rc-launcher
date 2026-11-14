@@ -44,7 +44,7 @@ On 2026-11-14 a throwaway `claude -p` session in default permission mode had a `
 - A message on the inbox socket starts a new turn in an idle session. The wire format is an optional auth line, then `{"type":"user","message":{"role":"user","content":"..."}}`. On Linux the auth line is optional, so the node does not need the token.
 - The denial text for a call that needs approval is in the transcript as a `tool_result` with `is_error: true`.
 
-Still not proven: whether an allow rule clears a denial made by the auto mode classifier. On 2026-11-14 the Phase 2 spike ran three throwaway `claude -p --permission-mode auto` sessions in a temp git folder, asking for a force push to a local bare repo, a `curl | bash` against a closed local port, and a vague request to rewrite a shared branch. The classifier never denied any of them, so there was no denial to clear. The result is inconclusive, and the interface keeps its warning that a classifier denial may stay in place after the user adds an allow rule.
+Proven on 2026-11-14 in a later live test: an exact allow rule clears a denial made by the auto mode classifier. A throwaway `claude -p --permission-mode auto` session had `echo classifier-test` blocked by a one-run `autoMode.hard_deny` rule. The user added the exact allow rule in the sheet with the nudge on. The same session then ran the command. The docs say the same: narrow Bash allow rules are resolved before the classifier. A rule that allows any command, such as `Bash(*)`, is suspended in auto mode and does not clear a denial. The earlier Phase 2 spike was inconclusive because the classifier denied nothing.
 
 ## Approaches considered
 
@@ -90,7 +90,7 @@ A blocked call is a `tool_use` paired with a later `tool_result` that has `is_er
 
 - `needs_approval`: the call needed a prompt and nobody answered. A rule fixes it.
 - `user_rejected`: the user said no. Shown, but the add-rule button asks for an extra confirmation.
-- `classifier`: the auto mode classifier denied it. The button shows a warning until the Phase 2 test says whether a rule helps.
+- `classifier`: the auto mode classifier denied it. The button shows a note that a narrow allow rule clears it and a rule that allows any command does not.
 - `deny_rule`: a deny rule matched. No allow rule helps. The UI shows the deny rule and its file instead of an add button.
 - `safety_check`: a built-in guard (for example `rm -rf`). No button.
 
