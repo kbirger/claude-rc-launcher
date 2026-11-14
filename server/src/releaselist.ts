@@ -84,7 +84,7 @@ export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; 
       try {
         const f = releaseOf(normalizeVersion(from));
         const t = releaseOf(normalizeVersion(to));
-        if (f === undefined || t === undefined || compareVersions(f, t) === 0) return { releases: [], complete: true };
+        if (f === undefined || t === undefined || compareVersions(f, t) >= 0) return { releases: [], complete: true };
         const all = await list();
         if (!all) return { releases: [], complete: false };
         const releases = all.filter((r) => compareVersions(r.version, f) > 0 && compareVersions(r.version, t) <= 0);

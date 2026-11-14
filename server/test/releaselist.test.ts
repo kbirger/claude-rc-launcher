@@ -88,4 +88,14 @@ describe("createReleaseList", () => {
     await s.list.between("0.22.0", "0.22.3");
     expect(s.urls).toEqual(["https://api.github.com/repos/kbirger/claude-rc-launcher/releases?per_page=100"]);
   });
+
+  test("from above to gives an empty list and complete true, with no fetch", async () => {
+    const s = setup();
+    expect(await s.list.between("0.22.3", "0.22.1")).toEqual({ releases: [], complete: true });
+    expect(await s.list.between("0.24.0", "0.23.0")).toEqual({ releases: [], complete: true });
+    expect(s.urls.length).toBe(0);
+    const down = setup(new Error("offline"));
+    expect(await down.list.between("0.22.3", "0.22.1")).toEqual({ releases: [], complete: true });
+    expect(down.urls.length).toBe(0);
+  });
 });
