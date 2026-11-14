@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Circle from "@tabler/icons-svelte/icons/circle";
@@ -73,7 +72,8 @@
             <!-- The hub is the special node, so its chip has the primary color. An agent has the plain chip. -->
             <span class={cn(chip, roleOf(h) === "hub" && "border-primary/40 bg-primary/10 font-medium text-primary")}>{roleOf(h)}</span>
           </div>
-          <Badge variant={h.status === "ok" || h.status === "restarting" ? "outline" : "destructive"} class={cn("h-6 flex-none", h.status === "ok" ? "text-success" : h.status === "restarting" ? "text-warning" : "")}>{h.status}</Badge>
+          <!-- The health of the node is a plain dot: green (ok), orange (restarting) or red (any other status). The status is the tooltip and the label for a screen reader. -->
+          <span class={cn("mt-1.5 size-2.5 flex-none rounded-full", h.status === "ok" ? "bg-success" : h.status === "restarting" ? "bg-warning" : "bg-destructive")} title={h.status} role="img" aria-label="Status: {h.status}"></span>
         </div>
         <!-- The second line: one chip for each component, with its update badge. -->
         <div class="flex flex-wrap items-center gap-1.5">
@@ -82,7 +82,7 @@
               <span class={chip}>
                 {c.text}
                 {#if c.outdated}
-                  <Badge variant="outline" class="h-4 border-warning px-1.5 text-[0.65rem] text-warning">update</Badge>
+                  <span class="size-2 flex-none rounded-full bg-warning" title="Update available" role="img" aria-label="Update available for the {c.key}"></span>
                 {/if}
               </span>
             {/each}
@@ -111,7 +111,7 @@
           {/if}
           <div class="ml-auto flex items-center gap-1">
             {#if onupdate && h.status === "ok" && components(h, latest).some((c) => c.outdated)}
-              <!-- The badge on the chip shows that a component is behind. This button updates the service and the client of the node. -->
+              <!-- The yellow dot on the chip shows that a component is behind. This button updates the service and the client of the node. -->
               <Button variant="ghost" size="sm" class="h-8 px-2 text-warning hover:border-warning/40 hover:bg-warning/10 hover:text-warning" disabled={updating === h.id} onclick={() => confirm(`Update ${h.name}? The update replaces the service and the client of this node.`) && update(h)} aria-label="Update {h.name}">
                 <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
               </Button>
