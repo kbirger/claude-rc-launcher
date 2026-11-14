@@ -144,19 +144,22 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
+type Entry = { sessionId: string; info: LiveInfo; updatedAt: number; socketPath?: string };
+
+/** The socket path of a session file, only when it is a usable absolute path (a string, under 1025 characters, no NUL). */
+function socketOf(v: unknown): string | undefined {
+  if (typeof v !== "string" || !v.startsWith("/") || v.length > 1024 || v.includes("\0")) return undefined;
+  return v;
+}
+
 /**
- * The running sessions under `home`, by session id. A missing or unreadable folder, or a sessions folder whose real
- * place is not inside the real home (a link out), gives an empty map.
+ * The live entries under `home`, one per valid `.json` file, in folder order. A missing or unreadable folder, or a
+ * sessions folder whose real place is not inside the real home (a link out), gives none.
  * Liveness on Linux: the start time in /proc must equal the file's `procStart` (a reused pid has another start time),
  * and the file's `pidDomain` must name this machine and this pid namespace. A value that cannot be read is not a
  * reason to skip. Without /proc (and on Windows) `kill(pid, 0)` decides.
  */
-export async function readLiveSessions(o: {
-  home: string;
-  fs?: LiveFs;
-  alive?: (pid: number) => boolean;
-  proc?: ProcReads;
-}): Promise<Map<string, LiveInfo>> {
+async function liveEntries(o: { home: string; fs?: LiveFs; alive?: (pid: number) => boolean; proc?: ProcReads }): Promise<Entry[]> {
   const fs = o.fs ?? defaultFs;
   const alive = o.alive ?? pidAlive;
   const proc = o.proc ?? (process.platform === "linux" ? linuxProc : noProc);
@@ -165,9 +168,9 @@ export async function readLiveSessions(o: {
     // O_NOFOLLOW covers only the final name: a link at .claude or .claude/sessions is caught here.
     const realHome = await fs.realpath(o.home);
     dir = await fs.realpath(join(o.home, ".claude", "sessions"));
-    if (!within(dir, realHome)) return new Map();
+    if (!within(dir, realHome)) return [];
   } catch {
-    return new Map();
+    return [];
   }
   const names: string[] = [];
   try {
@@ -178,10 +181,10 @@ export async function readLiveSessions(o: {
       if (++seen >= MAX_ENTRIES || names.length >= MAX_FILES) break;
     }
   } catch {
-    return new Map();
+    return [];
   }
   const [machine, ns] = names.length ? await Promise.all([proc.machineId(), proc.pidNamespace()]) : [undefined, undefined];
-  const out = new Map<string, LiveInfo & { updatedAt: number }>();
+  const out: Entry[] = [];
   for (const name of names) {
     let r: Record<string, unknown>;
     try {
@@ -193,7 +196,7 @@ export async function readLiveSessions(o: {
     } catch {
       continue;
     }
-    const { pid, sessionId, status, name: appName, nameSource, bridgeSessionId, updatedAt, procStart, pidDomain } = r;
+    const { pid, sessionId, status, name: appName, nameSource, bridgeSessionId, updatedAt, procStart, pidDomain, messagingSocketPath } = r;
     // pid 0 and negative pids name process groups, and kill(0) or kill(-1) would succeed.
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || name !== `${pid}.json`) continue;
     if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) continue;
@@ -207,9 +210,7 @@ export async function readLiveSessions(o: {
       if (typeof procStart === "string" && procStart !== start) continue;
     } else if (!alive(pid)) continue;
     const at = typeof updatedAt === "number" ? updatedAt : 0;
-    const prev = out.get(sessionId);
-    if (prev && prev.updatedAt >= at) continue;
-    const info: LiveInfo & { updatedAt: number } = { remoteControl: typeof bridgeSessionId === "string" && bridgeSessionId.length > 0, updatedAt: at };
+    const info: LiveInfo = { remoteControl: typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 };
     if (status === "busy" || status === "idle") info.status = status;
     if (typeof appName === "string" && appName.length > 0 && appName.length <= MAX_NAME) info.name = appName;
     if (typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 && bridgeSessionId.length <= MAX_BRIDGE) info.bridgeId = bridgeSessionId;
@@ -217,17 +218,38 @@ export async function readLiveSessions(o: {
     const first = await proc.firstSession(pid);
     if (first !== undefined && first !== sessionId) info.firstSessionId = first;
     if (info.name !== undefined && nameSource === "derived") info.nameIsDefault = true;
-    out.set(sessionId, info);
+    out.push({ sessionId, info, updatedAt: at, socketPath: socketOf(messagingSocketPath) });
   }
+  return out;
+}
+
+/** The newest entry per session id (a later file wins only with a strictly newer `updatedAt`). */
+function newest(list: Entry[]): Map<string, Entry> {
+  const out = new Map<string, Entry>();
+  for (const e of list) {
+    const prev = out.get(e.sessionId);
+    if (!prev || e.updatedAt > prev.updatedAt) out.set(e.sessionId, e);
+  }
+  return out;
+}
+
+/** The running sessions under `home`, by session id. The socket path never leaves this module through this function. */
+export async function readLiveSessions(o: {
+  home: string;
+  fs?: LiveFs;
+  alive?: (pid: number) => boolean;
+  proc?: ProcReads;
+}): Promise<Map<string, LiveInfo>> {
   const result = new Map<string, LiveInfo>();
-  for (const [id, v] of out) {
-    const info: LiveInfo = { remoteControl: v.remoteControl };
-    if (v.status !== undefined) info.status = v.status;
-    if (v.name !== undefined) info.name = v.name;
-    if (v.nameIsDefault) info.nameIsDefault = true;
-    if (v.bridgeId !== undefined) info.bridgeId = v.bridgeId;
-    if (v.firstSessionId !== undefined) info.firstSessionId = v.firstSessionId;
-    result.set(id, info);
-  }
+  for (const [id, e] of newest(await liveEntries(o))) result.set(id, e.info);
   return result;
+}
+
+/**
+ * The `messagingSocketPath` of the newest live file of a session, or undefined (no live session, no path, or a path that
+ * is not a string, not absolute, over 1024 characters, or holds a NUL). It applies the same checks as readLiveSessions.
+ * The path stays inside the server: it is not part of LiveInfo.
+ */
+export async function findSessionSocket(o: { home: string; sessionId: string; fs?: LiveFs; alive?: (pid: number) => boolean; proc?: ProcReads }): Promise<string | undefined> {
+  return newest(await liveEntries(o)).get(o.sessionId)?.socketPath;
 }

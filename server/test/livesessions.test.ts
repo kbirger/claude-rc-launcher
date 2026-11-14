@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLiveSessions, statStartTime, type LiveFs, type ProcReads } from "../src/livesessions";
+import { findSessionSocket, readLiveSessions, statStartTime, type LiveFs, type ProcReads } from "../src/livesessions";
 
 const HOME = "/h";
 const DIR = join(HOME, ".claude", "sessions");
@@ -243,5 +243,53 @@ describe("the real file system", () => {
       await symlink(outside, join(home, ".claude"));
       expect((await readLiveSessions({ home })).size).toBe(0);
     });
+  });
+});
+
+describe("findSessionSocket", () => {
+  const SOCK = "/run/user/0/claude/100.sock";
+  const find = (files: Record<string, string>, pids: number[], id = S1, asked: string[] = []) =>
+    findSessionSocket({ home: HOME, sessionId: id, fs: fakeFs(files, asked), alive: alive(pids), proc: NO_PROC });
+
+  test("findSessionSocket returns the socket of the live session", async () => {
+    expect(await find({ "100.json": file(100, { messagingSocketPath: SOCK }) }, [100])).toBe(SOCK);
+  });
+
+  test("findSessionSocket takes the newest file of the session", async () => {
+    const files = { "100.json": file(100, { messagingSocketPath: "/a.sock", updatedAt: 1 }), "200.json": file(200, { messagingSocketPath: "/b.sock", updatedAt: 5 }) };
+    expect(await find(files, [100, 200])).toBe("/b.sock");
+  });
+
+  test("findSessionSocket gives undefined for a dead pid", async () => {
+    expect(await find({ "100.json": file(100, { messagingSocketPath: SOCK }) }, [])).toBeUndefined();
+  });
+
+  test("findSessionSocket gives undefined for a session id with no file", async () => {
+    expect(await find({ "100.json": file(100, { messagingSocketPath: SOCK }) }, [100], S2)).toBeUndefined();
+  });
+
+  test("findSessionSocket gives undefined when there is no messagingSocketPath", async () => {
+    expect(await find({ "100.json": file(100) }, [100])).toBeUndefined();
+  });
+
+  test("findSessionSocket ignores a socket path that is relative, over 1024 characters, holds a NUL, or is not a string", async () => {
+    for (const bad of ["rel/x.sock", "/" + "a".repeat(1024), "/a\0b.sock", 42, null, ["/a.sock"]]) {
+      expect(await find({ "100.json": file(100, { messagingSocketPath: bad }) }, [100])).toBeUndefined();
+    }
+  });
+
+  test("findSessionSocket never opens a .key file", async () => {
+    const asked: string[] = [];
+    await find({ "100.json": file(100, { messagingSocketPath: SOCK }), "100.abc.key": "peerToken" }, [100], S1, asked);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.some((p) => p.endsWith(".key"))).toBe(false);
+  });
+});
+
+describe("readLiveSessions and the socket path", () => {
+  test("readLiveSessions output has no socket path", async () => {
+    const m = await live({ "100.json": file(100, { messagingSocketPath: "/run/secret-place.sock" }) }, [100]);
+    expect(m.size).toBe(1);
+    expect(JSON.stringify([...m.entries()])).not.toContain("secret-place");
   });
 });
