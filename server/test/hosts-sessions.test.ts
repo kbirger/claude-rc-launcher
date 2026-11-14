@@ -30,6 +30,24 @@ describe("hub session JSON routes", () => {
     expect(calls[2][2].query).toEqual({ path: "a b", hidden: "1" });
     expect(calls[3][2].query).toEqual({ path: "x.txt" });
   });
+  test("forward the permissions and blocked routes to the node with the same paths", async () => {
+    const calls: any[] = [];
+    const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 200, body: { ok: p } })) as any });
+    expect((await app.request(`/api/hosts/nas/instances/${ID}/permissions`)).status).toBe(200);
+    expect((await app.request(`${base}/${SID}/permissions`)).status).toBe(200);
+    expect((await app.request(`${base}/${SID}/blocked`)).status).toBe(200);
+    expect(calls.map((c) => [c[0], c[1]])).toEqual([
+      ["GET", `/api/instances/${ID}/permissions`],
+      ["GET", `/api/instances/${ID}/sessions/${SID}/permissions`],
+      ["GET", `/api/instances/${ID}/sessions/${SID}/blocked`],
+    ]);
+  });
+  test("the permissions routes reject bad ids with 400", async () => {
+    const app = build({});
+    expect((await app.request(`/api/hosts/nas/instances/zz/permissions`)).status).toBe(400);
+    expect((await app.request(`${base}/nope/permissions`)).status).toBe(400);
+    expect((await app.request(`${base}/nope/blocked`)).status).toBe(400);
+  });
   test("rejects bad ids and bad paths with 400", async () => {
     const app = build({});
     expect((await app.request(`/api/hosts/nas/instances/zz/sessions`)).status).toBe(400);

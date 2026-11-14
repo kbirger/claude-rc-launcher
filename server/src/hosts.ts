@@ -309,6 +309,9 @@ export function hostsApi(o: {
 
   remote.get("/instances/:id/sessions", forwardJson((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
   remote.get("/instances/:id/sessions/:sid/touched", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/touched`, { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/permissions", forwardJson((c, k) => k.call("GET", `/api/instances/${instanceId(c)}/permissions`, { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions/:sid/permissions", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/permissions`, { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions/:sid/blocked", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/blocked`, { timeoutMs: requestTimeoutMs })));
   remote.get("/instances/:id/sessions/:sid/changed", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/changed`, { timeoutMs: requestTimeoutMs })));
   remote.get(
     "/instances/:id/sessions/:sid/files",

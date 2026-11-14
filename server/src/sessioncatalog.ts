@@ -11,6 +11,8 @@ import { PinnedRoot } from "./pinnedroot";
 import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
 import { openDownload, previewIn } from "./sessionfs";
+import { blockedIn, type BlockedCall } from "./blocked";
+import type { PermissionLayers } from "./settingsfile";
 import { touchedIn, type TouchedFile } from "./touched";
 import { SESSION_ID } from "./transcript";
 import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
@@ -205,6 +207,16 @@ export class Session {
   touched(o: { dirs: readonly string[] }): Promise<TouchedFile[]> {
     const catalog = this.instance.catalog;
     return touchedIn({ fs: catalog.fs, file: this.file, root: this.root, platform: catalog.platform, dirs: o.dirs });
+  }
+
+  /** The blocked tool calls of this transcript, newest first. It reads this transcript and never scans again. */
+  blocked(): Promise<BlockedCall[]> {
+    return blockedIn({ fs: this.instance.catalog.fs, file: this.file });
+  }
+
+  /** The settings layers that apply to this session. It runs the real-root check first (a failed check is a 404). */
+  async permissions(o: { ownerUid?: number }): Promise<PermissionLayers> {
+    return (await this.open()).permissions(o);
   }
 
   /** Runs the real-root check and gives the checked root. A failed check is a 404. */

@@ -92,16 +92,11 @@ function catalogOptions(deps: SessionApiDeps): SessionCatalogOptions {
 /** Which file a file or download request names: `path` (relative to the session folder) or `abs` (a touched file). */
 type Target = { path: string } | { abs: string };
 
-/** Routes for the sessions of one instance. Mount at `/instances/:id/sessions`. */
-export function sessionApi(deps: SessionApiDeps): Hono {
-  const { instances } = deps;
-  const catalog = deps.sessions ?? new SessionCatalog(catalogOptions(deps));
-  const platform = catalog.platform;
-  const run = deps.run ?? bunRunner;
-  const win = platform === "win32";
-  const P = win ? win32Path : posix;
-  const r = new Hono();
-
+/**
+ * The lookups that every route of an instance's sessions starts with: the instance folder (400 for a bad id, 501 for a
+ * host without sessions) and the session found again from its transcript (400 for a bad id, 404 when there is none).
+ */
+export function sessionLookup(instances: Instances, catalog: SessionCatalog) {
   async function home(c: Context): Promise<{ path: string; home: string; identity?: Identity }> {
     const id = c.req.param("id") ?? "";
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
@@ -118,6 +113,21 @@ export function sessionApi(deps: SessionApiDeps): Hono {
     if (!session) throw new HttpError(404, "session not found");
     return session;
   }
+
+  return { home, sessionOf };
+}
+
+/** Routes for the sessions of one instance. Mount at `/instances/:id/sessions`. */
+export function sessionApi(deps: SessionApiDeps): Hono {
+  const { instances } = deps;
+  const catalog = deps.sessions ?? new SessionCatalog(catalogOptions(deps));
+  const platform = catalog.platform;
+  const run = deps.run ?? bunRunner;
+  const win = platform === "win32";
+  const P = win ? win32Path : posix;
+  const r = new Hono();
+
+  const { home, sessionOf } = sessionLookup(instances, catalog);
 
   /** The checked real root of the session the request names. */
   async function pinnedOf(c: Context): Promise<PinnedRoot> {
