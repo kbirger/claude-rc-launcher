@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmod, link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_FILE_BYTES, readUserFile } from "../src/safefile";
+import { FileConflict, FileRefused, MAX_FILE_BYTES, readUserFile, writeUserFile } from "../src/safefile";
 
 let dir: string;
 beforeEach(async () => {
@@ -142,5 +142,115 @@ describe("readUserFile with follow", () => {
     await writeFile(join(dir, "t.json"), "{}");
     await symlink(join(dir, "t.json"), join(dir, "l.json"));
     expect(await readUserFile(join(dir, "l.json"))).toEqual({ kind: "invalid", reason: "it is a symlink" });
+  });
+});
+
+describe("writeUserFile", () => {
+  const me = process.getuid!();
+  const gid = process.getgid!();
+  const leftovers = async () => (await readdir(dir)).filter((n) => n.endsWith(".tmp"));
+
+  test("a new file gets mode 0600", async () => {
+    const f = join(dir, "n.json");
+    const r = await writeUserFile(f, Buffer.from("{}"));
+    expect((await stat(f)).mode & 0o777).toBe(0o600);
+    expect(r.realPath).toBe(await realpath(f));
+    expect(r.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("an existing file keeps its mode", async () => {
+    const f = join(dir, "e.json");
+    await writeFile(f, "{}");
+    await chmod(f, 0o640);
+    await writeUserFile(f, Buffer.from('{"a":1}'));
+    expect((await stat(f)).mode & 0o777).toBe(0o640);
+    expect(await readFile(f, "utf8")).toBe('{"a":1}');
+  });
+
+  test("chown runs with the uid and gid only when isRoot is true", async () => {
+    const calls: [number, number][] = [];
+    const chown = async (_fh: unknown, u: number, g: number) => { calls.push([u, g]); };
+    await writeUserFile(join(dir, "a"), Buffer.from("x"), { ownerUid: me, gid, chown, isRoot: () => false });
+    expect(calls).toEqual([]);
+    await writeUserFile(join(dir, "b"), Buffer.from("x"), { ownerUid: me, gid, chown, isRoot: () => true });
+    expect(calls).toEqual([[me, gid]]);
+  });
+
+  test("a stale hash gives FileConflict and leaves the file and the folder unchanged", async () => {
+    const f = join(dir, "s.json");
+    await writeFile(f, "old");
+    const stale = (await readUserFile(f)) as { hash: string };
+    await writeFile(f, "newer");
+    const before = await readdir(dir);
+    await expect(writeUserFile(f, Buffer.from("mine"), { expectedHash: stale.hash })).rejects.toBeInstanceOf(FileConflict);
+    expect(await readFile(f, "utf8")).toBe("newer");
+    expect(await readdir(dir)).toEqual(before);
+  });
+
+  test("expectedHash null against an existing file gives FileConflict", async () => {
+    const f = join(dir, "x.json");
+    await writeFile(f, "{}");
+    await expect(writeUserFile(f, Buffer.from("a"), { expectedHash: null })).rejects.toBeInstanceOf(FileConflict);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("with follow, a symlink stays a symlink and the target changes", async () => {
+    const real = join(dir, "real.json");
+    await writeFile(real, "old");
+    const l = join(dir, "link.json");
+    await symlink(real, l);
+    const r = await writeUserFile(l, Buffer.from("new"), { follow: true });
+    expect((await lstat(l)).isSymbolicLink()).toBe(true);
+    expect(await readFile(real, "utf8")).toBe("new");
+    expect(r.realPath).toBe(await realpath(real));
+  });
+
+  test("a link to a file of another owner gives FileRefused", async () => {
+    const real = join(dir, "real.json");
+    await writeFile(real, "old");
+    const l = join(dir, "link.json");
+    await symlink(real, l);
+    await expect(writeUserFile(l, Buffer.from("new"), { follow: true, ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
+    expect(await readFile(real, "utf8")).toBe("old");
+  });
+
+  test("a real folder of another owner gives FileRefused", async () => {
+    await expect(writeUserFile(join(dir, "f.json"), Buffer.from("a"), { ownerUid: me + 1 })).rejects.toBeInstanceOf(FileRefused);
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  test("content over the cap gives FileRefused", async () => {
+    await expect(writeUserFile(join(dir, "big"), Buffer.alloc(MAX_FILE_BYTES + 1))).rejects.toBeInstanceOf(FileRefused);
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  test("a hard-linked file gives FileRefused", async () => {
+    const f = join(dir, "h.json");
+    await writeFile(f, "old");
+    await link(f, join(dir, "h2.json"));
+    await expect(writeUserFile(f, Buffer.from("new"))).rejects.toBeInstanceOf(FileRefused);
+    expect(await readFile(f, "utf8")).toBe("old");
+  });
+
+  test("two parallel writes with the same hash give one success and one FileConflict", async () => {
+    const f = join(dir, "p.json");
+    await writeFile(f, "old");
+    const h = ((await readUserFile(f)) as { hash: string }).hash;
+    const res = await Promise.allSettled([
+      writeUserFile(f, Buffer.from("one"), { expectedHash: h }),
+      writeUserFile(f, Buffer.from("two"), { expectedHash: h }),
+    ]);
+    expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const bad = res.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(bad.reason).toBeInstanceOf(FileConflict);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("a failed rename removes the temp file", async () => {
+    const f = join(dir, "r.json");
+    // The target becomes a folder after the read, so the rename fails.
+    const chown = async () => { await mkdir(f); };
+    await expect(writeUserFile(f, Buffer.from("a"), { ownerUid: me, gid, chown, isRoot: () => true })).rejects.toThrow();
+    expect(await leftovers()).toEqual([]);
   });
 });

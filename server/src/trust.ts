@@ -1,8 +1,7 @@
-import { randomBytes } from "node:crypto";
-import { open, rename, rm, type FileHandle } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
-import { readUserFile } from "./safefile";
+import { readUserFile, writeUserFile } from "./safefile";
 import type { SystemUser } from "./users";
 
 export type TrustOwner = Pick<SystemUser, "home"> & { uid?: number; gid?: number };
@@ -91,27 +90,8 @@ export function fileTrust(o: {
       projects[absPath] = { ...(isObject(prev) ? prev : {}), hasTrustDialogAccepted: true };
       doc.projects = projects;
 
-      // The mode comes from the handle that was read. The owner is always the target user from passwd,
-      // never the owner of what was found at the path.
-      const mode = r.kind === "ok" ? r.mode : 0o600;
-      const { uid, gid } = user;
-
-      // Random name plus O_EXCL ("wx"): never follows a symlink planted by the user.
-      // All permission and owner changes go through the open handle, never the path.
-      const tmp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
-      try {
-        const fh = await open(tmp, "wx", 0o600);
-        try {
-          await fh.chmod(mode);
-          if (isRoot() && uid !== undefined && gid !== undefined) await chown(fh, uid, gid);
-          await fh.writeFile(JSON.stringify(doc, null, 2) + "\n");
-        } finally {
-          await fh.close();
-        }
-        await rename(tmp, file);
-      } catch (e) {
-        await rm(tmp, { force: true }).catch(() => {});
-        throw e;
-      }
+      // The mode comes from the file that was read. The owner is always the target user from passwd,
+      // never the owner of what was found at the path. The shared writer does the temp file and the rename.
+      await writeUserFile(file, Buffer.from(JSON.stringify(doc, null, 2) + "\n"), { ownerUid: user.uid, gid: user.gid, checkOwner: false, chown, isRoot });
   }
 }
