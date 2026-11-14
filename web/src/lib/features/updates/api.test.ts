@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { getLatest, getUpdates, updateHost } from "./api";
+import { getLatest, getReleaseNotes, getUpdates, updateHost } from "./api";
 
 const realFetch = globalThis.fetch;
 const realLoc = (globalThis as any).location;
@@ -37,4 +37,11 @@ test("getLatest and getUpdates GET their endpoints", async () => {
   stub(200, []);
   await getUpdates();
   expect(calls.map((c) => c.url)).toEqual(["/api/latest", "/api/updates"]);
+});
+
+test("getReleaseNotes GETs the range with encoded versions", async () => {
+  stub(200, { releases: [], complete: true });
+  await getReleaseNotes("0.22.0", "0.23.0+x y");
+  expect(calls[0]!.url).toBe("/api/release-notes?from=0.22.0&to=0.23.0%2Bx%20y");
+  expect(calls[0]!.init?.method).toBe("GET");
 });
