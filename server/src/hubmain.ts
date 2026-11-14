@@ -5,6 +5,7 @@ import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
 import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
 import { createLatestRelease } from "./latest";
+import { createReleaseList } from "./releaselist";
 import { loadOrCreateHubKey, type HubKey } from "./hubproof";
 import { HostRegistry } from "./hostregistry";
 import { bunRunner, InstanceService, type Instances } from "./instances";
@@ -124,6 +125,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const latest = createLatestRelease({ fetch: globalThis.fetch, onError: (m) => console.warn(`[latest] ${m}`) });
   // Fill the cache now, so the first host list after a start already knows whether the hub is stale. Startup does not wait for it.
   void latest.get().catch(() => {});
+  const releaseList = createReleaseList({ fetch: globalThis.fetch, onError: (m) => console.warn(`[releases] ${m}`) });
   const record = await UpdateRecord.load({ stateDir: cfg.stateDir });
   const history = await UpdateHistory.load({ stateDir: cfg.stateDir });
   // Both listeners come before `reconcileHub`, so that the settle of a hub update after its restart is also journaled and kept.
@@ -163,7 +165,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const offRecord = record.onChange((e) => {
     if (e.host !== "local" && (e.status === "unknown" || e.status === "rolled back")) watchers.endRestarting(e.host);
   });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, clientVersions, updates: record, history, updateLog, presence, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, releaseList, clientVersions, updates: record, history, updateLog, presence, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);

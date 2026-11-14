@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import * as Card from "#lib/components/ui/card/index.js";
+  import ReleaseNotes from "./ReleaseNotes.svelte";
   import { historyQuery } from "./queries";
   import { historyEntries, historyTitle, linesSummary } from "./updatehistory";
 
@@ -31,6 +32,7 @@
             {:else}
               <p class="m-0 text-xs text-muted-foreground">No output was recorded for this update.</p>
             {/if}
+            <ReleaseNotes entry={item.entry} />
           </Card.Content>
         </Card.Root>
       </li>

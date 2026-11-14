@@ -12,6 +12,7 @@
   import type { UpdateEntry } from "./api";
   import { updateHostMutation } from "./mutations";
   import { versionsText, type HostInfo } from "../hosts";
+  import { releasePageUrl } from "./releasenotes";
   import UpdateOutput from "./UpdateOutput.svelte";
   import { panelOpenByDefault } from "./updateoutput";
   import { windowsNames } from "./updatewarn";
@@ -157,7 +158,7 @@
       {/each}
     </ul>
     {#if full && items.length === 0}<p class="m-0 px-1 text-muted-foreground">Everything is up to date.</p>{/if}
-    {#if full && latest}<p class="m-0 px-1 text-xs text-muted-foreground">Latest release: {latest}</p>{/if}
+    {#if full && latest}<p class="m-0 px-1 text-xs text-muted-foreground">Latest release: {latest} <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(latest)} target="_blank" rel="noreferrer">Release notes</a></p>{/if}
     <!-- The versions of every machine as it reports them: a local build shows its full version (release, branch, commit). -->
     {#if full}
     <Table.Root class="w-full text-xs">

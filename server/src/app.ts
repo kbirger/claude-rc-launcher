@@ -21,6 +21,7 @@ import { createUpdateTracker } from "./updatetracker";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
+import type { createReleaseList } from "./releaselist";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
 import { sessionApi } from "./sessionapi";
@@ -35,7 +36,7 @@ export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandle
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -278,6 +279,14 @@ export function createApp(deps: Deps): Hono {
       if (e instanceof LatestError) throw new HttpError(503, e.message);
       throw e;
     }
+  });
+
+  api.get("/release-notes", async (c) => {
+    if (!deps.releaseList) throw new HttpError(501, "release notes are not available on this host");
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    if (!from || !to) throw new HttpError(400, "from and to are required");
+    return c.json(await deps.releaseList.between(from, to));
   });
 
   const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());

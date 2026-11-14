@@ -1,10 +1,22 @@
 name: Release
 
-# Push a tag like v0.1.0 to build the prebuilt binaries (Linux server, command-line client, Windows node and its
-# installer) and publish them as a GitHub release.
+# Start this workflow by hand from the Actions tab (Run workflow) to build the prebuilt binaries (Linux server,
+# command-line client, Windows node and its installer) and publish them as a GitHub release. git-cliff works out the
+# next version and writes the release notes. Run it with dry_run first: it prints the version and the notes and
+# creates nothing. Pushing a tag like v0.1.0 still works as a fallback.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the version and the notes only. Create nothing.
+        type: boolean
+        default: true
+      version:
+        description: Optional. Overrides the computed version, for example 1.0.0
+        type: string
+        required: false
 
 permissions:
   contents: write
@@ -13,19 +25,95 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Refuse a run from a branch other than main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Run this workflow from the main branch. This run uses $REF."
+          exit 1
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
+      - name: Work out the version and the notes
+        id: rel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/notes.md"
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_VERSION" ]; then
+              if ! printf '%s' "$INPUT_VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+                echo "::error::The version input is not a version like 1.2.3 or v1.2.3."
+                exit 1
+              fi
+              tag="v${INPUT_VERSION#v}"
+            else
+              bumped="$(bunx git-cliff --config cliff.toml --bumped-version)"
+              tag="v${bumped#v}"
+              latest="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+              if [ "$tag" = "$latest" ]; then
+                echo "Nothing to release since $latest."
+                echo "Nothing to release since $latest." >> "$summary"
+                echo "publish=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::error::The tag $tag exists already."
+              exit 1
+            fi
+            prev="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+            cliff_args=(--unreleased --tag "$tag")
+          else
+            tag="$GITHUB_REF_NAME"
+            prev="$(git describe --tags --abbrev=0 --match 'v*' "$tag^" 2>/dev/null || true)"
+            cliff_args=(--current)
+          fi
+          if out="$(bunx git-cliff --config cliff.toml "${cliff_args[@]}")"; then
+            if [ -z "${out//[[:space:]]/}" ]; then
+              out="No user-visible changes."
+            fi
+          else
+            echo "::warning::git-cliff failed. The release notes link to the compare view."
+            out="Changes: https://github.com/$REPO/compare/${prev:-$tag}...$tag"
+          fi
+          printf '%s\n' "$out" > "$notes"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          {
+            echo "## Release $tag"
+            echo
+            cat "$notes"
+          } | tee -a "$summary"
+          # A dispatch run publishes only when dry_run is exactly false. Any other value is a dry run.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" != "false" ]; then
+            echo "Dry run: nothing is built or published."
+            echo "Dry run: nothing is built or published." >> "$summary"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.rel.outputs.publish == 'true'
+        run: bun install --frozen-lockfile
         working-directory: web
-      - run: bun run test
+      - if: steps.rel.outputs.publish == 'true'
+        run: bun run test
       - name: Build web bundle and embed it
+        if: steps.rel.outputs.publish == 'true'
         run: bun run build:bundle
       - name: Compile binaries
+        if: steps.rel.outputs.publish == 'true'
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ env.RELEASE_TAG }}
         run: |
           mkdir -p dist
           version="$(bun scripts/version.ts)"
@@ -49,6 +137,14 @@ jobs:
           cp install-cli.sh dist/install-cli.sh
           (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish release
+        if: steps.rel.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME"
+        # On a dispatch run the tag does not exist yet. gh creates it at this commit.
+        # A version with a hyphen (1.0.0-rc.1) is a pre-release. It must not become the latest release, because every hub reads releases/latest.
+        run: |
+          flags=()
+          case "$RELEASE_TAG" in
+            *-*) flags=(--prerelease --latest=false) ;;
+          esac
+          gh release create "$RELEASE_TAG" dist/* --notes-file "$RUNNER_TEMP/notes.md" --title "$RELEASE_TAG" --target "$GITHUB_SHA" "${flags[@]}"
