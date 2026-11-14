@@ -1,0 +1,2 @@
+{"type": "assistant", "timestamp": "2026-11-14T10:00:00.000Z", "message": {"content": [{"type": "tool_use", "id": "toolu_user_rejected", "name": "Edit", "input": {"file_path": "/work/src/app.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "timestamp": "2026-11-14T10:00:01.000Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_user_rejected", "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).", "is_error": true}]}}
