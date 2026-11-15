@@ -5,6 +5,7 @@ import { HostError, type HostClient, type HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
+import { parseRuleEdit } from "./permissionsapi";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import type { LatestRelease } from "./latest";
 import { isStale, normalizeVersion, releaseOf, stalestVersion } from "./versions";
@@ -210,6 +211,12 @@ export function hostsApi(o: {
     });
   }
 
+  // The local instance API is the node API. It names its caller in the audit line of a rule edit: here that is the hub user.
+  app.use("/local/*", async (c, next) => {
+    const u = c.get("user" as never) as User | undefined;
+    c.set("caller" as never, String(u?.username ?? u?.sub ?? "unknown") as never);
+    await next();
+  });
   app.route("/local", local);
 
   const remote = new Hono();
@@ -309,6 +316,36 @@ export function hostsApi(o: {
 
   remote.get("/instances/:id/sessions", forwardJson((c, k) => k.call("GET", sessionsBase(c), { timeoutMs: requestTimeoutMs })));
   remote.get("/instances/:id/sessions/:sid/touched", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/touched`, { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/permissions", forwardJson((c, k) => k.call("GET", `/api/instances/${instanceId(c)}/permissions`, { timeoutMs: requestTimeoutMs })));
+  remote.get("/instances/:id/sessions/:sid/permissions", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/permissions`, { timeoutMs: requestTimeoutMs })));
+  // Rule edits. The hub checks the body, forwards it as it is, and writes its own audit line (no file content, no text of a blocked call).
+  const ruleEdit = (method: "POST" | "DELETE", scopes: readonly ("user" | "project" | "local")[], path: (c: Context) => string, allowNudge = false) =>
+    forwardJson(async (c, k) => {
+      const e = parseRuleEdit(await readJson(c), scopes, { allowNudge, remove: method === "DELETE" });
+      const u = c.get("user" as never) as User | undefined;
+      const rawUser = String(u?.username ?? u?.sub ?? "unknown");
+      const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
+      const iid = instanceId(c);
+      const line = (status: number) =>
+        `audit user=${who} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${iid} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status} nudge=${e.nudge ? "on" : "off"}`;
+      try {
+        const r = await k.call(method, path(c), { json: { scope: e.scope, list: e.list, rule: e.rule, expectedHash: e.expectedHash, ...(e.nudge ? { nudge: true } : {}) }, timeoutMs: requestTimeoutMs });
+        console.log(line(r.status === 200 || (r.status >= 400 && r.status <= 599) ? r.status : 502));
+        return r;
+      } catch (err) {
+        console.log(line(err instanceof HostError ? 502 : 500));
+        throw err;
+      }
+    });
+  const USER_ONLY = ["user"] as const;
+  const SESSION_SCOPES = ["user", "project", "local"] as const;
+  const userRules = (c: Context) => `/api/instances/${instanceId(c)}/permissions/rules`;
+  const sessionRules = (c: Context) => `${sessionsBase(c)}/${sessionId(c)}/permissions/rules`;
+  remote.post("/instances/:id/permissions/rules", ruleEdit("POST", USER_ONLY, userRules));
+  remote.delete("/instances/:id/permissions/rules", ruleEdit("DELETE", USER_ONLY, userRules));
+  remote.post("/instances/:id/sessions/:sid/permissions/rules", ruleEdit("POST", SESSION_SCOPES, sessionRules, true));
+  remote.delete("/instances/:id/sessions/:sid/permissions/rules", ruleEdit("DELETE", SESSION_SCOPES, sessionRules, true));
+  remote.get("/instances/:id/sessions/:sid/blocked", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/blocked`, { timeoutMs: requestTimeoutMs })));
   remote.get("/instances/:id/sessions/:sid/changed", forwardJson((c, k) => k.call("GET", `${sessionsBase(c)}/${sessionId(c)}/changed`, { timeoutMs: requestTimeoutMs })));
   remote.get(
     "/instances/:id/sessions/:sid/files",

@@ -1,0 +1,2 @@
+{"type": "assistant", "timestamp": "2026-11-14T10:00:00.000Z", "message": {"content": [{"type": "tool_use", "id": "toolu_deny_rule", "name": "Bash", "input": {"command": "rm -rf build", "description": "Clean"}}]}}
+{"type": "user", "timestamp": "2026-11-14T10:00:01.000Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_deny_rule", "content": "Permission to use Bash has been denied by your rule Bash(rm *).", "is_error": true}]}}

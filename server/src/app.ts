@@ -25,6 +25,7 @@ import { LatestError, type createLatestRelease } from "./latest";
 import type { createReleaseList } from "./releaselist";
 import { HttpError, type Instances } from "./instances";
 import { PathError, within } from "./paths";
+import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
@@ -182,7 +183,9 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     });
   }
 
-  r.route("/instances/:id/sessions", sessionApi({ instances, sessions: deps.sessions ?? sessionCatalogFor(cfg) }));
+  const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
+  r.route("/instances/:id/sessions", sessionApi({ instances, sessions: sessionCatalog }));
+  r.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;

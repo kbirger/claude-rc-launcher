@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Circle from "@tabler/icons-svelte/icons/circle";
   import Close from "@tabler/icons-svelte/icons/x";
   import Check from "@tabler/icons-svelte/icons/circle-check";
   import Pencil from "@tabler/icons-svelte/icons/pencil";
+  import EntityCard from "#lib/components/EntityCard.svelte";
+  import StatusDot from "#lib/components/StatusDot.svelte";
+  import Pill from "#lib/components/Pill.svelte";
   import { cn } from "#lib/utils.js";
   import type { HostInfo } from "./api";
   import { components, roleOf } from "./nodeline";
@@ -52,77 +54,83 @@
     }
   }
 
-  const chip = "inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-full border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]";
+  const hasContent = (h: HostInfo) => h.status === "ok" || (editing === h.id && !!error) || !!updateError[h.id] || !!h.error;
 </script>
 
-<ul class="m-0 grid list-none gap-2 p-0" aria-label="Nodes">
+<ul class="m-0 grid list-none gap-3 p-0" aria-label="Nodes">
   {#each hosts as h (h.id)}
-    <li class={cn("flex flex-col gap-1.5 rounded-lg border bg-card p-3", h.id === selected && "border-primary")}>
-      <div class="flex min-w-0 flex-col gap-1.5">
-        <!-- The first line: the name (or the rename form above) and the role on the left, the health of the node on the right. -->
-        <div class="flex items-start justify-between gap-2">
-          <div class="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-            {#if editing === h.id}
-              <form id="rename-{h.id}" class="flex min-w-0 flex-1 basis-32" onsubmit={(e) => { e.preventDefault(); void save(h); }}>
-                <!-- svelte-ignore a11y_autofocus -->
-                <input autofocus bind:value={draft} maxlength="64" aria-label="Node name" class="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-base font-semibold" onkeydown={(e) => e.key === "Escape" && (editing = null)} />
-              </form>
-            {:else}
-              <span class="min-w-0 font-semibold [overflow-wrap:anywhere]">{h.name}</span>
+    {#snippet title()}{h.name}{/snippet}
+    {#snippet titleEditor()}
+      <form id="rename-{h.id}" class="flex min-w-0 flex-1 basis-32" onsubmit={(e) => { e.preventDefault(); void save(h); }}>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input autofocus bind:value={draft} maxlength="64" aria-label="Node name" class="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-base font-semibold" onkeydown={(e) => e.key === "Escape" && (editing = null)} />
+      </form>
+    {/snippet}
+    <!-- The hub is the special node, so its pill has the primary tone. An agent has the plain pill. -->
+    {#snippet titleAside()}<Pill tone={roleOf(h) === "hub" ? "primary" : "default"}>{roleOf(h)}</Pill>{/snippet}
+    <!-- The health of the node is a plain dot: green (ok), orange (restarting) or red (any other status). The status is the tooltip and the label for a screen reader. -->
+    {#snippet status()}
+      <StatusDot tone={h.status === "ok" ? "ok" : h.status === "restarting" ? "warn" : "bad"} label="Status: {h.status}" />
+    {/snippet}
+    <!-- One pill for each component, with its update badge, then the error texts. -->
+    {#snippet content()}
+      {#if h.status === "ok"}
+        {#each components(h, latest) as c (c.key)}
+          <Pill>
+            {c.text}
+            {#if c.outdated}
+              <span class="size-2 flex-none rounded-full bg-warning" title="Update available" role="img" aria-label="Update available for the {c.key}"></span>
             {/if}
-            <!-- The hub is the special node, so its chip has the primary color. An agent has the plain chip. -->
-            <span class={cn(chip, roleOf(h) === "hub" && "border-primary/40 bg-primary/10 font-medium text-primary")}>{roleOf(h)}</span>
-          </div>
-          <Badge variant={h.status === "ok" || h.status === "restarting" ? "outline" : "destructive"} class={cn("h-6 flex-none", h.status === "ok" ? "text-success" : h.status === "restarting" ? "text-warning" : "")}>{h.status}</Badge>
-        </div>
-        <!-- The second line: one chip for each component, with its update badge. -->
-        <div class="flex flex-wrap items-center gap-1.5">
-          {#if h.status === "ok"}
-            {#each components(h, latest) as c (c.key)}
-              <span class={chip}>
-                {c.text}
-                {#if c.outdated}
-                  <Badge variant="outline" class="h-4 border-warning px-1.5 text-[0.65rem] text-warning">update</Badge>
-                {/if}
-              </span>
-            {/each}
-          {/if}
-        </div>
-        {#if editing === h.id && error}<span class="text-xs text-destructive" role="alert">{error}</span>{/if}
-        {#if updateError[h.id]}<span class="text-xs text-destructive" role="alert">{updateError[h.id]}</span>{/if}
-        {#if h.status !== "ok" && h.error}
-          <span class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{h.error}</span>
-        {/if}
-      </div>
-      <!-- One action row. -mx-2 cancels the ghost buttons' inner padding, so the first and last buttons line up with the text edges. -->
-      <div class="-mx-2 mt-1 flex items-center gap-1">
-        {#if editing === h.id}
-          <Button type="button" variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => (editing = null)} aria-label="Cancel rename">
-            <Close aria-hidden="true" />Cancel
+          </Pill>
+        {/each}
+      {/if}
+      {#if editing === h.id && error}<span class="w-full text-xs text-destructive" role="alert">{error}</span>{/if}
+      {#if updateError[h.id]}<span class="w-full text-xs text-destructive" role="alert">{updateError[h.id]}</span>{/if}
+      {#if h.status !== "ok" && h.error}
+        <span class="w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">{h.error}</span>
+      {/if}
+    {/snippet}
+    {#snippet actions()}
+      {#if editing === h.id}
+        <Button type="button" variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => (editing = null)} aria-label="Cancel rename">
+          <Close aria-hidden="true" />Cancel
+        </Button>
+      {:else}
+        <Button variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => edit(h)} aria-label="Rename {h.name}">
+          <Pencil aria-hidden="true" />Rename
+        </Button>
+      {/if}
+    {/snippet}
+    {#snippet actionsEnd()}
+      {#if editing === h.id}
+        <Button type="submit" form="rename-{h.id}" variant="ghost" size="sm" class="h-8 px-2 text-primary hover:border-border" disabled={saving} aria-label="Save name">
+          <Check aria-hidden="true" />Save
+        </Button>
+      {:else}
+        {#if onupdate && h.status === "ok" && components(h, latest).some((c) => c.outdated)}
+          <!-- The yellow dot on the pill shows that a component is behind. This button updates the service and the client of the node. -->
+          <Button variant="ghost" size="sm" class="h-8 px-2 text-warning hover:border-warning/40 hover:bg-warning/10 hover:text-warning" disabled={updating === h.id} onclick={() => confirm(`Update ${h.name}? The update replaces the service and the client of this node.`) && update(h)} aria-label="Update {h.name}">
+            <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
           </Button>
-          <Button type="submit" form="rename-{h.id}" variant="ghost" size="sm" class="ml-auto h-8 px-2 text-primary hover:border-border" disabled={saving} aria-label="Save name">
-            <Check aria-hidden="true" />Save
-          </Button>
-        {:else}
-          {#if renamable(h) && editing !== h.id}
-            <Button variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => edit(h)} aria-label="Rename {h.name}">
-              <Pencil aria-hidden="true" />Rename
-            </Button>
-          {/if}
-          <div class="ml-auto flex items-center gap-1">
-            {#if onupdate && h.status === "ok" && components(h, latest).some((c) => c.outdated)}
-              <!-- The badge on the chip shows that a component is behind. This button updates the service and the client of the node. -->
-              <Button variant="ghost" size="sm" class="h-8 px-2 text-warning hover:border-warning/40 hover:bg-warning/10 hover:text-warning" disabled={updating === h.id} onclick={() => confirm(`Update ${h.name}? The update replaces the service and the client of this node.`) && update(h)} aria-label="Update {h.name}">
-                <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
-              </Button>
-            {/if}
-            <!-- One button for the state of the node in the app: Active (the node in use), Use (it can be used), or Unavailable (it is not running). -->
-            <Button variant="ghost" size="sm" class={cn("h-8 min-w-24 px-2 hover:border-border", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
-              {#if h.id === selected}<Check aria-hidden="true" />Active{:else if h.status === "ok"}<Circle aria-hidden="true" />Use{:else}<Circle aria-hidden="true" />Unavailable{/if}
-            </Button>
-          </div>
         {/if}
-      </div>
+        <!-- One button for the state of the node in the app: Active (the node in use), Use (it can be used), or Unavailable (it is not running). -->
+        <Button variant="ghost" size="sm" class={cn("h-8 min-w-24 px-2 hover:border-border", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
+          {#if h.id === selected}<Check aria-hidden="true" />Active{:else if h.status === "ok"}<Circle aria-hidden="true" />Use{:else}<Circle aria-hidden="true" />Unavailable{/if}
+        </Button>
+      {/if}
+    {/snippet}
+    <li class="min-w-0">
+      <EntityCard
+        {title}
+        titleText={h.name}
+        titleEditor={editing === h.id ? titleEditor : undefined}
+        {titleAside}
+        {status}
+        selected={h.id === selected}
+        children={hasContent(h) ? content : undefined}
+        actions={editing === h.id || renamable(h) ? actions : undefined}
+        {actionsEnd}
+      />
     </li>
   {/each}
 </ul>

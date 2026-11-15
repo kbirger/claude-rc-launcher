@@ -1,8 +1,7 @@
-import { randomBytes } from "node:crypto";
-import { constants } from "node:fs";
-import { open, rename, rm, type FileHandle } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
+import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 import type { SystemUser } from "./users";
 
 export type TrustOwner = Pick<SystemUser, "home"> & { uid?: number; gid?: number };
@@ -40,50 +39,13 @@ type ReadResult =
   | { kind: "invalid"; reason: string }
   | { kind: "ok"; doc: Record<string, unknown>; mode: number };
 
-/** Larger than any real `.claude.json`. A bigger file is refused, not read. */
-const MAX_DOC_BYTES = 1024 * 1024;
-
-/**
- * Reads the trust file without following a symlink and without blocking on a FIFO or a device.
- * As root, this file is in another user's home, so the user controls what is at this path.
- */
+/** The trust file as a JSON object. The safe open (no symlink, no hard link, no FIFO, size cap) is in safefile.ts. */
 async function readDoc(file: string): Promise<ReadResult> {
-  let fh: FileHandle;
+  const r = await readUserFile(file);
+  if (r.kind !== "ok") return r;
   try {
-    fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return { kind: "missing" };
-    if (code === "ELOOP") return { kind: "invalid", reason: "it is a symlink" };
-    return { kind: "invalid", reason: "it cannot be opened" };
-  }
-  let text: string;
-  let mode: number;
-  try {
-    const st = await fh.stat();
-    if (!st.isFile()) return { kind: "invalid", reason: "it is not a regular file" };
-    // A hard link could be another user's file. The copy written back would then belong to this user.
-    if (st.nlink !== 1) return { kind: "invalid", reason: "it has more than one link" };
-    if (st.size > MAX_DOC_BYTES) return { kind: "invalid", reason: "it is too large" };
-    mode = st.mode & 0o777;
-    // Read at most one byte over the cap, so a file that grows after the stat still cannot pass it.
-    const buf = Buffer.alloc(MAX_DOC_BYTES + 1);
-    let n = 0;
-    for (;;) {
-      const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
-      if (bytesRead === 0) break;
-      n += bytesRead;
-      if (n === buf.length) return { kind: "invalid", reason: "it is too large" };
-    }
-    text = buf.toString("utf8", 0, n);
-  } catch {
-    return { kind: "invalid", reason: "it cannot be read" };
-  } finally {
-    await fh.close().catch(() => {});
-  }
-  try {
-    const doc = JSON.parse(text);
-    return isObject(doc) ? { kind: "ok", doc, mode } : { kind: "invalid", reason: "it is not a JSON object" };
+    const doc = JSON.parse(r.bytes.toString("utf8"));
+    return isObject(doc) ? { kind: "ok", doc, mode: r.mode } : { kind: "invalid", reason: "it is not a JSON object" };
   } catch {
     return { kind: "invalid", reason: "it is not valid JSON" };
   }
@@ -128,26 +90,13 @@ export function fileTrust(o: {
       projects[absPath] = { ...(isObject(prev) ? prev : {}), hasTrustDialogAccepted: true };
       doc.projects = projects;
 
-      // The mode comes from the handle that was read. The owner is always the target user from passwd,
-      // never the owner of what was found at the path.
-      const mode = r.kind === "ok" ? r.mode : 0o600;
-      const { uid, gid } = user;
-
-      // Random name plus O_EXCL ("wx"): never follows a symlink planted by the user.
-      // All permission and owner changes go through the open handle, never the path.
-      const tmp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+      // The mode comes from the file that was read. The owner is always the target user from passwd,
+      // never the owner of what was found at the path. The shared writer does the temp file and the rename.
       try {
-        const fh = await open(tmp, "wx", 0o600);
-        try {
-          await fh.chmod(mode);
-          if (isRoot() && uid !== undefined && gid !== undefined) await chown(fh, uid, gid);
-          await fh.writeFile(JSON.stringify(doc, null, 2) + "\n");
-        } finally {
-          await fh.close();
-        }
-        await rename(tmp, file);
+        await writeUserFile(file, Buffer.from(JSON.stringify(doc, null, 2) + "\n"), { ownerUid: user.uid, gid: user.gid, checkOwner: false, chown, isRoot });
       } catch (e) {
-        await rm(tmp, { force: true }).catch(() => {});
+        if (e instanceof FileRefused) throw new HttpError(500, `cannot write the user's .claude.json: ${e.reason}`);
+        if (e instanceof FileConflict) throw new HttpError(500, "cannot write the user's .claude.json: it changed while it was written");
         throw e;
       }
   }
