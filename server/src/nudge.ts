@@ -62,7 +62,7 @@ export async function sendAsUser(
   const argv0 = o.argv0 ?? [process.execPath];
   const log = o.log ?? ((l: string) => console.log(l));
   let code: number | undefined;
-  let proc: ReturnType<typeof Bun.spawn> | undefined;
+  let proc: Bun.Subprocess<"pipe", "ignore", "ignore"> | undefined;
   let exited = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
