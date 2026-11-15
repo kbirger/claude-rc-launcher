@@ -94,12 +94,14 @@ describe("add", () => {
     expect(calls).toEqual([[4321, 8765]]);
   });
 
-  test("as root with no ids given, chown is skipped for an existing file", async () => {
+  test("as root with no ids given, the write is refused with a 500 and the file stays as it was", async () => {
     await writeFile(file(), "{}");
     let n = 0;
-    await fileTrust({ isRoot: () => true, chown: async () => { n++; } }).add({ home }, "/x");
+    const err = await fileTrust({ isRoot: () => true, chown: async () => { n++; } }).add({ home }, "/x").catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect([(err as HttpError).status, (err as HttpError).message]).toEqual([500, "cannot write the user's .claude.json: the owner of the file is not known"]);
     expect(n).toBe(0);
-    expect((await fileTrust().checker(home))("/x")).toBe(true);
+    expect(await readFile(file(), "utf8")).toBe("{}");
   });
 
   test("chown is skipped when not root", async () => {

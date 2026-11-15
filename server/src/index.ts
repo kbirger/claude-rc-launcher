@@ -2,12 +2,17 @@ import { ConfigError, type Config } from "./config";
 import { applyLocal, loadConfigFile, resolveConfigPath } from "./configfile";
 import { startHub } from "./hubmain";
 import { generateSecret } from "./nodeauth";
+import { runNudgeSend } from "./nudge";
 import { startNode } from "./nodemain";
 import { VERSION } from "./version";
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);
   process.exit(0);
+}
+
+if (process.argv[2] === "nudge-send") {
+  process.exit(await runNudgeSend(process.argv.slice(2), () => Bun.stdin.text()));
 }
 
 if (process.argv[2] === "gen-secret") {

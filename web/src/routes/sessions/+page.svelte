@@ -9,7 +9,8 @@
   const host = $derived(p.get("host") || shell.flow.selected);
   const instance = $derived(p.get("instance") ?? "");
   const session = $derived(p.get("session") ?? "");
-  const view = $derived(p.get("view") === "folder" ? "folder" : p.get("view") === "changed" ? "changed" : "touched");
+  const VIEWS = ["touched", "changed", "folder", "permissions", "blocked"] as const;
+  const view = $derived(VIEWS.find((v) => v === p.get("view")) ?? "touched");
   const path = $derived(p.get("path") ?? "");
   const hidden = $derived(showHidden(p.get("hidden"), path));
   const now = $derived(shell.now.getTime());

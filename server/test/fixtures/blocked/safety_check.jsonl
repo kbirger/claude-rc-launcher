@@ -1,0 +1,2 @@
+{"type": "assistant", "timestamp": "2026-11-14T10:00:00.000Z", "message": {"content": [{"type": "tool_use", "id": "toolu_safety_check", "name": "Bash", "input": {"command": "rm -rf /work/build", "description": "Clean"}}]}}
+{"type": "user", "timestamp": "2026-11-14T10:00:01.000Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_safety_check", "content": "Permission for this command was denied by a built-in Claude Code safety check, not by the user. The check stops commands that delete a whole folder tree.", "is_error": true}]}}

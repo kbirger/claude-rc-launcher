@@ -178,4 +178,19 @@ describe("SessionCatalog", () => {
     expect(files.map((t) => t.path)).toEqual(["/work/proj/a.txt"]);
     expect(calls.readdir).toBe(readdirs);
   });
+  test.skipIf(win)("blocked() returns the blocked calls of its own transcript and does not scan", async () => {
+    const use = JSON.stringify({ type: "assistant", timestamp: "2026-01-01T00:00:20.000Z", message: { content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "touch x" } }] } });
+    const res = JSON.stringify({ type: "user", timestamp: "2026-01-01T00:00:21.000Z", message: { content: [{ type: "tool_result", tool_use_id: "t2", content: "touch in '/work/proj/x' needs approval.", is_error: true }] } });
+    const calls = none();
+    const s = await new SessionCatalog({ fs: fakeFs(calls, [FIRST, WRITE, DONE, use, res]) }).instance({ path: PATH, home: HOME }).find(ID1);
+    const readdirs = calls.readdir;
+    const out = await s!.blocked();
+    expect(out.map((b) => [b.id, b.tool, b.reason])).toEqual([["t2", "Bash", "needs_approval"]]);
+    expect(calls.readdir).toBe(readdirs);
+  });
+
+  test.skipIf(win)("permissions() is a 404 when the real-root check fails (the folder is not on disk)", async () => {
+    const s = await new SessionCatalog({ fs: fakeFs(none()) }).instance({ path: PATH, home: HOME }).find(ID1);
+    await expect(s!.permissions({})).rejects.toMatchObject({ status: 404 });
+  });
 });

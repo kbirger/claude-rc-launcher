@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
@@ -52,7 +52,8 @@ function app() {
   const cfg = { mode: "node", name: "pi", roots: [dir], stateDir: state, node: { tls: { stateDir: tlsState } } } as unknown as Config;
   const instances: any = {
     list: async () => [],
-    claudeHome: async (id: string) => ({ path: work, home: join(dir, "home") }),
+    // As root a write needs the owner (the service user), so the stub names this process as that user.
+    claudeHome: async (id: string) => ({ path: work, home: join(dir, "home"), identity: { home: join(dir, "home"), path: "/usr/bin", uid: process.getuid?.(), gid: process.getgid?.() } }),
   };
   return createNodeApp({ cfg, instances, auth });
 }
@@ -84,5 +85,45 @@ describe("node app wiring of the refused state folders", () => {
   test("the touched answer lists only the file outside the state folders", async () => {
     const r = await app().request(`/api/instances/${ID}/sessions/${SID}/touched`, { headers: ok });
     expect(((await r.json()) as { path: string }[]).map((t) => t.path)).toEqual([join(outside, "ok.txt")]);
+  });
+});
+
+describe("permissions routes in the node app", () => {
+  const base = `/api/instances/${ID}`;
+  test("they need the node login", async () => {
+    const a = app();
+    expect((await a.request(`${base}/permissions`)).status).toBe(401);
+    expect((await a.request(`${base}/sessions/${SID}/permissions`)).status).toBe(401);
+    expect((await a.request(`${base}/sessions/${SID}/blocked`)).status).toBe(401);
+  });
+  test("the four edit routes need the node login and JSON, and answer for the real session folder", async () => {
+    const a = app();
+    const urls = [`${base}/permissions/rules`, `${base}/sessions/${SID}/permissions/rules`];
+    for (const url of urls) {
+      for (const method of ["POST", "DELETE"]) {
+        expect((await a.request(url, { method, headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+        expect((await a.request(url, { method, headers: { ...ok, "content-type": "text/plain" }, body: "{}" })).status).toBe(415);
+      }
+    }
+    const body = JSON.stringify({ scope: "user", list: "allow", rule: "Bash(ls *)", expectedHash: null });
+    const r = await a.request(urls[1]!, { method: "POST", headers: { ...ok, "content-type": "application/json" }, body });
+    expect(r.status).toBe(200);
+    expect(JSON.parse(await readFile(join(dir, "home", ".claude", "settings.json"), "utf8")).permissions.allow).toEqual(["Bash(ls *)"]);
+  });
+  test("the user, session and blocked routes answer for the real session folder", async () => {
+    await mkdir(join(dir, "home", ".claude"), { recursive: true });
+    await writeFile(join(dir, "home", ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["Bash(ls *)"] } }));
+    const a = app();
+    const user = (await (await a.request(`${base}/permissions`, { headers: ok })).json()) as { layers: { scope: string; rules: { raw: string }[] }[] };
+    expect(user.layers.map((l) => l.scope)).toEqual(["user"]);
+    expect(user.layers[0]!.rules.map((r) => r.raw)).toEqual(["Bash(ls *)"]);
+    const s = await a.request(`${base}/sessions/${SID}/permissions`, { headers: ok });
+    expect(s.status).toBe(200);
+    const scopes = ((await s.json()) as { layers: { scope: string }[] }).layers.map((l) => l.scope);
+    expect(scopes).toContain("project");
+    expect(scopes.at(-1)).toBe("user");
+    const b = await a.request(`${base}/sessions/${SID}/blocked`, { headers: ok });
+    expect(b.status).toBe(200);
+    expect(await b.json()).toEqual([]);
   });
 });

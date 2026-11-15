@@ -556,6 +556,20 @@ describe("claudeHome", () => {
     // The identity is what git runs as for the Changed list.
     expect(h.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
   });
+  test("as root the default user gets the uid and gid of the service user, so a write is owned by it", async () => {
+    const as = { serviceUser: "alice", serviceHome: "/home/alice" };
+    const id = instanceId("/srv/a");
+    await writeFile(join(dir, unitName(id)), renderUnit(cfg(as), "/srv/a", "alpha"));
+    const h = await svc(as, { isRoot: () => true }).claudeHome(id);
+    expect(h.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
+  });
+  test("a node that is not root adds no uid for the default user", async () => {
+    const as = { serviceUser: "alice", serviceHome: "/home/alice" };
+    const id = instanceId("/srv/a");
+    await writeFile(join(dir, unitName(id)), renderUnit(cfg(as), "/srv/a", "alpha"));
+    const h = await svc(as, { isRoot: () => false }).claudeHome(id);
+    expect(h.identity?.uid).toBeUndefined();
+  });
   test("a unit whose user has vanished is 404 instance user not found", async () => {
     await svc().start({ path: "/srv/a", user: "alice" });
     const [inst] = await svc().list();

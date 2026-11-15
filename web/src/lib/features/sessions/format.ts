@@ -1,4 +1,5 @@
 // Small helpers for the session screens. They only use values the API gave.
+import { ago } from "../../shared/time";
 import type { Session, TouchedFile } from "./api";
 
 const fwd = (p: string): string => p.replace(/\\/g, "/");
@@ -26,17 +27,7 @@ export function humanSize(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Short relative time, in the style of the instance uptime. */
-export function ago(iso: string, now: number): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "—";
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d > 0) return `${d}d ago`;
-  if (h > 0) return `${h}h ago`;
-  if (m > 0) return `${m}m ago`;
-  return "now";
-}
+export { ago };
 
 /** The calendar date and time of an instant, for a reader's locale ("Nov 12, 2:05 PM"). The year shows only when it is not the year of `now`. */
 export function shortDate(iso: string, now: number): string {

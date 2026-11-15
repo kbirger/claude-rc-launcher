@@ -12,6 +12,7 @@ import { changedIn, type ChangedFile, type GitDeps } from "./gitchanges";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { HttpError } from "./instances";
 import { absRefused, PathError, within } from "./paths";
+import { ClaudeSettings, type PermissionLayers } from "./settingsfile";
 import type { Session, SessionCatalog } from "./sessioncatalog";
 import { listIn, type Download, type Listing, type Preview } from "./sessionfs";
 
@@ -64,6 +65,21 @@ export class PinnedRoot {
     if (worktree && !within(real, await realOrMissing(join(instance, ".claude", "worktrees")))) throw new HttpError(404, "session folder not found");
     if (dirname(real) === real) throw new HttpError(404, "session not found");
     return new PinnedRoot(session, real);
+  }
+
+  /**
+   * The settings layers that apply to this session (see settingsfile.ts). Settings files can sit outside the session
+   * folder (the home folder, the git root above it), so they are not read through the file opener of this class.
+   * Only the checked real root comes from here.
+   */
+  async permissions(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
+    return (await this.settings(o)).layers();
+  }
+
+  /** The settings files that apply to this session (see settingsfile.ts). A route edits a rule through one of them. */
+  settings(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
+    const catalog = this.session.instance.catalog;
+    return ClaudeSettings.forSession({ home: this.session.instance.home, root: this.real, platform: catalog.platform, ...(o.ownerUid !== undefined ? { ownerUid: o.ownerUid } : {}), ...(o.isRoot ? { isRoot: o.isRoot } : {}) });
   }
 
   /** One folder of the session folder. */
