@@ -1,3 +1,4 @@
+import { staticHandler } from "../src/static";
 import { closeStreams } from "../src/sse";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -63,6 +64,27 @@ const mk = (over: Record<string, any> = {}, staticHandler?: any) => {
 const H = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "application/json", ...extra });
 const post = (app: any, body: unknown, headers = H()) =>
   app.request("/api/hosts/local/instances", { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+describe("PWA files", () => {
+  const files = new Map([
+    ["/index.html", { path: "/dev/null", type: "text/html" }],
+    ["/manifest.webmanifest", { path: "/dev/null", type: "application/manifest+json" }],
+    ["/service-worker.js", { path: "/dev/null", type: "text/javascript" }],
+  ]);
+  let app: any;
+  beforeAll(() => {
+    app = mk({}, staticHandler(files)).app;
+  });
+  test("the manifest and the service worker load without a login", async () => {
+    expect((await app.request("/manifest.webmanifest")).status).toBe(200);
+    expect((await app.request("/service-worker.js")).status).toBe(200);
+  });
+  test("other pages still redirect to login", async () => {
+    const r = await app.request("/");
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe("/auth/login");
+  });
+});
 
 describe("error handling", () => {
   test("non-HttpError with numeric status becomes 500 internal error", async () => {

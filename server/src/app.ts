@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { isPwaFile } from "./static";
 import { sseResponse, trackStreams } from "./sse";
 import type { DefinitionStatus } from "./win/definition";
 import type { UpdateHistory } from "./updatehistory";
@@ -388,7 +389,7 @@ export function createApp(deps: Deps): Hono {
     app.all("/cli/*", (c) => c.json({ error: "not found" }, 404));
   }
 
-  if (staticHandler) app.get("*", userAuth.middleware, staticHandler);
+  if (staticHandler) app.get("*", (c, next) => (isPwaFile(new URL(c.req.url).pathname) ? next() : userAuth.middleware(c, next)), staticHandler);
 
   app.onError(onError);
 
