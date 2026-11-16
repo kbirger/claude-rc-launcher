@@ -1,0 +1,16 @@
+sequenceDiagram
+  autonumber
+  participant U as Browser
+  participant H as Hub
+  participant A as authentik
+  U->>H: GET /
+  H-->>U: 302 to authentik, with state and PKCE challenge
+  U->>A: Log in
+  A-->>U: 302 to the hub callback with a code
+  U->>H: GET /auth/callback?code=...
+  H->>A: Exchange the code, with the PKCE verifier
+  A-->>H: ID token with sub, name, email and launcher_role
+  H->>H: Check allowed_users, resolve the role
+  H-->>U: Set the signed session cookie (sub, name, role)
+  U->>H: GET /api/instances (cookie)
+  H->>H: Check that the role allows the route

@@ -1,0 +1,8 @@
+sequenceDiagram
+  autonumber
+  participant H as Hub
+  participant N as Node
+  H->>H: Check the user role for this route
+  H->>N: Request with Hub-Proof (aud = node certificate fingerprint, htm, htu, bh, jti, exp)
+  N->>N: Check key, audience, lifetime, method, path, body, jti not seen
+  N-->>H: Result
