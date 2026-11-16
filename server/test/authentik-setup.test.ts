@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { ADMIN_GROUP, APPLICATIONS, GROUPS, MAPPING_EXPRESSION, MAPPING_NAME, OLD_HUB, PROVIDERS, run, SCOPE_NAME } from "../../scripts/authentik-roles";
+import { run } from "../../scripts/authentik-setup";
+import { mappingExpression } from "../../scripts/authentik/roles";
+import { DEFAULTS } from "../../scripts/authentik/settings";
+
+const MAPPING_EXPRESSION = mappingExpression(DEFAULTS.claim);
+const MAPPING_NAME = DEFAULTS.mappingName;
+const SCOPE_NAME = DEFAULTS.scope;
+const GROUPS = DEFAULTS.groups;
+const ADMIN_GROUP = DEFAULTS.adminGroup;
+const APPLICATIONS = [DEFAULTS.webApp.slug, DEFAULTS.cliApp.slug];
+const PROVIDERS = [DEFAULTS.webApp.provider, DEFAULTS.cliApp.provider];
+const OLD_HUB = DEFAULTS.oldHub;
 
 type Json = Record<string, any>;
 
@@ -66,7 +77,7 @@ const base = (fake: ReturnType<typeof fakeAuthentik>, over: Partial<Parameters<t
   return { log, o: { url: "https://auth.example.com/", token: "sekret-token", apply: true, removeOldHub: false, fetch: fake.fetch, log: (l: string) => log.push(l), ...over } };
 };
 
-describe("authentik-roles", () => {
+describe("authentik-setup", () => {
   test("a plan makes no write call and says what it would do", async () => {
     const a = fakeAuthentik();
     const { o, log } = base(a, { apply: false, adminUser: "kir" });
@@ -137,7 +148,9 @@ describe("authentik-roles", () => {
 
   test("a missing provider or user is reported after the rest is done", async () => {
     const a = fakeAuthentik({ providers: [PROVIDERS[0]!] });
-    await expect(run(base(a, { adminUser: "nobody" }).o)).rejects.toThrow(/provider not found: Provider for Claude RC CLI.*user not found: nobody/);
+    const err = await run(base(a, { adminUser: "nobody" }).o).catch((e) => String(e));
+    expect(err).toContain("provider not found: Provider for Claude RC CLI");
+    expect(err).toContain("user not found: nobody");
     expect(a.groups).toHaveLength(GROUPS.length);
   });
 

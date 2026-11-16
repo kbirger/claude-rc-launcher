@@ -1152,14 +1152,14 @@ needs a public client with a loopback redirect on `127.0.0.1` (any port) and ref
 
 9. **Let the role groups sign in.** Open each of the two applications, then Policy / Group / User Bindings. Bind each role group. A user who is in no bound group sees "Permission denied" at the login.
 
-The script `scripts/authentik-roles.ts` does steps 7, 8, and 9 for you. It needs the address of authentik and an API token
+The script `scripts/authentik-setup.ts` does steps 7, 8, and 9 for you. It needs the address of authentik and an API token
 in the environment. It shows what it would do and changes nothing, unless you pass `--apply`:
 
 ```sh
 export AUTHENTIK_URL=https://auth.example.com
 export AUTHENTIK_TOKEN=<an API token of an admin>
-bun scripts/authentik-roles.ts --admin-user kir            # shows the plan
-bun scripts/authentik-roles.ts --admin-user kir --apply    # makes the changes
+bun scripts/authentik-setup.ts --admin-user kir            # shows the plan
+bun scripts/authentik-setup.ts --admin-user kir --apply    # makes the changes
 ```
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)

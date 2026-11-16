@@ -154,7 +154,7 @@ roles = [g.attributes.get("clauderc_role") for g in request.user.ak_groups.all()
 return {"clauderc_role": [r for r in roles if r]}
 ```
 
-The script `scripts/authentik-roles.ts` creates the mapping, attaches it, creates the groups, and adds a user to the admin group.
+The script `scripts/authentik-setup.ts` creates the mapping, attaches it, creates the groups, and adds a user to the admin group.
 
 How the hub treats the claim:
 
