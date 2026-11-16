@@ -20,6 +20,9 @@ export type RoleSettings = {
 
 export const DEFAULT_ROLES: RoleSettings = { claim: "launcher_role", scope: "launcher", defaultRole: "read", map: {} };
 
+/** The role settings of a hub configuration. A hand-made configuration (a test) can leave them out. */
+export const rolesFrom = (ua?: { roles?: RoleSettings }): RoleSettings => ua?.roles ?? DEFAULT_ROLES;
+
 const RANK: Record<Role, number> = { read: 1, write: 2, admin: 3 };
 
 export const isRole = (v: unknown): v is Role => v === "read" || v === "write" || v === "admin";

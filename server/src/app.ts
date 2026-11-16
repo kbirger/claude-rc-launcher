@@ -33,7 +33,7 @@ import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type Upda
 import { VERSION } from "./version";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
-export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
+export type CliDeps = { issuer: string; clientId: string; roleScope?: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
 
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
