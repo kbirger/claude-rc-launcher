@@ -271,3 +271,21 @@ describe("node events route", () => {
     for (const reader of open.slice(1)) await reader.cancel();
   });
 });
+
+describe("node audit with the acting user", () => {
+  const withAct = (act: unknown) =>
+    createNodeApp({ cfg, instances, auth: async (c, next) => (c.set("caller" as never, "hub" as never), c.set("act" as never, act as never), next()) });
+  const post = (a: ReturnType<typeof withAct>) => a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) });
+  test("the audit line shows the acting user and role", async () => {
+    await post(withAct({ actSub: "kir", actRole: "write" }));
+    expect(logged).toContain("audit caller=hub act=kir/write POST /api/instances 201");
+  });
+  test("an odd name is quoted, so that it cannot add a line", async () => {
+    await post(withAct({ actSub: "a\naudit caller=x", actRole: "write" }));
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(['audit caller=hub act="a\\naudit caller=x"/write POST /api/instances 201']);
+  });
+  test("a proof with no acting user adds no act field", async () => {
+    await post(withAct({}));
+    expect(logged).toContain("audit caller=hub POST /api/instances 201");
+  });
+});

@@ -8,7 +8,7 @@ import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
-import { enforceRoles } from "./roles";
+import { enforceRoles, logToken } from "./roles";
 import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
@@ -224,7 +224,9 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
   api.use("*", async (c, next) => {
     await next();
     if (isWrite(c.req.method)) {
-      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+      const act = c.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
+      const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
+      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")}${actPart} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
   if (events) {

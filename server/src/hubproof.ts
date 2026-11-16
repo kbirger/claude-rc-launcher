@@ -2,9 +2,13 @@ import { SignJWT, decodeProtectedHeader, exportJWK, exportPKCS8, generateKeyPair
 import { X509Certificate, createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { actStore } from "./roles";
 
 export type HubKey = { privateKey: CryptoKey; publicKey: string; kid: string };
 export type ProofRequest = { method: string; pathAndQuery: string; body: string };
+/** Who the hub acted for. A proof from a hub that does not send them gives an empty object. */
+export type ProofActor = { actSub?: string; actRole?: string };
+const ACT_MAX = 128;
 
 export class ProofError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -80,7 +84,9 @@ export async function signProof(
   o: { now?: () => number; jti?: () => string } = {},
 ): Promise<string> {
   const iat = Math.floor((o.now ?? Date.now)() / 1000);
-  return new SignJWT({ htm: req.method, htu: req.pathAndQuery, bh: sha256Hex(req.body), jti: (o.jti ?? crypto.randomUUID.bind(crypto))() })
+  // The user and the role of the request in progress. The node watchers and other work with no user act as `system`.
+  const act = actStore.getStore() ?? { sub: "system", role: "system" };
+  return new SignJWT({ htm: req.method, htu: req.pathAndQuery, bh: sha256Hex(req.body), jti: (o.jti ?? crypto.randomUUID.bind(crypto))(), act_sub: act.sub.slice(0, ACT_MAX), act_role: act.role.slice(0, ACT_MAX) })
     .setProtectedHeader({ alg: "EdDSA", kid: key.kid })
     .setIssuer(ISSUER)
     .setAudience(aud)
@@ -94,7 +100,7 @@ export function createProofVerifier(o: {
   keys: string[];
   selfFingerprint: string;
   now?: () => number;
-}): (jwt: string, req: ProofRequest) => Promise<void> {
+}): (jwt: string, req: ProofRequest) => Promise<ProofActor> {
   const now = o.now ?? Date.now;
   const byKid = new Map<string, Promise<CryptoKey>>();
   for (const x of o.keys) {
@@ -141,5 +147,9 @@ export function createProofVerifier(o: {
     for (const [j, exp] of seen) if (exp + CLOCK_TOLERANCE_S < t) seen.delete(j);
     if (seen.has(p.jti!)) fail("replayed");
     seen.set(p.jti!, p.exp!);
+    const str = (v: unknown) => (typeof v === "string" && v ? v.slice(0, ACT_MAX) : undefined);
+    const actSub = str(p.act_sub);
+    const actRole = str(p.act_role);
+    return { ...(actSub ? { actSub } : {}), ...(actRole ? { actRole } : {}) };
   };
 }

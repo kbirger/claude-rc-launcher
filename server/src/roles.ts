@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Context, MiddlewareHandler } from "hono";
 import type { User } from "./userauth";
 
@@ -25,6 +26,12 @@ export const DEFAULT_ROLES: RoleSettings = { claim: "launcher_role", scope: "lau
 
 /** The role settings of a hub configuration. A hand-made configuration (a test) can leave them out. */
 export const rolesFrom = (ua?: { roles?: RoleSettings }): RoleSettings => ua?.roles ?? DEFAULT_ROLES;
+
+/** The user and role of the request that the hub is serving. The hub proof carries both to a node. Outside a request the store is empty. */
+export const actStore = new AsyncLocalStorage<{ sub: string; role: string }>();
+
+/** A value for a log line: plain names stay as they are. Anything else is quoted and cut, so it cannot add a line or a field. */
+export const logToken = (v: string): string => (/^[\w.@:-]{1,128}$/.test(v) ? v : JSON.stringify(v.slice(0, 128)));
 
 const RANK: Record<Role, number> = { read: 1, write: 2, admin: 3 };
 
@@ -150,6 +157,6 @@ export function enforceRoles(prefix: string): MiddlewareHandler {
     const need = requiredRole(c.req.method, sub) ?? "admin";
     if (!atLeast(role, need)) return refuse(`needs role ${need}`);
     if (!atLeast(role, "admin") && namesUser(c.req.method, sub) && (await requestNamesUser(c))) return refuse("needs role admin to name a user");
-    await next();
+    await actStore.run({ sub: who, role }, () => next());
   };
 }

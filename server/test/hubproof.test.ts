@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import os from "node:os";
 import path from "node:path";
 import { certFingerprint, createProofVerifier, loadOrCreateHubKey, ProofError, signProof, type ProofRequest } from "../src/hubproof";
+import { actStore } from "../src/roles";
 import { ensureNodeCert } from "../src/tls";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-hubproof-"));
@@ -167,5 +168,28 @@ describe("certFingerprint", () => {
   test("returns sha256:<hex> matching ensureNodeCert", async () => {
     const c = await ensureNodeCert({ dir: tmp(), names: ["localhost"] });
     expect(certFingerprint(c.certPem)).toBe(`sha256:${c.fingerprintSha256}`);
+  });
+});
+
+describe("acting user in the proof", () => {
+  test("a proof signed inside actStore carries the user and the role", async () => {
+    const { key, verify } = await setup();
+    const jwt = await actStore.run({ sub: "kir", role: "write" }, () => sign(key));
+    expect(await verify(jwt, req)).toEqual({ actSub: "kir", actRole: "write" });
+  });
+  test("a proof signed outside any request is for the system", async () => {
+    const { key, verify } = await setup();
+    expect(await verify(await sign(key), req)).toEqual({ actSub: "system", actRole: "system" });
+  });
+  test("a long name is cut to 128 characters", async () => {
+    const { key, verify } = await setup();
+    const jwt = await actStore.run({ sub: "x".repeat(300), role: "read" }, () => sign(key));
+    expect(((await verify(jwt, req)) as { actSub: string }).actSub).toHaveLength(128);
+  });
+  test("a proof from an older hub has no acting user", async () => {
+    const { key, verify } = await setup();
+    const jwt = await new SignJWT({ htm: req.method, htu: req.pathAndQuery, bh, jti: "old-1" })
+      .setProtectedHeader({ alg: "EdDSA", kid: key.kid }).setIssuer("claude-rc-hub").setAudience(AUD).setIssuedAt(NOW / 1000).setExpirationTime(NOW / 1000 + 30).sign(key.privateKey);
+    expect(await verify(jwt, req)).toEqual({});
   });
 });
