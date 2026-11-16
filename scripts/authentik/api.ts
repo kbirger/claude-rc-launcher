@@ -20,6 +20,7 @@ export type Ctx = {
   apply: boolean;
   changes(): number;
   problems: string[];
+  url: string;
 };
 
 export function makeCtx(o: CtxOptions): Ctx {
@@ -51,5 +52,5 @@ export function makeCtx(o: CtxOptions): Ctx {
     const r = await call("GET", `${path}${path.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`);
     return (r?.results as Json[] | undefined)?.find((x) => x[key] === value);
   };
-  return { call, write, find, log, apply: o.apply, changes: () => changes, problems: [] };
+  return { call, write, find, log, apply: o.apply, changes: () => changes, problems: [], url: base };
 }
