@@ -5,7 +5,8 @@
  *   2. the mapping on the web provider and on the CLI provider,
  *   3. three role groups with that attribute,
  *   4. optionally, a user in the admin group,
- *   5. optionally, removal of the old hub-to-node application and provider.
+ *   5. the role groups may sign in to the two applications (a policy binding for each group),
+ *   6. optionally, removal of the old hub-to-node application and provider.
  *
  * It shows the plan and changes nothing, unless you pass --apply. It can run again: it changes only what differs.
  *
@@ -23,6 +24,7 @@ export const GROUPS = [
   { name: "ak-clauderc-ro", role: "read" },
 ];
 export const ADMIN_GROUP = "ak-clauderc-admins";
+export const APPLICATIONS = ["claude-rc-launcher", "claude-rc-cli"];
 export const OLD_HUB = { application: "claude-rc-hub", provider: "Provider for Claude RC hub" };
 
 export type Options = {
@@ -138,7 +140,22 @@ export async function run(o: Options): Promise<{ changes: number }> {
     }
   }
 
-  // 5. The old hub-to-node application and provider. This cannot be undone, so it needs its own flag.
+  // 5. Access: a member of a role group may sign in to both applications. Without a binding, authentik answers "Permission denied".
+  for (const slug of APPLICATIONS) {
+    const app = await find("/api/v3/core/applications/", "slug", slug);
+    if (!app) {
+      problems.push(`application not found: ${slug}`);
+      continue;
+    }
+    const bound: Json[] = (await call("GET", `/api/v3/policies/bindings/?target=${app.pk}&page_size=200`))?.results ?? [];
+    for (const [i, g] of GROUPS.entries()) {
+      const group = groups.get(g.name);
+      if (group?.pk && bound.some((b) => b.group === group.pk)) log(`ok: "${g.name}" can sign in to "${slug}"`);
+      else await write(`let the group "${g.name}" sign in to "${slug}"`, "POST", "/api/v3/policies/bindings/", { target: app.pk, ...(group?.pk ? { group: group.pk } : {}), order: 10 + i, enabled: true, negate: false, timeout: 30 });
+    }
+  }
+
+  // 6. The old hub-to-node application and provider. This cannot be undone, so it needs its own flag.
   if (o.removeOldHub) {
     const app = await find("/api/v3/core/applications/", "slug", OLD_HUB.application);
     if (app) await write(`delete the application "${OLD_HUB.application}"`, "DELETE", `/api/v3/core/applications/${OLD_HUB.application}/`);

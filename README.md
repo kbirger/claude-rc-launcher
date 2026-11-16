@@ -1150,7 +1150,9 @@ needs a public client with a loopback redirect on `127.0.0.1` (any port) and ref
    `read`, or `none`. A user who is in several role groups gets the highest role. Put each user in a group.
    Attach the mapping (step 7) and set the groups before you upgrade the hub.
 
-The script `scripts/authentik-roles.ts` does steps 7 and 8 for you. It needs the address of authentik and an API token
+9. **Let the role groups sign in.** Open each of the two applications, then Policy / Group / User Bindings. Bind each role group. A user who is in no bound group sees "Permission denied" at the login.
+
+The script `scripts/authentik-roles.ts` does steps 7, 8, and 9 for you. It needs the address of authentik and an API token
 in the environment. It shows what it would do and changes nothing, unless you pass `--apply`:
 
 ```sh

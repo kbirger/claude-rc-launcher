@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ADMIN_GROUP, GROUPS, MAPPING_EXPRESSION, MAPPING_NAME, OLD_HUB, PROVIDERS, run, SCOPE_NAME } from "../../scripts/authentik-roles";
+import { ADMIN_GROUP, APPLICATIONS, GROUPS, MAPPING_EXPRESSION, MAPPING_NAME, OLD_HUB, PROVIDERS, run, SCOPE_NAME } from "../../scripts/authentik-roles";
 
 type Json = Record<string, any>;
 
@@ -11,7 +11,8 @@ function fakeAuthentik(opts: { providers?: string[]; newMappingPath?: boolean } 
   const providers: Json[] = (opts.providers ?? [...PROVIDERS, OLD_HUB.provider]).map((name, i) => ({ pk: 20 + i, name, property_mappings: ["existing-mapping"] }));
   const groups: Json[] = [];
   const users: Json[] = [{ pk: 7, username: "kir" }];
-  const apps: Json[] = [{ slug: OLD_HUB.application }];
+  const apps: Json[] = [...APPLICATIONS, OLD_HUB.application].map((slug, i) => ({ slug, pk: `app-${i}` }));
+  const bindings: Json[] = [];
   const calls: { method: string; path: string; body?: any; auth?: string | null }[] = [];
 
   const list = (items: Json[], q: URLSearchParams, key: string) => ({ results: items.filter((x) => !q.has(key) || x[key] === q.get(key)) });
@@ -45,13 +46,19 @@ function fakeAuthentik(opts: { providers?: string[]; newMappingPath?: boolean } 
     const gm = groups.find((x) => p.startsWith(`/api/v3/core/groups/${x.pk}/`));
     if (gm && method === "PATCH") return out(200, Object.assign(gm, body));
     if (gm && p.endsWith("/add_user/") && method === "POST") return (gm.users.push(body.pk), out(204));
+    if (p === "/api/v3/policies/bindings/" && method === "GET") return out(200, { results: bindings.filter((b) => !url.searchParams.has("target") || b.target === url.searchParams.get("target")) });
+    if (p === "/api/v3/policies/bindings/" && method === "POST") {
+      const b = { pk: uuid(), ...body };
+      bindings.push(b);
+      return out(201, b);
+    }
     if (p === "/api/v3/core/users/" && method === "GET") return out(200, list(users, url.searchParams, "username"));
     if (p === "/api/v3/core/applications/" && method === "GET") return out(200, list(apps, url.searchParams, "slug"));
     const am = apps.find((x) => p === `/api/v3/core/applications/${x.slug}/`);
     if (am && method === "DELETE") return (apps.splice(apps.indexOf(am), 1), out(204));
     return out(404, { detail: `no route ${method} ${p}` });
   }) as unknown as typeof globalThis.fetch;
-  return { fetch, mappings, providers, groups, apps, calls, writes: () => calls.filter((c) => c.method !== "GET") };
+  return { fetch, mappings, providers, groups, apps, bindings, calls, writes: () => calls.filter((c) => c.method !== "GET") };
 }
 
 const base = (fake: ReturnType<typeof fakeAuthentik>, over: Partial<Parameters<typeof run>[0]> = {}) => {
@@ -81,6 +88,25 @@ describe("authentik-roles", () => {
     expect(a.providers.find((p) => p.name === OLD_HUB.provider)!.property_mappings).toEqual(["existing-mapping"]);
     expect(a.groups.map((g) => [g.name, g.attributes.clauderc_role])).toEqual(GROUPS.map((g) => [g.name, g.role]));
     expect(a.groups.find((g) => g.name === ADMIN_GROUP)!.users).toEqual([7]);
+  });
+
+  test("every role group is bound to both applications, once", async () => {
+    const a = fakeAuthentik();
+    await run(base(a).o);
+    expect(a.bindings).toHaveLength(APPLICATIONS.length * GROUPS.length);
+    for (const slug of APPLICATIONS) {
+      const app = a.apps.find((x) => x.slug === slug)!;
+      const groupsBound = a.bindings.filter((b) => b.target === app.pk).map((b) => a.groups.find((g) => g.pk === b.group)?.name);
+      expect(groupsBound.sort()).toEqual(GROUPS.map((g) => g.name).sort());
+    }
+    // the old hub application gets none
+    expect(a.bindings.some((b) => b.target === a.apps.find((x) => x.slug === OLD_HUB.application)!.pk)).toBe(false);
+  });
+
+  test("a missing application is reported", async () => {
+    const a = fakeAuthentik();
+    a.apps.splice(a.apps.findIndex((x) => x.slug === APPLICATIONS[1]), 1);
+    await expect(run(base(a).o)).rejects.toThrow(/application not found: claude-rc-cli/);
   });
 
   test("a second run changes nothing", async () => {
@@ -118,12 +144,12 @@ describe("authentik-roles", () => {
   test("the old hub application and provider go only with the flag and with apply", async () => {
     const a = fakeAuthentik();
     await run(base(a).o);
-    expect(a.apps).toHaveLength(1);
+    expect(a.apps).toHaveLength(APPLICATIONS.length + 1);
     expect(a.providers.some((p) => p.name === OLD_HUB.provider)).toBe(true);
     await run(base(a, { removeOldHub: true, apply: false }).o);
-    expect(a.apps).toHaveLength(1);
+    expect(a.apps).toHaveLength(APPLICATIONS.length + 1);
     await run(base(a, { removeOldHub: true }).o);
-    expect(a.apps).toHaveLength(0);
+    expect(a.apps).toHaveLength(APPLICATIONS.length);
     expect(a.providers.some((p) => p.name === OLD_HUB.provider)).toBe(false);
     // already gone: a second run is quiet
     expect((await run(base(a, { removeOldHub: true }).o)).changes).toBe(0);
