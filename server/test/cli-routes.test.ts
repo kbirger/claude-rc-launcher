@@ -6,6 +6,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { createApp, createNodeApp } from "../src/app";
 import { SessionCatalog } from "../src/sessioncatalog";
 import { cliBearerAuth } from "../src/cliauth";
+import { DEFAULT_ROLES } from "../src/roles";
 import type { Config } from "../src/config";
 import { createHostClient, secretAuthorizer, type HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
@@ -35,7 +36,7 @@ async function kit() {
 const browserAuth: UserAuthStrategy = {
   middleware: async (c, next) => {
     if (c.req.header("x-browser") !== "1") return c.json({ error: "unauthenticated" }, 401);
-    c.set("user" as never, { sub: "b1", name: "Browser", username: "bob" } as never);
+    c.set("user" as never, { sub: "b1", name: "Browser", username: "bob", role: "admin" } as never);
     await next();
   },
 };
@@ -60,7 +61,7 @@ async function setup(o: { cli?: boolean; claudeHome?: (id: string) => Promise<{ 
   const makeClient = (h: HostConfig) => createHostClient(h, secretAuthorizer(node.secret));
   const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [], clients: new Map(), makeClient });
   const enrollment = { hubKeys: ["PUBKEY"] };
-  const cli = { issuer: ISS, clientId: AUD, auth: cliBearerAuth({ verify: k.verify }), makeClient, enrollment };
+  const cli = { issuer: ISS, clientId: AUD, auth: cliBearerAuth({ verify: k.verify, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } }), makeClient, enrollment };
   const app = createApp({ cfg, instances: local, userAuth: browserAuth, hosts: registry, ...(o.cli === false ? {} : { cli }) });
   const token = await k.sign();
   const call = (method: string, p: string, body?: unknown, headers: Record<string, string> = { authorization: `Bearer ${token}` }) =>
@@ -141,7 +142,7 @@ describe("/cli", () => {
 
   test("/cli/api/me returns the token user", async () => {
     const s = await setup();
-    expect(await (await s.call("GET", "/cli/api/me")).json()).toEqual({ sub: "u1", name: "Ann", username: "kir" });
+    expect(await (await s.call("GET", "/cli/api/me")).json()).toEqual({ sub: "u1", name: "Ann", username: "kir", role: "admin" });
   });
 
   test("list, start, stop, logs, fs and mkdir work through /cli/api for local", async () => {
@@ -175,9 +176,9 @@ describe("/cli", () => {
   test("the audit line for a start uses the CLI user name, and the add line is written once", async () => {
     const s = await setup();
     await s.call("POST", "/cli/api/hosts/local/instances", { path: "/srv/p" });
-    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=local POST /cli/api/hosts/local/instances 201"]);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir role=admin host=local POST /cli/api/hosts/local/instances 201"]);
     logged = [];
     await s.call("POST", "/cli/api/hosts", { id: "pi", url: s.node.url, fingerprint: s.node.fp });
-    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=pi POST /cli/api/hosts 201"]);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir role=admin host=pi POST /cli/api/hosts 201"]);
   });
 });

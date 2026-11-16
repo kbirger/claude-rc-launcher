@@ -8,6 +8,7 @@ import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
+import { enforceRoles } from "./roles";
 import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
@@ -271,6 +272,7 @@ export function createApp(deps: Deps): Hono {
 
   const api = new Hono();
   api.use("*", userAuth.middleware);
+  api.use("*", enforceRoles("/api"));
   api.use("*", csrf(cfg));
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
@@ -322,7 +324,7 @@ export function createApp(deps: Deps): Hono {
   api.patch("/hosts/:id", async (c, next) => {
     await renameHandler(registry)(c, next);
     const u = c.get("user" as never) as User | undefined;
-    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
+    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
@@ -377,6 +379,7 @@ export function createApp(deps: Deps): Hono {
     app.route("/cli/config", cliConfigRoute(cli));
     const cliApi = new Hono();
     cliApi.use("*", cli.auth);
+    cliApi.use("*", enforceRoles("/cli/api"));
     cliApi.use("*", csrf(cfg));
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
     cliApi.get("/events", hubEvents);

@@ -1,3 +1,6 @@
+import type { Context, MiddlewareHandler } from "hono";
+import type { User } from "./userauth";
+
 /**
  * Roles of a hub user and the minimum role of each hub route. The identity provider sets the role through one claim
  * in the login token. The hub enforces it (see `enforceRoles`). See `docs/auth-architecture.md`.
@@ -76,7 +79,7 @@ const RULES: Rule[] = [
     "/hosts/:host/instances/:id/permissions/rules",
     `${SESSION}/permissions/rules`,
   ]),
-  ...rows("write", "DELETE", ["/hosts/:host/instances/:id"]),
+  ...rows("write", "DELETE", ["/hosts/:host/instances/:id", "/hosts/:host/instances/:id/permissions/rules", `${SESSION}/permissions/rules`]),
   ...rows("write", "GET", ["/hosts/:host/github/repos"], true),
   // read
   ...rows("read", "GET", ["/hosts/:host/fs"], true),
@@ -115,3 +118,38 @@ export const requiredRole = (method: string, path: string): Role | undefined => 
 
 /** True for a route whose request can name a `user` (a service user other than the default one). */
 export const namesUser = (method: string, path: string): boolean => matchRule(method, path)?.user === true;
+
+/** True when the request names a `user`: in the query of a GET, or in the JSON body of a write. A body that is not JSON does not. */
+async function requestNamesUser(c: Context): Promise<boolean> {
+  if (c.req.method === "GET" || c.req.method === "HEAD") return c.req.query("user") !== undefined;
+  try {
+    const body: unknown = await c.req.raw.clone().json();
+    return typeof body === "object" && body !== null && !Array.isArray(body) && (body as Record<string, unknown>).user !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuses a request whose user has too low a role. `prefix` is the mount of the app (`/api` or `/cli/api`). A user with
+ * no role acts as `read`. A route with no policy row needs admin. A request that names a `user` needs admin. Every refusal
+ * writes one audit line with the user and the role. The host routes audit their own writes.
+ */
+export function enforceRoles(prefix: string): MiddlewareHandler {
+  return async (c, next) => {
+    const user = c.get("user" as never) as User | undefined;
+    const role: RoleValue = user?.role ?? "read";
+    const who = user?.username ?? user?.sub ?? "unknown";
+    const path = new URL(c.req.url).pathname;
+    const sub = path.slice(prefix.length) || "/";
+    const refuse = (error: string) => {
+      console.log(`audit user=${who} role=${role} ${c.req.method} ${path} 403 refused (${error})`);
+      return c.json({ error }, 403);
+    };
+    if (role === "none") return refuse("access refused");
+    const need = requiredRole(c.req.method, sub) ?? "admin";
+    if (!atLeast(role, need)) return refuse(`needs role ${need}`);
+    if (!atLeast(role, "admin") && namesUser(c.req.method, sub) && (await requestNamesUser(c))) return refuse("needs role admin to name a user");
+    await next();
+  };
+}

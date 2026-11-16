@@ -62,7 +62,7 @@ export function hostAdminApi(o: {
     await next();
     const u = c.get("user" as never) as User | undefined;
     const host = (c.get("auditHost" as never) as string | undefined) ?? "unknown";
-    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${host} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${host} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
   };
 
   r.post("/probe", async (c) => {

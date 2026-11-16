@@ -18,7 +18,7 @@ import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
 import { UpdateLog } from "../src/updatelog";
 import type { Presence } from "../src/nodewatcher";
 
-const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
+const user: User = { sub: "u1", name: "Ann", email: "a@x.io", role: "admin" };
 const ID = "0123456789ab";
 let root: string;
 let cfg: Config;

@@ -93,8 +93,8 @@ describe("trusted_peers", () => {
 
 describe("CSRF stays mandatory", () => {
   test("POST with mismatched Origin -> 403; without JSON content-type -> 415", async () => {
-    const m = await mk();
-    const t = await m.sign();
+    const m = await mk({ roles: DEFAULT_ROLES });
+    const t = await m.sign({ launcher_role: "admin" });
     const base = { method: "POST", body: JSON.stringify({ path: "/p" }) };
     const evil = await m.app.request("/api/instances", { ...base, headers: { [HEADER]: t, "content-type": "application/json", origin: "https://evil.example" } });
     expect(evil.status).toBe(403);
