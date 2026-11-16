@@ -41,15 +41,15 @@ export const isRoleValue = (v: unknown): v is RoleValue => isRole(v) || v === "n
 export const atLeast = (have: Role, need: Role): boolean => RANK[have] >= RANK[need];
 
 /**
- * The role from the claims. A missing or empty claim gives `defaultRole`. A value that is neither a role name nor `none`
+ * The role from the claims. A missing claim, an empty value, or an empty list gives `defaultRole`. A value that is neither a role name nor `none`
  * gives `read`: a malformed claim never gives more than the lowest role. A list gives its highest role, and `none` wins
  * only when it is the only value that maps to something.
  */
 export function resolveRole(claims: Record<string, unknown>, s: RoleSettings): RoleValue {
   const raw = claims[s.claim];
-  if (raw === undefined || raw === null || raw === "") return s.defaultRole;
-  const values = Array.isArray(raw) ? raw : [raw];
-  if (values.length === 0) return "read";
+  // No value means no role information: the default role applies. An empty list is the same as a missing claim.
+  const values = (Array.isArray(raw) ? raw : [raw]).filter((v) => v !== undefined && v !== null && v !== "");
+  if (values.length === 0) return s.defaultRole;
   let best: Role | undefined;
   let none = false;
   for (const v of values) {

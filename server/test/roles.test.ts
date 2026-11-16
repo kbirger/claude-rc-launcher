@@ -24,7 +24,12 @@ describe("resolveRole", () => {
     expect(resolveRole({ clauderc_role: ["read", "admin"] }, s())).toBe("admin");
     expect(resolveRole({ clauderc_role: ["read", "write"] }, s())).toBe("write");
     expect(resolveRole({ clauderc_role: ["bogus"] }, s())).toBe("read");
+  });
+  test("an empty list, or a list of empty values, means no role: the default role", () => {
     expect(resolveRole({ clauderc_role: [] }, s())).toBe("read");
+    expect(resolveRole({ clauderc_role: [] }, s({ defaultRole: "write" }))).toBe("write");
+    expect(resolveRole({ clauderc_role: ["", ""] }, s({ defaultRole: "write" }))).toBe("write");
+    expect(resolveRole({ clauderc_role: ["", "admin"] }, s({ defaultRole: "write" }))).toBe("admin");
   });
   test("none in a list refuses only when it is the only role", () => {
     expect(resolveRole({ clauderc_role: ["none"] }, s())).toBe("none");

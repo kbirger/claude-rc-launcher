@@ -144,19 +144,23 @@ flowchart TD
 
 ## Where the role comes from
 
-The role lives in authentik as an attribute on the user. A scope mapping is a short Python expression. Authentik runs it for each token. One scope mapping copies the attribute into the token. You attach the same mapping to the web provider and to the CLI provider. No second provider is needed.
+The role lives in authentik as a property of a group. Each role group has the attribute `clauderc_role`, with the value `read`, `write`, `admin`, or `none`. A user gets a role by joining a group. A group with no attribute, such as `ak-users`, gives no role.
+
+A scope mapping is a short Python expression. Authentik runs it for each token. One scope mapping collects the attribute of every group that the user belongs to. The hub then picks the highest role. The group names appear nowhere in the mapping or in the hub. You attach the same mapping to the web provider and to the CLI provider. No second provider is needed.
 
 ```python
 # Scope name: clauderc
-role = request.user.attributes.get("clauderc_role", "")
-return {"clauderc_role": role}
+roles = [g.attributes.get("clauderc_role") for g in request.user.ak_groups.all()]
+return {"clauderc_role": [r for r in roles if r]}
 ```
+
+The script `scripts/authentik-roles.ts` creates the mapping, attaches it, creates the groups, and adds a user to the admin group.
 
 How the hub treats the claim:
 
 1. The claim has the value `read`, `write`, or `admin`. The hub uses it.
 2. The claim has the value `none`. The hub refuses the person with 403. Use this value to turn off one person without a change to the policy bindings.
-3. The claim is missing or empty. The hub uses `user_auth.default_role`.
+3. The claim is missing, empty, or an empty list. The hub uses `user_auth.default_role`.
 4. The claim has any other value. The hub uses `read`.
 
 The claim can be one text value or a list of text values. If it is a list, the hub uses the highest role in the list.

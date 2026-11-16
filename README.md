@@ -1140,13 +1140,25 @@ needs a public client with a loopback redirect on `127.0.0.1` (any port) and ref
    `clauderc role` and the scope name to `clauderc`. Use this expression:
 
    ```python
-   return {"clauderc_role": request.user.attributes.get("clauderc_role", "")}
+   roles = [g.attributes.get("clauderc_role") for g in request.user.ak_groups.all()]
+   return {"clauderc_role": [r for r in roles if r]}
    ```
 
-   Add the mapping to the provider of the web login, and to the provider of the CLI login. A user with no attribute gets
+   Add the mapping to the provider of the web login, and to the provider of the CLI login. A user in no role group gets
    `user_auth.default_role`.
-8. **Set the role of each user.** Directory > Users > the user > Attributes. Add `clauderc_role: admin`, or `write`,
-   `read`, or `none`. Attach the mapping (step 7) before you set the attribute, and do both before you upgrade the hub.
+8. **Set the role of each group.** Directory > Groups > the group > Attributes. Add `clauderc_role: admin`, or `write`,
+   `read`, or `none`. A user who is in several role groups gets the highest role. Put each user in a group.
+   Attach the mapping (step 7) and set the groups before you upgrade the hub.
+
+The script `scripts/authentik-roles.ts` does steps 7 and 8 for you. It needs the address of authentik and an API token
+in the environment. It shows what it would do and changes nothing, unless you pass `--apply`:
+
+```sh
+export AUTHENTIK_URL=https://auth.example.com
+export AUTHENTIK_TOKEN=<an API token of an admin>
+bun scripts/authentik-roles.ts --admin-user kir            # shows the plan
+bun scripts/authentik-roles.ts --admin-user kir --apply    # makes the changes
+```
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)
 
