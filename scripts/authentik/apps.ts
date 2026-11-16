@@ -1,7 +1,7 @@
 import { ApiError, type Ctx, type Json } from "./api";
 import type { Settings } from "./settings";
 
-export type AppsResult = { issuer: string; webClientId?: string; webClientSecret?: string; cliClientId?: string; cliJwksUrl: string };
+export type AppsResult = { issuer: string; webClientId?: string; webClientSecret?: string; cliClientId?: string; cliIssuer: string; cliJwksUrl: string };
 
 type Redirect = { matching_mode: "strict" | "regex"; url: string };
 
@@ -87,6 +87,7 @@ export async function ensureApplications(ctx: Ctx, s: Settings, publicUrl: strin
 
   return {
     issuer: `${ctx.url}/application/o/${s.webApp.slug}/`,
+    cliIssuer: `${ctx.url}/application/o/${s.cliApp.slug}/`,
     cliJwksUrl: `${ctx.url}/application/o/${s.cliApp.slug}/jwks/`,
     ...(web?.client_id ? { webClientId: web.client_id } : {}),
     ...(ctx.apply && web?.client_secret ? { webClientSecret: web.client_secret } : {}),
