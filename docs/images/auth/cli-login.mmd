@@ -3,7 +3,7 @@ sequenceDiagram
   participant C as CLI
   participant A as authentik
   participant H as Hub
-  C->>A: Authorization request, scopes openid, email, profile, offline_access, launcher
+  C->>A: Authorization request, scopes openid, email, profile, offline_access, clauderc
   A-->>C: Code, sent to the loopback redirect
   C->>A: Exchange the code, with the PKCE verifier
   A-->>C: ID token and refresh token

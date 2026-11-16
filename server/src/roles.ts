@@ -22,7 +22,7 @@ export type RoleSettings = {
   map: Record<string, RoleValue>;
 };
 
-export const DEFAULT_ROLES: RoleSettings = { claim: "launcher_role", scope: "launcher", defaultRole: "read", map: {} };
+export const DEFAULT_ROLES: RoleSettings = { claim: "clauderc_role", scope: "clauderc", defaultRole: "read", map: {} };
 
 /** The role settings of a hub configuration. A hand-made configuration (a test) can leave them out. */
 export const rolesFrom = (ua?: { roles?: RoleSettings }): RoleSettings => ua?.roles ?? DEFAULT_ROLES;

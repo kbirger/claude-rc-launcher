@@ -94,7 +94,7 @@ describe("trusted_peers", () => {
 describe("CSRF stays mandatory", () => {
   test("POST with mismatched Origin -> 403; without JSON content-type -> 415", async () => {
     const m = await mk({ roles: DEFAULT_ROLES });
-    const t = await m.sign({ launcher_role: "admin" });
+    const t = await m.sign({ clauderc_role: "admin" });
     const base = { method: "POST", body: JSON.stringify({ path: "/p" }) };
     const evil = await m.app.request("/api/instances", { ...base, headers: { [HEADER]: t, "content-type": "application/json", origin: "https://evil.example" } });
     expect(evil.status).toBe(403);
@@ -159,12 +159,12 @@ describe("proxy-jwt config", () => {
 describe("proxy-jwt roles", () => {
   test("the role comes from the claim", async () => {
     const m = await mk({ roles: DEFAULT_ROLES });
-    const r = await get(m.app, "/api/me", { [HEADER]: await m.sign({ launcher_role: "admin" }) });
+    const r = await get(m.app, "/api/me", { [HEADER]: await m.sign({ clauderc_role: "admin" }) });
     expect(((await r.json()) as { role: string }).role).toBe("admin");
   });
   test("the role none gives 403", async () => {
     const m = await mk({ roles: DEFAULT_ROLES });
-    const r = await get(m.app, "/api/me", { [HEADER]: await m.sign({ launcher_role: "none" }) });
+    const r = await get(m.app, "/api/me", { [HEADER]: await m.sign({ clauderc_role: "none" }) });
     expect(r.status).toBe(403);
     expect(await r.json()).toEqual({ error: "access refused" });
   });

@@ -5,35 +5,35 @@ const s = (over: Partial<RoleSettings> = {}): RoleSettings => ({ ...DEFAULT_ROLE
 
 describe("resolveRole", () => {
   test("uses a role name from the claim", () => {
-    expect(resolveRole({ launcher_role: "admin" }, s())).toBe("admin");
-    expect(resolveRole({ launcher_role: "write" }, s())).toBe("write");
+    expect(resolveRole({ clauderc_role: "admin" }, s())).toBe("admin");
+    expect(resolveRole({ clauderc_role: "write" }, s())).toBe("write");
   });
   test("none refuses", () => {
-    expect(resolveRole({ launcher_role: "none" }, s())).toBe("none");
+    expect(resolveRole({ clauderc_role: "none" }, s())).toBe("none");
   });
   test("a missing or empty claim gives the default role", () => {
     expect(resolveRole({}, s())).toBe("read");
-    expect(resolveRole({ launcher_role: "" }, s())).toBe("read");
+    expect(resolveRole({ clauderc_role: "" }, s())).toBe("read");
     expect(resolveRole({}, s({ defaultRole: "admin" }))).toBe("admin");
   });
   test("an unknown value or a number gives read, not the default", () => {
-    expect(resolveRole({ launcher_role: "root" }, s({ defaultRole: "admin" }))).toBe("read");
-    expect(resolveRole({ launcher_role: 7 }, s({ defaultRole: "admin" }))).toBe("read");
+    expect(resolveRole({ clauderc_role: "root" }, s({ defaultRole: "admin" }))).toBe("read");
+    expect(resolveRole({ clauderc_role: 7 }, s({ defaultRole: "admin" }))).toBe("read");
   });
   test("a list gives the highest role in it", () => {
-    expect(resolveRole({ launcher_role: ["read", "admin"] }, s())).toBe("admin");
-    expect(resolveRole({ launcher_role: ["read", "write"] }, s())).toBe("write");
-    expect(resolveRole({ launcher_role: ["bogus"] }, s())).toBe("read");
-    expect(resolveRole({ launcher_role: [] }, s())).toBe("read");
+    expect(resolveRole({ clauderc_role: ["read", "admin"] }, s())).toBe("admin");
+    expect(resolveRole({ clauderc_role: ["read", "write"] }, s())).toBe("write");
+    expect(resolveRole({ clauderc_role: ["bogus"] }, s())).toBe("read");
+    expect(resolveRole({ clauderc_role: [] }, s())).toBe("read");
   });
   test("none in a list refuses only when it is the only role", () => {
-    expect(resolveRole({ launcher_role: ["none"] }, s())).toBe("none");
-    expect(resolveRole({ launcher_role: ["none", "write"] }, s())).toBe("write");
+    expect(resolveRole({ clauderc_role: ["none"] }, s())).toBe("none");
+    expect(resolveRole({ clauderc_role: ["none", "write"] }, s())).toBe("write");
   });
   test("role_map turns claim values into roles", () => {
-    const m = s({ claim: "groups", map: { "launcher-admins": "admin", "launcher-writers": "write", blocked: "none" } });
-    expect(resolveRole({ groups: ["x", "launcher-writers"] }, m)).toBe("write");
-    expect(resolveRole({ groups: "launcher-admins" }, m)).toBe("admin");
+    const m = s({ claim: "groups", map: { "clauderc-admins": "admin", "clauderc-writers": "write", blocked: "none" } });
+    expect(resolveRole({ groups: ["x", "clauderc-writers"] }, m)).toBe("write");
+    expect(resolveRole({ groups: "clauderc-admins" }, m)).toBe("admin");
     expect(resolveRole({ groups: ["blocked"] }, m)).toBe("none");
     expect(resolveRole({ groups: ["x"] }, m)).toBe("read");
   });

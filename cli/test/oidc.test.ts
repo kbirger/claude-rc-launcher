@@ -237,11 +237,11 @@ describe("logout", () => {
 describe("role scope", () => {
   test("login asks for the role scope that the hub reports, and keeps the scope for a refresh", async () => {
     const idp = fakeIdp();
-    const c = await login(base(idp, { hub: fakeHub(idp.base, "launcher") }));
-    expect(idp.log.authorize[0]!.get("scope")).toBe("openid email profile offline_access launcher");
-    expect(c.scope).toBe("openid email profile offline_access launcher");
+    const c = await login(base(idp, { hub: fakeHub(idp.base, "clauderc") }));
+    expect(idp.log.authorize[0]!.get("scope")).toBe("openid email profile offline_access clauderc");
+    expect(c.scope).toBe("openid email profile offline_access clauderc");
     await renew(c);
-    expect(idp.log.token.at(-1)!.get("scope")).toBe("openid email profile offline_access launcher");
+    expect(idp.log.token.at(-1)!.get("scope")).toBe("openid email profile offline_access clauderc");
   });
   test("with no role scope from the hub, the scope is the old one", async () => {
     const idp = fakeIdp();

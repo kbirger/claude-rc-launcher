@@ -53,11 +53,11 @@ describe("isAllowed", () => {
 
 describe("userFromClaims and roles", () => {
   test("the role is added only when role settings are given", () => {
-    expect(userFromClaims({ sub: "s", launcher_role: "admin" })).toEqual({ sub: "s", name: "s" });
-    expect(userFromClaims({ sub: "s", launcher_role: "admin" }, DEFAULT_ROLES)).toEqual({ sub: "s", name: "s", role: "admin" });
+    expect(userFromClaims({ sub: "s", clauderc_role: "admin" })).toEqual({ sub: "s", name: "s" });
+    expect(userFromClaims({ sub: "s", clauderc_role: "admin" }, DEFAULT_ROLES)).toEqual({ sub: "s", name: "s", role: "admin" });
   });
   test("a missing claim gives the default role, and none is kept", () => {
     expect(userFromClaims({ sub: "s" }, { ...DEFAULT_ROLES, defaultRole: "write" })!.role).toBe("write");
-    expect(userFromClaims({ sub: "s", launcher_role: "none" }, DEFAULT_ROLES)!.role).toBe("none");
+    expect(userFromClaims({ sub: "s", clauderc_role: "none" }, DEFAULT_ROLES)!.role).toBe("none");
   });
 });

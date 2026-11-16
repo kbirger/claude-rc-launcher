@@ -321,9 +321,9 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `user_auth.mode` | required | `oidc` or `proxy-jwt`. There is no unauthenticated mode |
 | `user_auth.allowed_users` | unset | Usernames or emails allowed to log in. An email that the IdP marks `email_verified: false` never matches, so that user must match by username. The list is checked on every request. A user who is removed from it loses access as soon as the hub runs with the new list. A user who is removed at the IdP keeps a browser session for up to 12 hours. Omit = anyone the IdP admits. `[]` is an error |
 | `user_auth.default_role` | `read` | Role of a user whose token has no role claim: `read`, `write`, or `admin`. See [Roles](#roles) |
-| `user_auth.role_claim` | `launcher_role` | Name of the claim that carries the role. The value is one text value or a list of text values |
-| `user_auth.role_scope` | `launcher` | Extra scope that the hub and the CLI ask the provider for. An empty string asks for none |
-| `user_auth.role_map` | none | Optional table that turns claim values into roles, for example `"launcher-admins" = "admin"`. A value of `none` refuses the person |
+| `user_auth.role_claim` | `clauderc_role` | Name of the claim that carries the role. The value is one text value or a list of text values |
+| `user_auth.role_scope` | `clauderc` | Extra scope that the hub and the CLI ask the provider for. An empty string asks for none |
+| `user_auth.role_map` | none | Optional table that turns claim values into roles, for example `"clauderc-admins" = "admin"`. A value of `none` refuses the person |
 | `user_auth.session_ttl_hours` | `12` | Lifetime of the browser session cookie in hours (`oidc` only). A role change reaches a browser user at the next login |
 | `user_auth.session_secret_file` | required for `oidc` | At least 32 chars: `openssl rand -hex 32` |
 | `user_auth.oidc.issuer` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `allow_insecure = true` |
@@ -1137,15 +1137,15 @@ needs a public client with a loopback redirect on `127.0.0.1` (any port) and ref
 6. **Bind the application to the intended users/groups** (Application > Policy / Group / User
    Bindings). This is the access control.
 7. **Add the role claim.** Customization > Property Mappings > Create > **Scope Mapping**. Set the name to
-   `launcher role` and the scope name to `launcher`. Use this expression:
+   `clauderc role` and the scope name to `clauderc`. Use this expression:
 
    ```python
-   return {"launcher_role": request.user.attributes.get("launcher_role", "")}
+   return {"clauderc_role": request.user.attributes.get("clauderc_role", "")}
    ```
 
    Add the mapping to the provider of the web login, and to the provider of the CLI login. A user with no attribute gets
    `user_auth.default_role`.
-8. **Set the role of each user.** Directory > Users > the user > Attributes. Add `launcher_role: admin`, or `write`,
+8. **Set the role of each user.** Directory > Users > the user > Attributes. Add `clauderc_role: admin`, or `write`,
    `read`, or `none`. Attach the mapping (step 7) before you set the attribute, and do both before you upgrade the hub.
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)

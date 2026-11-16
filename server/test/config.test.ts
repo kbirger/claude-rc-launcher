@@ -105,7 +105,7 @@ describe("parseConfig", () => {
 
   test("role keys have defaults", () => {
     const u = oa(parseConfig(base(), io));
-    expect(u.roles).toEqual({ claim: "launcher_role", scope: "launcher", defaultRole: "read", map: {} });
+    expect(u.roles).toEqual({ claim: "clauderc_role", scope: "clauderc", defaultRole: "read", map: {} });
     expect(u.sessionTtlHours).toBe(12);
   });
 
@@ -113,11 +113,11 @@ describe("parseConfig", () => {
     const b = base();
     const u = oa(
       parseConfig(
-        { ...b, user_auth: { ...b.user_auth, default_role: "admin", role_claim: "groups", role_scope: "", session_ttl_hours: 3, role_map: { "launcher-admins": "admin", off: "none" } } },
+        { ...b, user_auth: { ...b.user_auth, default_role: "admin", role_claim: "groups", role_scope: "", session_ttl_hours: 3, role_map: { "clauderc-admins": "admin", off: "none" } } },
         io,
       ),
     );
-    expect(u.roles).toEqual({ claim: "groups", scope: undefined, defaultRole: "admin", map: { "launcher-admins": "admin", off: "none" } });
+    expect(u.roles).toEqual({ claim: "groups", scope: undefined, defaultRole: "admin", map: { "clauderc-admins": "admin", off: "none" } });
     expect(u.sessionTtlHours).toBe(3);
   });
 

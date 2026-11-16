@@ -111,7 +111,7 @@ describe("cliConfigRoute", () => {
 describe("cliBearerAuth roles", () => {
   test("the role comes from the claim", async () => {
     const m = await mk(undefined, DEFAULT_ROLES);
-    const r = await get(m.app, { authorization: `Bearer ${await m.sign({ launcher_role: "write" })}` });
+    const r = await get(m.app, { authorization: `Bearer ${await m.sign({ clauderc_role: "write" })}` });
     expect(((await r.json()) as { role: string }).role).toBe("write");
   });
   test("a token with no role claim gets the default role", async () => {
@@ -121,13 +121,13 @@ describe("cliBearerAuth roles", () => {
   });
   test("the role none gives 403", async () => {
     const m = await mk(undefined, DEFAULT_ROLES);
-    const r = await get(m.app, { authorization: `Bearer ${await m.sign({ launcher_role: "none" })}` });
+    const r = await get(m.app, { authorization: `Bearer ${await m.sign({ clauderc_role: "none" })}` });
     expect(r.status).toBe(403);
     expect(await r.json()).toEqual({ error: "access refused" });
   });
   test("the config route reports the role scope", async () => {
-    const app = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c", roleScope: "launcher" }));
-    expect(await (await app.request("/")).json()).toEqual({ issuer: "https://i/", client_id: "c", role_scope: "launcher" });
+    const app = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c", roleScope: "clauderc" }));
+    expect(await (await app.request("/")).json()).toEqual({ issuer: "https://i/", client_id: "c", role_scope: "clauderc" });
     const bare = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c" }));
     expect(await (await bare.request("/")).json()).toEqual({ issuer: "https://i/", client_id: "c" });
   });

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Roles are `read`, `write`, `admin`. The claim value `none` refuses the person with 403.
-- Defaults: `role_claim = "launcher_role"`, `role_scope = "launcher"`, `default_role = "read"`, `session_ttl_hours = 12`.
+- Defaults: `role_claim = "clauderc_role"`, `role_scope = "clauderc"`, `default_role = "read"`, `session_ttl_hours = 12`.
 - A claim value that is not a role name or `none` gives `read`. A claim that is a list gives the highest role in it.
 - `role_map` turns claim values into roles before the rules above apply.
 - A request that names a `user` other than the default `service_user` needs admin.
@@ -47,7 +47,7 @@
   - `namesUser(method: string, path: string): boolean`. It is true for routes that take a `user` field.
 
 - [ ] **Step 1: Write tests in `server/test/roles.test.ts`.** Cover these cases.
-  - `resolveRole`: `{launcher_role:"admin"}` gives `admin`. `"none"` gives `none`. A missing or empty claim gives the default.
+  - `resolveRole`: `{clauderc_role:"admin"}` gives `admin`. `"none"` gives `none`. A missing or empty claim gives the default.
   - `resolveRole`: `"root"` and a number give `read`. `["read","admin"]` gives `admin`. `{g:"x"}` with `map {x:"write"}` gives `write`.
   - `requiredRole`: `GET /hosts/h1/instances` is `read`. `POST /hosts/h1/instances` and `PATCH /hosts/h1` are `write`.
   - `requiredRole` admin cases: `POST /hosts`, `DELETE /hosts/h1`, `POST /hosts/probe`, `POST /hosts/h1/update`, `POST /hosts/h1/github/login`, `GET /hosts/h1/github/login/abc`.
@@ -160,5 +160,5 @@
 
 - [ ] **Step 1: Document the keys and the claim contract** in the README, with the authentik mapping expression in one appendix.
 - [ ] **Step 2: Run the whole suite and `bun run typecheck`.** Expect pass.
-- [ ] **Step 3: In authentik, set `launcher_role = admin` on the owner** with the update-user tool. The scope mapping and its attachment to providers 22 and 23 need the admin page.
+- [ ] **Step 3: In authentik, set `clauderc_role = admin` on the owner** with the update-user tool. The scope mapping and its attachment to providers 22 and 23 need the admin page.
 - [ ] **Step 4: Commit** `docs: roles, claim contract and authentik setup`.

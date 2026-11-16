@@ -351,7 +351,7 @@ describe("roles", () => {
     expect(find((await callbackWith(user)).r, "session")).toContain("Max-Age=43200");
   });
   test("the scope adds the role scope when one is set", () => {
-    expect(scopeFor(DEFAULT_ROLES)).toBe("openid email profile launcher");
+    expect(scopeFor(DEFAULT_ROLES)).toBe("openid email profile clauderc");
     expect(scopeFor({ ...DEFAULT_ROLES, scope: undefined })).toBe("openid email profile");
   });
 });

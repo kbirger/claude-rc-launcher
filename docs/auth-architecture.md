@@ -73,7 +73,7 @@ sequenceDiagram
   A-->>U: 302 to the hub callback with a code
   U->>H: GET /auth/callback?code=...
   H->>A: Exchange the code, with the PKCE verifier
-  A-->>H: ID token with sub, name, email and launcher_role
+  A-->>H: ID token with sub, name, email and clauderc_role
   H->>H: Check allowed_users, resolve the role
   H-->>U: Set the signed session cookie (sub, name, role)
   U->>H: GET /api/instances (cookie)
@@ -90,7 +90,7 @@ sequenceDiagram
   participant C as CLI
   participant A as authentik
   participant H as Hub
-  C->>A: Authorization request, scopes openid, email, profile, offline_access, launcher
+  C->>A: Authorization request, scopes openid, email, profile, offline_access, clauderc
   A-->>C: Code, sent to the loopback redirect
   C->>A: Exchange the code, with the PKCE verifier
   A-->>C: ID token and refresh token
@@ -132,7 +132,7 @@ Planned: every route on the hub declares its minimum role. The test walks the ro
 flowchart TD
   R["Request reaches the hub"] --> A{"Identity valid?"}
   A -- "no" --> E401["401"]
-  A -- "yes" --> Q["Resolve the role from the launcher_role claim"]
+  A -- "yes" --> Q["Resolve the role from the clauderc_role claim"]
   Q --> Z{"Role is none?"}
   Z -- "yes" --> E403c["403"]
   Z -- "no" --> L{"In allowed_users, if set?"}
@@ -147,9 +147,9 @@ flowchart TD
 The role lives in authentik as an attribute on the user. A scope mapping is a short Python expression. Authentik runs it for each token. One scope mapping copies the attribute into the token. You attach the same mapping to the web provider and to the CLI provider. No second provider is needed.
 
 ```python
-# Scope name: launcher
-role = request.user.attributes.get("launcher_role", "")
-return {"launcher_role": role}
+# Scope name: clauderc
+role = request.user.attributes.get("clauderc_role", "")
+return {"clauderc_role": role}
 ```
 
 How the hub treats the claim:
@@ -161,7 +161,7 @@ How the hub treats the claim:
 
 The claim can be one text value or a list of text values. If it is a list, the hub uses the highest role in the list.
 
-The hub asks for the scope `launcher` in both login flows. In `proxy-jwt` mode, you attach the mapping to the proxy provider, and the claim arrives in the signed JWT.
+The hub asks for the scope `clauderc` in both login flows. In `proxy-jwt` mode, you attach the mapping to the proxy provider, and the claim arrives in the signed JWT.
 
 Authentik policy bindings on the application still decide who can log in at all. They cannot separate read from write, so the claim does that part.
 
@@ -192,17 +192,17 @@ Planned keys in the hub `config.toml`:
 ```toml
 [user_auth]
 default_role = "read"        # used when the token has no role claim
-role_claim = "launcher_role" # name of the claim. A text value or a list of text values
-role_scope = "launcher"      # extra scope that the hub requests. Empty means none
+role_claim = "clauderc_role" # name of the claim. A text value or a list of text values
+role_scope = "clauderc"      # extra scope that the hub requests. Empty means none
 session_ttl_hours = 12       # browser cookie lifetime in hours. This is the built value
 # allowed_users = [...]      # optional second check. Leave it out if the IdP limits sign-in
 
 [user_auth.role_map]         # optional. Turns claim values into roles
-"launcher-admins" = "admin"
-"launcher-writers" = "write"
+"clauderc-admins" = "admin"
+"clauderc-writers" = "write"
 ```
 
-The default role is `read`. After an upgrade, every existing user is a reader until the IdP sends a role. Before you deploy, add the scope mapping to the web provider and the CLI provider. Then set `launcher_role = admin` on your own user. Deploy the hub after that, and sign in again, because the cookie holds the role. The release notes must say this.
+The default role is `read`. After an upgrade, every existing user is a reader until the IdP sends a role. Before you deploy, add the scope mapping to the web provider and the CLI provider. Then set `clauderc_role = admin` on your own user. Deploy the hub after that, and sign in again, because the cookie holds the role. The release notes must say this.
 
 ## Revocation and limits
 
@@ -247,7 +247,7 @@ Finer rules, such as a narrower token scope, are postponed. They are in `docs/su
 
 ## Decisions
 
-1. Default role. Decided: `read`. Before the deploy, the owner gets `launcher_role = admin` in authentik.
+1. Default role. Decided: `read`. Before the deploy, the owner gets `clauderc_role = admin` in authentik.
 2. GitHub routes. Decided: the login needs admin, and listing repositories and cloning need write. Finer rules are postponed to a later task. The ideas file holds them.
 3. Renaming a node. Decided: a write action. Registering and removing a node stay admin.
 4. Cookie lifetime. Decided: the default stays at 12 hours. The new key `session_ttl_hours` lets an operator choose a shorter life. This is a small risk for one owner, and replacing `session.secret` ends all sessions at once. Review finding 9 is already fixed.
@@ -256,7 +256,7 @@ Finer rules, such as a narrower token scope, are postponed. They are in `docs/su
 
 ## Build order
 
-1. In authentik, add the scope mapping to the web provider (22) and the CLI provider (23). Set `launcher_role = admin` on the owner. Do this before any hub deploy.
+1. In authentik, add the scope mapping to the web provider (22) and the CLI provider (23). Set `clauderc_role = admin` on the owner. Do this before any hub deploy.
 2. Add the role to the user model and read it from the token in all three login modes. Include the `none` value, the list form, `role_map`, and `default_role`.
 3. Add the minimum-role declaration to every route, and the test that walks the route table. Give the GitHub login routes admin, and the repository list and the clone route write. Add the `user` field rule for the GitHub routes, `POST /fs/mkdir`, and instance creation.
 4. Add the audit line with the role, and the configuration keys, including `session_ttl_hours`.

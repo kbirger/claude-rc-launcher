@@ -1,9 +1,11 @@
 flowchart TD
   R["Request reaches the hub"] --> A{"Identity valid?"}
   A -- "no" --> E401["401"]
-  A -- "yes" --> L{"In allowed_users, if set?"}
+  A -- "yes" --> Q["Resolve the role from the clauderc_role claim"]
+  Q --> Z{"Role is none?"}
+  Z -- "yes" --> E403c["403"]
+  Z -- "no" --> L{"In allowed_users, if set?"}
   L -- "no" --> E403a["403"]
-  L -- "yes" --> Q["Resolve the role from the launcher_role claim"]
-  Q --> M{"Role at least the route minimum?"}
+  L -- "yes" --> M{"Role at least the route minimum?"}
   M -- "no" --> E403b["403 and an audit line"]
   M -- "yes" --> X["Run the route, audit line with user and role"]

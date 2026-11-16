@@ -9,7 +9,7 @@ sequenceDiagram
   A-->>U: 302 to the hub callback with a code
   U->>H: GET /auth/callback?code=...
   H->>A: Exchange the code, with the PKCE verifier
-  A-->>H: ID token with sub, name, email and launcher_role
+  A-->>H: ID token with sub, name, email and clauderc_role
   H->>H: Check allowed_users, resolve the role
   H-->>U: Set the signed session cookie (sub, name, role)
   U->>H: GET /api/instances (cookie)
