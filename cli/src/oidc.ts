@@ -2,6 +2,9 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ExitError, LOGIN_MESSAGE, type Credentials } from "./creds";
 
 const SCOPE = "openid email profile offline_access";
+
+/** The hub can name one more scope that carries the role claim. Only a plain token is used, so the value cannot add a scope or break the request. */
+const roleScopeOf = (v: unknown): string | undefined => (typeof v === "string" && /^[\w.:-]{1,64}$/.test(v) ? v : undefined);
 const SUCCESS_PAGE = "<!doctype html><meta charset=utf-8><title>claude-rc</title><p>You are signed in. You can close this tab.</p>";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -111,6 +114,8 @@ export async function login(o: {
 
   requireSecure("the authorization endpoint", disco.authorization_endpoint);
   requireSecure("the token endpoint", disco.token_endpoint);
+  const roleScope = roleScopeOf(cfg.role_scope);
+  const scope = roleScope ? `${SCOPE} ${roleScope}` : SCOPE;
   const state = rand();
   const nonce = rand();
   const verifier = rand();
@@ -123,7 +128,7 @@ export async function login(o: {
     response_type: "code",
     client_id: cfg.client_id,
     redirect_uri: redirectUri,
-    scope: SCOPE,
+    scope,
     state,
     nonce,
     code_challenge: challengeOf(verifier),
@@ -189,6 +194,7 @@ export async function login(o: {
       tokenEndpoint: disco.token_endpoint,
       ...(typeof disco.revocation_endpoint === "string" ? { revocationEndpoint: disco.revocation_endpoint } : {}),
       idToken: t.body.id_token,
+      scope,
       ...(typeof t.body.refresh_token === "string" ? { refreshToken: t.body.refresh_token } : {}),
       expiresAt: typeof claims.exp === "number" ? claims.exp : Math.floor(Date.now() / 1000) + Number(t.body.expires_in ?? 300),
     };
@@ -202,7 +208,7 @@ export async function login(o: {
 /** Exchanges the refresh token for a new ID token. Code 2 means that the user must log in again. */
 export async function renew(c: Credentials, f: typeof fetch = fetch): Promise<Credentials> {
   if (!c.refreshToken) throw new ExitError(LOGIN_MESSAGE, 2);
-  const t = await postForm(f, c.tokenEndpoint, { grant_type: "refresh_token", refresh_token: c.refreshToken, client_id: c.clientId, scope: SCOPE });
+  const t = await postForm(f, c.tokenEndpoint, { grant_type: "refresh_token", refresh_token: c.refreshToken, client_id: c.clientId, scope: c.scope ?? SCOPE });
   if (!t.ok || typeof t.body?.id_token !== "string") throw new ExitError(LOGIN_MESSAGE, 2);
   const claims = decodeClaims(t.body.id_token);
   return {

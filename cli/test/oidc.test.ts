@@ -55,8 +55,8 @@ function fakeIdp(mode: Mode = "ok") {
   return { base: `http://127.0.0.1:${server.port}`, log, stop: () => server.stop(true) };
 }
 
-function fakeHub(idpBase: string) {
-  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ issuer: `${idpBase}/o/cli/`, client_id: "cli" }) });
+function fakeHub(idpBase: string, roleScope?: string) {
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ issuer: `${idpBase}/o/cli/`, client_id: "cli", ...(roleScope ? { role_scope: roleScope } : {}) }) });
   stops.push(() => server.stop(true));
   return `http://127.0.0.1:${server.port}`;
 }
@@ -231,5 +231,31 @@ describe("logout", () => {
     const c = sample(idp);
     idp.stop();
     await logout(c);
+  });
+});
+
+describe("role scope", () => {
+  test("login asks for the role scope that the hub reports, and keeps the scope for a refresh", async () => {
+    const idp = fakeIdp();
+    const c = await login(base(idp, { hub: fakeHub(idp.base, "launcher") }));
+    expect(idp.log.authorize[0]!.get("scope")).toBe("openid email profile offline_access launcher");
+    expect(c.scope).toBe("openid email profile offline_access launcher");
+    await renew(c);
+    expect(idp.log.token.at(-1)!.get("scope")).toBe("openid email profile offline_access launcher");
+  });
+  test("with no role scope from the hub, the scope is the old one", async () => {
+    const idp = fakeIdp();
+    const c = await login(base(idp));
+    expect(c.scope).toBe("openid email profile offline_access");
+  });
+  test("credentials saved before this change refresh with the old scope", async () => {
+    const idp = fakeIdp();
+    await renew({ hub: "https://hub", issuer: `${idp.base}/o/cli/`, clientId: "cli", tokenEndpoint: `${idp.base}/token`, idToken: "old", refreshToken: "R1", expiresAt: 1 });
+    expect(idp.log.token[0]!.get("scope")).toBe("openid email profile offline_access");
+  });
+  test("an odd role scope from the hub is ignored", async () => {
+    const idp = fakeIdp();
+    await login(base(idp, { hub: fakeHub(idp.base, "a b\nc") }));
+    expect(idp.log.authorize[0]!.get("scope")).toBe("openid email profile offline_access");
   });
 });

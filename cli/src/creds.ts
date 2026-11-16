@@ -12,6 +12,8 @@ export type Credentials = {
   refreshToken?: string;
   /** Epoch seconds at which the ID token expires. */
   expiresAt: number;
+  /** The scope of the login. A refresh asks for the same scope. Credentials from an older client have none. */
+  scope?: string;
 };
 
 /** An error that ends the program: code 1 is a failure, code 2 means that the user must log in again. */
