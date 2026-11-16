@@ -1,6 +1,6 @@
 # Authentication and authorization architecture
 
-Status: draft target design, 2026-11-15. Parts marked Built exist in the code today. Parts marked Planned do not.
+Status: approved 2026-11-15. The role design is built on branch `feat/roles`. Parts marked Built exist in the code today. Parts marked Planned do not.
 
 This document describes who can do what in Claude RC launcher, and which component decides it. The diagrams use Mermaid. GitHub renders them.
 

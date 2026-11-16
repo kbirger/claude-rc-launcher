@@ -13,9 +13,11 @@ see [Multiple hosts](#multiple-hosts).
 - The launcher typically runs as **root** (it must write unit files to `/etc/systemd/system`).
   A successful login therefore gives **root-level command execution** as the configured
   `instance.service_user` (Claude running in any directory under `instance.roots`).
-- **Access control is the OIDC provider's, plus an optional flat allow-list** (`user_auth.allowed_users`).
-  Without it anyone who completes login is allowed. Bind the application in Authentik to the intended
-  users/groups, and/or set `allowed_users`.
+- **Access control is the OIDC provider's, plus roles.** The provider decides who can sign in. A role claim in the
+  login token decides what a person can do: `read`, `write`, or `admin`. See [Roles](#roles). Only an `admin` is
+  root-equivalent on every host. A user with no role claim gets `user_auth.default_role`, which is `read` by
+  default. The optional `user_auth.allowed_users` list adds a second check for a provider that cannot limit who
+  signs in. Bind the application in your provider to the intended users or groups.
 - Prefer a dedicated non-root `instance.service_user` where possible, and keep `instance.roots` narrow.
 - Sessions are stateless signed cookies valid for 12 hours. Logout clears the cookie but cannot
   revoke a copy of it; replace `session.secret` to invalidate all sessions.
@@ -318,6 +320,11 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `public_url` | required | External URL; redirect URI is `public_url/auth/callback`; cookie is `Secure` when https |
 | `user_auth.mode` | required | `oidc` or `proxy-jwt`. There is no unauthenticated mode |
 | `user_auth.allowed_users` | unset | Usernames or emails allowed to log in. An email that the IdP marks `email_verified: false` never matches, so that user must match by username. The list is checked on every request. A user who is removed from it loses access as soon as the hub runs with the new list. A user who is removed at the IdP keeps a browser session for up to 12 hours. Omit = anyone the IdP admits. `[]` is an error |
+| `user_auth.default_role` | `read` | Role of a user whose token has no role claim: `read`, `write`, or `admin`. See [Roles](#roles) |
+| `user_auth.role_claim` | `launcher_role` | Name of the claim that carries the role. The value is one text value or a list of text values |
+| `user_auth.role_scope` | `launcher` | Extra scope that the hub and the CLI ask the provider for. An empty string asks for none |
+| `user_auth.role_map` | none | Optional table that turns claim values into roles, for example `"launcher-admins" = "admin"`. A value of `none` refuses the person |
+| `user_auth.session_ttl_hours` | `12` | Lifetime of the browser session cookie in hours (`oidc` only). A role change reaches a browser user at the next login |
 | `user_auth.session_secret_file` | required for `oidc` | At least 32 chars: `openssl rand -hex 32` |
 | `user_auth.oidc.issuer` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `allow_insecure = true` |
 | `user_auth.oidc.allow_insecure` | `false` | Permits a non-loopback `http://` issuer. INSECURE: ID tokens are not signature-verified, a network attacker can forge logins. Do not use in production |
@@ -1087,6 +1094,38 @@ runs, and it overwrites them on the next change. Hosts that you write by hand, a
 secret, belong in `config.toml`. Those hosts show `source: config` and cannot be removed with the CLI. A new
 managed host works at once, without a restart.
 
+## Roles
+
+A person has one of three roles. The identity provider sets the role through one claim in the login token. The hub
+enforces the role on every route of the web page and of the CLI. A node never sees a user token. It trusts the hub,
+and the hub signs each request with the user and the role that it acts for. The node writes both to its audit log.
+
+| Role | Can do |
+|---|---|
+| `read` | See instances, logs, files, the event stream, and update status |
+| `write` | Everything in `read`. Also create, stop, pause, and resume instances, make folders, clone repositories, list GitHub repositories, change the permission rules of a session, and rename a node |
+| `admin` | Everything in `write`. Also register and remove nodes, run updates, start the GitHub login for a service user, and start an instance or a folder as another user or as root |
+
+A claim value of `none` refuses the person with 403. A value that is not a role name gives `read`. If the claim is a
+list, the hub uses the highest role in it. A request that names a `user` other than the default `service_user` of
+the node needs `admin`. A hub route that has no policy entry needs `admin`, and a test fails for a new route
+that has none.
+
+An existing browser session has no role. It acts as `read` until the person signs in again. After an upgrade,
+make sure that your own user has the role `admin` **before** you start the new hub. Otherwise you are a reader and
+you cannot give yourself the role from the web page.
+
+The claim is the authority. `user_auth.allowed_users` stays as an optional second check. If you set it, both checks
+must pass. The list exists for a provider that cannot limit which people can sign in to one application. With
+authentik, bind the application to the intended users or groups, and leave the list unset.
+
+### Using another identity provider
+
+The hub needs an OIDC provider with an https issuer, with the authorization code flow and PKCE. It also needs a way to
+add one claim to the ID token. Set `role_claim` to the claim name. Set `role_scope` to the scope that makes the provider
+send it, or to an empty string. Use `role_map` when the values of the claim are group names. For the CLI, the provider
+needs a public client with a loopback redirect on `127.0.0.1` (any port) and refresh tokens.
+
 ## Authentik setup
 
 1. Applications > Providers > Create > **OAuth2/OpenID Provider**.
@@ -1096,7 +1135,18 @@ managed host works at once, without a restart.
 5. Create an **Application** using that provider; its slug gives the issuer URL
    `https://<authentik>/application/o/<slug>/` (use this as `user_auth.oidc.issuer`).
 6. **Bind the application to the intended users/groups** (Application > Policy / Group / User
-   Bindings). This (and optionally `allowed_users`) is the access control.
+   Bindings). This is the access control.
+7. **Add the role claim.** Customization > Property Mappings > Create > **Scope Mapping**. Set the name to
+   `launcher role` and the scope name to `launcher`. Use this expression:
+
+   ```python
+   return {"launcher_role": request.user.attributes.get("launcher_role", "")}
+   ```
+
+   Add the mapping to the provider of the web login, and to the provider of the CLI login. A user with no attribute gets
+   `user_auth.default_role`.
+8. **Set the role of each user.** Directory > Users > the user > Attributes. Add `launcher_role: admin`, or `write`,
+   `read`, or `none`. Attach the mapping (step 7) before you set the attribute, and do both before you upgrade the hub.
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)
 
@@ -1248,7 +1298,7 @@ labels:
 The command-line client uses the same handlers under `/cli/api` with `Authorization: Bearer <ID token>`:
 `GET /cli/api/me`, the host routes below, and the host management routes `POST /cli/api/hosts/probe
 {url, server_name?}`, `POST /cli/api/hosts {id, name?, url, server_name?, fingerprint, force?}` and
-`DELETE /cli/api/hosts/:id`. `GET /cli/config` returns `{issuer, client_id}` and needs no token.
+`DELETE /cli/api/hosts/:id`. `GET /cli/config` returns `{issuer, client_id}` and, when a role scope is set, `role_scope`. It needs no token.
 
 `GET /instances`, `POST /instances {path, name?, user?, addTrust?}` (201), `DELETE /instances/:id`,
 `GET /instances/:id/logs`, `GET /users`, `GET /fs?path=&user=`,
