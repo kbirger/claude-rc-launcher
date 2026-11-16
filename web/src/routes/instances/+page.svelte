@@ -6,7 +6,7 @@
   const shell = getShell();
 </script>
 
-<Button size="touch" class="mb-4 w-full" onclick={() => shell.flow.openNew()}>+ New</Button>
+{#if shell.can("write")}<Button size="touch" class="mb-4 w-full" onclick={() => shell.flow.openNew()}>+ New</Button>{/if}
 {#key shell.flow.selected}
-  <InstanceList host={shell.flow.selected} startError={shell.flow.startError} />
+  <InstanceList host={shell.flow.selected} startError={shell.flow.startError} canWrite={shell.can("write")} />
 {/key}

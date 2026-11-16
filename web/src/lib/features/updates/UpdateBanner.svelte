@@ -21,7 +21,7 @@
   // The short form (default) is the notice on the other pages: the buttons lead to the Updates page, where `full` shows
   // the whole panel with the version table and the buttons run the update. `start` runs the update that the short form asked for.
   // `onrun` replaces the update call (the temporary mock on the Updates page uses it so that no real update runs).
-  let { hosts, updates, latestError, full = false, start, onstarted, onrun }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; full?: boolean; start?: "hub" | "nodes"; onstarted?: () => void; onrun?: (id: string, release?: string) => void } = $props();
+  let { hosts, updates, latestError, full = false, canRun = true, start, onstarted, onrun }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; full?: boolean; /** False hides the update buttons: the hub only lets an admin update. */ canRun?: boolean; start?: "hub" | "nodes"; onstarted?: () => void; onrun?: (id: string, release?: string) => void } = $props();
   let dismissed = $state("");
 
   const client = useQueryClient();
@@ -99,9 +99,9 @@
 </script>
 
 {#snippet action(label: string, kind: "hub" | "nodes", onclick: () => void)}
-  <Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} href={full ? undefined : `/updates?start=${kind}`} onclick={full ? onclick : undefined}>
+  {#if canRun}<Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} href={full ? undefined : `/updates?start=${kind}`} onclick={full ? onclick : undefined}>
     <ArrowUp size={16} aria-hidden="true" />{label}
-  </Button>
+  </Button>{/if}
 {/snippet}
 
 {#if full || (items.length && dismissed !== key)}
@@ -128,7 +128,7 @@
                   {@const h = hosts.find((x) => x.id === n.id)}
                   <li class="flex flex-wrap items-center justify-between gap-x-3">
                     <span class="min-w-0 [overflow-wrap:anywhere]">{n.name}{#if h}<span class="text-xs text-muted-foreground"> · {versionsText(h)}</span>{/if}</span>
-                    <Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} onclick={() => updateNodes([n])}><ArrowUp size={16} aria-hidden="true" />Update to {n.target}</Button>
+                    {#if canRun}<Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} onclick={() => updateNodes([n])}><ArrowUp size={16} aria-hidden="true" />Update to {n.target}</Button>{/if}
                   </li>
                 {/each}
               </ul>

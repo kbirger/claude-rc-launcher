@@ -76,7 +76,7 @@ async function tick(ms = 0) {
 
 const trust = (path: string, user = "dev") => ({ path, user });
 
-function mount(start: { initial?: NewInitial; busyReason?: string } = {}) {
+function mount(start: { initial?: NewInitial; busyReason?: string; canChooseUser?: boolean } = {}) {
   const client = new QueryClient();
   const props = reactive({ initial: start.initial, busyReason: start.busyReason });
   const started: StartArgs[] = [];
@@ -86,6 +86,7 @@ function mount(start: { initial?: NewInitial; busyReason?: string } = {}) {
       client,
       initial: () => props.initial,
       busyReason: () => props.busyReason,
+      ...(start.canChooseUser === undefined ? {} : { canChooseUser: () => start.canChooseUser! }),
       onstart: (a) => started.push(a),
     }),
   );
@@ -537,5 +538,20 @@ describe("new dialog model", () => {
     expect(m.model.cloneBusy).toBe(false);
     m.model.closeClone();
     expect(m.model.cloning).toBe(false);
+  });
+});
+
+describe("a person who cannot name a user", () => {
+  test("gets no selector and no request names a user", async () => {
+    const m = mount({ canChooseUser: false });
+    await tick();
+    expect(m.model.usersInfo).toBeNull();
+    expect(m.model.chosenUser).toBeUndefined();
+    expect(browses().every((c) => !c.query.has("user"))).toBe(true);
+  });
+  test("an admin gets the selector", async () => {
+    const m = mount();
+    await tick();
+    expect(m.model.usersInfo?.default).toBe("dev");
   });
 });

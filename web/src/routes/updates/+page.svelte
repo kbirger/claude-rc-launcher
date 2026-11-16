@@ -48,6 +48,7 @@
   {hosts}
   {updates}
   latestError={shell.latestError}
+  canRun={shell.can("admin")}
   start={mock ? undefined : start}
   onstarted={() => goto(mockable ? "/updates?mock" : "/updates", { replaceState: true })}
   onrun={mock ? () => pick("started") : undefined}

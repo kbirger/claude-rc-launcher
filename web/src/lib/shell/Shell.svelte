@@ -6,7 +6,7 @@
   import Logo from "../shared/ui/Logo.svelte";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { meQuery } from "../features/auth";
+  import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
   import { HostPicker, hostsQuery, selectionAfter, type HostInfo } from "../features/hosts";
   import { UpdateBanner, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "../features/updates";
@@ -101,6 +101,8 @@
     get now() { return now; },
     get user() { return meQ.data?.name ?? ""; },
     get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
+    // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
+    can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
     select,
     get latestError() { return latestQ.isError; },
   });
@@ -118,7 +120,7 @@
 <header>
   <h1><a class="home" href="/instances" aria-label="Claude RC: home"><Logo /></a></h1>
   {#if hosts.length > 1}
-    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} />
+    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
   {/if}
   <span class="user"><span class="uname">{meQ.data?.name ?? ""}</span></span>
   <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
@@ -134,7 +136,7 @@
   {/if}
   <!-- The Updates page shows the whole panel itself. -->
   {#if page.url.pathname !== "/updates"}
-    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} canRun={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
   {/if}
   {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
     {#key flow.selected}
@@ -154,6 +156,8 @@
       initial={flow.newInitial}
       onclose={() => flow.closeNew()}
       onstart={startNew}
+      canChooseUser={can(meQ.data?.role, "admin", meQ.data !== undefined)}
+      canSignInGitHub={can(meQ.data?.role, "admin", meQ.data !== undefined)}
     />
   {/key}
 {/if}

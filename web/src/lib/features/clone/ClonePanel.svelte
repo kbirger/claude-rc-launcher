@@ -4,8 +4,10 @@
   import { useQueryClient } from "@tanstack/svelte-query";
   import { createCloneModel } from "./model.svelte";
 
-  let { host, parent, user, oncloned, onclose, onbusy }: {
+  let { host, parent, user, oncloned, onclose, onbusy, canSignIn = true }: {
     host: string;
+    /** False hides the GitHub sign-in: the hub only lets an admin start it. */
+    canSignIn?: boolean;
     parent: string;
     user?: string;
     oncloned: (path: string) => void;
@@ -56,8 +58,12 @@
         <a href={model.login.url} target="_blank" rel="noopener noreferrer">Open {model.login.url}</a>
         <p class="muted">Waiting for you to finish...</p>
       {:else}
-        <p class="muted">Sign in to GitHub to list your repos. A pasted link works without it.</p>
-        <Button size="touch" disabled={model.signingIn} onclick={() => model.signIn()}>Sign in to GitHub</Button>
+        {#if canSignIn}
+          <p class="muted">Sign in to GitHub to list your repos. A pasted link works without it.</p>
+          <Button size="touch" disabled={model.signingIn} onclick={() => model.signIn()}>Sign in to GitHub</Button>
+        {:else}
+          <p class="muted">An admin signs in to GitHub. A pasted link works without it.</p>
+        {/if}
       {/if}
       {#if model.loginError}<p class="error" role="status">{model.loginError}</p>{/if}
     </div>

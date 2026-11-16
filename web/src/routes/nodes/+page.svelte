@@ -21,4 +21,4 @@
 </script>
 
 <h2 class="mt-0 text-lg">Nodes</h2>
-<NodeList hosts={shell.hosts} selected={shell.flow.selected} onselect={shell.select} {latest} onrename={(id, name) => rename.mutateAsync({ id, name })} onupdate={updateNode} />
+<NodeList hosts={shell.hosts} selected={shell.flow.selected} onselect={shell.select} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
