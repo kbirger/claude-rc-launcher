@@ -337,8 +337,10 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `instance.service_path` | `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` of instances |
 | `instance.ssh_auth_sock` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit |
 | `instance.claude_bin` | `<service_home>/.local/bin/claude` | Claude executable used in `ExecStart`. Must be absolute |
-| `instance.claude_rc_args` | `["--spawn","same-dir","--no-create-session-in-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
+| `instance.claude_rc_args` | `["--spawn","same-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
 | `instance.name_prefix` | empty | Prefix for the default `--name`. Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` |
+
+The default does not contain `--no-create-session-in-dir`. A server that starts with this flag refuses to restart while its folder has a recoverable session.
 
 #### proxy-jwt user authentication
 
@@ -460,7 +462,7 @@ Environment="HOME=/root"
 Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # next line only if SSH_AUTH_SOCK is configured
 Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"
-ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir
+ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir
 StandardOutput=null
 StandardError=journal
 Restart=always

@@ -39,7 +39,7 @@ describe("renderUnit", () => {
       `Environment="HOME=/root"`,
       `Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`,
       `Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"`,
-      "ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir",
+      "ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir",
       "StandardOutput=null",
       "StandardError=journal",
       "Restart=always",
@@ -71,7 +71,7 @@ describe("renderUnit", () => {
     const out = renderUnit(cfg(), p, "n");
     expect(out).toContain('WorkingDirectory=/srv/my "proj" 100%%$x é\n');
     expect(out.split("\n").filter((l) => l.startsWith("ExecStart="))).toEqual([
-      "ExecStart=/root/.local/bin/claude remote-control --name n --spawn same-dir --no-create-session-in-dir",
+      "ExecStart=/root/.local/bin/claude remote-control --name n --spawn same-dir",
     ]);
     expect(parseManaged(out)).toEqual({ path: p });
   });
