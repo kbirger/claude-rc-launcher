@@ -27,12 +27,12 @@ Commands:
                                      start an instance   (--host <id>)
   settings <id> [--create-session|--no-create-session] [--spawn <same-dir|worktree>] [--yes]
                                      show or change the settings of an instance (--host <id>)
-                                     a change restarts the server of that instance
+                                     a change restarts a running instance, a paused one only saves it
   stop <id>                          stop an instance    (--host <id>)
   logs <id> [--lines <n>]            show instance logs  (--host <id>)
   ls [path] [--user <u>]             list directories    (--host <id>)
   mkdir <parent> <name> [--user <u>] make a directory    (--host <id>)
-  clone <repo> <parent> [--user <u>] [--name <n>] [--force]
+  clone <repo> <parent> [--user <u>] [--name <n>] [--force] [--create-session|--no-create-session] [--spawn <same-dir|worktree>]
                                      clone a GitHub repo and start it (--host <id>)
   repos [--user <u>]                 list your GitHub repos (--host <id>)
   gh-login [--user <u>]              sign in to GitHub     (--host <id>)

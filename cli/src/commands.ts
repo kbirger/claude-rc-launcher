@@ -51,6 +51,16 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       ...(flags.spawn !== undefined ? { spawnMode: flags.spawn } : {}),
     };
   };
+  /** An old node or an old hub ignores the settings fields and still starts. When a settings flag is given, ask for the help route first so that it fails instead. */
+  const requireSettingsSupport = async () => {
+    if (Object.keys(wantedSettings()).length === 0) return;
+    try {
+      await hub.request("GET", `${host}/instance-settings`);
+    } catch (e) {
+      if (e instanceof HubError && e.status === 404) throw new ExitError("This node cannot take instance settings. Update the node and the hub first.", 1);
+      throw e;
+    }
+  };
   const describe = (s: Settings) => `create-session ${s.createSession ? "on" : "off"}, spawn ${sanitizeLine(String(s.spawnMode))}`;
 
   const cannotClone = () => new ExitError("this host cannot clone. Update the node.", 1);
@@ -125,6 +135,7 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       need(args, 1, "start <path> [--name <n>] [--user <u>] [--force] [--create-session|--no-create-session] [--spawn <same-dir|worktree>]");
       wantedSettings();
       await requireUserSupport();
+      await requireSettingsSupport();
       await startInstance(args[0]!);
       return;
     }
@@ -178,15 +189,22 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
         if (!/^(y|yes)$/i.test(answer.trim())) throw new ExitError("not changed", 1);
       }
       try {
-        const r = await hub.request<{ instance: Instance }>("PATCH", base, want);
+        const r = await hub.request<{ instance: Instance; applied?: boolean }>("PATCH", base, want);
         const now = r.instance.settings ?? next;
         show(r.instance, () => `changed: ${describe(now)}`);
+        // A paused instance only saves the change. With --json, only the instance is printed.
+        if (r.applied === false && !flags.json) out("Saved. The new settings start when you resume this folder. The node does not check them before then.");
       } catch (e) {
         if (e instanceof HubError && e.status === 409) {
-          const b = (e.body ?? {}) as { error?: string; settings?: Settings };
+          const b = (e.body ?? {}) as { error?: string; code?: string; settings?: Settings };
           const reason = sanitizeLine(String(b.error ?? e.message));
-          throw new ExitError(`${reason}. Settings stay: ${describe(b.settings ?? old)}`, 1);
+          if (b.code === "settings_refused" || b.code === "settings_failed") throw new ExitError(`${reason}. Settings stay: ${describe(b.settings ?? old)}`, 1);
+          // Another change runs for this folder. Nothing was applied or undone by this call.
+          throw new ExitError(`Another change is running for this folder. Try again in a minute. Reason: ${reason}`, 1);
         }
+        // The answer is lost: the hub could not reach the node, or the CLI could not reach the hub. The node may still run the change.
+        const lost = e instanceof HubError ? e.status === 502 : e instanceof ExitError && e.code === 1 && e.message.startsWith("cannot reach ");
+        if (lost) throw new ExitError(`${sanitizeLine((e as Error).message)}. The answer did not come back. The change may still be running. Look at the instance list before you try again.`, 1);
         throw e;
       }
       return;
@@ -220,8 +238,11 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
       return;
     }
     case "clone": {
-      need(args, 2, "clone <repo> <parent> [--user <u>] [--name <n>] [--force]");
+      need(args, 2, "clone <repo> <parent> [--user <u>] [--name <n>] [--force] [--create-session|--no-create-session] [--spawn <same-dir|worktree>]");
+      // The settings are checked before the clone, so a bad flag or an old node fails before anything is made.
+      wantedSettings();
       await requireUserSupport();
+      await requireSettingsSupport();
       const repo = args[0]!;
       let job: { id: string; path: string };
       try {
