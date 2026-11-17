@@ -7,17 +7,19 @@
   import Pause from "@tabler/icons-svelte/icons/player-pause";
   import Play from "@tabler/icons-svelte/icons/player-play";
   import Stop from "@tabler/icons-svelte/icons/player-stop";
+  import SettingsIcon from "@tabler/icons-svelte/icons/settings";
   import { cn } from "#lib/utils.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { PermissionsLink } from "#lib/features/permissions";
   import { SessionsLink } from "#lib/features/sessions";
   import InstanceLogs from "./InstanceLogs.svelte";
+  import InstanceSettingsDialog from "./InstanceSettingsDialog.svelte";
   import { createInstancesModel } from "./model.svelte";
   import { isPaused, stateLabel, stateTone } from "./state";
   import type { Instance } from "./api";
 
-  let { host, startError = "", canWrite = true }: { host: string; startError?: string; /** False hides pause, resume and stop: the hub only lets a writer use them. */ canWrite?: boolean } = $props();
+  let { host, startError = "", canWrite = true }: { host: string; startError?: string; /** False hides pause, resume, stop and settings: the hub only lets a writer use them. */ canWrite?: boolean } = $props();
 
   // The model holds the state and the rules. This file draws it. App remounts the list (#key) when the host changes.
   const model = createInstancesModel({ host: untrack(() => host), client: useQueryClient(), startError: () => startError });
@@ -44,6 +46,28 @@
       const { [id]: _, ...rest } = open;
       open = rest;
     } else open = { ...open, [id]: true };
+  }
+
+  // The instance whose settings dialog is open. The dialog mounts fresh for each open.
+  let editing = $state<Instance | null>(null);
+  let editOpen = $state(false);
+  // Counts the opens: a second open of the same instance must also mount a fresh dialog.
+  let opens = $state(0);
+  // An old node has no help and its instances have no settings: then there is no Settings action. A reader gets none either.
+  const canEditSettings = (i: Instance) => canWrite && !!model.settingsHelp && !!i.settings;
+
+  function openSettings(i: Instance) {
+    editing = i;
+    opens++;
+    editOpen = true;
+  }
+
+  function overflowFor(i: Instance, pending: boolean) {
+    if (!canWrite) return [];
+    return [
+      ...(canEditSettings(i) ? [{ label: "Settings", icon: SettingsIcon, disabled: pending, onselect: () => openSettings(i) }] : []),
+      { label: "Stop", icon: Stop, destructive: true, disabled: pending, onselect: () => stop(i) },
+    ];
   }
 
   function stop(i: Instance) {
@@ -111,8 +135,13 @@
         actionsEnd={i ? actionsEnd : undefined}
         footer={i && i.id in open ? logs : undefined}
         overflowLabel="More actions for {r.name}"
-        overflow={i && canWrite ? [{ label: "Stop", icon: Stop, destructive: true, disabled: !!r.pending, onselect: () => stop(i) }] : []}
+        overflow={i ? overflowFor(i, !!r.pending) : []}
       />
     </li>
   {/each}
 </ul>
+{#if editing && model.settingsHelp}
+  {#key opens}
+    <InstanceSettingsDialog bind:open={editOpen} {host} instance={editing} help={model.settingsHelp} />
+  {/key}
+{/if}

@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { createMutation, createQuery, type QueryClient } from "@tanstack/svelte-query";
 import { ApiError } from "../../shared/http";
-import type { StartArgs } from "../instances";
+import { DEFAULT_SETTINGS, settingsHelpQuery, type InstanceSettings, type StartArgs } from "../instances";
 import type { DirListing } from "./api";
 import { breadcrumbs } from "./crumbs";
 import { browseQuery, mkdirMutation, nodeQuery, usersQuery } from "./queries";
@@ -32,6 +32,8 @@ export function createNewDialogModel(opts: {
   let folderName = $state("");
   let userPick = $state<string | undefined>(init?.user);
   let trustPrompt = $state<TrustPrompt | null>(init?.trust ?? null);
+  // The settings of the new instance. After a 428 they are the settings of that start.
+  let settings = $state<InstanceSettings>({ ...(init?.settings ?? DEFAULT_SETTINGS) });
   // The clone view is open.
   let cloning = $state(false);
   // True while a clone runs (the panel can be open with no clone running). Close is locked then.
@@ -41,6 +43,9 @@ export function createNewDialogModel(opts: {
   const usersQ = createQuery(() => usersQuery(host), () => client);
   // An old node or an error: no clone button, no message.
   const nodeQ = createQuery(() => nodeQuery(host), () => client);
+  // An old node (no settings route) or an error: no settings part, no message, and the start sends no settings.
+  const helpQ = createQuery(() => settingsHelpQuery(host), () => client);
+  const settingsHelp = $derived(helpQ.data ?? null);
   // A person who cannot name a user gets no selector, and no request names one: the hub lets only an admin do that.
   const usersInfo = $derived(usersQ.data?.selectable && (opts.canChooseUser?.() ?? true) ? usersQ.data : null);
   const user = $derived(userPick ?? usersInfo?.default ?? "");
@@ -85,6 +90,7 @@ export function createNewDialogModel(opts: {
         go(next.path);
         userPick = next.user;
       }
+      if (next.settings) settings = { ...next.settings };
       trustPrompt = next.trust;
       latePrompts++;
       if (!name.trim()) name = next.name ?? "";
@@ -103,7 +109,7 @@ export function createNewDialogModel(opts: {
     if (needsAck) return;
     const a = trustStartArgs(trustPrompt, l, u, addTrust);
     if (!a) return;
-    opts.onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust });
+    opts.onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust, ...(settingsHelp ? { ...settings } : {}) });
   }
 
   return {
@@ -129,6 +135,10 @@ export function createNewDialogModel(opts: {
     get mkdirPending() { return mkdirM.isPending; },
     get cloning() { return cloning; },
     get cloneBusy() { return cloneBusy; },
+    /** The settings help of the node, or null: then the dialog shows no settings part. */
+    get settingsHelp() { return settingsHelp; },
+    get settings() { return settings; },
+    set settings(v: InstanceSettings) { settings = v; },
 
     go,
 

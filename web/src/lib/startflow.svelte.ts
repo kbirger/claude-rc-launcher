@@ -59,7 +59,9 @@ export function createStartFlow(initialHost: string) {
       }
       // This prompt replaces the one in the open dialog: say that the displaced folder still needs trust.
       if (showNew && newInitial && newInitial.path !== a.path) startError = `Trust needed for ${newInitial.path}`;
-      newInitial = { path: a.path, user: a.user, name: a.name, trust: failure.prompt };
+      // The settings go along, so the trust start sends the same settings as the start that got the 428.
+      const settings = a.createSession !== undefined && a.spawnMode !== undefined ? { createSession: a.createSession, spawnMode: a.spawnMode } : undefined;
+      newInitial = { path: a.path, user: a.user, name: a.name, ...(settings ? { settings } : {}), trust: failure.prompt };
       showNew = true;
     },
   };

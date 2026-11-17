@@ -9,7 +9,7 @@
   import ActionIcon from "../../shared/ui/ActionIcon.svelte";
   import FolderIcon from "../../shared/ui/FolderIcon.svelte";
   import { iconKind } from "../../shared/ui/foldericon";
-  import type { StartArgs } from "../instances";
+  import { InstanceSettingsFields, type StartArgs } from "../instances";
   import { createNewDialogModel } from "./model.svelte";
 
   let { host, onclose, onstart, busyReason, initial, canChooseUser = true, canSignInGitHub = true }: {
@@ -87,6 +87,12 @@
     </ul>
     <div class="footer">
       <input placeholder="Name (optional)" bind:value={model.name} />
+      {#if model.settingsHelp}
+        <details class="settings">
+          <summary>Settings</summary>
+          <div class="settings-body"><InstanceSettingsFields help={model.settingsHelp} value={model.settings} onchange={(v) => (model.settings = v)} /></div>
+        </details>
+      {/if}
       {#if model.error}<p class="error">{model.error}</p>{/if}
       {#if model.trustPrompt}
         <div class="trust" role="alert">
@@ -129,4 +135,7 @@
   .trust p { margin: 0 0 8px; overflow-wrap: anywhere; }
   .pad { padding: 12px; }
   .footer { display: grid; gap: 8px; }
+  .settings { border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+  .settings summary { min-height: 44px; display: flex; align-items: center; padding: 0 12px; cursor: pointer; }
+  .settings-body { padding: 0 12px 12px; max-height: 40vh; overflow: auto; }
 </style>
