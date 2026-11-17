@@ -56,6 +56,24 @@ describe("authentik-setup", () => {
     expect(a.bindings.some((b) => b.target === a.apps.find((x) => x.slug === OLD_HUB.application)!.pk)).toBe(false);
   });
 
+  test("an application in the all mode is set to any", async () => {
+    const a = fakeAuthentik();
+    a.apps.find((x) => x.slug === APPLICATIONS[0])!.policy_engine_mode = "all";
+    await run(base(a).o);
+    for (const slug of APPLICATIONS) expect(a.apps.find((x) => x.slug === slug)!.policy_engine_mode).toBe("any");
+    expect(a.writes().filter((c) => c.method === "PATCH" && c.path === `/api/v3/core/applications/${APPLICATIONS[0]}/`)).toHaveLength(1);
+  });
+
+  test("a binding that is not a role group is reported and not deleted", async () => {
+    const a = fakeAuthentik();
+    await run(base(a).o);
+    const app = a.apps.find((x) => x.slug === APPLICATIONS[0])!;
+    a.bindings.push({ pk: "stray", target: app.pk, user: 7, user_obj: { username: "kir" }, order: 0 });
+    await expect(run(base(a).o)).rejects.toThrow(/"claude-rc-launcher" has a binding for the user kir/);
+    expect(a.bindings.some((b) => b.pk === "stray")).toBe(true);
+    expect(a.writes().some((c) => c.method === "DELETE" && c.path.includes("bindings"))).toBe(false);
+  });
+
   test("a missing application is reported", async () => {
     const a = fakeAuthentik();
     a.apps.splice(a.apps.findIndex((x) => x.slug === APPLICATIONS[1]), 1);

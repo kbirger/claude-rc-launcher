@@ -44,7 +44,17 @@ export async function run(o: Options): Promise<{ changes: number }> {
       ctx.problems.push(`application not found: ${slug}`);
       continue;
     }
+    // "any": one role group is enough. In "all" mode a user would need every binding, so nobody could sign in.
+    if (app.policy_engine_mode === "any") ctx.log(`ok: "${slug}" lets in a member of any role group`);
+    else await ctx.write(`set the policy engine mode of "${slug}" to "any"`, "PATCH", `/api/v3/core/applications/${slug}/`, { policy_engine_mode: "any" });
     const bound: Json[] = (await ctx.call("GET", `/api/v3/policies/bindings/?target=${app.pk}&page_size=200`))?.results ?? [];
+    // Access comes from the role groups only. Any other binding, such as one for a single user, is reported and left in place.
+    const roleGroupPks = new Set([...groups.values()].map((g) => g?.pk).filter(Boolean));
+    for (const b of bound) {
+      if (b.group && roleGroupPks.has(b.group)) continue;
+      const what = b.user_obj?.username ? `the user ${b.user_obj.username}` : b.group_obj?.name ? `the group ${b.group_obj.name}` : b.policy_obj?.name ? `the policy ${b.policy_obj.name}` : "something that is not a role group";
+      ctx.problems.push(`"${slug}" has a binding for ${what}. Access must come from the role groups only, so remove it in authentik`);
+    }
     for (const [i, g] of s.groups.entries()) {
       const group = groups.get(g.name);
       if (group?.pk && bound.some((b) => b.group === group.pk)) ctx.log(`ok: "${g.name}" can sign in to "${slug}"`);

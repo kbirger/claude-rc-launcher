@@ -14,7 +14,7 @@ export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; new
   const providers: Json[] = (opts.providers ?? [...PROVIDERS, OLD_HUB.provider]).map((name, i) => ({ pk: 20 + i, name, property_mappings: ["existing-mapping"] }));
   const groups: Json[] = [];
   const users: Json[] = [{ pk: 7, username: "kir" }];
-  const apps: Json[] = (opts.apps ?? [...APPLICATIONS, OLD_HUB.application]).map((slug, i) => ({ slug, pk: `app-${i}` }));
+  const apps: Json[] = (opts.apps ?? [...APPLICATIONS, OLD_HUB.application]).map((slug, i) => ({ slug, pk: `app-${i}`, policy_engine_mode: "any" }));
   const bindings: Json[] = [];
   const managed: Json[] = ["openid", "email", "profile", "offline_access"].map((n) => ({ pk: `managed-${n}`, name: n, managed: `goauthentik.io/providers/oauth2/scope-${n}` }));
   let providerPk = 100;
@@ -76,6 +76,7 @@ export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; new
     if (p === "/api/v3/core/users/" && method === "GET") return out(200, list(users, url.searchParams, "username"));
     if (p === "/api/v3/core/applications/" && method === "GET") return out(200, list(apps, url.searchParams, "slug"));
     const am = apps.find((x) => p === `/api/v3/core/applications/${x.slug}/`);
+    if (am && method === "PATCH") return out(200, Object.assign(am, body));
     if (am && method === "DELETE") return (apps.splice(apps.indexOf(am), 1), out(204));
     return out(404, { detail: `no route ${method} ${p}` });
   }) as unknown as typeof globalThis.fetch;
