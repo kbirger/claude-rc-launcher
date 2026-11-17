@@ -23,8 +23,11 @@ Commands:
   whoami                             show the signed-in user
   hosts                              list hosts
   list                               list instances      (--host <id>)
-  start <path> [--name <n>] [--user <u>] [--force]
+  start <path> [--name <n>] [--user <u>] [--force] [--create-session|--no-create-session] [--spawn <same-dir|worktree>]
                                      start an instance   (--host <id>)
+  settings <id> [--create-session|--no-create-session] [--spawn <same-dir|worktree>] [--yes]
+                                     show or change the settings of an instance (--host <id>)
+                                     a change restarts the server of that instance
   stop <id>                          stop an instance    (--host <id>)
   logs <id> [--lines <n>]            show instance logs  (--host <id>)
   ls [path] [--user <u>]             list directories    (--host <id>)
@@ -96,7 +99,7 @@ export function defaultEnv(): Env {
   };
 }
 
-const INSTANCE_COMMANDS = new Set<string>(["whoami", "hosts", "ls", "mkdir", "list", "start", "stop", "logs", "clone", "repos", "gh-login"]);
+const INSTANCE_COMMANDS = new Set<string>(["whoami", "hosts", "ls", "mkdir", "list", "start", "stop", "logs", "clone", "repos", "gh-login", "settings"]);
 
 export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void }, env: Env = defaultEnv()): Promise<number> {
   try {
@@ -191,7 +194,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
       else await hostRemove(id, hub, io.out);
       return 0;
     }
-    await runCommand(name as CommandName, args, flags, hub, io.out, env.sleep);
+    await runCommand(name as CommandName, args, flags, hub, io.out, env.sleep, env.readLine);
     return 0;
   } catch (e) {
     if (e instanceof ExitError) {

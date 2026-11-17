@@ -57,15 +57,17 @@ describe("commands", () => {
     await s.run("list");
     await s.run("list", "--host", "nas");
     expect(s.seen.map((r) => r.path)).toEqual(["/cli/api/hosts/local/instances", "/cli/api/hosts/nas/instances"]);
-    expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+/srv/p`));
+    expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+-\\s+/srv/p`));
+    expect(s.out.join("\n")).toMatch(/STATE\s+SETTINGS\s+PATH/);
+    expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+-\\s+/srv/p`));
   });
 
   test("list adds a USER column only when an instance has a user", async () => {
     const withUser = [{ id: ID, name: "n", state: "active", path: "/srv/p", startedAt: null, user: "svc (admin)" }];
     const s = setup({ "GET /cli/api/hosts/local/instances": () => withUser });
     await s.run("list");
-    expect(s.out.join("\n")).toMatch(new RegExp(`ID\\s+NAME\\s+STATE\\s+USER\\s+PATH`));
-    expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+svc \\(admin\\)\\s+/srv/p`));
+    expect(s.out.join("\n")).toMatch(new RegExp(`ID\\s+NAME\\s+STATE\\s+USER\\s+SETTINGS\\s+PATH`));
+    expect(s.out.join("\n")).toMatch(new RegExp(`${ID}\\s+n\\s+active\\s+svc \\(admin\\)\\s+-\\s+/srv/p`));
     const plain = setup({ "GET /cli/api/hosts/local/instances": () => [{ ...withUser[0]!, user: undefined }] });
     await plain.run("list");
     expect(plain.out.join("\n")).not.toContain("USER");
@@ -508,5 +510,100 @@ describe("clone, repos and gh-login", () => {
     expect((await s.run("repos", "--user", "a b")).code).toBe(0);
     expect(s.seen.map((x) => x.path)).toEqual([`${H}/users`, `${H}/github/repos?user=a%20b`]);
     expect(s.out).toEqual(["no repos"]);
+  });
+
+  describe("instance settings", () => {
+    const base = "/cli/api/hosts/local/instances";
+    const inst = (over = {}) => ({ id: ID, name: "n", state: "active", path: "/srv/p", startedAt: null, settings: { createSession: true, spawnMode: "same-dir" }, ...over });
+    const help = { settings: [{ key: "createSession", label: "Create a session at start", values: [{ value: true, label: "On", explanation: "Makes one session.\u001b[31m" }], limits: "A change restarts the instance." }] };
+
+    test("start sends only the given settings", async () => {
+      const s = setup({ [`POST ${base}`]: () => new Response(JSON.stringify(inst()), { status: 201 }) });
+      await s.run("start", "/srv/p", "--no-create-session", "--spawn", "worktree");
+      expect(JSON.parse(s.seen[0]!.body)).toEqual({ path: "/srv/p", createSession: false, spawnMode: "worktree" });
+      s.seen.length = 0;
+      await s.run("start", "/srv/p", "--create-session");
+      expect(JSON.parse(s.seen[0]!.body)).toEqual({ path: "/srv/p", createSession: true });
+      s.seen.length = 0;
+      await s.run("start", "/srv/p");
+      expect(JSON.parse(s.seen[0]!.body)).toEqual({ path: "/srv/p" });
+    });
+
+    test("start refuses both session flags and a wrong spawn value", async () => {
+      const s = setup({});
+      const a = await s.run("start", "/srv/p", "--create-session", "--no-create-session");
+      expect(a.code).toBe(1);
+      expect(s.err.join("\n")).toContain("not both");
+      s.err.length = 0;
+      const b = await s.run("start", "/srv/p", "--spawn", "tree");
+      expect(b.code).toBe(1);
+      expect(s.err.join("\n")).toContain("same-dir or worktree");
+      expect(s.seen).toEqual([]);
+    });
+
+    test("list shows the settings column", async () => {
+      const s = setup({ [`GET ${base}`]: () => [inst({ settings: { createSession: false, spawnMode: "worktree" } })] });
+      await s.run("list");
+      expect(s.out.join("\n")).toMatch(/session:off spawn:worktree\s+\/srv\/p/);
+    });
+
+    test("settings prints the values and the explanations without control characters", async () => {
+      const s = setup({ [`GET ${base}`]: () => [inst()], "GET /cli/api/hosts/local/instance-settings": () => help });
+      expect((await s.run("settings", ID)).code).toBe(0);
+      const text = s.out.join("\n");
+      expect(text).toContain("create-session: on");
+      expect(text).toContain("spawn: same-dir");
+      expect(text).toContain("On: Makes one session.?[31m");
+      expect(text).not.toContain("\u001b");
+    });
+
+    test("settings says so when the node has no explanations, and --json prints only the settings", async () => {
+      const s = setup({ [`GET ${base}`]: () => [inst()] });
+      await s.run("settings", ID);
+      expect(s.out.join("\n")).toContain("does not offer explanations");
+      s.out.length = 0;
+      await s.run("settings", ID, "--json");
+      expect(JSON.parse(s.out.join("\n"))).toEqual({ createSession: true, spawnMode: "same-dir" });
+    });
+
+    test("a change asks first and sends nothing on no", async () => {
+      const s = setup({ [`GET ${base}`]: () => [inst()], [`PATCH ${base}/${ID}`]: () => ({ instance: inst(), previous: inst().settings }) });
+      const prompts: string[] = [];
+      s.env.readLine = async (p) => (prompts.push(p), "n");
+      const r = await s.run("settings", ID, "--no-create-session");
+      expect(r.code).toBe(1);
+      expect(s.err).toEqual(["not changed"]);
+      expect(s.out.join("\n")).toContain("create-session: on to off");
+      expect(s.out.join("\n")).toContain("restarts the server");
+      expect(prompts.length).toBe(1);
+      expect(s.seen.some((x) => x.method === "PATCH")).toBe(false);
+    });
+
+    test("y sends the change and prints the new values", async () => {
+      const s = setup({ [`GET ${base}`]: () => [inst()], [`PATCH ${base}/${ID}`]: () => ({ instance: inst({ settings: { createSession: false, spawnMode: "same-dir" } }), previous: inst().settings }) });
+      s.env.readLine = async () => "y";
+      const r = await s.run("settings", ID, "--no-create-session");
+      expect(r.code).toBe(0);
+      expect(JSON.parse(s.seen.find((x) => x.method === "PATCH")!.body)).toEqual({ createSession: false });
+      expect(s.out.at(-1)).toBe("changed: create-session off, spawn same-dir");
+    });
+
+    test("--yes skips the question", async () => {
+      const s = setup({ [`GET ${base}`]: () => [inst()], [`PATCH ${base}/${ID}`]: () => ({ instance: inst({ settings: { createSession: true, spawnMode: "worktree" } }), previous: inst().settings }) });
+      s.env.readLine = async () => { throw new Error("must not ask"); };
+      const r = await s.run("settings", ID, "--spawn", "worktree", "--yes");
+      expect(r.code).toBe(0);
+      expect(s.out.at(-1)).toBe("changed: create-session on, spawn worktree");
+    });
+
+    test("a 409 prints the reason and the old settings and exits 1", async () => {
+      const s = setup({
+        [`GET ${base}`]: () => [inst()],
+        [`PATCH ${base}/${ID}`]: () => new Response(JSON.stringify({ error: "a recoverable session exists\u001b[0m", code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } }), { status: 409 }),
+      });
+      const r = await s.run("settings", ID, "--no-create-session", "--yes");
+      expect(r.code).toBe(1);
+      expect(s.err.join("\n")).toBe("a recoverable session exists?[0m. Settings stay: create-session on, spawn same-dir");
+    });
   });
 });
