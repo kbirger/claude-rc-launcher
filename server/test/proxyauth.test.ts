@@ -4,6 +4,7 @@ import { createApp } from "../src/app";
 import { parseConfig, type Config, type ProxyJwtUserAuth } from "../src/config";
 import { createJwtVerifier } from "../src/jwt";
 import { cidrContains, proxyJwtUserAuth } from "../src/proxyauth";
+import { DEFAULT_ROLES } from "../src/roles";
 
 const ISS = "https://auth.example.com/o/proxy/";
 const AUD = "rc-proxy";
@@ -92,8 +93,8 @@ describe("trusted_peers", () => {
 
 describe("CSRF stays mandatory", () => {
   test("POST with mismatched Origin -> 403; without JSON content-type -> 415", async () => {
-    const m = await mk();
-    const t = await m.sign();
+    const m = await mk({ roles: DEFAULT_ROLES });
+    const t = await m.sign({ clauderc_role: "admin" });
     const base = { method: "POST", body: JSON.stringify({ path: "/p" }) };
     const evil = await m.app.request("/api/instances", { ...base, headers: { [HEADER]: t, "content-type": "application/json", origin: "https://evil.example" } });
     expect(evil.status).toBe(403);
@@ -135,7 +136,7 @@ describe("proxy-jwt config", () => {
 
   test("valid", () => {
     const c = parseConfig(raw({ allowed_users: ["kir"], proxy_jwt: pj({ trusted_peers: ["127.0.0.1", "10.0.0.0/24"], logout_url: "https://rc/out" }) }), io);
-    expect(c.userAuth).toEqual({ mode: "proxy-jwt", header: "X-authentik-jwt", jwksUrl: "https://a/jwks", issuer: ISS, audience: AUD, trustedPeers: ["127.0.0.1", "10.0.0.0/24"], logoutUrl: "https://rc/out", allowedUsers: ["kir"] });
+    expect(c.userAuth).toEqual({ mode: "proxy-jwt", header: "X-authentik-jwt", jwksUrl: "https://a/jwks", issuer: ISS, audience: AUD, trustedPeers: ["127.0.0.1", "10.0.0.0/24"], logoutUrl: "https://rc/out", allowedUsers: ["kir"], roles: DEFAULT_ROLES });
   });
   test("requires proxy_jwt and forbids oidc / session_secret_file", () => {
     expect(fails(raw({}))).toContain("user_auth.proxy_jwt");
@@ -152,5 +153,19 @@ describe("proxy-jwt config", () => {
   test("oidc mode forbids proxy_jwt", () => {
     const b = { public_url: "https://x", user_auth: { mode: "oidc", session_secret_file: "s", oidc: { issuer: "https://i", client_id: "c", client_secret_file: "c" }, proxy_jwt: pj() } };
     expect(fails(b)).toContain("user_auth.proxy_jwt");
+  });
+});
+
+describe("proxy-jwt roles", () => {
+  test("the role comes from the claim", async () => {
+    const m = await mk({ roles: DEFAULT_ROLES });
+    const r = await get(m.app, "/api/me", { [HEADER]: await m.sign({ clauderc_role: "admin" }) });
+    expect(((await r.json()) as { role: string }).role).toBe("admin");
+  });
+  test("the role none gives 403", async () => {
+    const m = await mk({ roles: DEFAULT_ROLES });
+    const r = await get(m.app, "/api/me", { [HEADER]: await m.sign({ clauderc_role: "none" }) });
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({ error: "access refused" });
   });
 });

@@ -7,7 +7,7 @@
   import type { HostInfo } from "./api";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
 
-  let { hosts, selected, onselect, updates = [], now = new Date() }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date } = $props();
+  let { hosts, selected, onselect, updates = [], now = new Date(), allowUpdate = true }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; updates?: UpdateEntry[]; now?: Date; /** False hides the Update button: the hub only lets an admin update. */ allowUpdate?: boolean } = $props();
 
   const client = useQueryClient();
   const updateM = createMutation(() => updateHostMutation(client));
@@ -62,7 +62,7 @@
     </Select.Content>
   </Select.Root>
 </div>
-{#if canUpdate}
+{#if canUpdate && allowUpdate}
   <Button size="touch" disabled={busy || isRunning(lastEntry(updates, current?.id ?? ""), now)} onclick={update}>Update</Button>
 {/if}
 {#if step && stepText(step)}<span class:error={stepIsError(step)} class="step" role="status">{stepText(step)}</span>{/if}

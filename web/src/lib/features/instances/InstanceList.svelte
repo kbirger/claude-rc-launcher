@@ -17,7 +17,7 @@
   import { isPaused, stateLabel, stateTone } from "./state";
   import type { Instance } from "./api";
 
-  let { host, startError = "" }: { host: string; startError?: string } = $props();
+  let { host, startError = "", canWrite = true }: { host: string; startError?: string; /** False hides pause, resume and stop: the hub only lets a writer use them. */ canWrite?: boolean } = $props();
 
   // The model holds the state and the rules. This file draws it. App remounts the list (#key) when the host changes.
   const model = createInstancesModel({ host: untrack(() => host), client: useQueryClient(), startError: () => startError });
@@ -84,7 +84,7 @@
       {/if}
     {/snippet}
     {#snippet actionsEnd()}
-      {#if i}
+      {#if i && canWrite}
         {#if isPaused(i.state)}
           <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
             <Play aria-hidden="true" />
@@ -111,7 +111,7 @@
         actionsEnd={i ? actionsEnd : undefined}
         footer={i && i.id in open ? logs : undefined}
         overflowLabel="More actions for {r.name}"
-        overflow={i ? [{ label: "Stop", icon: Stop, destructive: true, disabled: !!r.pending, onselect: () => stop(i) }] : []}
+        overflow={i && canWrite ? [{ label: "Stop", icon: Stop, destructive: true, disabled: !!r.pending, onselect: () => stop(i) }] : []}
       />
     </li>
   {/each}

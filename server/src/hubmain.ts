@@ -3,6 +3,7 @@ import { cliBearerAuth } from "./cliauth";
 import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
 import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
+import { rolesFrom } from "./roles";
 import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
 import { createLatestRelease } from "./latest";
 import { createReleaseList } from "./releaselist";
@@ -54,7 +55,8 @@ function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) =>
   return {
     issuer: c.issuer,
     clientId: c.clientId,
-    auth: cliBearerAuth({ verify, ...(cfg.userAuth?.allowedUsers ? { allowedUsers: cfg.userAuth.allowedUsers } : {}) }),
+    ...(rolesFrom(cfg.userAuth).scope ? { roleScope: rolesFrom(cfg.userAuth).scope } : {}),
+    auth: cliBearerAuth({ verify, roles: rolesFrom(cfg.userAuth), ...(cfg.userAuth?.allowedUsers ? { allowedUsers: cfg.userAuth.allowedUsers } : {}) }),
     makeClient,
     enrollment: { hubKeys },
   };

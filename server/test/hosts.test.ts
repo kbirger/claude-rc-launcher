@@ -23,7 +23,7 @@ const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-hosts-"));
 
 const userAuth = {
   middleware: (async (c, next) => {
-    c.set("user" as never, { sub: "u1", name: "Ann", username: "kir" } as never);
+    c.set("user" as never, { sub: "u1", name: "Ann", username: "kir", role: "admin" } as never);
     await next();
   }) as MiddlewareHandler,
 };
@@ -451,7 +451,7 @@ describe("audit", () => {
     const app = hub([{ id: "nas", name: "nas", url: "https://x", ca: "p", auth: { type: "secret", secret: "s" } }], new Map([["nas", f]]));
     await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p" }) });
     await get(app, "/api/hosts/nas/instances");
-    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=nas POST /api/hosts/nas/instances 201"]);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir role=admin host=nas POST /api/hosts/nas/instances 201"]);
   });
   test("a rule edit on the local host has one node line with the hub user and the rule", async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), "hub-local-"));
@@ -465,7 +465,7 @@ describe("audit", () => {
   test("local writes are audited with host=local", async () => {
     const app = hub([], new Map());
     await app.request("/api/hosts/local/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/srv/p" }) });
-    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=local POST /api/hosts/local/instances 201"]);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir role=admin host=local POST /api/hosts/local/instances 201"]);
   });
 });
 
@@ -626,7 +626,7 @@ describe("node and update routes", () => {
     await upPost(app, "/api/hosts/nas/update", { release: "v1.1.0" });
     await upPost(app, "/api/hosts/local/update", {});
     const audit = logged.filter((l) => l.startsWith("audit user="));
-    expect(audit).toEqual(["audit user=kir host=nas POST /api/hosts/nas/update 202", "audit user=kir host=local POST /api/hosts/local/update 202"]);
+    expect(audit).toEqual(["audit user=kir role=admin host=nas POST /api/hosts/nas/update 202", "audit user=kir role=admin host=local POST /api/hosts/local/update 202"]);
     expect(logged.some((l) => /^audit caller=\S+ POST \/api\/update 202$/.test(l))).toBe(true);
   });
 });
@@ -666,7 +666,7 @@ describe("clone, repo list and login forwarding", () => {
       const f = fakeCloner();
       const n = await startNode("nas", { cloner: f.cloner });
       const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [n.host], clients: new Map([["nas", n.client]]), makeClient: () => n.client });
-      const cli = { issuer: "i", clientId: "c", auth: (async (c: any, next: any) => (c.set("user", { sub: "u1", username: "kir" }), next())) as MiddlewareHandler, makeClient: () => n.client, enrollment: { hubKeys: [] } };
+      const cli = { issuer: "i", clientId: "c", auth: (async (c: any, next: any) => (c.set("user", { sub: "u1", username: "kir", role: "admin" }), next())) as MiddlewareHandler, makeClient: () => n.client, enrollment: { hubKeys: [] } };
       const app = createApp({ cfg: { name: "box", hosts: [n.host], roots: ["/srv"], publicUrl: "https://rc.example.com" } as unknown as Config, instances: localSvc, userAuth, hosts: registry, cli: cli as any });
       const base = `${prefix}/nas`;
       const clone = await send(app, "POST", `${base}/clone`, { repo: "o/r", parent: "/p", user: "alice", evil: 1 });
@@ -770,7 +770,7 @@ describe("clone, repo list and login forwarding", () => {
     await send(app, "POST", "/api/hosts/nas/clone", { repo: "secret-org/secret-repo", parent: "/p" });
     await send(app, "POST", "/api/hosts/nas/github/login", { user: "alice" });
     await get(app, "/api/hosts/nas/github/repos?user=alice");
-    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=nas POST /api/hosts/nas/clone 202", "audit user=kir host=nas POST /api/hosts/nas/github/login 202"]);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir role=admin host=nas POST /api/hosts/nas/clone 202", "audit user=kir role=admin host=nas POST /api/hosts/nas/github/login 202"]);
     expect(logged.join("\n")).not.toMatch(/secret-repo|ABCD-1234|alice/);
   });
 
@@ -887,7 +887,7 @@ describe("update record", () => {
     expect(await r.json()).toEqual({ status: "up-to-date", from: "1.0.0", clients: [] });
     expect(during).toMatchObject({ status: "running", from: "1.0.0", startedBy: "kir" });
     expect(entryOf(record, "nas")).toMatchObject({ status: "up-to-date", startedBy: "kir" });
-    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir host=nas POST /api/hosts/nas/update 200"]);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual(["audit user=kir role=admin host=nas POST /api/hosts/nas/update 200"]);
   });
   test("local starts from the hub version and stays running after a restart answer", async () => {
     const record = await newRecord();

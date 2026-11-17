@@ -1,0 +1,21 @@
+flowchart LR
+  subgraph People
+    B["Browser"]
+    C["CLI"]
+  end
+  IdP["Identity provider (authentik)"]
+  H["Hub: login, roles, audit"]
+  subgraph Hosts
+    N1["Node A"]
+    N2["Node B"]
+    L["Local instances on the hub host"]
+  end
+
+  B -- "OIDC login, then session cookie" --> H
+  C -- "OIDC login, then Bearer ID token" --> H
+  B -. "redirect to log in" .-> IdP
+  C -. "redirect to log in" .-> IdP
+  H -- "checks token signature with the IdP keys" --> IdP
+  H -- "Hub-Proof, signed per request" --> N1
+  H -- "Hub-Proof, signed per request" --> N2
+  H --> L

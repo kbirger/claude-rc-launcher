@@ -36,7 +36,7 @@ async function setup(o: { secret?: string; peek?: typeof peekCertificate } = {})
   const registry = await HostRegistry.load({ stateDir, hosts: [staticHost], clients: new Map([["nas", { stream: async () => { throw new Error("unused"); }, call: async () => ({ status: 200, body: {} }) }]]), makeClient });
   const app = new Hono();
   app.use("*", async (c, next) => {
-    c.set("user" as never, { sub: "u1", name: "Ann", username: "kir" } as never);
+    c.set("user" as never, { sub: "u1", name: "Ann", username: "kir", role: "admin" } as never);
     await next();
   });
   app.route("/cli/api/hosts", hostAdminApi({ registry, makeClient, ...(o.peek ? { peek: o.peek } : {}) }));
@@ -165,8 +165,8 @@ describe("audit", () => {
     await s.del("/pi");
     await s.post("/probe", { url: s.node.url });
     expect(logged.filter((l) => l.startsWith("audit"))).toEqual([
-      "audit user=kir host=pi POST /cli/api/hosts 201",
-      "audit user=kir host=pi DELETE /cli/api/hosts/pi 204",
+      "audit user=kir role=admin host=pi POST /cli/api/hosts 201",
+      "audit user=kir role=admin host=pi DELETE /cli/api/hosts/pi 204",
     ]);
   });
 });

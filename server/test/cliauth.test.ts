@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { cliBearerAuth, cliConfigRoute } from "../src/cliauth";
 import { createJwtVerifier } from "../src/jwt";
+import { DEFAULT_ROLES, type RoleSettings } from "../src/roles";
 
 const ISS = "https://auth.example.com/o/cli/";
 const AUD = "cli-client";
@@ -16,10 +17,10 @@ async function kit() {
   return { sign, verify: createJwtVerifier({ keys, issuer: ISS, audience: AUD }) };
 }
 
-async function mk(allowedUsers?: string[]) {
+async function mk(allowedUsers?: string[], roles?: RoleSettings) {
   const k = await kit();
   const app = new Hono();
-  app.use("*", cliBearerAuth({ verify: k.verify, ...(allowedUsers ? { allowedUsers } : {}) }));
+  app.use("*", cliBearerAuth({ verify: k.verify, ...(allowedUsers ? { allowedUsers } : {}), ...(roles ? { roles } : {}) }));
   app.get("/who", (c) => c.json(c.get("user" as never)));
   return { ...k, app };
 }
@@ -104,5 +105,30 @@ describe("cliConfigRoute", () => {
     const r = await app.request("/");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ issuer: ISS, client_id: AUD });
+  });
+});
+
+describe("cliBearerAuth roles", () => {
+  test("the role comes from the claim", async () => {
+    const m = await mk(undefined, DEFAULT_ROLES);
+    const r = await get(m.app, { authorization: `Bearer ${await m.sign({ clauderc_role: "write" })}` });
+    expect(((await r.json()) as { role: string }).role).toBe("write");
+  });
+  test("a token with no role claim gets the default role", async () => {
+    const m = await mk(undefined, { ...DEFAULT_ROLES, defaultRole: "read" });
+    const r = await get(m.app, { authorization: `Bearer ${await m.sign()}` });
+    expect(((await r.json()) as { role: string }).role).toBe("read");
+  });
+  test("the role none gives 403", async () => {
+    const m = await mk(undefined, DEFAULT_ROLES);
+    const r = await get(m.app, { authorization: `Bearer ${await m.sign({ clauderc_role: "none" })}` });
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({ error: "access refused" });
+  });
+  test("the config route reports the role scope", async () => {
+    const app = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c", roleScope: "clauderc" }));
+    expect(await (await app.request("/")).json()).toEqual({ issuer: "https://i/", client_id: "c", role_scope: "clauderc" });
+    const bare = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c" }));
+    expect(await (await bare.request("/")).json()).toEqual({ issuer: "https://i/", client_id: "c" });
   });
 });

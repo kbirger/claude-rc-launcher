@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
-import { createProofVerifier, ProofError } from "./hubproof";
+import { createProofVerifier, ProofError, type ProofActor } from "./hubproof";
 
 export type NodeAuthSettings = {
   hubKeys: string[];
@@ -74,13 +74,15 @@ export function nodeAuth(s: NodeAuthSettings): MiddlewareHandler {
       if (body === null) return c.json({ error: "request body too large" }, 413);
       (c.req.bodyCache as Record<string, unknown>).text = Promise.resolve(body); // handlers can still call c.req.text() / c.req.json()
       const url = new URL(c.req.url);
+      let act: ProofActor;
       try {
-        await verifyProof(token, { method: c.req.method, pathAndQuery: url.pathname + url.search, body });
+        act = await verifyProof(token, { method: c.req.method, pathAndQuery: url.pathname + url.search, body });
       } catch (e) {
         warn(e);
         return deny(c);
       }
       c.set("caller" as never, "hub" as never);
+      c.set("act" as never, act as never);
     } else {
       const h = hashSecret(token);
       let ok = false;

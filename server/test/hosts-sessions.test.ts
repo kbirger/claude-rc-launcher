@@ -100,7 +100,7 @@ describe("hub session JSON routes", () => {
       } finally {
         console.log = orig;
       }
-      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200 nudge=off`]);
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown role=read host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200 nudge=off`]);
     });
     const sp = `${sbase}/sessions/${SID}/permissions/rules`;
     test("forwards nudge true in the body", async () => {
@@ -126,7 +126,7 @@ describe("hub session JSON routes", () => {
       } finally {
         console.log = orig;
       }
-      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown host=nas action=add instance=${ID} scope=user list=allow rule="Bash(git *)" status=200 nudge=on`]);
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown role=read host=nas action=add instance=${ID} scope=user list=allow rule="Bash(git *)" status=200 nudge=on`]);
     });
     test("refuses a non boolean flag with 400 before any forward, and nudge true on the user route", async () => {
       const calls: any[] = [];
@@ -291,7 +291,7 @@ describe("hub download", () => {
       console.log = orig;
     }
     const line = logs.find((l) => l.startsWith("audit"));
-    expect(line).toBe("audit user=unknown host=nas GET download 200");
+    expect(line).toBe("audit user=unknown role=read host=nas GET download 200");
     expect(logs.join("\n")).not.toContain("secret.txt");
   });
 });
@@ -333,10 +333,10 @@ describe("hub abs for touched files outside the session folder", () => {
       Object.assign(console, orig);
     }
     expect(logs.filter((l) => l.startsWith("audit"))).toEqual([
-      "audit user=unknown host=nas GET preview abs 200",
-      "audit user=unknown host=nas GET preview abs 404",
-      "audit user=unknown host=nas GET preview abs 502",
-      "audit user=unknown host=nas GET download 200",
+      "audit user=unknown role=read host=nas GET preview abs 200",
+      "audit user=unknown role=read host=nas GET preview abs 404",
+      "audit user=unknown role=read host=nas GET preview abs 502",
+      "audit user=unknown role=read host=nas GET download 200",
     ]);
     expect(logs.join("\n")).not.toContain("secret-name");
     expect(logs.join("\n")).not.toContain(".ssh");

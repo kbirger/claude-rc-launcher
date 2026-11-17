@@ -89,9 +89,10 @@ export function proxyJwtUserAuth(o: { settings: ProxyJwtUserAuth; verify: JwtVer
       } catch {
         return c.json({ error: "unauthenticated" }, 401);
       }
-      const user = userFromClaims(claims);
+      const user = userFromClaims(claims, settings.roles);
       if (!user) return c.json({ error: "unauthenticated" }, 401);
       if (!isAllowed(user, settings.allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
+      if (user.role === "none") return c.json({ error: "access refused" }, 403);
       c.set("user" as never, user as never);
       await next();
     },

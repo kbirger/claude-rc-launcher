@@ -8,6 +8,7 @@ import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
+import { enforceRoles, logToken } from "./roles";
 import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
@@ -33,7 +34,7 @@ import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type Upda
 import { VERSION } from "./version";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
-export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
+export type CliDeps = { issuer: string; clientId: string; roleScope?: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
 
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
@@ -223,7 +224,9 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
   api.use("*", async (c, next) => {
     await next();
     if (isWrite(c.req.method)) {
-      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+      const act = c.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
+      const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
+      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")}${actPart} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
   if (events) {
@@ -271,6 +274,7 @@ export function createApp(deps: Deps): Hono {
 
   const api = new Hono();
   api.use("*", userAuth.middleware);
+  api.use("*", enforceRoles("/api"));
   api.use("*", csrf(cfg));
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
@@ -322,7 +326,7 @@ export function createApp(deps: Deps): Hono {
   api.patch("/hosts/:id", async (c, next) => {
     await renameHandler(registry)(c, next);
     const u = c.get("user" as never) as User | undefined;
-    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
+    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
@@ -377,6 +381,7 @@ export function createApp(deps: Deps): Hono {
     app.route("/cli/config", cliConfigRoute(cli));
     const cliApi = new Hono();
     cliApi.use("*", cli.auth);
+    cliApi.use("*", enforceRoles("/cli/api"));
     cliApi.use("*", csrf(cfg));
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
     cliApi.get("/events", hubEvents);

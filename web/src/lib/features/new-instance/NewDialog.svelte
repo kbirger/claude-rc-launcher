@@ -12,8 +12,12 @@
   import type { StartArgs } from "../instances";
   import { createNewDialogModel } from "./model.svelte";
 
-  let { host, onclose, onstart, busyReason, initial }: {
+  let { host, onclose, onstart, busyReason, initial, canChooseUser = true, canSignInGitHub = true }: {
     host: string;
+    /** False hides Run as: the hub only lets an admin start an instance as another user. */
+    canChooseUser?: boolean;
+    /** False hides the GitHub sign-in: the hub only lets an admin start it. */
+    canSignInGitHub?: boolean;
     onclose: () => void;
     onstart: (a: StartArgs) => void;
     busyReason?: string;
@@ -27,6 +31,7 @@
     client: useQueryClient(),
     initial: () => initial,
     busyReason: () => busyReason,
+    canChooseUser: () => canChooseUser,
     onstart: (a) => onstart(a),
   });
 </script>
@@ -72,7 +77,7 @@
       </form>
     {/if}
     {#if model.cloning && model.listing}
-      <ClonePanel {host} parent={model.listing.path} user={model.chosenUser} oncloned={model.cloned} onclose={model.closeClone} onbusy={model.setCloneBusy} />
+      <ClonePanel {host} parent={model.listing.path} user={model.chosenUser} oncloned={model.cloned} onclose={model.closeClone} onbusy={model.setCloneBusy} canSignIn={canSignInGitHub} />
     {:else}
     <ul>
       {#each model.listing?.dirs ?? [] as d (d.path)}

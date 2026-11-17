@@ -16,6 +16,8 @@ export function createNewDialogModel(opts: {
   client: QueryClient;
   initial: () => NewInitial | undefined;
   busyReason: () => string | undefined;
+  /** False for a person who cannot start an instance as another user. The default is true. */
+  canChooseUser?: () => boolean;
   onstart: (a: StartArgs) => void;
 }) {
   const { host, client } = opts;
@@ -39,7 +41,8 @@ export function createNewDialogModel(opts: {
   const usersQ = createQuery(() => usersQuery(host), () => client);
   // An old node or an error: no clone button, no message.
   const nodeQ = createQuery(() => nodeQuery(host), () => client);
-  const usersInfo = $derived(usersQ.data?.selectable ? usersQ.data : null);
+  // A person who cannot name a user gets no selector, and no request names one: the hub lets only an admin do that.
+  const usersInfo = $derived(usersQ.data?.selectable && (opts.canChooseUser?.() ?? true) ? usersQ.data : null);
   const user = $derived(userPick ?? usersInfo?.default ?? "");
   // Only pass a user when the selector is shown.
   const chosenUser = $derived(usersInfo ? user : undefined);

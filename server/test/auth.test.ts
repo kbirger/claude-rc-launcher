@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createOidcClient, mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../src/auth";
+import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor, type OidcClient, type User } from "../src/auth";
 import type { Config, OidcUserAuth } from "../src/config";
+import { DEFAULT_ROLES } from "../src/roles";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const withSecret = (c: Config, s: string): Config => ({ ...c, userAuth: { ...(c.userAuth as OidcUserAuth), sessionSecret: s } });
@@ -312,4 +313,45 @@ test("createOidcClient does not contact the IdP until first use", async () => {
   (cfg.userAuth as OidcUserAuth).oidc.issuer = "http://127.0.0.1:1/";
   const c = await createOidcClient(cfg);
   await expect(c.authorizationUrl({ redirectUri: "http://x/cb", state: "s", codeVerifier: "v".repeat(43) })).rejects.toThrow();
+});
+
+describe("roles", () => {
+  const callbackWith = async (u: User, cfg = mkCfg()) => {
+    const oidc: OidcClient = { async authorizationUrl(p) { return `https://idp/authorize?state=${p.state}`; }, async exchange() { return u; } };
+    const app = build(cfg, oidc);
+    const { sc, state } = await login(app);
+    return { app, r: await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } }) };
+  };
+  test("the role none gives 403 and no session cookie", async () => {
+    const { r } = await callbackWith({ ...user, role: "none" });
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({ error: "access refused" });
+    expect(find(r, "session")).toBeUndefined();
+  });
+  test("the role is kept in the session", async () => {
+    const { app, r } = await callbackWith({ ...user, role: "write" });
+    const cookie = pair(find(r, "session")!);
+    const me = await app.request("/", { headers: { cookie } });
+    expect(((await me.json()) as { user: User }).user.role).toBe("write");
+  });
+  test("a session with no role has no role", async () => {
+    const cookie = await mintSessionCookie(mkCfg(), user, 1_000_000 + 60_000);
+    const me = await build().request("/", { headers: { cookie } });
+    expect(((await me.json()) as { user: User }).user.role).toBeUndefined();
+  });
+  test("a session with an unknown role value has no role", async () => {
+    const cookie = await mintSessionCookie(mkCfg(), { ...user, role: "root" } as unknown as User, 1_000_000 + 60_000);
+    const me = await build().request("/", { headers: { cookie } });
+    expect(((await me.json()) as { user: User }).user.role).toBeUndefined();
+  });
+  test("the cookie life follows session_ttl_hours, and is 12 hours without it", async () => {
+    const c = mkCfg();
+    const two = { ...c, userAuth: { ...(c.userAuth as OidcUserAuth), sessionTtlHours: 2 } } as Config;
+    expect(find((await callbackWith(user, two)).r, "session")).toContain("Max-Age=7200");
+    expect(find((await callbackWith(user)).r, "session")).toContain("Max-Age=43200");
+  });
+  test("the scope adds the role scope when one is set", () => {
+    expect(scopeFor(DEFAULT_ROLES)).toBe("openid email profile clauderc");
+    expect(scopeFor({ ...DEFAULT_ROLES, scope: undefined })).toBe("openid email profile");
+  });
 });

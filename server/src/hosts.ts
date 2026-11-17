@@ -161,13 +161,13 @@ export function hostsApi(o: {
     if (what) {
       const u = c.get("user" as never) as User | undefined;
       const hostId = /\/hosts\/([^/]+)/.exec(url.pathname)?.[1] ?? "unknown";
-      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} GET ${what} ${c.res.status}`);
+      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${hostId} GET ${what} ${c.res.status}`);
     }
     if (isWrite(c.req.method)) {
       const u = c.get("user" as never) as User | undefined;
       const pathname = new URL(c.req.url).pathname;
       const hostId = /\/hosts\/([^/]+)/.exec(pathname)?.[1] ?? "unknown";
-      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${hostId} ${c.req.method} ${pathname} ${c.res.status}`);
+      console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${hostId} ${c.req.method} ${pathname} ${c.res.status}`);
     }
   });
 
@@ -327,7 +327,7 @@ export function hostsApi(o: {
       const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
       const iid = instanceId(c);
       const line = (status: number) =>
-        `audit user=${who} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${iid} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status} nudge=${e.nudge ? "on" : "off"}`;
+        `audit user=${who} role=${u?.role ?? "read"} host=${clientOf(c).id} action=${method === "POST" ? "add" : "remove"} instance=${iid} scope=${e.scope} list=${e.list} rule=${JSON.stringify(e.rule)} status=${status} nudge=${e.nudge ? "on" : "off"}`;
       try {
         const r = await k.call(method, path(c), { json: { scope: e.scope, list: e.list, rule: e.rule, expectedHash: e.expectedHash, ...(e.nudge ? { nudge: true } : {}) }, timeoutMs: requestTimeoutMs });
         console.log(line(r.status === 200 || (r.status >= 400 && r.status <= 599) ? r.status : 502));
