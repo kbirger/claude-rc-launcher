@@ -13,6 +13,7 @@ const HELP: SettingsHelp = {
     { key: "spawnMode", label: "Session folders", values: [{ value: "same-dir", label: "Same folder", explanation: "same text" }, { value: "worktree", label: "Worktree", explanation: "tree text" }] },
   ],
 };
+const LOST = "The answer did not come back. The change may still be running. Look at the instance list before you try again.";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 // Moves the fake clock in small steps (TanStack batches its notifications on a timer) and runs the Svelte effects
 // after each step, so the fetch answers and the cache updates land.
@@ -327,15 +328,52 @@ describe("settings dialog model", () => {
     }
   });
 
-  test("a network error shows an error and keeps the dialog open", async () => {
+  test("a network error says the change may still run and keeps the dialog open", async () => {
     api.patch = () => { throw new TypeError("Failed to fetch"); };
     const d = dialog();
     d.model.set({ createSession: false, spawnMode: "same-dir" });
     d.model.apply();
     await settle();
-    expect(d.model.error).not.toBe("");
+    expect(d.model.error).toBe(LOST);
     expect(d.closed()).toBe(0);
     expect(d.model.busy).toBe(false);
     d.stop();
+  });
+
+  test("a hub 502 says the change may still run", async () => {
+    api.patch = () => json({ error: "nas: unreachable" }, 502);
+    const d = dialog();
+    d.model.set({ createSession: false, spawnMode: "same-dir" });
+    d.model.apply();
+    await settle();
+    expect(d.model.error).toBe(LOST);
+    expect(d.closed()).toBe(0);
+    d.stop();
+  });
+
+  test("applied false keeps the dialog open with the saved notice, and nothing is left to apply", async () => {
+    api.patch = () => json({ instance: { ...inst("a"), settings: { createSession: false, spawnMode: "same-dir" } }, previous: SETTINGS, applied: false });
+    const d = dialog();
+    d.model.set({ createSession: false, spawnMode: "same-dir" });
+    d.model.apply();
+    await settle();
+    expect(d.model.notice).toBe("Saved. The new settings start when you resume this folder. The node does not check them before then.");
+    expect(d.model.error).toBe("");
+    expect(d.model.changed).toBe(false);
+    expect(d.closed()).toBe(0);
+    d.stop();
+  });
+
+  test("applied true or an answer without applied closes the dialog with no notice", async () => {
+    for (const applied of [true, undefined]) {
+      api.patch = () => json({ instance: inst("a"), previous: SETTINGS, ...(applied === undefined ? {} : { applied }) });
+      const d = dialog();
+      d.model.set({ createSession: false, spawnMode: "same-dir" });
+      d.model.apply();
+      await settle();
+      expect(d.model.notice).toBe("");
+      expect(d.closed()).toBe(1);
+      d.stop();
+    }
   });
 });

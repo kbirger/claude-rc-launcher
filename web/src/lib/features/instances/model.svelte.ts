@@ -110,9 +110,14 @@ export function settingsErrorMessage(e: unknown): string {
     // Another change runs on this instance (a CLI, another tab, a pause or a resume). Nothing was applied or undone.
     return `Another change is running for this folder. Try again in a minute. Reason: ${e.message}`;
   }
-  if (e instanceof ApiError) return e.message;
-  return "The change did not reach the hub. Check the connection and try again.";
+  // The answer is lost (no connection, or the hub could not reach the node). The node may still run the change.
+  if (!(e instanceof ApiError) || e.status === 502) return LOST_ANSWER;
+  return e.message;
 }
+
+const LOST_ANSWER = "The answer did not come back. The change may still be running. Look at the instance list before you try again.";
+/** The notice after a change on a paused instance: the node only saved it. */
+export const SAVED_NOT_APPLIED = "Saved. The new settings start when you resume this folder. The node does not check them before then.";
 
 // The state and rules of the settings dialog of one instance. InstanceSettingsDialog only draws this.
 // It must run inside a component or an $effect.root. Mount it fresh for each open: it reads the instance once.
@@ -123,6 +128,8 @@ export function createSettingsDialogModel(opts: { host: string; client: QueryCli
   let current = $state<InstanceSettings>({ ...(opts.instance.settings ?? DEFAULT_SETTINGS) });
   let value = $state<InstanceSettings>({ ...current });
   let error = $state("");
+  // Set when the node only saved the change (a paused instance). The dialog then stays open to show it.
+  let notice = $state("");
   const m = createMutation(() => updateSettingsMutation(host, client), () => client);
   // A change of this instance that runs anywhere (also one that a closed dialog started) makes the dialog busy.
   const running = useMutationState(
@@ -137,6 +144,7 @@ export function createSettingsDialogModel(opts: { host: string; client: QueryCli
     get changed() { return changed; },
     get busy() { return busy; },
     get error() { return error; },
+    get notice() { return notice; },
     set(v: InstanceSettings) { value = v; },
     /** Sends the changed values. Nothing happens while a change runs or when nothing changed. */
     apply() {
@@ -145,10 +153,17 @@ export function createSettingsDialogModel(opts: { host: string; client: QueryCli
       if (value.createSession !== current.createSession) patch.createSession = value.createSession;
       if (value.spawnMode !== current.spawnMode) patch.spawnMode = value.spawnMode;
       error = "";
+      notice = "";
+      const sent = { ...value };
       m.mutate(
         { id, patch },
         {
-          onSuccess: () => opts.onclose(),
+          // An older node sends no `applied`: that reads as applied.
+          onSuccess: (r) => {
+            if (r?.applied !== false) return opts.onclose();
+            current = isSettings(r.instance?.settings) ? { ...r.instance.settings } : sent;
+            notice = SAVED_NOT_APPLIED;
+          },
           onError: (e) => {
             error = settingsErrorMessage(e);
             if (e instanceof ApiError && isSettings(e.body?.settings)) current = { ...e.body.settings };

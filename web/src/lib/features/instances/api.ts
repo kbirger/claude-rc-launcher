@@ -50,8 +50,11 @@ export async function getInstanceSettingsHelp(host: string): Promise<SettingsHel
     throw e;
   }
 }
-/** Changes the settings and restarts the instance. A refused or undone change answers 409 with the reason and the old settings. */
+/**
+ * Changes the settings and restarts the instance. A refused or undone change answers 409 with the reason and the old settings.
+ * `applied` is false when the instance is paused: the node only saved the change. An older node does not send it.
+ */
 export const updateInstanceSettings = (host: string, id: string, patch: SettingsPatch) =>
-  request<{ instance: Instance; previous: InstanceSettings }>("PATCH", `${hostUrl(host)}/instances/${encodeURIComponent(id)}`, patch);
+  request<{ instance: Instance; previous: InstanceSettings; applied?: boolean }>("PATCH", `${hostUrl(host)}/instances/${encodeURIComponent(id)}`, patch);
 /** Restarts one instance with its current settings. */
 export const restartInstance = (host: string, id: string) => request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/restart`);
