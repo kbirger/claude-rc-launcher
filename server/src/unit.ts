@@ -116,7 +116,7 @@ export function parseManaged(fileContent: string): { path: string } | null {
 }
 
 /** Split an ExecStart value into words. It undoes execWord: quotes, backslash escapes, %% and $$. */
-function execWords(value: string): string[] {
+export function execWords(value: string): string[] {
   const words: string[] = [];
   let cur = "";
   let has = false;

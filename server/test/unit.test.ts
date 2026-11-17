@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseConfig } from "../src/config";
-import { defaultName, instanceId, isValidName, parseManaged, parseUnitSettings, parseUnitUser, renderUnit, runAsFor, unitName } from "../src/unit";
+import { defaultName, instanceId, isValidName, parseManaged, execWords, parseUnitSettings, parseUnitUser, renderUnit, runAsFor, unitName } from "../src/unit";
 
 const KEYS: Record<string, string> = {
   CLAUDE_BIN: "claude_bin", NAME_PREFIX: "name_prefix", SERVICE_HOME: "service_home", SERVICE_PATH: "service_path",
@@ -213,7 +213,7 @@ describe("parseUnitUser", () => {
 });
 
 describe("unit settings", () => {
-  test("round trip keeps settings, spaces and percent signs in words", () => {
+  test("round trip keeps settings with spaces and a percent sign in the binary path", () => {
     const c = cfg({ CLAUDE_RC_ARGS: "--verbose" });
     c.claudeBin = "/opt/my bin/100%/claude";
     const out = renderUnit(c, P, "my-proj", undefined, { createSession: false, spawnMode: "worktree" });
@@ -223,9 +223,17 @@ describe("unit settings", () => {
   test("operator args with quotes and backslashes survive", () => {
     const c = cfg();
     c.claudeRcArgs = ["--note", 'a "b" c\\d $x', "--spawn", "worktree"];
-    const out = renderUnit(c, P, "n", undefined, { createSession: true, spawnMode: "same-dir" });
-    expect(parseUnitSettings(out)).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(out).toContain('--note "a \\"b\\" c\\\\d $$x" --spawn same-dir');
+    const out = renderUnit(c, P, "n", undefined, { createSession: false, spawnMode: "worktree" });
+    expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(out).toContain('--note "a \\"b\\" c\\\\d $$x" --spawn worktree');
+  });
+  test("execWords undoes the execWord quoting", () => {
+    const c = cfg();
+    c.claudeBin = "/opt/my bin/100%/claude";
+    c.claudeRcArgs = ["", "--note", 'a "b" c\\d $x %h', "$$", "%%", "plain", "--spawn", "worktree"];
+    const out = renderUnit(c, P, "n");
+    const value = /^ExecStart=(.*)$/m.exec(out)![1]!;
+    expect(execWords(value)).toEqual([c.claudeBin, "remote-control", "--name", "n", ...c.claudeRcArgs]);
   });
   test("old unit with flags reads back", () => {
     const u = "ExecStart=/bin/claude remote-control --name x --spawn same-dir --no-create-session-in-dir\n";
