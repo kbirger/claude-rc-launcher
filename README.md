@@ -871,6 +871,9 @@ claude-rc mkdir /srv alice-project --user alice  # the new folder is owned by al
 claude-rc start /srv/new-project --name demo     # prints the instance id
 claude-rc start /srv/new-project --user alice    # run the instance as alice
 claude-rc start /srv/new-project --force         # add the folder to trust, then start
+claude-rc start /srv/new-project --no-create-session --spawn worktree   # start with chosen settings
+claude-rc settings <id>                          # show the settings and what they mean
+claude-rc settings <id> --spawn worktree --yes   # change a setting and restart the instance
 claude-rc logs <id> --lines 50
 claude-rc stop <id>
 claude-rc logout
@@ -888,6 +891,43 @@ Add `--json` to any command for machine-readable output. Exit code 0 is success,
 you must log in again. The login is saved in `~/.config/claude-rc/credentials.json` (`$XDG_CONFIG_HOME` is
 honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
 reads no other environment variable.
+
+### Instance settings
+
+An instance is one `claude remote-control` server for one folder. Two settings control how that server starts.
+
+- `createSession` is on by default. When it is on, the server makes one empty session at start. After a crash or a
+  restart, it brings back its recorded sessions. When it is off, the server starts with no session and makes one
+  when a client asks. A server with this setting off restarts only if its folder has no recoverable session.
+  Otherwise it refuses with `This folder is already served by a terminal claude remote-control`. So crash recovery
+  does not work with it off.
+- `spawnMode` is `same-dir` by default. In that mode, every session works in the same folder, so two sessions can
+  change the same files. In `worktree` mode, each new session gets its own git worktree (a separate checkout of the
+  same repository). The first session stays in the folder. The folder must be a git repository.
+
+The settings are stored in different places. On Linux they are in the `ExecStart` line of the unit file. On
+Windows they are in the instance record in `instances.json`, as the fields `createSession` and `spawnMode`. The
+default for new instances comes from `instance.claude_rc_args` in the node config. Its built-in value is
+`["--spawn","same-dir"]`. The node also reports these defaults on its help route.
+
+Set them when you start an instance, or change them later:
+
+```sh
+claude-rc start <path> [--create-session|--no-create-session] [--spawn same-dir|worktree]
+claude-rc settings <id>                                   # show the current settings and their meaning
+claude-rc settings <id> [--create-session|--no-create-session] [--spawn same-dir|worktree] [--yes]
+```
+
+The `list` command shows the settings in a SETTINGS column. In the web UI, the start form has a Settings part.
+Each instance has a Settings action. Its dialog asks you to agree before it restarts the server.
+
+A change restarts the instance. The node waits up to 20 seconds for the new server. If the server exits with code
+69 (the "already served" refusal) or does not stay up, the node puts the old settings back. You then see the reason:
+HTTP status 409 with `settings_refused` or `settings_failed`. On Linux, a paused instance saves the new settings
+and applies them when you resume it. The Windows node does the same work in its supervisor loop. It has no pause.
+
+Only one change runs for each instance at a time. A change needs the `write` role, and the hub writes an audit line
+for each one. If a node is too old to have the settings route, the web page shows no settings controls for it.
 
 ### Update the client
 
