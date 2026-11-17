@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseConfig } from "../src/config";
-import { defaultName, instanceId, isValidName, parseManaged, parseUnitUser, renderUnit, runAsFor, unitName } from "../src/unit";
+import { defaultName, instanceId, isValidName, parseManaged, parseUnitSettings, parseUnitUser, renderUnit, runAsFor, unitName } from "../src/unit";
 
 const KEYS: Record<string, string> = {
   CLAUDE_BIN: "claude_bin", NAME_PREFIX: "name_prefix", SERVICE_HOME: "service_home", SERVICE_PATH: "service_path",
@@ -209,5 +209,41 @@ describe("parseUnitUser", () => {
   test("returns the name, or null when there is no User= line", () => {
     expect(parseUnitUser("[Service]\nUser=alice\nType=simple\n")).toBe("alice");
     expect(parseUnitUser("[Service]\nType=simple\n")).toBeNull();
+  });
+});
+
+describe("unit settings", () => {
+  test("round trip keeps settings, spaces and percent signs in words", () => {
+    const c = cfg({ CLAUDE_RC_ARGS: "--verbose" });
+    c.claudeBin = "/opt/my bin/100%/claude";
+    const out = renderUnit(c, P, "my-proj", undefined, { createSession: false, spawnMode: "worktree" });
+    expect(out).toContain('"/opt/my bin/100%%/claude" remote-control --name my-proj --verbose --spawn worktree --no-create-session-in-dir');
+    expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree" });
+  });
+  test("operator args with quotes and backslashes survive", () => {
+    const c = cfg();
+    c.claudeRcArgs = ["--note", 'a "b" c\\d $x', "--spawn", "worktree"];
+    const out = renderUnit(c, P, "n", undefined, { createSession: true, spawnMode: "same-dir" });
+    expect(parseUnitSettings(out)).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(out).toContain('--note "a \\"b\\" c\\\\d $$x" --spawn same-dir');
+  });
+  test("old unit with flags reads back", () => {
+    const u = "ExecStart=/bin/claude remote-control --name x --spawn same-dir --no-create-session-in-dir\n";
+    expect(parseUnitSettings(u)).toEqual({ createSession: false, spawnMode: "same-dir" });
+  });
+  test("a unit with no flags reads as the defaults", () => {
+    expect(parseUnitSettings("ExecStart=/bin/claude remote-control --name x\n")).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(parseUnitSettings("")).toEqual({ createSession: true, spawnMode: "same-dir" });
+  });
+  test("settings keep other operator flags", () => {
+    const c = cfg();
+    c.claudeRcArgs = ["--spawn", "worktree", "--permission-mode", "plan"];
+    const out = renderUnit(c, P, "n", undefined, { createSession: true, spawnMode: "same-dir" });
+    expect(out).toContain("--name n --permission-mode plan --spawn same-dir\n");
+  });
+  test("without settings the args are untouched", () => {
+    const c = cfg();
+    c.claudeRcArgs = ["--no-create-session-in-dir", "--x"];
+    expect(renderUnit(c, P, "n")).toContain("--name n --no-create-session-in-dir --x\n");
   });
 });

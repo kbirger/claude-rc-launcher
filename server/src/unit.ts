@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Config } from "./config";
+import { argsWith, settingsFromArgs, type InstanceSettings } from "./instancesettings";
 import { USER_NAME_RE, type SystemUser } from "./users";
 
 const MARKER = "# managed-by: claude-rc-launcher path=";
@@ -67,7 +68,7 @@ export function parseUnitUser(content: string): string | null {
   return m ? m[1] : null;
 }
 
-export function renderUnit(cfg: Config, absPath: string, name: string, runAs: RunAs = defaultRunAs(cfg)): string {
+export function renderUnit(cfg: Config, absPath: string, name: string, runAs: RunAs = defaultRunAs(cfg), settings?: InstanceSettings): string {
   if (!isValidName(name)) throw new Error("invalid instance name");
   safe("path", absPath);
   if (!absPath.startsWith("/")) throw new Error("path must be absolute");
@@ -92,7 +93,7 @@ export function renderUnit(cfg: Config, absPath: string, name: string, runAs: Ru
     envLine("PATH", runAs.path),
   ];
   if (cfg.sshAuthSock) lines.push(envLine("SSH_AUTH_SOCK", cfg.sshAuthSock));
-  const exec = [runAs.claudeBin, "remote-control", "--name", name, ...cfg.claudeRcArgs].map(execWord).join(" ");
+  const exec = [runAs.claudeBin, "remote-control", "--name", name, ...(settings ? argsWith(cfg.claudeRcArgs, settings) : cfg.claudeRcArgs)].map(execWord).join(" ");
   lines.push(
     `ExecStart=${exec}`,
     "StandardOutput=null",
@@ -112,4 +113,43 @@ export function parseManaged(fileContent: string): { path: string } | null {
   if (!first.startsWith(MARKER)) return null;
   const path = first.slice(MARKER.length);
   return path ? { path } : null;
+}
+
+/** Split an ExecStart value into words. It undoes execWord: quotes, backslash escapes, %% and $$. */
+function execWords(value: string): string[] {
+  const words: string[] = [];
+  let cur = "";
+  let has = false;
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i]!;
+    if (c === "\\" && i + 1 < value.length) {
+      cur += value[++i];
+      has = true;
+    } else if (c === '"') {
+      quoted = !quoted;
+      has = true;
+    } else if ((c === "%" || c === "$") && value[i + 1] === c) {
+      cur += c;
+      i++;
+      has = true;
+    } else if (!quoted && /\s/.test(c)) {
+      if (has) words.push(cur);
+      cur = "";
+      has = false;
+    } else {
+      cur += c;
+      has = true;
+    }
+  }
+  if (has) words.push(cur);
+  return words;
+}
+
+/** Read the instance settings from the ExecStart line. The flags come after "--name <value>". */
+export function parseUnitSettings(content: string): InstanceSettings {
+  const m = /^ExecStart=(.*)$/m.exec(content);
+  const words = m ? execWords(m[1]!) : [];
+  const i = words.indexOf("--name");
+  return settingsFromArgs(i >= 0 ? words.slice(i + 2) : []);
 }

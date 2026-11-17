@@ -5,15 +5,16 @@ import { resolveWithinRoots } from "./paths";
 import type { Runner } from "./runner";
 import { fileTrust, type TrustStore } from "./trust";
 import {
-  defaultName, defaultRunAs, instanceId, isValidName, parseManaged, parseUnitUser, renderUnit, runAsFor, unitName, type RunAs,
+  defaultName, defaultRunAs, instanceId, isValidName, parseManaged, parseUnitSettings, parseUnitUser, renderUnit, runAsFor, unitName, type RunAs,
 } from "./unit";
+import type { InstanceSettings } from "./instancesettings";
 import type { Identity } from "./asuser";
 import { passwdDirectory, type UserDirectory } from "./users";
 
 export type { RunResult, Runner } from "./runner";
 export { bunRunner } from "./runner";
 
-export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string };
+export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string; settings?: InstanceSettings };
 
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 
@@ -171,7 +172,7 @@ export class InstanceService implements Instances {
     const managed = parseManaged(content);
     if (!managed) return null;
     const user = parseUnitUser(content);
-    return { id, path: managed.path, name: nameFromUnit(content), ...(user ? { user } : {}), ...(await this.show(id)) };
+    return { id, path: managed.path, name: nameFromUnit(content), settings: parseUnitSettings(content), ...(user ? { user } : {}), ...(await this.show(id)) };
   }
 
   async claudeHome(id: string): Promise<{ path: string; home: string; identity?: Identity }> {

@@ -80,6 +80,16 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
+describe("settings", () => {
+  test("describe carries settings from the unit", async () => {
+    const id = instanceId("/srv/proj");
+    const c = cfg({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir"] });
+    await writeFile(join(dir, unitName(id)), renderUnit(c, "/srv/proj", "my"));
+    const [inst] = await svc({ claudeRcArgs: [] }).list();
+    expect(inst).toMatchObject({ name: "my", settings: { createSession: false, spawnMode: "worktree" } });
+  });
+});
+
 describe("start", () => {
   test("writes unit then daemon-reload then enable --now", async () => {
     const inst = await svc().start({ path: "/srv/proj", name: "my" });
@@ -162,7 +172,7 @@ describe("list", () => {
     await writeFile(join(dir, "claude-rc-abcdef012345.service"), "[Unit]\n");
     await writeFile(join(dir, `claude-rc-${id}.txt`), renderUnit(cfg(), "/srv/c", "x"));
     const l = await svc().list();
-    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", user: "root", state: "active", startedAt: "2024-11-06T10:00:00.000Z" }]);
+    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", user: "root", settings: { createSession: true, spawnMode: "same-dir" }, state: "active", startedAt: "2024-11-06T10:00:00.000Z" }]);
     expect(calls).toEqual([sc("show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id))]);
   });
   test("garbage or empty timestamp -> null", async () => {
