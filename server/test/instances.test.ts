@@ -17,7 +17,7 @@ let failDisable: boolean;
 let gate: Promise<void> | null;
 let events: string[];
 
-const SHOW = "ActiveState=active\nSubState=running\nActiveEnterTimestamp=@1730887200\n";
+const SHOW = "ActiveState=active\nSubState=running\nActiveEnterTimestamp=@1730887200\nUnitFileState=enabled\n";
 let showOverride: string | null = null;
 let journalFail = false;
 /** A test can answer a call itself. Undefined falls through to the default answers. */
@@ -609,6 +609,13 @@ describe("start with settings", () => {
     expect(trustAdds).toBe(0);
     expect(calls).toEqual([]);
   });
+  test("an operator default of worktree in a folder that is not a git repository is 400 and writes nothing", async () => {
+    const s = svc({ claudeRcArgs: ["--spawn", "worktree"] }, { repoKind: async () => undefined });
+    expect(await status(s.start({ path: "/srv/proj" }))).toBe(400);
+    expect(await status(s.start({ path: "/srv/proj", settings: { createSession: false } }))).toBe(400);
+    expect(await readdir(dir)).toEqual([]);
+    expect(calls).toEqual([]);
+  });
   test("worktree in a git repository and createSession off go into the unit", async () => {
     const inst = await svc({}, { repoKind: async () => "git" }).start({ path: "/srv/proj", settings: { spawnMode: "worktree", createSession: false } });
     expect(inst.settings).toEqual({ createSession: false, spawnMode: "worktree" });
@@ -630,8 +637,17 @@ describe("restart", () => {
   test("restart is systemctl restart and an unmanaged id is 404", async () => {
     const id = await seed("/srv/a");
     await svc().restart(id);
-    expect(calls).toEqual([sc("restart", unitName(id))]);
+    expect(calls).toEqual([sc("show", "-p", "ActiveState,UnitFileState", unitName(id)), sc("restart", unitName(id))]);
     expect(await status(svc().restart("abcdef012345"))).toBe(404);
+  });
+  test("restart on a paused instance is 409 and never restarts", async () => {
+    const id = await seed("/srv/a");
+    hook = (_cmd, args) => (args[0] === "show" ? { code: 0, stdout: "ActiveState=inactive\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    let err: HttpError | undefined;
+    try { await svc().restart(id); } catch (e) { err = e as HttpError; }
+    expect(err!.status).toBe(409);
+    expect(err!.message).toBe("instance is paused, resume it first");
+    expect(calls.some((c) => c.args[0] === "restart")).toBe(false);
   });
 });
 
@@ -647,7 +663,7 @@ describe("update", () => {
     expect(r.instance).toMatchObject({ id, name: "alpha", settings: { createSession: false, spawnMode: "same-dir" }, state: "active" });
     const content = await readFile(join(dir, unitName(id)), "utf8");
     expect(content).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
-    expect(calls.slice(0, 2)).toEqual([sc("daemon-reload"), sc("restart", unitName(id))]);
+    expect(calls.filter((c) => c.args[0] !== "show").slice(0, 2)).toEqual([sc("daemon-reload"), sc("restart", unitName(id))]);
     expect(restarts()).toBe(1);
     expect(await readdir(dir)).toEqual([unitName(id)]); // no .tmp file left
   });
@@ -714,6 +730,47 @@ describe("update", () => {
     expect(err!.message).toContain("69");
     expect(err!.message).toContain("undo broke");
     expect((err!.extra as { settings?: unknown }).settings).toBeUndefined();
+  });
+
+  test("a paused instance gets the new unit and a daemon-reload, and is not restarted", async () => {
+    const id = await seed("/srv/a", "alpha");
+    hook = (_cmd, args) => (args[0] === "show" && !isProbe(args) ? { code: 0, stdout: "ActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    const slept: number[] = [];
+    const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
+    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(r.instance).toMatchObject({ settings: { createSession: false, spawnMode: "same-dir" }, state: "inactive" });
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
+    expect(calls.some((c) => c.args[0] === "daemon-reload")).toBe(true);
+    expect(restarts()).toBe(0);
+    expect(calls.some((c) => isProbe(c.args))).toBe(false);
+    expect(slept).toEqual([]);
+  });
+
+  test("a paused instance with a failed daemon-reload gets its old unit back and 409 settings_failed", async () => {
+    const id = await seed("/srv/a");
+    const before = await readFile(join(dir, unitName(id)), "utf8");
+    let reloads = 0;
+    hook = (_cmd, args) => {
+      if (args[0] === "show") return { code: 0, stdout: "ActiveState=inactive\nUnitFileState=disabled\n", stderr: "" };
+      if (args[0] === "daemon-reload" && ++reloads === 1) return { code: 1, stdout: "", stderr: "reload broke" };
+      return undefined;
+    };
+    let err: HttpError | undefined;
+    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
+    expect(err!.status).toBe(409);
+    expect(err!.extra).toEqual({ code: "settings_failed", settings: { createSession: true, spawnMode: "same-dir" } });
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
+    expect(restarts()).toBe(0);
+  });
+
+  test("an enabled instance that is activating is still restarted and settles", async () => {
+    const id = await seed("/srv/a");
+    hook = (_cmd, args) => (args[0] === "show" && !isProbe(args) ? { code: 0, stdout: "ActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\n", stderr: "" } : undefined);
+    const slept: number[] = [];
+    const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
+    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(restarts()).toBe(1);
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(20_000);
   });
 
   test("the settle wait is 20 seconds of fake time", async () => {

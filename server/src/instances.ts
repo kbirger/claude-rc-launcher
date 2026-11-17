@@ -276,7 +276,7 @@ export class InstanceService implements Instances {
     return out;
   }
 
-  /** If the patch asks for worktree and the folder is not a git repository, this throws 400. */
+  /** If the settings ask for worktree and the folder is not a git repository, this throws 400. */
   private async checkWorktree(patch: SettingsPatch, real: string): Promise<void> {
     if (patch.spawnMode === "worktree" && (await this.repoKind(real)) === undefined) {
       throw new HttpError(400, "the worktree mode needs a git repository");
@@ -288,8 +288,10 @@ export class InstanceService implements Instances {
     if (input.settings !== undefined && !isValidPatch(input.settings)) throw new HttpError(400, "invalid settings");
     const real = await this.resolvePath(input.path, this.cfg.roots);
     // The operator list gives the defaults. Without settings the unit stays as it was before settings existed.
-    const settings = input.settings === undefined ? undefined : { ...settingsFromArgs(this.cfg.claudeRcArgs), ...definedFields(input.settings) };
-    if (input.settings !== undefined) await this.checkWorktree(input.settings, real);
+    const merged: InstanceSettings = { ...settingsFromArgs(this.cfg.claudeRcArgs), ...definedFields(input.settings ?? {}) };
+    const settings = input.settings === undefined ? undefined : merged;
+    // The check uses the value that the unit really gets, so an operator default of worktree is checked too.
+    await this.checkWorktree(merged, real);
     const id = instanceId(real);
     const name = input.name ?? defaultName(this.cfg, real);
     const t = await this.target(input.user);
@@ -384,7 +386,26 @@ export class InstanceService implements Instances {
   }
 
   async restart(id: string): Promise<void> {
-    await this.change(id, ["restart"], "restart");
+    if (this.inflight.has(id)) throw new HttpError(409, "operation in progress");
+    this.inflight.set(id, undefined);
+    try {
+      await this.requireManaged(id);
+      // A restart starts a unit that is not running. So a paused instance must be resumed first.
+      if (await this.isPaused(id)) throw new HttpError(409, "instance is paused, resume it first");
+      const unit = unitName(id);
+      const r = await this.sysctl(["restart", unit]);
+      if (r.code !== 0) throw new HttpError(500, `failed to restart ${unit}: ${r.stderr.trim()}`);
+    } finally {
+      this.inflight.delete(id);
+    }
+  }
+
+  /** A paused instance is one whose unit is not enabled. That is the state that `pause` leaves. A crash loop is not a pause. */
+  private async isPaused(id: string): Promise<boolean> {
+    const unit = unitName(id);
+    const r = await this.sysctl(["show", "-p", "ActiveState,UnitFileState", unit]);
+    if (r.code !== 0) throw new HttpError(500, `failed to read the state of ${unit}: ${r.stderr.trim()}`);
+    return showValues(r.stdout).UnitFileState !== "enabled";
   }
 
   /** Write the file under a temporary name and rename it over the old one, so a reader never sees half a file. */
@@ -443,6 +464,7 @@ export class InstanceService implements Instances {
       }
 
       const unit = unitName(id);
+      const paused = await this.isPaused(id);
       try {
         await this.replaceFile(file, content);
       } catch (e) {
@@ -450,10 +472,12 @@ export class InstanceService implements Instances {
       }
       let failure: { code: "settings_refused" | "settings_failed"; reason: string } | undefined;
       const reload = await this.sysctl(["daemon-reload"]);
-      const r = reload.code === 0 ? await this.sysctl(["restart", unit]) : reload;
+      // A paused instance is not restarted. The new settings apply when the user resumes it.
+      const r = reload.code === 0 && !paused ? await this.sysctl(["restart", unit]) : reload;
       if (r.code !== 0) {
-        failure = { code: "settings_failed", reason: `failed to restart ${unit}: ${r.stderr.trim()}` };
-      } else {
+        const what = reload.code !== 0 ? "daemon-reload failed" : `failed to restart ${unit}`;
+        failure = { code: "settings_failed", reason: `${what}: ${r.stderr.trim()}` };
+      } else if (!paused) {
         const settled = await waitSettled(() => this.probe(id), { timeoutMs: SETTLE_MS, intervalMs: PROBE_INTERVAL_MS, sleep: this.sleep });
         if (settled !== "ok") failure = { code: settled === "refused" ? "settings_refused" : "settings_failed", reason: settleReason(settled) };
       }
@@ -469,7 +493,7 @@ export class InstanceService implements Instances {
       }
       const reload2 = await this.sysctl(["daemon-reload"]);
       if (reload2.code !== 0) throw undoFailed(`daemon-reload failed: ${reload2.stderr.trim()}`);
-      const r2 = await this.sysctl(["restart", unit]);
+      const r2 = paused ? reload2 : await this.sysctl(["restart", unit]);
       if (r2.code !== 0) throw undoFailed(`failed to restart ${unit}: ${r2.stderr.trim()}`);
       throw new HttpError(409, failure.reason, { code: failure.code, settings: previous });
     } finally {
