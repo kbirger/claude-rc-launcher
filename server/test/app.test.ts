@@ -211,12 +211,12 @@ describe("instances", () => {
   });
   test("PATCH settings: 200 with previous, bad body 400, bad id 400, no backend support 501, 409 keeps its extra fields", async () => {
     const prev = { createSession: true, spawnMode: "same-dir" };
-    const { app, calls } = mk({ update: async (id: string, p: any) => { calls.push(["update", id, p]); return { instance: inst, previous: prev }; } });
+    const { app, calls } = mk({ update: async (id: string, p: any) => { calls.push(["update", id, p]); return { instance: inst, previous: prev, applied: false }; } });
     const url = `/api/hosts/local/instances/${ID}`;
     const patch = (u: string, body: unknown) => app.request(u, { method: "PATCH", headers: H(), body: JSON.stringify(body) });
     const r = await patch(url, { createSession: false });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ instance: inst, previous: prev });
+    expect(await r.json()).toEqual({ instance: inst, previous: prev, applied: false });
     expect(calls).toEqual([["update", ID, { createSession: false }]]);
     expect((await patch(url, {})).status).toBe(400);
     expect((await patch("/api/hosts/local/instances/..%2Fx", { createSession: false })).status).toBe(400);

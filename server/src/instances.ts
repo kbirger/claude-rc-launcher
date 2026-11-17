@@ -19,6 +19,8 @@ export type { RunResult, Runner } from "./runner";
 export { bunRunner } from "./runner";
 
 export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string; settings?: InstanceSettings };
+/** The answer of a settings change. `applied` is false when the change was only saved (a paused instance). */
+export type UpdateResult = { instance: Instance; previous: InstanceSettings; applied: boolean };
 
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 
@@ -35,8 +37,9 @@ export interface Instances {
   /**
    * Changes the settings and restarts the instance. If the instance does not stay up, the old settings come back
    * and the call throws 409 with `code` and the old `settings`. A patch equal to the current settings does nothing.
+   * `applied` is false when the instance is paused: the change is only saved, and nothing checks it before the resume.
    */
-  update?(id: string, patch: SettingsPatch): Promise<{ instance: Instance; previous: InstanceSettings }>;
+  update?(id: string, patch: SettingsPatch): Promise<UpdateResult>;
   /** Stops the service but keeps the instance, so `resume` can start it again. Not every backend has it. */
   pause?(id: string): Promise<void>;
   resume?(id: string): Promise<void>;
@@ -400,12 +403,16 @@ export class InstanceService implements Instances {
     }
   }
 
-  /** A paused instance is one whose unit is not enabled. That is the state that `pause` leaves. A crash loop is not a pause. */
+  /**
+   * A paused instance is one whose unit is not enabled and not active. That is the state that `pause` leaves.
+   * A unit that runs but is not enabled (started by hand) is not paused. A crash loop (enabled, activating) is not a pause.
+   */
   private async isPaused(id: string): Promise<boolean> {
     const unit = unitName(id);
     const r = await this.sysctl(["show", "-p", "ActiveState,UnitFileState", unit]);
     if (r.code !== 0) throw new HttpError(500, `failed to read the state of ${unit}: ${r.stderr.trim()}`);
-    return showValues(r.stdout).UnitFileState !== "enabled";
+    const kv = showValues(r.stdout);
+    return kv.UnitFileState !== "enabled" && kv.ActiveState !== "active";
   }
 
   /** Write the file under a temporary name and rename it over the old one, so a reader never sees half a file. */
@@ -429,7 +436,7 @@ export class InstanceService implements Instances {
     return kv.ActiveState === "active" ? "up" : "down";
   }
 
-  async update(id: string, patch: SettingsPatch): Promise<{ instance: Instance; previous: InstanceSettings }> {
+  async update(id: string, patch: SettingsPatch): Promise<UpdateResult> {
     if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(404, "instance not found");
     // The two checks come before the first await, so two calls at the same time cannot both pass.
     const release = this.changes.tryLock(id);
@@ -453,7 +460,8 @@ export class InstanceService implements Instances {
       if (!managed) throw new HttpError(404, "instance not found");
       const previous = parseUnitSettings(old);
       const next: InstanceSettings = { ...previous, ...definedFields(patch) };
-      if (sameSettings(previous, next)) return { instance: (await this.describe(id, old))!, previous };
+      // Nothing changes, so there is nothing to apply later: the answer is applied true.
+      if (sameSettings(previous, next)) return { instance: (await this.describe(id, old))!, previous, applied: true };
       await this.checkWorktree(patch, managed.path);
       const t = await this.target(parseUnitUser(old) ?? undefined);
       let content: string;
@@ -481,7 +489,7 @@ export class InstanceService implements Instances {
         const settled = await waitSettled(() => this.probe(id), { timeoutMs: SETTLE_MS, intervalMs: PROBE_INTERVAL_MS, sleep: this.sleep });
         if (settled !== "ok") failure = { code: settled === "refused" ? "settings_refused" : "settings_failed", reason: settleReason(settled) };
       }
-      if (!failure) return { instance: (await this.describe(id, content))!, previous };
+      if (!failure) return { instance: (await this.describe(id, content))!, previous, applied: !paused };
 
       // Undo: the old bytes go back, and the unit restarts with them.
       const undoFailed = (why: string) =>

@@ -2,7 +2,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { ChangeLock, isValidPatch, PROBE_INTERVAL_MS, REFUSED_EXIT_CODE, sameSettings, SETTLE_MS, settleReason, waitSettled, type ProbeResult } from "../instancechange";
-import { HttpError, type Instance, type Instances, type UsersInfo } from "../instances";
+import { HttpError, type Instance, type Instances, type UpdateResult, type UsersInfo } from "../instances";
 import { argsWith, settingsFromArgs, type InstanceSettings, type SettingsPatch, type SpawnMode } from "../instancesettings";
 import { resolveWithinRoots } from "../paths";
 import { repoKind, type RepoKind } from "../repokind";
@@ -435,7 +435,7 @@ export class WinInstances implements Instances {
     return "down";
   }
 
-  async update(id: string, patch: SettingsPatch): Promise<{ instance: Instance; previous: InstanceSettings }> {
+  async update(id: string, patch: SettingsPatch): Promise<UpdateResult> {
     if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(404, "instance not found");
     // The two checks come before the first await, so two calls at the same time cannot both pass.
     const release = this.changes.tryLock(id);
@@ -451,7 +451,8 @@ export class WinInstances implements Instances {
       const e = this.requireEntry(id);
       const previous: InstanceSettings = { ...e.settings };
       const next: InstanceSettings = { ...previous, ...definedFields(patch) };
-      if (sameSettings(previous, next)) return { instance: this.describe(e), previous };
+      // Windows has no pause, so a change is always applied.
+      if (sameSettings(previous, next)) return { instance: this.describe(e), previous, applied: true };
       await this.checkWorktree(patch.spawnMode, e.path);
 
       const logFrom = await this.logSize(id);
@@ -473,7 +474,7 @@ export class WinInstances implements Instances {
       }
       if (!failure) {
         const settled = await waitSettled(() => this.probe(e, logFrom), { timeoutMs: SETTLE_MS, intervalMs: PROBE_INTERVAL_MS, sleep: this.deps.sleep });
-        if (settled === "ok") return { instance: this.describe(e), previous };
+        if (settled === "ok") return { instance: this.describe(e), previous, applied: true };
         failure = { code: settled === "refused" ? "settings_refused" : "settings_failed", reason: settleReason(settled) };
       }
 

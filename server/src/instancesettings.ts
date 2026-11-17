@@ -62,7 +62,7 @@ export const SETTINGS_HELP: SettingsHelp = {
             "The server starts with no session. When a client asks, the server makes a session. While the folder holds a recoverable session, the server refuses to restart, so crash recovery does not work.",
         },
       ],
-      limits: "A change restarts the instance.",
+      limits: "A change restarts a running instance and checks that it stays up. A paused instance only saves the change.",
     },
     {
       key: "spawnMode",
@@ -80,7 +80,7 @@ export const SETTINGS_HELP: SettingsHelp = {
             "Each new session gets its own git worktree. The first session stays in the folder. The folder must be a git repository.",
         },
       ],
-      limits: "A change restarts the instance. The worktree mode needs a git repository.",
+      limits: "A change restarts a running instance and checks that it stays up. A paused instance only saves the change. The worktree mode needs a git repository.",
     },
   ],
 };

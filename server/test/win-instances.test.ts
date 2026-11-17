@@ -588,6 +588,7 @@ describe("instance settings", () => {
     expect((await s.list())[0]!.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
     const r = await settle(s.update(instanceId(P1), { createSession: false }));
     expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(r.applied).toBe(true);
     expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "same-dir" });
   });
 

@@ -649,6 +649,12 @@ describe("restart", () => {
     expect(err!.message).toBe("instance is paused, resume it first");
     expect(calls.some((c) => c.args[0] === "restart")).toBe(false);
   });
+  test("restart on a unit that is active but not enabled (started by hand) restarts it", async () => {
+    const id = await seed("/srv/a");
+    hook = (_cmd, args) => (args[0] === "show" ? { code: 0, stdout: "ActiveState=active\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    await svc().restart(id);
+    expect(calls.some((c) => c.args[0] === "restart")).toBe(true);
+  });
 });
 
 describe("update", () => {
@@ -661,6 +667,7 @@ describe("update", () => {
     const r = await svc({}, noSleep).update(id, { createSession: false });
     expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
     expect(r.instance).toMatchObject({ id, name: "alpha", settings: { createSession: false, spawnMode: "same-dir" }, state: "active" });
+    expect(r.applied).toBe(true);
     const content = await readFile(join(dir, unitName(id)), "utf8");
     expect(content).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
     expect(calls.filter((c) => c.args[0] !== "show").slice(0, 2)).toEqual([sc("daemon-reload"), sc("restart", unitName(id))]);
@@ -739,6 +746,7 @@ describe("update", () => {
     const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
     expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
     expect(r.instance).toMatchObject({ settings: { createSession: false, spawnMode: "same-dir" }, state: "inactive" });
+    expect(r.applied).toBe(false);
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
     expect(calls.some((c) => c.args[0] === "daemon-reload")).toBe(true);
     expect(restarts()).toBe(0);
@@ -760,6 +768,23 @@ describe("update", () => {
     expect(err!.status).toBe(409);
     expect(err!.extra).toEqual({ code: "settings_failed", settings: { createSession: true, spawnMode: "same-dir" } });
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
+    expect(restarts()).toBe(0);
+  });
+
+  test("a unit that is active but not enabled is not paused: it restarts, settles and answers applied true", async () => {
+    const id = await seed("/srv/a");
+    hook = (_cmd, args) => (args[0] === "show" && !isProbe(args) ? { code: 0, stdout: "ActiveState=active\nSubState=running\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    const slept: number[] = [];
+    const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
+    expect(r.applied).toBe(true);
+    expect(restarts()).toBe(1);
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(20_000);
+  });
+
+  test("a change equal to the current settings answers applied true and does nothing", async () => {
+    const id = await seed("/srv/a");
+    const r = await svc({}, noSleep).update(id, { createSession: true });
+    expect(r.applied).toBe(true);
     expect(restarts()).toBe(0);
   });
 
