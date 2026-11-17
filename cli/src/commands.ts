@@ -184,7 +184,7 @@ export async function runCommand(name: CommandName, args: string[], flags: Flags
           ...(next.spawnMode !== old.spawnMode ? [`spawn: ${sanitizeLine(String(old.spawnMode))} to ${sanitizeLine(String(next.spawnMode))}`] : []),
         ];
         out(changes.length > 0 ? changes.join("\n") : "nothing changes");
-        out("A change restarts the server of this instance.");
+        out("If the instance runs, a change restarts the server. If it is paused, the change is only saved.");
         const answer = readLine ? await readLine("Continue? [y/N] ") : "";
         if (!/^(y|yes)$/i.test(answer.trim())) throw new ExitError("not changed", 1);
       }

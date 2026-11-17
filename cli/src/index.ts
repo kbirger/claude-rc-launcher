@@ -27,7 +27,7 @@ Commands:
                                      start an instance   (--host <id>)
   settings <id> [--create-session|--no-create-session] [--spawn <same-dir|worktree>] [--yes]
                                      show or change the settings of an instance (--host <id>)
-                                     a change restarts a running instance, a paused one only saves it
+                                     a change restarts a running instance. A paused one only saves it.
   stop <id>                          stop an instance    (--host <id>)
   logs <id> [--lines <n>]            show instance logs  (--host <id>)
   ls [path] [--user <u>]             list directories    (--host <id>)

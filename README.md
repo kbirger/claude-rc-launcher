@@ -920,7 +920,7 @@ claude-rc settings <id> [--create-session|--no-create-session] [--spawn same-dir
 ```
 
 The `list` command shows the settings in a SETTINGS column. In the web UI, the start form has a Settings part.
-Each instance has a Settings action. Its dialog warns that applying the change restarts the server. The restart starts when you press Apply.
+Each instance has a Settings action. Its dialog warns that applying the change restarts the server of a running folder, and that a paused folder only saves it. The change starts when you press Apply.
 
 A change restarts a running instance. The node waits up to 20 seconds for the new server. If the server exits with code
 69 (the "already served" refusal) or does not stay up, the node puts the old settings back. You then see the reason:

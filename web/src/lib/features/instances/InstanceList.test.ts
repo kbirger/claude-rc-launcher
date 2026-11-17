@@ -217,7 +217,7 @@ const HELP = {
     { key: "spawnMode", label: "Session folders", values: [{ value: "same-dir", label: "Same folder", explanation: "Node text for same." }, { value: "worktree", label: "Worktree", explanation: "Node text for worktree." }] },
   ],
 };
-const RESTART_TEXT = "Applying this restarts the server of this folder. If Create a session at start is on, its sessions come back.";
+const RESTART_TEXT = "If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.";
 const menuLabels = () => items().map((i) => i.textContent?.trim());
 const radio = (label: string) => [...document.querySelectorAll("label")].find((l) => l.textContent?.trim() === label)?.querySelector("input[type=radio]") as HTMLInputElement | null;
 const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined;
