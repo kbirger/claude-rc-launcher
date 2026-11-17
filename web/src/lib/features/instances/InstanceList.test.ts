@@ -219,7 +219,8 @@ const HELP = {
 };
 const RESTART_TEXT = "If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.";
 const menuLabels = () => items().map((i) => i.textContent?.trim());
-const radio = (label: string) => [...document.querySelectorAll("label")].find((l) => l.textContent?.trim() === label)?.querySelector("input[type=radio]") as HTMLInputElement | null;
+const radio = (label: string) => [...document.querySelectorAll("label")].find((l) => l.querySelector("[data-slot=field-title]")?.textContent?.trim() === label)?.querySelector("[role=radio]") as HTMLButtonElement | null;
+const checked = (label: string) => radio(label)?.getAttribute("aria-checked") === "true";
 const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined;
 async function openSettings() {
   await show();
@@ -267,12 +268,12 @@ test("Settings opens a dialog with the node text, prefilled, and sends nothing u
   const text = document.body.textContent!;
   expect(text).toContain(RESTART_TEXT);
   for (const s of ["Create a session at start", "Session folders", "Node text for on.", "Node text for off.", "Node text for same.", "Node text for worktree.", "Node limits text."]) expect(text).toContain(s);
-  expect(radio("Off")!.checked).toBe(true);
-  expect(radio("Worktree")!.checked).toBe(true);
+  expect(checked("Off")).toBe(true);
+  expect(checked("Worktree")).toBe(true);
   expect(button("Apply")!.disabled).toBe(true);
   pick("On");
   pick("Same folder");
-  expect(radio("On")!.checked).toBe(true);
+  expect(checked("On")).toBe(true);
   await new Promise((r) => setTimeout(r, 50));
   expect(patches).toEqual([]);
   button("Apply")!.click();

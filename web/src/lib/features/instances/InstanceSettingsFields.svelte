@@ -1,4 +1,6 @@
 <script lang="ts">
+  import * as Field from "#lib/components/ui/field/index.js";
+  import * as RadioGroup from "#lib/components/ui/radio-group/index.js";
   import type { InstanceSettings, SettingsHelp } from "./api";
 
   // Draws each setting of the node help as a choice, with the node explanation under each value. All text comes from the
@@ -15,8 +17,10 @@
       .filter((s) => s.values.length > 0),
   );
 
-  function choose(key: "createSession" | "spawnMode", v: boolean | string) {
-    onchange({ ...value, [key]: v } as InstanceSettings);
+  // The radio group works with strings, so a value is matched by its text and the node value is sent back unchanged.
+  function choose(key: "createSession" | "spawnMode", values: { value: boolean | string }[], text: string) {
+    const found = values.find((v) => String(v.value) === text);
+    if (found) onchange({ ...value, [key]: found.value } as InstanceSettings);
   }
 </script>
 
@@ -24,21 +28,19 @@
   {#each shown as s, n (s.key)}
     <fieldset class="m-0 grid min-w-0 gap-2 border-0 p-0" {disabled}>
       <legend class="mb-1 p-0 text-sm font-medium [overflow-wrap:anywhere]">{s.label}</legend>
-      {#each s.values as v, k (k)}
-        <div class="grid gap-0.5">
-          <label class="flex min-h-11 items-center gap-3 text-sm [overflow-wrap:anywhere]">
-            <input
-              type="radio"
-              name="{uid}-{n}"
-              class="size-5 w-auto shrink-0 accent-primary"
-              checked={value[s.key] === v.value}
-              aria-describedby="{uid}-{n}-{k}"
-              onchange={() => choose(s.key, v.value)}
-            />{v.label}
-          </label>
-          <p id="{uid}-{n}-{k}" class="m-0 pl-8 text-xs text-muted-foreground [overflow-wrap:anywhere]">{v.explanation}</p>
-        </div>
-      {/each}
+      <RadioGroup.Root value={String(value[s.key])} {disabled} aria-label={s.label} onValueChange={(text) => choose(s.key, s.values, text)}>
+        {#each s.values as v, k (k)}
+          <Field.Label for="{uid}-{n}-{k}">
+            <Field.Field orientation="horizontal">
+              <Field.Content>
+                <Field.Title>{v.label}</Field.Title>
+                <Field.Description>{v.explanation}</Field.Description>
+              </Field.Content>
+              <RadioGroup.Item value={String(v.value)} id="{uid}-{n}-{k}" class="mt-0.5" />
+            </Field.Field>
+          </Field.Label>
+        {/each}
+      </RadioGroup.Root>
       {#if s.limits}<p class="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{s.limits}</p>{/if}
     </fieldset>
   {/each}
