@@ -54,6 +54,14 @@ export function cleanOrigin(label: string, v: string): string {
   return u.origin;
 }
 
+/** The hub address. The redirect needs the origin only, so a path is a mistake. A trailing slash is fine. */
+export function publicOrigin(v: string): string {
+  const origin = cleanOrigin("--public-url", v);
+  const u = new URL(v);
+  if (u.pathname !== "/" || u.search || u.hash) throw new Error("--public-url must be an address without a path, for example https://rc.example.com");
+  return origin;
+}
+
 export const validSlug = (v: string): string | undefined => (/^[a-z0-9][a-z0-9-]*$/.test(v) ? undefined : "a slug has only a-z, 0-9 and -");
 export const validName = (v: string): string | undefined => (/^[A-Za-z0-9_.-]+$/.test(v) ? undefined : "use only letters, digits, _, . and -");
 
@@ -136,7 +144,7 @@ export function parseSettings(argv: string[], env: Record<string, string | undef
   const hub = get("WRITE_HUB_CONFIG");
   return {
     settings,
-    publicUrl: rawPublic ? cleanOrigin("--public-url", rawPublic) : "",
+    publicUrl: rawPublic ? publicOrigin(rawPublic) : "",
     apply: bools.has("apply"),
     interactive,
     secretFile: get("SECRET_FILE") ?? "./oidc-client.secret",

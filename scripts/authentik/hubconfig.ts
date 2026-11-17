@@ -21,7 +21,12 @@ function entries(r: AppsResult, s: Settings): Entry[] {
 }
 
 const quote = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-const isHeader = (l: string) => /^\s*\[[^\]]+\]\s*(#.*)?$/.test(l);
+const isHeader = (l: string) => /^\s*\[\[?[^\]]+\]\]?\s*(#.*)?$/.test(l);
+/** True when the line is the header `[table]`, with spaces or a comment after it. */
+const isTable = (l: string, table: string) => {
+  const m = /^\s*\[\s*([^\[\]]+?)\s*\]\s*(#.*)?$/.exec(l);
+  return !!m && m[1] === table;
+};
 
 /** A snippet to paste into the hub configuration. */
 export function snippet(r: AppsResult, s: Settings): string {
@@ -49,19 +54,19 @@ const isPlaceholder = (v: string) => /example\.com|replace-with/.test(v);
 
 /** Sets one key in one table by line, so comments and other tables stay as they are. */
 function setKey(lines: string[], e: Entry, force: boolean): "set" | "same" | "kept" {
-  const header = lines.findIndex((l) => l.trim() === `[${e.table}]`);
+  const header = lines.findIndex((l) => isTable(l, e.table));
   const text = `${e.key} = ${quote(e.value)}`;
   if (header < 0) return "kept";
   let end = lines.findIndex((l, i) => i > header && isHeader(l));
   if (end < 0) end = lines.length;
-  const live = new RegExp(`^\\s*${e.key}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`);
+  const live = new RegExp(`^\\s*${e.key}\\s*=\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|'([^']*)')(\\s*#.*)?\\s*$`);
   for (let i = header + 1; i < end; i++) {
     const m = live.exec(lines[i]!);
     if (!m) continue;
-    const have = m[1]!.replace(/\\(.)/g, "$1");
+    const have = m[1] !== undefined ? m[1].replace(/\\(.)/g, "$1") : m[2]!;
     if (have === e.value) return "same";
     if (!isPlaceholder(have) && !force) return "kept";
-    lines[i] = text;
+    lines[i] = `${text}${m[3] ? `  ${m[3].trim()}` : ""}`;
     return "set";
   }
   const commented = new RegExp(`^\\s*#\\s*${e.key}\\s*=`);
@@ -87,7 +92,7 @@ export function writeHubConfig(dir: string, r: AppsResult, s: Settings, force: b
   const kept: string[] = [];
   const missing = new Map<string, Entry[]>();
   for (const e of entries(r, s)) {
-    if (!lines.some((l) => l.trim() === `[${e.table}]`)) {
+    if (!lines.some((l) => isTable(l, e.table))) {
       missing.set(e.table, [...(missing.get(e.table) ?? []), e]);
       continue;
     }
@@ -100,8 +105,28 @@ export function writeHubConfig(dir: string, r: AppsResult, s: Settings, force: b
     changed.push(...es.map((e) => `${table}.${e.key}`));
   }
   if (changed.length === 0) return { changed, kept };
+  const next = lines.join("\n") + "\n";
+  // The editor works by line. Parse the result, so that a form it cannot follow never reaches the file.
+  const wrong = verify(next, r, s, force, kept);
+  if (wrong) throw new Error(`could not edit ${file} safely (${wrong}). Edit it by hand with the printed settings. Nothing was written`);
   const backup = `${file}.bak`;
   copyFileSync(file, backup);
-  writeFileSync(file, lines.join("\n") + "\n");
+  writeFileSync(file, next);
   return { changed, kept, backup };
+}
+
+/** A reason, when the edited text does not parse or does not hold the wanted values. */
+function verify(text: string, r: AppsResult, s: Settings, force: boolean, kept: string[]): string | undefined {
+  let doc: any;
+  try {
+    doc = Bun.TOML.parse(text);
+  } catch (e) {
+    return `the result is not valid TOML: ${(e as Error).message}`;
+  }
+  for (const e of entries(r, s)) {
+    if (kept.includes(`${e.table}.${e.key}`) && !force) continue;
+    const got = e.table.split(".").reduce((o: any, k) => o?.[k], doc)?.[e.key];
+    if (got !== e.value) return `${e.table}.${e.key} would not have the wanted value`;
+  }
+  return undefined;
 }

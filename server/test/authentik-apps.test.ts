@@ -105,4 +105,43 @@ describe("ensureApplications", () => {
     expect(log.join("\n")).not.toContain("sekret-token");
     expect(log.join("\n")).not.toContain("fake-secret");
   });
+  test("an existing provider without a signing key or flows is repaired", async () => {
+    const a = empty();
+    await ensureApplications(ctxOf(a).ctx, DEFAULTS, PUBLIC, "map-1");
+    delete a.providers[1]!.signing_key;
+    const { ctx } = ctxOf(a);
+    await ensureApplications(ctx, DEFAULTS, PUBLIC, "map-1");
+    expect(ctx.changes()).toBe(1);
+    expect(a.providers[1]!.signing_key).toBe("key-1");
+  });
+  test("an existing provider of the wrong client type is a problem, not a silent success", async () => {
+    const a = empty();
+    await ensureApplications(ctxOf(a).ctx, DEFAULTS, PUBLIC, "map-1");
+    a.providers[0]!.client_type = "public";
+    const { ctx } = ctxOf(a);
+    await ensureApplications(ctx, DEFAULTS, PUBLIC, "map-1");
+    expect(ctx.problems.join(" ")).toContain("client type");
+  });
+  test("an existing application that links to another provider is relinked", async () => {
+    const a = empty();
+    await ensureApplications(ctxOf(a).ctx, DEFAULTS, PUBLIC, "map-1");
+    a.apps[0]!.provider = 999;
+    const { ctx } = ctxOf(a);
+    await ensureApplications(ctx, DEFAULTS, PUBLIC, "map-1");
+    expect(ctx.changes()).toBe(1);
+    expect(a.apps[0]!.provider).toBe(a.providers[0]!.pk);
+  });
+  test("a missing flow stops the creation and makes no write", async () => {
+    const a = empty({ noFlows: true });
+    const { ctx } = ctxOf(a);
+    await ensureApplications(ctx, DEFAULTS, PUBLIC, "map-1");
+    expect(a.writes()).toEqual([]);
+    expect(ctx.problems.join(" ")).toContain("flow not found");
+  });
+  test("a 400 that is not about the redirect is not retried", async () => {
+    const a = empty({ rejectProviders: true });
+    const { ctx } = ctxOf(a);
+    await expect(ensureApplications(ctx, DEFAULTS, PUBLIC, "map-1")).rejects.toThrow(/HTTP 400/);
+    expect(a.calls.filter((c) => c.method === "POST" && c.path === "/api/v3/providers/oauth2/")).toHaveLength(1);
+  });
 });

@@ -27,8 +27,9 @@ describe("parseSettings", () => {
     expect(() => parseSettings(["--public-url", "http://rc.example.com"], env)).toThrow(/https/);
     expect(parseSettings(["--public-url", "http://127.0.0.1:8080"], env).publicUrl).toBe("http://127.0.0.1:8080");
   });
-  test("public url with a path or a trailing slash is cleaned to its origin", () => {
-    expect(parseSettings(["--public-url", "https://rc.example.com/some/path/"], env).publicUrl).toBe("https://rc.example.com");
+  test("public url with a trailing slash is cleaned, and a path is refused", () => {
+    expect(parseSettings(["--public-url", "https://rc.example.com/"], env).publicUrl).toBe("https://rc.example.com");
+    expect(() => parseSettings(["--public-url", "https://rc.example.com/some/path/"], env)).toThrow(/without a path/);
   });
   test("a slug must match [a-z0-9-]+", () => {
     expect(() => parseSettings([...base, "--web-slug", "Bad Slug"], env)).toThrow(/slug/);

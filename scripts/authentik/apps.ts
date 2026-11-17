@@ -32,15 +32,25 @@ async function ensureProvider(ctx: Ctx, name: string, kind: "web" | "cli", want:
     const p: Json = (await ctx.call("GET", `/api/v3/providers/oauth2/${found.pk}/`)) ?? found;
     const have: string[] = p.property_mappings ?? [];
     const missing = mappings.filter((m) => !have.includes(m));
+    const want_type = kind === "web" ? "confidential" : "public";
+    if (p.client_type && p.client_type !== want_type) {
+      ctx.problems.push(`the provider "${name}" has client type ${p.client_type}, but it must be ${want_type}. Change it in authentik or delete the provider`);
+      return p;
+    }
     const redirectOk = same(p.redirect_uris, want);
-    if (redirectOk && missing.length === 0) {
+    const fix: Json = {};
+    if (refs.key && p.signing_key !== refs.key) fix.signing_key = refs.key;
+    if (refs.authz && p.authorization_flow !== refs.authz) fix.authorization_flow = refs.authz;
+    if (refs.invalid && p.invalidation_flow !== refs.invalid) fix.invalidation_flow = refs.invalid;
+    if (redirectOk && missing.length === 0 && Object.keys(fix).length === 0) {
       ctx.log(`ok: the provider "${name}" is up to date`);
       return p;
     }
     const redirect = Array.isArray(p.redirect_uris) || p.redirect_uris === undefined ? want : want.map((w) => w.url).join("\n");
-    await ctx.write(`update the provider "${name}"`, "PATCH", `/api/v3/providers/oauth2/${p.pk}/`, { redirect_uris: redirect, property_mappings: [...have, ...missing] });
+    await ctx.write(`update the provider "${name}"`, "PATCH", `/api/v3/providers/oauth2/${p.pk}/`, { redirect_uris: redirect, property_mappings: [...have, ...missing], ...fix });
     return p;
   }
+  if (!refs.authz || !refs.invalid || !refs.key) return undefined;
   const body = (redirect_uris: unknown) => ({
     name,
     client_type: kind === "web" ? "confidential" : "public",
@@ -54,14 +64,15 @@ async function ensureProvider(ctx: Ctx, name: string, kind: "web" | "cli", want:
   try {
     return await ctx.write(what, "POST", "/api/v3/providers/oauth2/", body(want));
   } catch (e) {
-    if (!(e instanceof ApiError && e.status === 400)) throw e;
+    if (!(e instanceof ApiError && e.status === 400 && e.message.includes("redirect_uris"))) throw e;
     return await ctx.write(what, "POST", "/api/v3/providers/oauth2/", body(want.map((w) => w.url).join("\n")));
   }
 }
 
 async function ensureApplication(ctx: Ctx, slug: string, name: string, provider: Json | undefined): Promise<void> {
   const app = await ctx.find("/api/v3/core/applications/?superuser_full_list=true", "slug", slug);
-  if (app) ctx.log(`ok: the application "${slug}" exists`);
+  if (app && (!provider?.pk || app.provider === provider.pk)) ctx.log(`ok: the application "${slug}" exists`);
+  else if (app) await ctx.write(`link the application "${slug}" to its provider`, "PATCH", `/api/v3/core/applications/${slug}/`, { provider: provider!.pk });
   else await ctx.write(`create the application "${slug}"`, "POST", "/api/v3/core/applications/", { name, slug, ...(provider?.pk ? { provider: provider.pk } : {}) });
 }
 
@@ -75,6 +86,8 @@ export async function ensureApplications(ctx: Ctx, s: Settings, publicUrl: strin
   if (!refs.authz) ctx.problems.push("flow not found: default-provider-authorization-implicit-consent");
   if (!refs.invalid) ctx.problems.push("flow not found: default-provider-invalidation-flow");
   if (!refs.key) ctx.problems.push("no signing key found: make or import a certificate key pair in authentik");
+  const urls = { issuer: `${ctx.url}/application/o/${s.webApp.slug}/`, cliIssuer: `${ctx.url}/application/o/${s.cliApp.slug}/`, cliJwksUrl: `${ctx.url}/application/o/${s.cliApp.slug}/jwks/` };
+  if (!refs.authz || !refs.invalid || !refs.key) return urls;
   const base = async (extra: string[]) => {
     const pks = await Promise.all(["openid", "email", "profile", ...extra].map((n) => scopeMappingPk(ctx, n)));
     return [...pks.filter((x): x is string => !!x), ...(roleMappingPk ? [roleMappingPk] : [])];
@@ -86,9 +99,7 @@ export async function ensureApplications(ctx: Ctx, s: Settings, publicUrl: strin
   await ensureApplication(ctx, s.cliApp.slug, s.cliApp.name, cli);
 
   return {
-    issuer: `${ctx.url}/application/o/${s.webApp.slug}/`,
-    cliIssuer: `${ctx.url}/application/o/${s.cliApp.slug}/`,
-    cliJwksUrl: `${ctx.url}/application/o/${s.cliApp.slug}/jwks/`,
+    ...urls,
     ...(web?.client_id ? { webClientId: web.client_id } : {}),
     ...(ctx.apply && web?.client_secret ? { webClientSecret: web.client_secret } : {}),
     ...(cli?.client_id ? { cliClientId: cli.client_id } : {}),

@@ -94,4 +94,32 @@ describe("writeHubConfig", () => {
     expect(() => writeHubConfig(dir(), R, DEFAULTS, false)).toThrow(/config\.toml/);
     expect(existsSync(join(dir(), "config.toml.bak"))).toBe(false);
   });
+  test("the shipped template, with comments after its headers, stays valid TOML with the right values", () => {
+    const d = dir();
+    writeFileSync(join(d, "config.toml"), EXAMPLE);
+    writeHubConfig(d, R, DEFAULTS, false);
+    const t = Bun.TOML.parse(readFileSync(join(d, "config.toml"), "utf8")) as any;
+    expect(t.user_auth.role_claim).toBe("clauderc_role");
+    expect(t.user_auth.mode).toBe("oidc");
+    expect(t.user_auth.oidc.client_id).toBe("web-id");
+    expect(t.cli_auth.oidc.client_id).toBe("cli-id");
+  });
+  test("single-quoted values are replaced, and a comment after a value stays", () => {
+    const d = dir();
+    writeFileSync(join(d, "config.toml"), "[user_auth.oidc]\nissuer = 'https://auth.example.com/x/'   # must be https\nclient_id = 'replace-with-client-id'\n");
+    writeHubConfig(d, R, DEFAULTS, false);
+    const text = readFileSync(join(d, "config.toml"), "utf8");
+    expect(text).toContain("# must be https");
+    const t = Bun.TOML.parse(text) as any;
+    expect(t.user_auth.oidc.issuer).toBe(R.issuer);
+    expect(t.user_auth.oidc.client_id).toBe("web-id");
+  });
+  test("a form that the editor cannot follow (dotted keys) is refused and nothing is written", () => {
+    const d = dir();
+    const original = '[user_auth]\nmode = "oidc"\noidc.issuer = "https://old.example.net/"\n';
+    writeFileSync(join(d, "config.toml"), original);
+    expect(() => writeHubConfig(d, R, DEFAULTS, false)).toThrow(/nothing was written/i);
+    expect(readFileSync(join(d, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(join(d, "config.toml.bak"))).toBe(false);
+  });
 });

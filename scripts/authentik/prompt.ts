@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline/promises";
-import { applySetting, cleanOrigin, type Parsed } from "./settings";
+import { applySetting, publicOrigin, type Parsed } from "./settings";
 
 export type Io = { ask(question: string): Promise<string>; tty: boolean };
 
@@ -31,7 +31,7 @@ export async function askSettings(base: Parsed, io: Io): Promise<Parsed> {
       }
     }
   };
-  await ask("Public URL of the hub", r.publicUrl, (v) => ({ ...r, publicUrl: cleanOrigin("public url", v) }));
+  await ask("Public URL of the hub", r.publicUrl, (v) => ({ ...r, publicUrl: publicOrigin(v) }));
   await ask("Slug of the web application", r.settings.webApp.slug, (v) => ({ ...r, settings: applySetting(r.settings, "WEB_SLUG", v) }));
   await ask("Slug of the CLI application", r.settings.cliApp.slug, (v) => ({ ...r, settings: applySetting(r.settings, "CLI_SLUG", v) }));
   await ask("Prefix of the three role groups", r.settings.adminGroup.endsWith(GROUP_SUFFIX) ? r.settings.adminGroup.slice(0, -GROUP_SUFFIX.length) : r.settings.adminGroup, (v) => ({ ...r, settings: applySetting(r.settings, "GROUP_PREFIX", v) }));

@@ -7,7 +7,7 @@ const OLD_HUB = DEFAULTS.oldHub;
 export type Json = Record<string, any>;
 
 /** A small in-memory authentik: only the routes that the script uses. */
-export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; newMappingPath?: boolean; redirectAsString?: boolean } = {}) {
+export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; newMappingPath?: boolean; redirectAsString?: boolean; noFlows?: boolean; rejectProviders?: boolean } = {}) {
   let id = 0;
   const uuid = () => `00000000-0000-0000-0000-${String(++id).padStart(12, "0")}`;
   const mappings: Json[] = [];
@@ -42,6 +42,7 @@ export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; new
     if (p === "/api/v3/providers/oauth2/" && method === "GET") return out(200, list(providers, url.searchParams, "name"));
     const pm = providers.find((x) => p === `/api/v3/providers/oauth2/${x.pk}/`);
     if (p === "/api/v3/providers/oauth2/" && method === "POST") {
+      if (opts.rejectProviders) return out(400, { name: ["bad name"] });
       if (opts.redirectAsString && Array.isArray(body.redirect_uris)) return out(400, { redirect_uris: ["Not a valid string."] });
       const pk = ++providerPk;
       const made = { pk, client_id: `cid-${pk}`, ...(body.client_type === "confidential" ? { client_secret: `fake-secret-${pk}` } : {}), ...body };
@@ -49,7 +50,7 @@ export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; new
       return out(201, made);
     }
     if (pm && method === "GET") return out(200, pm);
-    if (p === "/api/v3/flows/instances/" && method === "GET") return out(200, list(["default-provider-authorization-implicit-consent", "default-provider-invalidation-flow"].map((slug) => ({ slug, pk: `flow-${slug}` })), url.searchParams, "slug"));
+    if (p === "/api/v3/flows/instances/" && method === "GET") return out(200, list(opts.noFlows ? [] : ["default-provider-authorization-implicit-consent", "default-provider-invalidation-flow"].map((slug) => ({ slug, pk: `flow-${slug}` })), url.searchParams, "slug"));
     if (p === "/api/v3/crypto/certificatekeypairs/" && method === "GET") return out(200, { results: [{ pk: "key-1", name: "authentik Self-signed Certificate" }] });
     if (p === "/api/v3/core/applications/" && method === "POST") {
       const made = { pk: uuid(), ...body };
@@ -76,6 +77,7 @@ export function fakeAuthentik(opts: { providers?: string[]; apps?: string[]; new
     if (p === "/api/v3/core/users/" && method === "GET") return out(200, list(users, url.searchParams, "username"));
     if (p === "/api/v3/core/applications/" && method === "GET") return out(200, list(apps, url.searchParams, "slug"));
     const am = apps.find((x) => p === `/api/v3/core/applications/${x.slug}/`);
+    if (am && method === "PATCH") return out(200, Object.assign(am, body));
     if (am && method === "PATCH") return out(200, Object.assign(am, body));
     if (am && method === "DELETE") return (apps.splice(apps.indexOf(am), 1), out(204));
     return out(404, { detail: `no route ${method} ${p}` });
