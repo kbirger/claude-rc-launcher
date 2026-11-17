@@ -58,7 +58,7 @@ describe("atLeast", () => {
 
 describe("requiredRole", () => {
   test("reads", () => {
-    for (const p of ["/me", "/latest", "/updates", "/events", "/hosts", "/hosts/h1/node", "/hosts/local/instances", "/hosts/h1/instances/abc/logs", "/hosts/h1/fs", "/hosts/h1/users", "/hosts/h1/instances/abc/sessions/s1/file", "/hosts/h1/instances/abc/permissions", "/hosts/h1/clone/abc"]) {
+    for (const p of ["/me", "/latest", "/updates", "/events", "/hosts", "/hosts/h1/node", "/hosts/local/instances", "/hosts/h1/instances/abc/logs", "/hosts/h1/fs", "/hosts/h1/users", "/hosts/h1/instances/abc/sessions/s1/file", "/hosts/h1/instances/abc/permissions", "/hosts/h1/clone/abc", "/hosts/h1/instance-settings"]) {
       expect(requiredRole("GET", p)).toBe("read");
     }
   });
@@ -69,6 +69,8 @@ describe("requiredRole", () => {
     expect(requiredRole("POST", "/hosts/h1/instances/abc/resume")).toBe("write");
     expect(requiredRole("POST", "/hosts/h1/fs/mkdir")).toBe("write");
     expect(requiredRole("PATCH", "/hosts/h1")).toBe("write");
+    expect(requiredRole("PATCH", "/hosts/h1/instances/abc")).toBe("write");
+    expect(requiredRole("POST", "/hosts/h1/instances/abc/restart")).toBe("write");
     expect(requiredRole("POST", "/hosts/h1/instances/abc/permissions/rules")).toBe("write");
     expect(requiredRole("POST", "/hosts/h1/instances/abc/sessions/s1/permissions/rules")).toBe("write");
     expect(requiredRole("GET", "/hosts/h1/github/repos")).toBe("write");

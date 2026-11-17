@@ -18,7 +18,7 @@ export class HostError extends Error {
 
 export interface HostClient {
   call(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     o?: { query?: Record<string, string>; json?: unknown; timeoutMs?: number },
   ): Promise<{ status: number; body: unknown }>;

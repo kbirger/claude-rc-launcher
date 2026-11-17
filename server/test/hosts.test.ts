@@ -987,3 +987,76 @@ describe("update record", () => {
     expect(entryOf(record, "nas")).toMatchObject({ status: "failed", error: "unexpected answer from the host" });
   });
 });
+
+describe("instance settings routes", () => {
+  const host = { id: "nas", name: "nas", url: "https://x", ca: "p", auth: { type: "secret", secret: "s" } } as HostConfig;
+  const mkHub = (reply: (m: string, p: string, o: any) => { status: number; body: unknown }, calls: any[] = []) =>
+    hub([host], new Map([["nas", { ...noStream, call: async (m: string, p: string, o: any) => (calls.push([m, p, o]), reply(m, p, o)) } as unknown as HostClient]]));
+  const patch = (app: any, body: unknown, p = `/api/hosts/nas/instances/${ID}`) => app.request(p, { method: "PATCH", headers: JSON_H, body: JSON.stringify(body) });
+  const ok = { instance: { ...inst, settings: { createSession: false, spawnMode: "worktree" } }, previous: { createSession: true, spawnMode: "same-dir" } };
+
+  test("PATCH forwards the body unchanged and returns the node answer", async () => {
+    const calls: any[] = [];
+    const app = mkHub(() => ({ status: 200, body: ok }), calls);
+    const r = await patch(app, { createSession: false, spawnMode: "worktree" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual(ok);
+    expect(calls[0][0]).toBe("PATCH");
+    expect(calls[0][1]).toBe(`/api/instances/${ID}`);
+    expect(calls[0][2].json).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(calls[0][2].timeoutMs).toBeGreaterThanOrEqual(60_000);
+  });
+  test("PATCH passes a 409 body with code and settings unchanged", async () => {
+    const body = { error: "no", code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } };
+    const r = await patch(mkHub(() => ({ status: 409, body })), { spawnMode: "worktree" });
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(body);
+  });
+  test("PATCH rejects a bad instance id with 400", async () => {
+    expect((await patch(mkHub(() => ({ status: 200, body: ok })), {}, "/api/hosts/nas/instances/zz")).status).toBe(400);
+  });
+  test("restart forwards to the node and passes 204", async () => {
+    const calls: any[] = [];
+    const app = mkHub(() => ({ status: 204, body: null }), calls);
+    const r = await app.request(`/api/hosts/nas/instances/${ID}/restart`, { method: "POST", headers: JSON_H, body: "{}" });
+    expect(r.status).toBe(204);
+    expect([calls[0][0], calls[0][1]]).toEqual(["POST", `/api/instances/${ID}/restart`]);
+  });
+  test("the help route forwards, and a node 404 reaches the caller as 404", async () => {
+    const calls: any[] = [];
+    const app = mkHub((_m, _p) => ({ status: calls.length === 1 ? 200 : 404, body: calls.length === 1 ? { createSession: {} } : { error: "not found" } }), calls);
+    const a = await get(app, "/api/hosts/nas/instance-settings");
+    expect(a.status).toBe(200);
+    expect(calls[0].slice(0, 2)).toEqual(["GET", "/api/instance-settings"]);
+    const b = await get(app, "/api/hosts/nas/instance-settings");
+    expect(b.status).toBe(404);
+  });
+  test("start forwards createSession and spawnMode to the node", async () => {
+    const calls: any[] = [];
+    const app = mkHub(() => ({ status: 201, body: inst }), calls);
+    await app.request("/api/hosts/nas/instances", { method: "POST", headers: JSON_H, body: JSON.stringify({ path: "/p", createSession: false, spawnMode: "worktree", extra: 1 }) });
+    expect(calls[0][2].json).toEqual({ path: "/p", createSession: false, spawnMode: "worktree" });
+  });
+  test("a successful PATCH writes one audit line with old and new values", async () => {
+    const app = mkHub(() => ({ status: 200, body: ok }));
+    await patch(app, { createSession: false, spawnMode: "worktree" });
+    expect(logged.filter((l) => l.includes("action=settings"))).toEqual([`audit user=kir role=admin host=nas action=settings instance=${ID} old=true,same-dir new=false,worktree status=200`]);
+  });
+  test("the audit line holds no raw node text or control characters", async () => {
+    const evil = { instance: { settings: { createSession: "x\nTOKEN=abc", spawnMode: "/etc/passwd\r\n" } }, previous: { createSession: true, spawnMode: "bad\nline" } };
+    await patch(mkHub(() => ({ status: 200, body: evil })), { createSession: true });
+    const lines = logged.filter((l) => l.includes("action=settings"));
+    expect(lines).toEqual([`audit user=kir role=admin host=nas action=settings instance=${ID} old=true,? new=?,? status=200`]);
+    expect(lines[0]).not.toMatch(/[\x00-\x1f]|TOKEN|passwd/);
+  });
+  test("a refused change writes one audit line with the result and the status", async () => {
+    const body = { error: "x\ny", code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } };
+    await patch(mkHub(() => ({ status: 409, body })), { spawnMode: "worktree" });
+    expect(logged.filter((l) => l.includes("action=settings"))).toEqual([`audit user=kir role=admin host=nas action=settings instance=${ID} old=true,same-dir result=refused status=409`]);
+  });
+  test("an unreachable node writes an audit line with status 502", async () => {
+    const app = hub([host], new Map([["nas", { ...noStream, call: async () => { throw new HostError("nas", "unreachable"); } } as unknown as HostClient]]));
+    expect((await patch(app, {})).status).toBe(502);
+    expect(logged.filter((l) => l.includes("action=settings"))).toEqual([`audit user=kir role=admin host=nas action=settings instance=${ID} status=502`]);
+  });
+});
