@@ -5,9 +5,13 @@
  *
  *   AUTHENTIK_URL=https://auth.example.com AUTHENTIK_TOKEN=... bun scripts/authentik-setup.ts --admin-user kir [--apply] [--remove-old-hub]
  */
+import { join } from "node:path";
 import { type Json, makeCtx } from "./authentik/api";
+import { type AppsResult, ensureApplications } from "./authentik/apps";
+import { snippet, writeHubConfig, writeSecret } from "./authentik/hubconfig";
+import { realIo, askSettings } from "./authentik/prompt";
 import { ensureRoles } from "./authentik/roles";
-import { DEFAULTS, type Settings } from "./authentik/settings";
+import { DEFAULTS, parseSettings, type Settings } from "./authentik/settings";
 
 export type Options = {
   url: string;
@@ -16,30 +20,40 @@ export type Options = {
   apply: boolean;
   removeOldHub: boolean;
   settings?: Settings;
+  /** The public address of the hub. Without it, the script does not create the providers and applications. */
+  publicUrl?: string;
   fetch?: typeof fetch;
   log?: (line: string) => void;
 };
 
 /** Runs the plan. Throws when a provider, a group, or the user that the plan needs is missing, after it has done what it can. */
-export async function run(o: Options): Promise<{ changes: number }> {
+export async function run(o: Options): Promise<{ changes: number; apps?: AppsResult }> {
   const s: Settings = { ...(o.settings ?? DEFAULTS), ...(o.adminUser ? { adminUser: o.adminUser } : {}), removeOldHub: o.removeOldHub };
   const ctx = makeCtx(o);
   const { mappingPk, groups } = await ensureRoles(ctx, s);
 
-  for (const name of [s.webApp.provider, s.cliApp.provider]) {
-    const p = await ctx.find("/api/v3/providers/oauth2/", "name", name);
-    if (!p) {
-      ctx.problems.push(`provider not found: ${name}`);
-      continue;
+  let apps: AppsResult | undefined;
+  if (o.publicUrl) apps = await ensureApplications(ctx, s, o.publicUrl, mappingPk);
+  else {
+    for (const name of [s.webApp.provider, s.cliApp.provider]) {
+      const p = await ctx.find("/api/v3/providers/oauth2/", "name", name);
+      if (!p) {
+        ctx.problems.push(`provider not found: ${name}`);
+        continue;
+      }
+      const have: string[] = p.property_mappings ?? [];
+      if (mappingPk && have.includes(mappingPk)) ctx.log(`ok: "${name}" has the mapping`);
+      else await ctx.write(`add the mapping to "${name}"`, "PATCH", `/api/v3/providers/oauth2/${p.pk}/`, { property_mappings: [...have, ...(mappingPk ? [mappingPk] : [])] });
     }
-    const have: string[] = p.property_mappings ?? [];
-    if (mappingPk && have.includes(mappingPk)) ctx.log(`ok: "${name}" has the mapping`);
-    else await ctx.write(`add the mapping to "${name}"`, "PATCH", `/api/v3/providers/oauth2/${p.pk}/`, { property_mappings: [...have, ...(mappingPk ? [mappingPk] : [])] });
   }
 
   // Access: a member of a role group may sign in to both applications. Without a binding, authentik answers "Permission denied".
   for (const slug of [s.webApp.slug, s.cliApp.slug]) {
     const app = await ctx.find("/api/v3/core/applications/?superuser_full_list=true", "slug", slug);
+    if (!app && !ctx.apply && o.publicUrl) {
+      ctx.log(`would let the role groups sign in to "${slug}", after the application exists`);
+      continue;
+    }
     if (!app) {
       ctx.problems.push(`application not found: ${slug}`);
       continue;
@@ -75,34 +89,34 @@ export async function run(o: Options): Promise<{ changes: number }> {
   if (ctx.problems.length) throw new Error(ctx.problems.join("; "));
   const changes = ctx.changes();
   ctx.log(o.apply ? `finished: ${changes} change(s) made` : `plan only: ${changes} change(s) needed. Run again with --apply to make them`);
-  return { changes };
-}
-
-function usage(): never {
-  console.error("usage: AUTHENTIK_URL=<https url> AUTHENTIK_TOKEN=<token> bun scripts/authentik-setup.ts [--admin-user <username>] [--apply] [--remove-old-hub]");
-  process.exit(2);
+  return { changes, ...(apps ? { apps } : {}) };
 }
 
 if (import.meta.main) {
-  const args = process.argv.slice(2);
-  const opts: Partial<Options> = { apply: false, removeOldHub: false };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--apply") opts.apply = true;
-    else if (a === "--remove-old-hub") opts.removeOldHub = true;
-    else if (a === "--admin-user") opts.adminUser = args[++i] ?? usage();
-    else usage();
-  }
-  const url = process.env.AUTHENTIK_URL;
-  const token = process.env.AUTHENTIK_TOKEN;
-  if (!url || !token) usage();
-  const u = new URL(url);
-  if (u.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(u.hostname)) {
-    console.error("AUTHENTIK_URL must use https, because the token travels in every request");
-    process.exit(2);
-  }
   try {
-    await run({ url, token, apply: opts.apply!, removeOldHub: opts.removeOldHub!, ...(opts.adminUser ? { adminUser: opts.adminUser } : {}) });
+    let p = parseSettings(process.argv.slice(2), process.env);
+    if (p.interactive) {
+      const { io, close } = realIo();
+      try {
+        p = await askSettings(p, io);
+      } finally {
+        close();
+      }
+    }
+    const r = await run({ url: p.url, token: p.token, apply: p.apply, removeOldHub: p.settings.removeOldHub, settings: p.settings, publicUrl: p.publicUrl });
+    if (r.apps) {
+      console.log(`\nSettings for the hub (config.toml):\n\n${snippet(r.apps, p.settings)}`);
+      if (p.apply) {
+        const secretPath = p.writeHubConfig ? join(p.writeHubConfig, "oidc-client.secret") : p.secretFile;
+        if (r.apps.webClientSecret) console.log(`The client secret file ${secretPath}: ${writeSecret(secretPath, r.apps.webClientSecret, p.force)}`);
+        else console.log("The script did not get the client secret. Copy it from the provider in authentik.");
+        if (p.writeHubConfig) {
+          const w = writeHubConfig(p.writeHubConfig, r.apps, p.settings, p.force);
+          console.log(`config.toml: ${w.changed.length} key(s) set${w.backup ? `, backup at ${w.backup}` : ""}`);
+          if (w.kept.length) console.log(`kept the values of: ${w.kept.join(", ")} (use --force to replace them)`);
+        }
+      } else if (p.writeHubConfig) console.log("Plan only: nothing is written to the hub directory.");
+    }
   } catch (e) {
     console.error(`error: ${(e as Error).message}`);
     process.exit(1);

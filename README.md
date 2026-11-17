@@ -1128,6 +1128,37 @@ needs a public client with a loopback redirect on `127.0.0.1` (any port) and ref
 
 ## Authentik setup
 
+The script `scripts/authentik-setup.ts` sets up authentik for the hub. It creates the web provider and application, the CLI provider and application, the role mapping, the three role groups, and the access bindings. It needs the address of authentik and an API token of an admin. It shows a plan and changes nothing, unless you pass `--apply`. You can run it again. It changes only what differs.
+
+```sh
+export AUTHENTIK_URL=https://auth.example.com
+export AUTHENTIK_TOKEN=<an API token of an admin>
+bun scripts/authentik-setup.ts --public-url https://rc.example.com --admin-user kir            # shows the plan
+bun scripts/authentik-setup.ts --public-url https://rc.example.com --admin-user kir --apply    # makes the changes
+```
+
+After a run with `--apply`, the script prints the settings for `config.toml`. It writes the client secret to the file `./oidc-client.secret` with mode 600, and it never prints the secret. It does not replace an existing file, unless you pass `--force`. Use `--secret-file <path>` to choose another file.
+
+To let the script write the hub settings, pass `--write-hub-config /etc/claude-rc-launcher`. The script then writes `oidc-client.secret` and the keys in `config.toml` in that directory. It makes the backup `config.toml.bak` first. It keeps a value that you set yourself, unless you pass `--force`. The script needs the right to write in that directory.
+
+Pass `--interactive` to answer questions instead of flags. Each question shows the current value in brackets, and an empty answer keeps it. This needs a terminal.
+
+| Flag | Environment variable | Default |
+| --- | --- | --- |
+| `--public-url` | `CLAUDERC_PUBLIC_URL` | none, required |
+| `--web-slug`, `--cli-slug` | `CLAUDERC_WEB_SLUG`, `CLAUDERC_CLI_SLUG` | `claude-rc-launcher`, `claude-rc-cli` |
+| `--web-name`, `--cli-name` | `CLAUDERC_WEB_NAME`, `CLAUDERC_CLI_NAME` | `Claude RC launcher`, `Claude RC CLI` |
+| `--group-prefix` | `CLAUDERC_GROUP_PREFIX` | `ak-clauderc` (groups `-admins`, `-writers`, `-ro`) |
+| `--claim`, `--scope` | `CLAUDERC_CLAIM`, `CLAUDERC_SCOPE` | `clauderc_role`, `clauderc` |
+| `--admin-user` | `CLAUDERC_ADMIN_USER` | none |
+| `--remove-old-hub` | none | off |
+
+If you change `--claim` or `--scope`, the printed settings carry the same names. Use them in `role_claim` and `role_scope`.
+
+### Authentik by hand
+
+Use these steps with another setup, or when you do not want to run the script.
+
 1. Applications > Providers > Create > **OAuth2/OpenID Provider**.
 2. Client type: **Confidential**. Note the client ID and secret.
 3. Redirect URI (strict): `https://rc.example.com/auth/callback` (i.e. `public_url/auth/callback`).
@@ -1151,16 +1182,6 @@ needs a public client with a loopback redirect on `127.0.0.1` (any port) and ref
    Attach the mapping (step 7) and set the groups before you upgrade the hub.
 
 9. **Let the role groups sign in.** Open each of the two applications, then Policy / Group / User Bindings. Bind each role group. A user who is in no bound group sees "Permission denied" at the login.
-
-The script `scripts/authentik-setup.ts` does steps 7, 8, and 9 for you. It needs the address of authentik and an API token
-in the environment. It shows what it would do and changes nothing, unless you pass `--apply`:
-
-```sh
-export AUTHENTIK_URL=https://auth.example.com
-export AUTHENTIK_TOKEN=<an API token of an admin>
-bun scripts/authentik-setup.ts --admin-user kir            # shows the plan
-bun scripts/authentik-setup.ts --admin-user kir --apply    # makes the changes
-```
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)
 

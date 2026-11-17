@@ -12,6 +12,10 @@ const APPLICATIONS = [DEFAULTS.webApp.slug, DEFAULTS.cliApp.slug];
 const PROVIDERS = [DEFAULTS.webApp.provider, DEFAULTS.cliApp.provider];
 const OLD_HUB = DEFAULTS.oldHub;
 
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeHubConfig, writeSecret } from "../../scripts/authentik/hubconfig";
 import { fakeAuthentik } from "./authentik-fake";
 
 const base = (fake: ReturnType<typeof fakeAuthentik>, over: Partial<Parameters<typeof run>[0]> = {}) => {
@@ -140,5 +144,58 @@ describe("authentik-setup", () => {
     const a = fakeAuthentik();
     const failing = (async () => new Response("denied", { status: 403 })) as unknown as typeof fetch;
     await expect(run({ ...base(a).o, fetch: failing })).rejects.toThrow(/GET .* failed: HTTP 403 denied/);
+  });
+});
+
+describe("authentik-setup from an empty authentik", () => {
+  const empty = () => fakeAuthentik({ providers: [], apps: [] });
+  const withUrl = { publicUrl: "https://rc.example.com" };
+
+  test("ends with both applications, the mapping, three groups, six bindings and the admin in the admin group", async () => {
+    const a = empty();
+    const r = await run(base(a, { adminUser: "kir", ...withUrl }).o);
+    expect(a.apps.map((x) => x.slug)).toEqual(APPLICATIONS);
+    expect(a.mappings).toHaveLength(1);
+    expect(a.groups).toHaveLength(3);
+    expect(a.bindings).toHaveLength(6);
+    expect(a.groups.find((g) => g.name === ADMIN_GROUP)!.users).toEqual([7]);
+    expect(r.apps?.webClientSecret).toBeDefined();
+    for (const p of a.providers) expect(p.property_mappings).toContain(a.mappings[0]!.pk);
+  });
+  test("a plan from an empty authentik makes no write and does not fail on the missing applications", async () => {
+    const a = empty();
+    const { o, log } = base(a, { apply: false, ...withUrl });
+    await run(o);
+    expect(a.writes()).toEqual([]);
+    expect(log.some((l) => l.includes("after the application exists"))).toBe(true);
+  });
+  test("no log line contains the client secret or the token", async () => {
+    const a = empty();
+    const { o, log } = base(a, withUrl);
+    const r = await run(o);
+    expect(log.join("\n")).not.toContain(r.apps!.webClientSecret!);
+    expect(log.join("\n")).not.toContain("sekret-token");
+  });
+  test("the secret file and the hub settings are written, and a second run keeps them", async () => {
+    const a = empty();
+    const r = await run(base(a, withUrl).o);
+    const d = mkdtempSync(join(tmpdir(), "setup-"));
+    writeFileSync(join(d, "config.toml"), 'mode = "hub"\n');
+    expect(writeSecret(join(d, "oidc-client.secret"), r.apps!.webClientSecret!, false)).toBe("written");
+    writeHubConfig(d, r.apps!, DEFAULTS, false);
+    const again = await run(base(a, withUrl).o);
+    expect(again.changes).toBe(0);
+    expect(writeSecret(join(d, "oidc-client.secret"), again.apps!.webClientSecret!, false)).toBe("kept");
+    expect(writeHubConfig(d, again.apps!, DEFAULTS, false).changed).toEqual([]);
+    expect(readFileSync(join(d, "config.toml"), "utf8")).toContain(`client_id = "${r.apps!.webClientId}"`);
+  });
+  test("a renamed claim shows up in the mapping expression, the group attribute and the snippet", async () => {
+    const a = empty();
+    const settings = { ...DEFAULTS, claim: "my_role" };
+    const r = await run(base(a, { ...withUrl, settings }).o);
+    expect(a.mappings[0]!.expression).toContain('"my_role"');
+    expect(a.groups[0]!.attributes).toEqual({ my_role: "admin" });
+    const { snippet } = await import("../../scripts/authentik/hubconfig");
+    expect(snippet(r.apps!, settings)).toContain('role_claim = "my_role"');
   });
 });
