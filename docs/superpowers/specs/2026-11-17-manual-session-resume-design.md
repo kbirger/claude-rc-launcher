@@ -1,6 +1,6 @@
 # Manual session resume: design
 
-Status: waiting for approval.
+Status: spikes run on 2026-11-17 (results below), waiting for approval.
 
 ## Intent
 
@@ -40,6 +40,16 @@ These facts come from tests on this machine on 2026-11-16 with Claude Code 2.1.3
 - `claude remote-control --session-id session_01...` brought `d1a3d7fd` back 4 hours 16 minutes after the kill. It needs no terminal. The child process wrote its own `~/.claude/sessions/<pid>.json` file. The file held the old session id, the bridge id and a messaging socket.
 - A one-line JSON message to that socket reached the session. The session answered in about one second. The file `nudge.ts` already sends such a message.
 - In this mode the process ends at the end of the session. The screen says "Single session" for it.
+
+Spike results from 2026-11-17 (Claude Code 2.1.326, scratch folder `/opt/rctest-resume`):
+
+- A session that claude.ai archived comes back. `--session-id` on an archived session connected with no error, and the session moved from the archive to the active list by itself. The launcher needs no unarchive step.
+- A made-up or expired id fails with exit code 1 and the text "Session <id> not found. It may have been archived or expired." Since archived sessions resume, this text means that claude.ai does not know the id.
+- A server in the folder blocks `--session-id`. This holds even when only the session child died and the server lives. The text is "Session <id> is already being served by another `claude remote-control` instance (pid <pid>) in <folder>. Use that terminal, or stop it first." The exit code is 1, not 69.
+- A second `--session-id` process for another session in the same folder is refused with "Environment <id> is already being served by another `claude remote-control` instance (pid <pid>) in <folder>." The exit code is 1. So a folder runs at most one single-session process.
+- After `kill -9` of the server and its child, a plain server (no flags) brought the session back. After a SIGTERM stop it did the same.
+- `kill -9` of a server does not always end its session children. One child survived as an orphan (parent pid 1) and kept running.
+- Each restore can change the local transcript id. The claude.ai session id stays the same. The history is loaded again, so the new local transcript can be large at once.
 
 ## Approaches
 
@@ -115,7 +125,7 @@ When `readLive` shows a live entry with the session id, the state becomes `activ
 
 #### Drop
 
-If the process exits, the node reads the exit code and the first lines of the log. Exit code 69, or the text "already served" in the log, means `blocked`. The node does not retry a blocked entry. Exit code 0 means that the session finished. The state becomes `finished`, and the node does not restart it. Any other exit means `waiting`. The node then starts again after 5, 15 and 45 seconds. After three failures in a row inside 10 minutes, the state becomes `failed`. A run that stays `active` for more than 2 minutes resets the count.
+If the process exits, the node reads the exit code and the first lines of the log. The text "already being served" or "already served" in the log means `blocked`. The exit code does not tell, because 1 was seen for these refusals. The text "not found" means `failed` with the reason "claude.ai does not know this session", and the node does not retry. The node does not retry a blocked entry. Exit code 0 means that the session finished. The state becomes `finished`, and the node does not restart it. Any other exit means `waiting`. The node then starts again after 5, 15 and 45 seconds. After three failures in a row inside 10 minutes, the state becomes `failed`. A run that stays `active` for more than 2 minutes resets the count.
 
 #### User stop
 
@@ -127,7 +137,7 @@ The children end with the node, and the map is gone. The sessions show as lost a
 
 #### Limits
 
-A node runs at most 4 resumed sessions at once (`resume_max`). It keeps at most one entry for each session id. Each child uses memory, and the test host has little.
+A node runs at most 4 resumed sessions at once (`resume_max`), and at most one in each folder. If a resumed process already runs in the folder, a resume of another lost session of that folder answers 409 with the code `folder_busy`. The page says that the user can resume it after the first one ends. It keeps at most one entry for each session id. Each child uses memory, and the test host has little.
 
 #### Already running
 
@@ -195,14 +205,14 @@ Each part has its own test file next to the existing ones.
 
 Each question has a spike. A spike is a throwaway script. It must run before the builder trusts the matching part of this design.
 
-1. A single-session process beside a server, for a different session. The test had no second session in the folder. Spike: stop the server, start it again so that it restores two sessions, and stop it. Then start the server again with one of them gone from its list. Then start `--session-id` for the other one. The result decides whether Resume can ever run beside a server. This design assumes that it cannot.
-2. Several single-session processes in one folder. Spike: with no server, start two `--session-id` processes for two sessions of one folder. The result decides the `resume_max` rule for a folder.
-3. An unclean kill. Spike: run `kill -9` on a server with default flags. Start a plain server again and look at its sessions. If the sessions come back, the Restart server advice also works after a crash.
-4. The shrinking transcript. The transcript of `d1a3d7fd` was 6.4 MB before the resume and 1.5 MB after. Spike: copy a transcript, resume it in a scratch folder, and compare. If a resume drops history, the dialog must warn about it.
-5. A stop by systemd. The command `systemctl stop` sends SIGTERM. The restore after a clean stop was tested only with SIGINT. Spike: stop the unit with `systemctl stop`, start it, and look at the sessions.
-6. The exit code of a single-session process. Exit status 69 was seen for a refused server. Spike: start `--session-id` beside a server and read the exit code. The supervisor also matches the text, so this is a test and not a blocker.
+1. Answered: no. A single-session process cannot run beside a server. The server claims the session even when its child died. The design assumption holds. Original question: a single-session process beside a server, for a different session. The test had no second session in the folder. Spike: stop the server, start it again so that it restores two sessions, and stop it. Then start the server again with one of them gone from its list. Then start `--session-id` for the other one. The result decides whether Resume can ever run beside a server. This design assumes that it cannot.
+2. Answered: only one. A second process in the folder is refused. See the limits. Original question: several single-session processes in one folder. Spike: with no server, start two `--session-id` processes for two sessions of one folder. The result decides the `resume_max` rule for a folder.
+3. Answered: yes. After `kill -9` a plain server brought the session back. Original question: an unclean kill. Spike: run `kill -9` on a server with default flags. Start a plain server again and look at its sessions. If the sessions come back, the Restart server advice also works after a crash.
+4. Still open for large transcripts. A small session resumed with no loss, but the local transcript id changed and the history loaded into a new file. Spike: use a session with a long history. Original question: the shrinking transcript. The transcript of `d1a3d7fd` was 6.4 MB before the resume and 1.5 MB after. Spike: copy a transcript, resume it in a scratch folder, and compare. If a resume drops history, the dialog must warn about it.
+5. Answered: yes. A SIGTERM stop keeps the sessions (a plain start brings them back). Original question: a stop by systemd. The command `systemctl stop` sends SIGTERM. The restore after a clean stop was tested only with SIGINT. Spike: stop the unit with `systemctl stop`, start it, and look at the sessions.
+6. Answered: the exit code is 1, so the text match is required. Original question: the exit code of a single-session process. Exit status 69 was seen for a refused server. Spike: start `--session-id` beside a server and read the exit code. The supervisor also matches the text, so this is a test and not a blocker.
 7. The folder of a work tree session. In `--spawn worktree` mode, a session runs in a work tree. Spike: find which folder `--session-id` must run in, so that the "already served" rule and the transcript match.
-8. The age limit. The docs say about four hours. The test worked at 4 hours 16 minutes. Spike: try a session that is one day old and record the error text. The default window of 24 hours depends on it.
+8. Still open. The archived session was resumed 15 minutes after its loss, so the age limit is untested. Original question: the age limit. The docs say about four hours. The test worked at 4 hours 16 minutes. Spike: try a session that is one day old and record the error text. The default window of 24 hours depends on it.
 9. A session with no bridge id. The launcher learns a bridge id only after it sees the session running. A session that died before that cannot resume. The id is the part of the claude.ai URL between `/code/` and `?`. One option is a field where the user pastes the id. This design leaves it out. If the user wants the field, the builder adds it.
 
 ## Left to the builder
@@ -212,3 +222,4 @@ Each question has a spike. A spike is a throwaway script. It must run before the
 - How to share the log cutting code with the existing instance logs.
 - Whether `restart` gets a CLI command in this change or in the feature for the server configuration.
 - The polling interval and the success timeout. The spikes can change them.
+10. Added: does an archived session need unarchiving? Answered: no. Resume brings it back to the active list by itself.

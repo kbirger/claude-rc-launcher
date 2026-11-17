@@ -10,6 +10,15 @@ Tech Stack: Bun, TypeScript, Hono, Svelte 5, `bun:test`, vitest for the web.
 
 Spec: `docs/superpowers/specs/2026-11-17-manual-session-resume-design.md`
 
+## Changes after the spikes (2026-11-17)
+
+Task 0 ran for questions 1, 2, 3, 5, 6 and for the archive goal. The results are in the spec. They change the build in these ways:
+
+- No unarchive step. Resume brings an archived session back by itself.
+- A folder runs one resumed process at a time. Task 4 adds the 409 code `folder_busy` and a test for it. The limit `resume_max` still applies to the node.
+- The supervisor tells a refusal from the log text, not from the exit code (the code is 1). Task 4 matches "already being served" and "already served" for `blocked`, and "not found" for `failed` with no retry.
+- Questions 4, 7, 8 and 9 stay open. Spike 4 needs a long transcript, spike 7 a work tree session, and spike 8 a session that is a day old.
+
 ## Global Constraints
 
 - Set the path for Bun first: `export PATH=$HOME/.bun/bin:$PATH`.
