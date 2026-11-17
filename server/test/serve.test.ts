@@ -97,3 +97,27 @@ describe("withLongUpdates: event stream", () => {
     expect(await timeouts("POST", "/api/events")).toEqual([]);
   });
 });
+
+describe("withLongUpdates: instance settings routes", () => {
+  const ID = "0123456789ab";
+  const timeouts = async (method: string, p: string) => {
+    const seen: [string, number][] = [];
+    const server = { timeout: (req: Request, s: number) => void seen.push([new URL(req.url).pathname, s]) };
+    await withLongUpdates({ fetch: () => new Response("ok") }, 190, 125)(new Request(`http://x${p}`, { method }), server as any);
+    return seen;
+  };
+
+  test("PATCH and restart of an instance get the update limit on node and hub paths", async () => {
+    for (const p of [`/api/instances/${ID}`, `/api/hosts/nas/instances/${ID}`, `/cli/api/hosts/nas/instances/${ID}`]) expect([p, await timeouts("PATCH", p)]).toEqual([p, [[p, 190]]]);
+    for (const p of [`/api/instances/${ID}/restart`, `/api/hosts/nas/instances/${ID}/restart`, `/cli/api/hosts/local/instances/${ID}/restart`]) expect([p, await timeouts("POST", p)]).toEqual([p, [[p, 190]]]);
+  });
+
+  test("other methods, paths and ids are left alone", async () => {
+    for (const [m, p] of [
+      ["GET", `/api/instances/${ID}`], ["POST", `/api/instances/${ID}`], ["DELETE", `/api/instances/${ID}`], ["GET", `/api/instances/${ID}/restart`], ["PATCH", `/api/instances/${ID}/restart`],
+      ["GET", `/api/instances/${ID}/logs`], ["POST", `/api/instances/${ID}/pause`], ["PATCH", `/api/instances/${ID}/logs`],
+      ["PATCH", "/api/instances/zz"], ["PATCH", "/api/instances/0123456789abc"], ["POST", "/api/instances/ABCDEF012345/restart"], ["POST", "/api/instances/zz/restart"],
+      ["PATCH", `/api/hosts/a/b/instances/${ID}`], ["PATCH", `/other/api/instances/${ID}`],
+    ]) expect([m, p, await timeouts(m!, p!)]).toEqual([m, p, []]);
+  });
+});
