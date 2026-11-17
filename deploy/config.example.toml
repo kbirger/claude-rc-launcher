@@ -18,7 +18,7 @@ public_url = "https://rc.example.com"
 # service_path = "/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
 # ssh_auth_sock = "/run/ssh-agent.sock"
 # claude_bin = "/root/.local/bin/claude"  # must be absolute
-# claude_rc_args = ["--spawn", "same-dir"]   # the built-in default; a list set here replaces it
+# claude_rc_args = ["--spawn", "same-dir"]   # This is the built-in default. A list set here replaces it.
 # name_prefix = "myhost-"
 
 # state_dir = "/var/lib/claude-rc-launcher"   # hosts added with `claude-rc host add` are stored here. The hub owns them: do not edit by hand
