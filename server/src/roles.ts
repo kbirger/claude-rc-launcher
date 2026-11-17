@@ -78,11 +78,12 @@ const RULES: Rule[] = [
   ...rows("admin", "DELETE", ["/hosts/:host"]),
   ...rows("admin", "GET", ["/hosts/:host/github/login/:id"]),
   // write: instances, folders, clones, permission rules and the name of a node
-  ...rows("write", "PATCH", ["/hosts/:host"]),
+  ...rows("write", "PATCH", ["/hosts/:host", "/hosts/:host/instances/:id"]),
   ...rows("write", "POST", ["/hosts/:host/instances", "/hosts/:host/fs/mkdir", "/hosts/:host/clone"], true),
   ...rows("write", "POST", [
     "/hosts/:host/instances/:id/pause",
     "/hosts/:host/instances/:id/resume",
+    "/hosts/:host/instances/:id/restart",
     "/hosts/:host/instances/:id/permissions/rules",
     `${SESSION}/permissions/rules`,
   ]),
@@ -101,6 +102,7 @@ const RULES: Rule[] = [
     "/hosts",
     "/hosts/:host/node",
     "/hosts/:host/instances",
+    "/hosts/:host/instance-settings",
     "/hosts/:host/instances/:id/logs",
     "/hosts/:host/instances/:id/permissions",
     "/hosts/:host/instances/:id/sessions",

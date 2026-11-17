@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../src/instances";
-import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest } from "../src/requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest } from "../src/requests";
 
 const rejects = (fn: () => unknown) => {
   try {
@@ -129,5 +129,29 @@ describe("the request helpers have a single definition", () => {
     expect(text).not.toMatch(/const isObject\s*=/);
     expect(text).not.toMatch(/function readJson/);
     expect(text).not.toMatch(/function readObject/);
+  });
+});
+
+describe("parseSettingsPatch and the start settings", () => {
+  test("a valid patch keeps only the sent fields", () => {
+    expect(parseSettingsPatch({ createSession: false })).toEqual({ createSession: false });
+    expect(parseSettingsPatch({ spawnMode: "worktree", createSession: true })).toEqual({ spawnMode: "worktree", createSession: true });
+  });
+  test.each<[unknown, string]>([
+    [{}, "at least one"],
+    [null, "object"],
+    [{ createSession: "yes" }, "createSession"],
+    [{ spawnMode: "tree" }, "spawnMode"],
+    [{ x: 1 }, "x"],
+    [{ createSession: true, x: 1 }, "x"],
+  ])("rejects %j", (body, word) => {
+    const r = rejects(() => parseSettingsPatch(body));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain(word);
+  });
+  test("parseStartRequest returns and validates createSession and spawnMode", () => {
+    expect(parseStartRequest({ path: "/p", createSession: false, spawnMode: "worktree" })).toEqual({ path: "/p", createSession: false, spawnMode: "worktree" });
+    expect(rejects(() => parseStartRequest({ path: "/p", createSession: 1 })).status).toBe(400);
+    expect(rejects(() => parseStartRequest({ path: "/p", spawnMode: "x" })).status).toBe(400);
   });
 });

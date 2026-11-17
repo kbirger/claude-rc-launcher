@@ -25,11 +25,12 @@ import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
 import type { createReleaseList } from "./releaselist";
 import { HttpError, type Instances } from "./instances";
+import { SETTINGS_HELP } from "./instancesettings";
 import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
-import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
 
@@ -116,7 +117,9 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       const real = await resolveChecked(input.path, cfg.roots).catch(() => undefined);
       if (real !== undefined && busy.some((t) => within(real, t))) throw new HttpError(409, "a clone is still running in that folder");
     }
-    return c.json(await instances.start(input), 201);
+    const { createSession, spawnMode, ...rest } = input;
+    const settings = { ...(createSession === undefined ? {} : { createSession }), ...(spawnMode === undefined ? {} : { spawnMode }) };
+    return c.json(await instances.start({ ...rest, ...(Object.keys(settings).length > 0 ? { settings } : {}) }), 201);
   });
   r.delete("/instances/:id", async (c) => {
     const id = c.req.param("id");
@@ -136,6 +139,21 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.resume) throw new HttpError(501, "resume is not supported on this node");
     await instances.resume(id);
+    return c.body(null, 204);
+  });
+  r.get("/instance-settings", (c) => c.json(SETTINGS_HELP));
+  r.patch("/instances/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    const patch = parseSettingsPatch(await readJson(c));
+    if (!instances.update) throw new HttpError(501, "settings are not supported on this node");
+    return c.json(await instances.update(id, patch));
+  });
+  r.post("/instances/:id/restart", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    if (!instances.restart) throw new HttpError(501, "restart is not supported on this node");
+    await instances.restart(id);
     return c.body(null, 204);
   });
   r.get("/instances/:id/logs", async (c) => {
