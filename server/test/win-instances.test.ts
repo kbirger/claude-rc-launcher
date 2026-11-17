@@ -3,11 +3,12 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpError } from "../src/instances";
+import { PROBE_INTERVAL_MS, SETTLE_MS } from "../src/instancechange";
 import { PathError } from "../src/paths";
 import type { TrustStore } from "../src/trust";
 import { instanceId } from "../src/unit";
 import { RestrictedTokenError } from "../src/win/token";
-import { WinInstances, taskkillTree, type Spawned, type WinInstanceOptions } from "../src/win/instances";
+import { WinInstances, taskkillTree, type Spawned, type WinDeps, type WinInstanceOptions } from "../src/win/instances";
 
 const ROOT = "C:\\work";
 const P1 = "C:\\work\\one";
@@ -19,6 +20,9 @@ let dir: string;
 let procs: FakeProc[];
 let killed: number[];
 let sleeps: (() => void)[];
+/** The sleeps between two probes of the wait after a change. */
+let probeSleeps: (() => void)[];
+let repos: Set<string>;
 let spawnError: Error | null;
 let killError: Error | null;
 let trustedPaths: Set<string>;
@@ -37,7 +41,7 @@ const trust: TrustStore = {
 function opts(over: Partial<WinInstanceOptions> = {}): WinInstanceOptions {
   return { roots: [ROOT], serviceUser: "svc", serviceHome: "C:\\Users\\svc", claudeBin: "C:\\Users\\svc\\.local\\bin\\claude.exe", claudeRcArgs: ["--spawn", "same-dir"], namePrefix: "", instanceDir: dir, ...over };
 }
-function make(over: Partial<WinInstanceOptions> = {}) {
+function make(over: Partial<WinInstanceOptions> = {}, deps: Partial<WinDeps> = {}) {
   return new WinInstances(opts(over), {
     spawn: (cmd, args, o) => {
       if (spawnError) throw spawnError;
@@ -52,11 +56,16 @@ function make(over: Partial<WinInstanceOptions> = {}) {
       killed.push(pid);
       procs.find((p) => p.pid === pid)?.exit(1); // a killed process exits
     },
-    sleep: () => new Promise<void>((r) => { sleeps.push(r); }),
+    sleep: (ms) => new Promise<void>((r) => {
+      if (ms === PROBE_INTERVAL_MS) probeSleeps.push(r);
+      else if (ms !== SETTLE_MS) sleeps.push(r); // the guard of a restart never ends in a test
+    }),
     now: () => new Date("2026-11-08T12:00:00Z"),
     resolvePath: resolve,
     trust,
     restartDelayMs: 10,
+    repoKind: async (d) => (repos.has(d) ? "git" : undefined),
+    ...deps,
   });
 }
 const flush = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -70,7 +79,7 @@ const stateFile = () => join(dir, "instances.json");
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "winst-"));
-  procs = []; killed = []; sleeps = []; spawnError = null; killError = null; trustedPaths = new Set([P1, P2]); trustAdds = []; nextPid = 100;
+  procs = []; killed = []; sleeps = []; probeSleeps = []; repos = new Set([P1]); spawnError = null; killError = null; trustedPaths = new Set([P1, P2]); trustAdds = []; nextPid = 100;
 });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
@@ -83,13 +92,13 @@ describe("start", () => {
     expect(procs[0]!.args).toEqual(["remote-control", "--name", "one", "--spawn", "same-dir"]);
     expect(procs[0]!.cwd).toBe(P1);
     expect(procs[0]!.logFile).toBe(join(dir, "logs", `${instanceId(P1)}.log`));
-    expect(inst).toEqual({ id: instanceId(P1), path: P1, name: "one", state: "active", startedAt: "2026-11-08T12:00:00.000Z" });
+    expect(inst).toEqual({ id: instanceId(P1), path: P1, name: "one", state: "active", startedAt: "2026-11-08T12:00:00.000Z", settings: { createSession: true, spawnMode: "same-dir" } });
     expect(await s.list()).toEqual([inst]);
   });
 
   test("lists the instance in the state file", async () => {
     await make().start({ path: P1, name: "mine" });
-    expect(JSON.parse(await readFile(stateFile(), "utf8"))).toEqual({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "mine" }] });
+    expect(JSON.parse(await readFile(stateFile(), "utf8"))).toEqual({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "mine", createSession: true, spawnMode: "same-dir" }] });
   });
 
   test("a bad name is 400 and a path outside the roots is 403, with nothing started", async () => {
@@ -505,5 +514,316 @@ describe("claudeHome", () => {
     const s = make();
     expect(await status(s.claudeHome("0123456789ab"))).toBe(404);
     expect(await status(s.claudeHome("x"))).toBe(404);
+  });
+});
+
+describe("instance settings", () => {
+  const REFUSED_TEXT = "This folder is already served by a terminal `claude remote-control`\n";
+  const NO_SESSION = ["remote-control", "--name", "one", "--spawn", "same-dir", "--no-create-session-in-dir"];
+  const DEFAULT_ARGS = ["remote-control", "--name", "one", "--spawn", "same-dir"];
+
+  /** Lets the wait after a change go on until the call ends. Only the probe sleeps end, so no restart delay passes. */
+  async function settle<T>(p: Promise<T>): Promise<T> {
+    let done = false;
+    p.then(() => { done = true; }, () => { done = true; });
+    const deadline = Date.now() + 3_000;
+    while (!done) {
+      if (Date.now() > deadline) throw new Error("the change did not end");
+      await flush();
+      probeSleeps.splice(0).forEach((r) => r());
+    }
+    return p;
+  }
+  /** Waits until `cond` is true. The file system work of a change needs more than one turn. */
+  async function until(cond: () => boolean) {
+    const deadline = Date.now() + 3_000;
+    while (!cond() && Date.now() <= deadline) await flush();
+    expect(cond()).toBe(true);
+  }
+  /** Waits for the wait after a change to begin, then ends `n` probe sleeps, so the wait is inside its window. */
+  async function probes(n: number) {
+    await until(() => probeSleeps.length > 0);
+    for (let i = 0; i < n; i++) {
+      await until(() => probeSleeps.length > 0);
+      probeSleeps.shift()!();
+    }
+    await flush();
+  }
+  const errOf = async (p: Promise<unknown>) => (await p.then(() => undefined, (e) => e)) as HttpError;
+  const fileRecord = async () => JSON.parse(await readFile(stateFile(), "utf8")).instances[0];
+
+  test("start with settings passes the flags, saves them and returns them", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1, settings: { createSession: false } });
+    expect(procs[0]!.args).toEqual(NO_SESSION);
+    expect(inst.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "same-dir" });
+    expect((await s.list())[0]!.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+  });
+
+  test("start: worktree in a folder that is not a repository is 400, a bad value is 400, nothing starts", async () => {
+    const s = make();
+    expect(await status(s.start({ path: P2, settings: { spawnMode: "worktree" } }))).toBe(400);
+    expect(await status(s.start({ path: P1, settings: { spawnMode: "elsewhere" as never } }))).toBe(400);
+    // the operator default counts too
+    const w = make({ claudeRcArgs: ["--spawn", "worktree"] });
+    expect(await status(w.start({ path: P2 }))).toBe(400);
+    expect(procs).toHaveLength(0);
+    expect(await readFile(stateFile(), "utf8").catch(() => null)).toBeNull();
+  });
+
+  test("the operator list gives the defaults and the instance values replace its managed flags", async () => {
+    const s = make({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir", "--verbose"] });
+    const inst = await s.start({ path: P1, settings: { createSession: true } });
+    expect(inst.settings).toEqual({ createSession: true, spawnMode: "worktree" });
+    expect(procs[0]!.args).toEqual(["remote-control", "--name", "one", "--verbose", "--spawn", "worktree"]);
+  });
+
+  test("an old state file without settings restores with the defaults; after update the file has both fields", async () => {
+    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }));
+    const s = make();
+    expect(await s.restore()).toBe(1);
+    await flush();
+    expect(procs[0]!.args).toEqual(DEFAULT_ARGS);
+    expect((await s.list())[0]!.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    const r = await settle(s.update(instanceId(P1), { createSession: false }));
+    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "same-dir" });
+  });
+
+  test("restore reads the settings of each record and spawns with them", async () => {
+    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "worktree" }] }));
+    const s = make();
+    await s.restore();
+    await flush();
+    expect(procs[0]!.args).toEqual(["remote-control", "--name", "one", "--spawn", "worktree", "--no-create-session-in-dir"]);
+    expect((await s.list())[0]!.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+  });
+
+  test("update kills the tree once, starts the new settings at once and keeps them when the server stays up", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const p = s.update(inst.id, { createSession: false });
+    await probes(0);
+    expect(killed).toEqual([100]);
+    expect(procs).toHaveLength(2);
+    expect(procs[1]!.args).toEqual(NO_SESSION);
+    expect(sleeps).toHaveLength(0); // no restart delay
+    const r = await settle(p);
+    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(r.instance.state).toBe("active");
+    expect((await fileRecord()).createSession).toBe(false);
+    expect(procs).toHaveLength(2);
+  });
+
+  test("the wait lasts the full 20 seconds of probes", async () => {
+    const seen: number[] = [];
+    const s = make({}, { sleep: async (ms) => { if (ms === PROBE_INTERVAL_MS) seen.push(ms); else await new Promise(() => {}); } });
+    const inst = await s.start({ path: P1 });
+    await s.update(inst.id, { createSession: false });
+    expect(seen.reduce((a, b) => a + b, 0)).toBe(SETTLE_MS);
+  });
+
+  test("a server that exits 69 inside the window: the old record and settings come back, 409 settings_refused", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const p = s.update(inst.id, { createSession: false });
+    await probes(3);
+    expect(procs[1]!.args).toEqual(NO_SESSION);
+    procs[1]!.exit(69);
+    const err = await errOf(settle(p));
+    expect(err.status).toBe(409);
+    expect(err.extra).toEqual({ code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } });
+    expect(procs).toHaveLength(3);
+    expect(procs[2]!.args).toEqual(DEFAULT_ARGS);
+    expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: true, spawnMode: "same-dir" });
+    const now = (await s.list())[0]!;
+    expect(now.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(now.state).toBe("active");
+    // the lock is free again
+    expect(await status(settle(s.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
+  });
+
+  test("the log text 'already served' after the change counts as refused", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const p = s.update(inst.id, { createSession: false });
+    await probes(1);
+    await mkdir(join(dir, "logs"), { recursive: true });
+    await writeFile(join(dir, "logs", `${inst.id}.log`), REFUSED_TEXT);
+    procs[1]!.exit(1);
+    expect((await errOf(settle(p))).extra).toMatchObject({ code: "settings_refused" });
+  });
+
+  test("an 'already served' text from before the change does not count; other exits are settings_failed", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    await mkdir(join(dir, "logs"), { recursive: true });
+    await writeFile(join(dir, "logs", `${inst.id}.log`), REFUSED_TEXT);
+    const p = s.update(inst.id, { createSession: false });
+    await probes(1);
+    procs[1]!.exit(1);
+    const err = await errOf(settle(p));
+    expect(err.status).toBe(409);
+    expect(err.extra).toEqual({ code: "settings_failed", settings: { createSession: true, spawnMode: "same-dir" } });
+    expect(procs.at(-1)!.args).toEqual(DEFAULT_ARGS);
+  });
+
+  test("an exit 69 from before the change does not make a healthy new server look refused", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    procs[0]!.exit(69); // a crash before the change: the supervisor waits to start it again
+    await flush();
+    expect(sleeps).toHaveLength(1);
+    const r = await settle(s.update(inst.id, { createSession: false }));
+    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(procs).toHaveLength(2);
+    expect(procs[1]!.args).toEqual(NO_SESSION);
+  });
+
+  test("an exit 69 from before the change does not count when the new start fails", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    procs[0]!.exit(69);
+    await flush();
+    spawnError = new Error("disk gone");
+    const err = await errOf(settle(s.update(inst.id, { createSession: false })));
+    expect(err.status).toBe(409);
+    expect(err.extra).toMatchObject({ code: "settings_failed" });
+  });
+
+  test("two changes to one instance together: the second is 409, the first finishes", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const first = s.update(inst.id, { createSession: false });
+    const second = await errOf(s.update(inst.id, { spawnMode: "worktree" }));
+    expect(second.status).toBe(409);
+    expect(second.message).toBe("change in progress");
+    const r = await settle(first);
+    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(procs).toHaveLength(2);
+  });
+
+  test("a patch equal to the current settings does nothing", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const r = await s.update(inst.id, { createSession: true, spawnMode: "same-dir" });
+    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(r.instance.settings).toEqual(r.previous);
+    expect(killed).toEqual([]);
+    expect(procs).toHaveLength(1);
+  });
+
+  test("bad input changes nothing and always frees the lock", async () => {
+    const s = make();
+    const inst = await s.start({ path: P2 });
+    expect(await status(s.update(inst.id, { spawnMode: "worktree" }))).toBe(400); // P2 is not a repository
+    expect(await status(s.update(inst.id, { createSession: "no" as never }))).toBe(400);
+    expect(await status(s.update("0".repeat(12), { createSession: false }))).toBe(404);
+    expect(await status(s.update("../x", { createSession: false }))).toBe(404);
+    expect(killed).toEqual([]);
+    expect(await fileRecord()).toMatchObject({ createSession: true, spawnMode: "same-dir" });
+    expect(await status(settle(s.update(inst.id, { createSession: false })))).toBe("ok");
+  });
+
+  test("when the old process cannot be ended, the old record comes back and it is 409 settings_failed", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    killError = new Error("access denied");
+    const err = await errOf(settle(s.update(inst.id, { createSession: false })));
+    expect(err.status).toBe(409);
+    expect(err.extra).toMatchObject({ code: "settings_failed" });
+    expect(err.message).toContain("access denied");
+    expect(await fileRecord()).toMatchObject({ createSession: true });
+    expect((await s.list())[0]!.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(procs).toHaveLength(1); // the old process runs on
+    killError = null;
+    expect(await status(settle(s.update(inst.id, { createSession: false })))).toBe("ok");
+  });
+
+  test("when the old record cannot be saved again, it is 500 undo_failed and the lock is free", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const p = s.update(inst.id, { createSession: false });
+    await probes(1);
+    // a folder where the state file must be: the next save fails
+    await rm(stateFile());
+    await mkdir(join(stateFile(), "x"), { recursive: true });
+    procs[1]!.exit(69);
+    const err = await errOf(settle(p));
+    expect(err.status).toBe(500);
+    expect(err.extra).toEqual({ code: "undo_failed" });
+    await rm(stateFile(), { recursive: true });
+    expect(await status(settle(s.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
+  });
+
+  test("stop during a change is 409 and leaves no process behind", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const p = s.update(inst.id, { createSession: false });
+    await probes(1);
+    expect(await status(s.stop(inst.id))).toBe(409);
+    expect(await status(s.restart(inst.id))).toBe(409);
+    await settle(p);
+    await s.stop(inst.id);
+    expect(await s.list()).toEqual([]);
+    expect(killed).toEqual([100, 101]);
+    expect(procs).toHaveLength(2);
+  });
+
+  test("close during a change ends the change and starts nothing again", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    const p = s.update(inst.id, { createSession: false });
+    await probes(1);
+    await s.close();
+    const err = await errOf(settle(p));
+    expect(err.status).toBe(409);
+    expect(err.extra).toMatchObject({ code: "settings_failed" });
+    await flush();
+    sleeps.splice(0).forEach((r) => r());
+    await flush();
+    expect(procs).toHaveLength(2);
+    expect(killed).toEqual([100, 101]);
+    expect(await fileRecord()).toMatchObject({ createSession: true }); // restore brings back the old settings
+  });
+
+  test("restart kills the tree once and the supervisor starts a new process at once, with no wait", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1, settings: { createSession: false } });
+    await s.restart(inst.id);
+    expect(killed).toEqual([100]);
+    expect(procs).toHaveLength(2);
+    expect(procs[1]!.args).toEqual(NO_SESSION);
+    expect(sleeps).toHaveLength(0);
+    expect((await s.list())[0]!.state).toBe("active");
+    // a later crash waits the restart delay as before
+    procs[1]!.exit(1);
+    await flush();
+    expect(sleeps).toHaveLength(1);
+    expect(procs).toHaveLength(2);
+  });
+
+  test("restart of an instance that waits to start again starts it at once", async () => {
+    const s = make();
+    const inst = await s.start({ path: P1 });
+    procs[0]!.exit(1);
+    await flush();
+    await s.restart(inst.id);
+    expect(killed).toEqual([]);
+    expect(procs).toHaveLength(2);
+    expect((await s.list())[0]!.state).toBe("active");
+  });
+
+  test("restart: an unknown id is 404 and a kill that fails is 500", async () => {
+    const s = make();
+    expect(await status(s.restart("0".repeat(12)))).toBe(404);
+    const inst = await s.start({ path: P1 });
+    killError = new Error("access denied");
+    expect(await status(s.restart(inst.id))).toBe(500);
+    killError = null;
+    await s.restart(inst.id);
+    expect(procs).toHaveLength(2);
   });
 });
