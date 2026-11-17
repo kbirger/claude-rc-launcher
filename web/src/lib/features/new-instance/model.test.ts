@@ -580,19 +580,46 @@ describe("instance settings in the start form", () => {
     expect(m.started).toEqual([{ path: HOME, name: undefined, user: "dev", addTrust: false }]);
   });
 
-  test("a new node shows the help and the start sends both values, the defaults first", async () => {
+  test("an untouched form sends no settings, so the node defaults decide", async () => {
     api.help = () => res(HELP);
     const m = mount();
     m.model.go(HOME);
     await tick();
     expect(m.model.settingsHelp).toEqual(HELP);
+    // HELP has no defaults (an older node): the form shows the built-in values.
     expect(m.model.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
     m.model.start();
-    m.model.settings = { createSession: false, spawnMode: "worktree" };
+    expect(m.started).toEqual([{ path: HOME, name: undefined, user: "dev", addTrust: false }]);
+  });
+
+  test("a changed field sends only that field", async () => {
+    api.help = () => res(HELP);
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    m.model.settings = { createSession: true, spawnMode: "worktree" };
+    m.model.start();
+    // A field set back to the default is no longer sent.
+    m.model.settings = { createSession: true, spawnMode: "same-dir" };
     m.model.start();
     expect(m.started).toEqual([
-      { path: HOME, name: undefined, user: "dev", addTrust: false, createSession: true, spawnMode: "same-dir" },
-      { path: HOME, name: undefined, user: "dev", addTrust: false, createSession: false, spawnMode: "worktree" },
+      { path: HOME, name: undefined, user: "dev", addTrust: false, spawnMode: "worktree" },
+      { path: HOME, name: undefined, user: "dev", addTrust: false },
+    ]);
+  });
+
+  test("the node defaults seed the form, and only a change from them is sent", async () => {
+    api.help = () => res({ ...HELP, defaults: { createSession: false, spawnMode: "worktree" } });
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    expect(m.model.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+    m.model.start();
+    m.model.settings = { createSession: true, spawnMode: "worktree" };
+    m.model.start();
+    expect(m.started).toEqual([
+      { path: HOME, name: undefined, user: "dev", addTrust: false },
+      { path: HOME, name: undefined, user: "dev", addTrust: false, createSession: true },
     ]);
   });
 

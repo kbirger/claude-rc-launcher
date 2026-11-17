@@ -113,4 +113,10 @@ describe("start flow", () => {
     f.startFailed("local", trust("/a"), { path: "/a" });
     expect(f.newInitial).toEqual({ path: "/a", user: undefined, name: undefined, trust: { path: "/a", user: "kir" } });
   });
+
+  test("a 428 keeps only the settings fields that the start sent", () => {
+    const f = createStartFlow("local");
+    f.startFailed("local", trust("/a"), { path: "/a", spawnMode: "worktree" });
+    expect(f.newInitial?.settings).toEqual({ spawnMode: "worktree" });
+  });
 });

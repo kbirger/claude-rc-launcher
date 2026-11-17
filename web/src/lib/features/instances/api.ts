@@ -3,7 +3,7 @@ import { ApiError, hostUrl, request } from "../../shared/http";
 export type SpawnMode = "same-dir" | "worktree";
 export type InstanceSettings = { createSession: boolean; spawnMode: SpawnMode };
 export type SettingsPatch = Partial<InstanceSettings>;
-// The values a node uses when a start names none. The node holds the same values.
+// The built-in values of a node. The page uses them only for a node whose help has no `defaults`.
 export const DEFAULT_SETTINGS: InstanceSettings = { createSession: true, spawnMode: "same-dir" };
 
 // The labels and explanations of the settings, as the node sends them. The page shows only this text: it has no copy of its own.
@@ -15,6 +15,8 @@ export type SettingsHelp = {
     values: { value: boolean | string; label: string; explanation: string }[];
     limits?: string;
   }[];
+  /** The settings that a start with no settings gets on this node. The operator list decides them. An older node does not send them. */
+  defaults?: InstanceSettings;
 };
 
 // An old node has no settings: the field is missing.

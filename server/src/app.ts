@@ -25,7 +25,7 @@ import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
 import type { createReleaseList } from "./releaselist";
 import { HttpError, type Instances } from "./instances";
-import { SETTINGS_HELP } from "./instancesettings";
+import { SETTINGS_HELP, settingsFromArgs } from "./instancesettings";
 import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
@@ -141,7 +141,8 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     await instances.resume(id);
     return c.body(null, 204);
   });
-  r.get("/instance-settings", (c) => c.json(SETTINGS_HELP));
+  // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
+  r.get("/instance-settings", (c) => c.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs ?? []) }));
   r.patch("/instances/:id", async (c) => {
     const id = c.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");

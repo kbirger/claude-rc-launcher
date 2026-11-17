@@ -308,6 +308,25 @@ describe("settings dialog model", () => {
     d.stop();
   });
 
+  test("each 409 says what happened: refused, undone, or another change running", async () => {
+    const cases: [Record<string, unknown>, string, boolean][] = [
+      [{ error: "claude refused it", code: "settings_refused", settings: SETTINGS }, "The node refused the change. The old settings stay. Reason: claude refused it", true],
+      [{ error: "it did not stay up", code: "settings_failed", settings: SETTINGS }, "The node undid the change. The old settings stay. Reason: it did not stay up", true],
+      [{ error: "operation in progress" }, "Another change is running for this folder. Try again in a minute. Reason: operation in progress", false],
+    ];
+    for (const [body, message, saysOldStay] of cases) {
+      api.patch = () => json(body, 409);
+      const d = dialog();
+      d.model.set({ createSession: false, spawnMode: "same-dir" });
+      d.model.apply();
+      await settle();
+      expect(d.model.error).toBe(message);
+      expect(d.model.error.includes("The old settings stay.")).toBe(saysOldStay);
+      expect(d.closed()).toBe(0);
+      d.stop();
+    }
+  });
+
   test("a network error shows an error and keeps the dialog open", async () => {
     api.patch = () => { throw new TypeError("Failed to fetch"); };
     const d = dialog();

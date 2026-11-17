@@ -102,11 +102,13 @@ const sameSettings = (a: InstanceSettings, b: InstanceSettings) => a.createSessi
 const isSettings = (v: unknown): v is InstanceSettings =>
   !!v && typeof (v as InstanceSettings).createSession === "boolean" && ((v as InstanceSettings).spawnMode === "same-dir" || (v as InstanceSettings).spawnMode === "worktree");
 
-/** The message for a settings change that failed. A 409 means the node refused or undid it: the old settings stay. */
+/** The message for a settings change that failed. A 409 with a settings code means the node refused or undid it. Another 409 means another change runs. */
 export function settingsErrorMessage(e: unknown): string {
   if (e instanceof ApiError && e.status === 409) {
-    const first = e.body?.code === "settings_refused" ? "The node refused the change." : "The node undid the change.";
-    return `${first} The old settings stay. Reason: ${e.message}`;
+    if (e.body?.code === "settings_refused") return `The node refused the change. The old settings stay. Reason: ${e.message}`;
+    if (e.body?.code === "settings_failed") return `The node undid the change. The old settings stay. Reason: ${e.message}`;
+    // Another change runs on this instance (a CLI, another tab, a pause or a resume). Nothing was applied or undone.
+    return `Another change is running for this folder. Try again in a minute. Reason: ${e.message}`;
   }
   if (e instanceof ApiError) return e.message;
   return "The change did not reach the hub. Check the connection and try again.";

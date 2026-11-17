@@ -3,4 +3,4 @@ export { default as InstanceSettingsFields } from "./InstanceSettingsFields.svel
 export { startInstanceMutation } from "./mutations";
 export type { StartArgs } from "./mutations";
 export { settingsHelpQuery } from "./queries";
-export { DEFAULT_SETTINGS, type InstanceSettings, type SettingsHelp } from "./api";
+export { DEFAULT_SETTINGS, type InstanceSettings, type SettingsHelp, type SettingsPatch } from "./api";

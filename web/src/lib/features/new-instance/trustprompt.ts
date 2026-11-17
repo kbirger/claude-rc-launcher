@@ -1,9 +1,10 @@
 import { ApiError } from "../../shared/http";
-import type { InstanceSettings } from "../instances";
+import type { SettingsPatch } from "../instances";
 
 export type TrustPrompt = { path: string; user: string };
 // What the dialog opens with after a 428: the folder, user, name and settings of that start, and its trust question.
-export type NewInitial = { path: string; user?: string; name?: string; settings?: InstanceSettings; trust: TrustPrompt };
+// The settings are only the ones that start changed from the node defaults.
+export type NewInitial = { path: string; user?: string; name?: string; settings?: SettingsPatch; trust: TrustPrompt };
 
 // What to send to startInstance. A trust start must use exactly the folder and user the prompt named,
 // whatever the dialog shows now, so it needs no listing. A plain start uses the current folder and the chosen user.

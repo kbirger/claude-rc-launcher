@@ -11,6 +11,8 @@ export type SettingsHelp = {
     values: { value: boolean | string; label: string; explanation: string }[];
     limits?: string;
   }[];
+  /** The settings that a start with no settings gets on this node. An older node does not send them. */
+  defaults?: InstanceSettings;
 };
 
 export function settingsFromArgs(args: string[]): InstanceSettings {
