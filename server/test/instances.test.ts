@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, readdir, readFile, writeFile, rm, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HttpError, InstanceService, type Runner } from "../src/instances";
+import { HttpError, InstanceService, type RunResult, type Runner } from "../src/instances";
 import { PathError } from "../src/paths";
 import { instanceId, renderUnit, unitName } from "../src/unit";
 import type { Config } from "../src/config";
@@ -20,8 +20,12 @@ let events: string[];
 const SHOW = "ActiveState=active\nSubState=running\nActiveEnterTimestamp=@1730887200\n";
 let showOverride: string | null = null;
 let journalFail = false;
+/** A test can answer a call itself. Undefined falls through to the default answers. */
+let hook: ((cmd: string, args: string[]) => Promise<RunResult | undefined> | RunResult | undefined) | null = null;
 const fake: Runner = async (cmd, args) => {
   calls.push({ cmd, args });
+  const h = hook ? await hook(cmd, args) : undefined;
+  if (h) return h;
   events.push(args.filter((a) => !a.startsWith("--user")).join(" ") + ((await readdir(dir).catch(() => [])).length ? " [file]" : " [nofile]"));
   if (args.includes("enable") && gate) await gate;
   if (args.includes("disable") && failDisable) return { code: 1, stdout: "", stderr: "nope" };
@@ -69,6 +73,7 @@ async function status(p: Promise<unknown>): Promise<number | string> {
 }
 
 beforeEach(async () => {
+  hook = null;
   showOverride = null;
   journalFail = false;
   dir = await mkdtemp(join(tmpdir(), "inst-"));
@@ -591,5 +596,194 @@ describe("claudeHome", () => {
   test("an unknown or bad id is 404", async () => {
     expect(await status(svc().claudeHome("0123456789ab"))).toBe(404);
     expect(await status(svc().claudeHome("../x"))).toBe(404);
+  });
+});
+
+describe("start with settings", () => {
+  test("worktree in a folder that is not a git repository is 400 and writes nothing", async () => {
+    let trustAdds = 0;
+    const trust: TrustStore = { checker: async () => () => false, add: async () => { trustAdds++; } };
+    const s = svc({}, { trust, repoKind: async () => undefined });
+    expect(await status(s.start({ path: "/srv/proj", addTrust: true, settings: { spawnMode: "worktree" } }))).toBe(400);
+    expect(await readdir(dir)).toEqual([]);
+    expect(trustAdds).toBe(0);
+    expect(calls).toEqual([]);
+  });
+  test("worktree in a git repository and createSession off go into the unit", async () => {
+    const inst = await svc({}, { repoKind: async () => "git" }).start({ path: "/srv/proj", settings: { spawnMode: "worktree", createSession: false } });
+    expect(inst.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+    const content = await readFile(join(dir, unitName(inst.id)), "utf8");
+    expect(content).toContain("--spawn worktree --no-create-session-in-dir");
+  });
+  test("a bad settings value is 400", async () => {
+    expect(await status(svc().start({ path: "/srv/proj", settings: { spawnMode: "elsewhere" as never } }))).toBe(400);
+    expect(await status(svc().start({ path: "/srv/proj", settings: { createSession: "yes" as never } }))).toBe(400);
+    expect(await readdir(dir)).toEqual([]);
+  });
+  test("without settings the unit is the same as before", async () => {
+    const inst = await svc().start({ path: "/srv/proj", name: "my" });
+    expect(await readFile(join(dir, unitName(inst.id)), "utf8")).toBe(renderUnit(cfg(), "/srv/proj", "my"));
+  });
+});
+
+describe("restart", () => {
+  test("restart is systemctl restart and an unmanaged id is 404", async () => {
+    const id = await seed("/srv/a");
+    await svc().restart(id);
+    expect(calls).toEqual([sc("restart", unitName(id))]);
+    expect(await status(svc().restart("abcdef012345"))).toBe(404);
+  });
+});
+
+describe("update", () => {
+  const noSleep = { sleep: async () => {} };
+  const isProbe = (args: string[]) => args[0] === "show" && args.some((a) => a.includes("ExecMainStatus"));
+  const restarts = () => calls.filter((c) => c.args[0] === "restart").length;
+
+  test("a healthy change rewrites the unit, reloads, restarts and returns the old settings", async () => {
+    const id = await seed("/srv/a", "alpha");
+    const r = await svc({}, noSleep).update(id, { createSession: false });
+    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(r.instance).toMatchObject({ id, name: "alpha", settings: { createSession: false, spawnMode: "same-dir" }, state: "active" });
+    const content = await readFile(join(dir, unitName(id)), "utf8");
+    expect(content).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
+    expect(calls.slice(0, 2)).toEqual([sc("daemon-reload"), sc("restart", unitName(id))]);
+    expect(restarts()).toBe(1);
+    expect(await readdir(dir)).toEqual([unitName(id)]); // no .tmp file left
+  });
+
+  test("createSession off with a recoverable session: exit 69, the change is undone, 409 settings_refused", async () => {
+    const id = await seed("/srv/a", "alpha");
+    const before = await readFile(join(dir, unitName(id)), "utf8");
+    let n = 0;
+    hook = (_cmd, args) => {
+      if (args[0] === "restart") { n++; return undefined; }
+      if (isProbe(args)) {
+        return { code: 0, stdout: n === 1 ? "ActiveState=activating\nSubState=auto-restart\nExecMainStatus=69\n" : "ActiveState=active\nSubState=running\nExecMainStatus=0\n", stderr: "" };
+      }
+      return undefined;
+    };
+    let err: HttpError | undefined;
+    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err!.status).toBe(409);
+    expect(err!.extra).toEqual({ code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } });
+    expect(err!.message).toContain("69");
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
+    expect(restarts()).toBe(2);
+    const verbs = calls.map((c) => c.args[0]).filter((v) => v !== "show");
+    expect(verbs).toEqual(["daemon-reload", "restart", "daemon-reload", "restart"]);
+    expect(await readdir(dir)).toEqual([unitName(id)]);
+  });
+
+  test("a unit that does not stay active is undone with 409 settings_failed", async () => {
+    const id = await seed("/srv/a");
+    const before = await readFile(join(dir, unitName(id)), "utf8");
+    hook = (_cmd, args) => (isProbe(args) ? { code: 0, stdout: "ActiveState=failed\nExecMainStatus=1\n", stderr: "" } : undefined);
+    let err: HttpError | undefined;
+    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
+    expect(err!.status).toBe(409);
+    expect((err!.extra as { code: string }).code).toBe("settings_failed");
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
+    expect(restarts()).toBe(2);
+  });
+
+  test("a failed first restart is undone with 409 settings_failed", async () => {
+    const id = await seed("/srv/a");
+    let n = 0;
+    hook = (_cmd, args) => (args[0] === "restart" && ++n === 1 ? { code: 1, stdout: "", stderr: "no restart" } : undefined);
+    let err: HttpError | undefined;
+    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
+    expect(err!.status).toBe(409);
+    expect(err!.message).toContain("no restart");
+    expect((err!.extra as { code: string }).code).toBe("settings_failed");
+    expect(restarts()).toBe(2);
+  });
+
+  test("a failure while undoing is reported as 500 and names both failures", async () => {
+    const id = await seed("/srv/a");
+    let n = 0;
+    hook = (_cmd, args) => {
+      if (args[0] === "restart" && ++n === 2) return { code: 1, stdout: "", stderr: "undo broke" };
+      if (isProbe(args)) return { code: 0, stdout: "ActiveState=activating\nExecMainStatus=69\n", stderr: "" };
+      return undefined;
+    };
+    let err: HttpError | undefined;
+    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
+    expect(err!.status).toBe(500);
+    expect(err!.message).toContain("69");
+    expect(err!.message).toContain("undo broke");
+    expect((err!.extra as { settings?: unknown }).settings).toBeUndefined();
+  });
+
+  test("the settle wait is 20 seconds of fake time", async () => {
+    const id = await seed("/srv/a");
+    const slept: number[] = [];
+    await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(20_000);
+  });
+
+  test("two changes to one instance together: the second is 409 and the first finishes", async () => {
+    const id = await seed("/srv/a");
+    let release!: () => void;
+    const gateRestart = new Promise<void>((r) => { release = r; });
+    hook = async (_cmd, args) => { if (args[0] === "restart") await gateRestart; return undefined; };
+    const s = svc({}, noSleep);
+    const first = s.update(id, { createSession: false });
+    const second = s.update(id, { spawnMode: "same-dir", createSession: true });
+    let err: HttpError | undefined;
+    try { await second; } catch (e) { err = e as HttpError; }
+    expect(err!.status).toBe(409);
+    expect(err!.message).toBe("change in progress");
+    // stop and restart wait too while the change runs
+    expect(await status(s.stop(id))).toBe(409);
+    expect(await status(s.restart(id))).toBe(409);
+    release();
+    const r = await first;
+    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    // the lock is free again
+    await s.update(id, { createSession: true });
+  });
+
+  test("a patch equal to the current settings does nothing", async () => {
+    const id = await seed("/srv/a", "alpha");
+    const before = await readFile(join(dir, unitName(id)), "utf8");
+    const r = await svc({}, noSleep).update(id, { createSession: true, spawnMode: "same-dir" });
+    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(r.instance.settings).toEqual(r.previous);
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
+    expect(calls.some((c) => c.args[0] === "restart" || c.args[0] === "daemon-reload")).toBe(false);
+  });
+
+  test("worktree in a folder that is not a git repository is 400 before any file changes", async () => {
+    const id = await seed("/srv/a");
+    const before = await readFile(join(dir, unitName(id)), "utf8");
+    expect(await status(svc({}, { ...noSleep, repoKind: async () => undefined }).update(id, { spawnMode: "worktree" }))).toBe(400);
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
+    expect(await readdir(dir)).toEqual([unitName(id)]);
+    expect(calls.some((c) => c.args[0] === "restart" || c.args[0] === "daemon-reload")).toBe(false);
+  });
+
+  test("worktree in a git repository is written", async () => {
+    const id = await seed("/srv/a");
+    const r = await svc({}, { ...noSleep, repoKind: async () => "github" }).update(id, { spawnMode: "worktree" });
+    expect(r.instance.settings).toEqual({ createSession: true, spawnMode: "worktree" });
+  });
+
+  test("bad values are 400 and an unknown id is 404", async () => {
+    const id = await seed("/srv/a");
+    expect(await status(svc({}, noSleep).update(id, { spawnMode: "x" as never }))).toBe(400);
+    expect(await status(svc({}, noSleep).update(id, { createSession: 1 as never }))).toBe(400);
+    expect(await status(svc({}, noSleep).update("abcdef012345", { createSession: false }))).toBe(404);
+    expect(await status(svc({}, noSleep).update("../x", { createSession: false }))).toBe(404);
+    expect(calls).toEqual([]);
+  });
+
+  test("a unit of another user keeps its user", async () => {
+    const s = svc({}, noSleep);
+    const inst = await s.start({ path: "/srv/a", user: "alice", name: "al" });
+    const r = await s.update(inst.id, { createSession: false });
+    expect(r.instance).toMatchObject({ user: "alice", name: "al" });
+    expect(await readFile(join(dir, unitName(inst.id)), "utf8")).toContain("User=alice");
   });
 });
