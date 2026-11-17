@@ -828,3 +828,36 @@ describe("instance settings", () => {
     expect(procs).toHaveLength(2);
   });
 });
+
+describe("persist", () => {
+  test("two overlapping saves run one after another and the last one wins", async () => {
+    const s = make();
+    await s.start({ path: P1, name: "one" });
+    await s.start({ path: P2, name: "two" });
+    const save = () => (s as unknown as { persist(): Promise<void> }).persist();
+    const entry = (id: string) => (s as unknown as { entries: Map<string, { settings: { createSession: boolean } }> }).entries.get(id)!;
+    const all: Promise<void>[] = [];
+    for (let i = 0; i < 10; i++) {
+      entry(instanceId(P2)).settings.createSession = i % 2 === 0;
+      all.push(save());
+    }
+    entry(instanceId(P2)).settings.createSession = false;
+    all.push(save());
+    await Promise.all(all);
+    const doc = JSON.parse(await readFile(stateFile(), "utf8"));
+    expect(doc.instances.find((x: { id: string }) => x.id === instanceId(P2)).createSession).toBe(false);
+    expect(await Bun.file(`${stateFile()}.tmp`).exists()).toBe(false);
+  });
+
+  test("a failed save does not stop the next one", async () => {
+    const s = make();
+    await s.start({ path: P1, name: "one" });
+    const save = () => (s as unknown as { persist(): Promise<void> }).persist();
+    await rm(dir, { recursive: true, force: true });
+    await writeFile(dir, "not a folder");
+    expect(await save().then(() => "ok", () => "failed")).toBe("failed");
+    await rm(dir, { force: true });
+    await save();
+    expect(JSON.parse(await readFile(stateFile(), "utf8")).instances).toHaveLength(1);
+  });
+});

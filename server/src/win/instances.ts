@@ -114,6 +114,8 @@ export class WinInstances implements Instances {
   private entries = new Map<string, Entry>();
   private inflight = new Set<string>();
   private changes = new ChangeLock();
+  /** The last save of the state file. Saves run one after another, so two saves never share the .tmp file. */
+  private saving: Promise<void> = Promise.resolve();
   private deps: WinDeps;
 
   constructor(private o: WinInstanceOptions, deps: Partial<WinDeps> & Pick<WinDeps, "killTree">) {
@@ -168,7 +170,14 @@ export class WinInstances implements Instances {
     return [...this.entries.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((e) => this.describe(e));
   }
 
-  private async persist(): Promise<void> {
+  /** Saves the list. A save waits for the one before it and reads the list when it runs, so the last call wins. */
+  private persist(): Promise<void> {
+    const next = this.saving.catch(() => {}).then(() => this.writeState());
+    this.saving = next;
+    return next;
+  }
+
+  private async writeState(): Promise<void> {
     const body = { version: 1, instances: [...this.entries.values()].map((e) => ({
       id: e.id, path: e.path, name: e.name, ...(e.admin ? { admin: true } : {}), createSession: e.settings.createSession, spawnMode: e.settings.spawnMode,
     })) };
@@ -540,7 +549,8 @@ export class WinInstances implements Instances {
       return 0;
     }
     const list = typeof doc === "object" && doc !== null && Array.isArray((doc as { instances?: unknown }).instances) ? (doc as { instances: unknown[] }).instances : [];
-    // A record from before settings existed reads as the node defaults, which are what it ran with.
+    // A record from before settings existed reads as the current default list of the node (claude_rc_args).
+    // That can differ from what the old process ran with, for example on a node that used the built-in list.
     const defaults = settingsFromArgs(this.o.claudeRcArgs);
     let n = 0;
     for (const item of list) {
