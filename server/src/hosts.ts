@@ -6,7 +6,7 @@ import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import { parseRuleEdit } from "./permissionsapi";
-import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import type { LatestRelease } from "./latest";
 import { isStale, normalizeVersion, releaseOf, stalestVersion } from "./versions";
 import { VERSION } from "./version";
@@ -269,14 +269,17 @@ export function hostsApi(o: {
     const o = typeof s === "object" && s !== null ? (s as Record<string, unknown>) : {};
     return `${settingText(o.createSession)},${settingText(o.spawnMode)}`;
   };
+  // The settings audit line. Each settings value is `<createSession>,<spawnMode>`, for example `old=true,same-dir`.
+  // A field that is not known or not sent is `?`. want= is the request, old= and new= come from the node answer.
   remote.patch(
     "/instances/:id",
     forwardJson(async (c, k) => {
-      const json = await readJson(c);
+      // A bad body is 400 here and never reaches the node. Then only the generic audit line is written.
+      const json = parseSettingsPatch(await readJson(c));
       const u = c.get("user" as never) as User | undefined;
       const rawUser = String(u?.username ?? u?.sub ?? "unknown");
       const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
-      const head = `audit user=${who} role=${u?.role ?? "read"} host=${clientOf(c).id} action=settings instance=${instanceId(c)}`;
+      const head = `audit user=${who} role=${u?.role ?? "read"} host=${clientOf(c).id} action=settings instance=${instanceId(c)} want=${settingsText(json)}`;
       try {
         const r = await k.call("PATCH", `/api/instances/${instanceId(c)}`, { json, timeoutMs: UPDATE_TIMEOUT_MS });
         const b = (typeof r.body === "object" && r.body !== null ? r.body : {}) as Record<string, unknown>;
@@ -284,7 +287,8 @@ export function hostsApi(o: {
           const inst = (typeof b.instance === "object" && b.instance !== null ? b.instance : {}) as Record<string, unknown>;
           console.log(`${head} old=${settingsText(b.previous)} new=${settingsText(inst.settings)} status=200`);
         } else {
-          const code = b.code === "settings_refused" ? " result=refused" : b.code === "settings_failed" ? " result=failed" : "";
+          const code =
+            b.code === "settings_refused" ? " result=refused" : b.code === "settings_failed" ? " result=failed" : b.code === "undo_failed" ? " result=undo_failed" : "";
           console.log(`${head} old=${settingsText(b.settings)}${code} status=${r.status >= 400 && r.status <= 599 ? r.status : 502}`);
         }
         return r;
