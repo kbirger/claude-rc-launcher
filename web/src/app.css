@@ -284,19 +284,7 @@
   --ok: #4cd37b; --warn: #ffb74d;
   color-scheme: dark;
 }
-/* In the base layer so Tailwind utilities and the shadcn components (which are layered) win over these element rules. */
+/* The Tailwind reset and the shadcn components style the controls. Only the page background and text color live here. */
 @layer base {
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--background); color: var(--foreground); font: 16px/1.4 var(--font-sans); }
-  button, input { font: inherit; color: inherit; }
-  button {
-    min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: 8px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--card);
-  }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
-  button.danger { color: var(--destructive); border-color: var(--destructive); }
-  input { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); width: 100%; }
-  .error { color: var(--destructive); margin: 8px 0; }
-  .muted { color: var(--muted-foreground); }
+  body { background: var(--background); color: var(--foreground); font: 16px/1.4 var(--font-sans); }
 }

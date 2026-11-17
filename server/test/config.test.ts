@@ -39,7 +39,7 @@ describe("parseConfig", () => {
     expect(c.host).toBe("0.0.0.0");
     expect(c.scope).toBe("system");
     expect(c.unitDir).toBe("/etc/systemd/system");
-    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir", "--no-create-session-in-dir"]);
+    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir"]);
     expect(c.claudeBin).toBe("/root/.local/bin/claude");
     expect(c.roots).toEqual(["/root"]);
     expect(c.serviceUser).toBe("root");

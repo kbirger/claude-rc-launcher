@@ -16,7 +16,7 @@
 {:else if isUnsupported(q.error)}
   <p class="text-muted-foreground">This node does not support permissions. Update the node.</p>
 {:else if q.error}
-  <p class="error">Could not load the permissions: {q.error.message}</p>
+  <p class="text-destructive">Could not load the permissions: {q.error.message}</p>
 {:else if q.data}
   <RuleList layers={q.data.layers} {host} {instance} />
 {/if}

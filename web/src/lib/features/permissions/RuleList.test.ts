@@ -126,7 +126,7 @@ const body = () => document.body.textContent ?? "";
 
 test("the sheet is not mounted until a button opens it", () => {
   show([wlayer("user", [rule("allow", "A")])]);
-  expect(document.querySelector("input[aria-label='Rule']")).toBeNull();
+  expect(document.querySelector("#rule-input")).toBeNull();
 });
 
 test("the Add rule button opens the sheet in add mode with every writable file", () => {
@@ -160,9 +160,9 @@ test("closing the sheet unmounts it, and the next open starts fresh", () => {
   show([wlayer("user", [rule("allow", "A"), rule("allow", "B")])]);
   press("Remove A from User settings");
   press("Cancel");
-  expect(document.querySelector("input[aria-label='Rule']")).toBeNull();
+  expect(document.querySelector("#rule-input")).toBeNull();
   press("Remove B from User settings");
-  expect(document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!.value).toBe("B");
+  expect(document.querySelector<HTMLInputElement>("#rule-input")!.value).toBe("B");
 });
 
 test("the file filter is a tab list, and the selected tab is marked", () => {

@@ -337,8 +337,10 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `instance.service_path` | `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` of instances |
 | `instance.ssh_auth_sock` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit |
 | `instance.claude_bin` | `<service_home>/.local/bin/claude` | Claude executable used in `ExecStart`. Must be absolute |
-| `instance.claude_rc_args` | `["--spawn","same-dir","--no-create-session-in-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
+| `instance.claude_rc_args` | `["--spawn","same-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
 | `instance.name_prefix` | empty | Prefix for the default `--name`. Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` |
+
+The default does not contain `--no-create-session-in-dir`. A server that starts with this flag refuses to restart while its folder has a recoverable session.
 
 #### proxy-jwt user authentication
 
@@ -460,7 +462,7 @@ Environment="HOME=/root"
 Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # next line only if SSH_AUTH_SOCK is configured
 Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"
-ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir
+ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir
 StandardOutput=null
 StandardError=journal
 Restart=always
@@ -869,6 +871,9 @@ claude-rc mkdir /srv alice-project --user alice  # the new folder is owned by al
 claude-rc start /srv/new-project --name demo     # prints the instance id
 claude-rc start /srv/new-project --user alice    # run the instance as alice
 claude-rc start /srv/new-project --force         # add the folder to trust, then start
+claude-rc start /srv/new-project --no-create-session --spawn worktree   # start with chosen settings
+claude-rc settings <id>                          # show the settings and what they mean
+claude-rc settings <id> --spawn worktree --yes   # change a setting and restart the instance
 claude-rc logs <id> --lines 50
 claude-rc stop <id>
 claude-rc logout
@@ -886,6 +891,57 @@ Add `--json` to any command for machine-readable output. Exit code 0 is success,
 you must log in again. The login is saved in `~/.config/claude-rc/credentials.json` (`$XDG_CONFIG_HOME` is
 honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
 reads no other environment variable.
+
+### Instance settings
+
+An instance is one `claude remote-control` server for one folder. Two settings control how that server starts.
+
+- `createSession` is on by default. When it is on, the server makes one empty session at start. After a crash or a
+  restart, it brings back its recorded sessions. When it is off, the server starts with no session and makes one
+  when a client asks. A server with this setting off restarts only if its folder has no recoverable session.
+  Otherwise it refuses with `This folder is already served by a terminal claude remote-control`. So crash recovery
+  does not work with it off.
+- `spawnMode` is `same-dir` by default. In that mode, every session works in the same folder, so two sessions can
+  change the same files. In `worktree` mode, each new session gets its own git worktree (a separate checkout of the
+  same repository). The first session stays in the folder. The folder must be a git repository.
+
+The settings are stored in different places. On Linux they are in the `ExecStart` line of the unit file. On
+Windows they are in the instance record in `instances.json`, as the fields `createSession` and `spawnMode`. The
+default for new instances comes from `instance.claude_rc_args` in the node config. Its built-in value is
+`["--spawn","same-dir"]`. The node also reports these defaults on its help route.
+
+Set them when you start an instance, or change them later:
+
+```sh
+claude-rc start <path> [--create-session|--no-create-session] [--spawn same-dir|worktree]
+claude-rc clone <repo> <parent> [--create-session|--no-create-session] [--spawn same-dir|worktree]
+claude-rc settings <id>                                   # show the current settings and their meaning
+claude-rc settings <id> [--create-session|--no-create-session] [--spawn same-dir|worktree] [--yes]
+```
+
+The `list` command shows the settings in a SETTINGS column. In the web UI, the start form has a Settings part.
+Each instance has a Settings action. Its dialog warns that applying the change restarts the server of a running folder, and that a paused folder only saves it. The change starts when you press Apply.
+
+A change restarts a running instance. The node waits up to 20 seconds for the new server. If the server exits with code
+69 (the "already served" refusal) or does not stay up, the node puts the old settings back. You then see the reason:
+HTTP status 409 with `settings_refused` or `settings_failed`. The Windows node does the same work in its supervisor
+loop. It has no pause.
+
+On Linux, a change on a paused instance is only saved. The answer then has `applied: false`. The new settings start
+when you resume the instance, and nothing checks them before then. If the server cannot start with the new settings,
+it fails at the resume. The node does not put the old settings back then.
+
+If the answer of a change does not come back (no connection, or HTTP status 502 from the hub), the change can still
+run on the node. Look at the instance list before you try again.
+
+When you give a settings flag to `start` or `clone`, the client first asks the node for its settings help. If the
+node or the hub is too old, the client stops with an error and starts nothing.
+
+After this version, an old Windows record without settings starts with the current default list of the node. An old
+Linux unit keeps the flags that its unit file has.
+
+Only one change runs for each instance at a time. A change needs the `write` role, and the hub writes an audit line
+for each one. If a node is too old to have the settings route, the web page shows no settings controls for it.
 
 ### Update the client
 

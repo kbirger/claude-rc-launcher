@@ -70,6 +70,15 @@ describe("enforcement", () => {
       expect([m, p, await status(m, p, "read", {})]).toEqual([m, p, 403]);
     }
   });
+  test("read gets 403 on a settings change and restart, and can read the help", async () => {
+    expect(await status("PATCH", "/api/hosts/nas/instances/0123456789ab", "read", { createSession: false })).toBe(403);
+    expect(await status("POST", "/api/hosts/nas/instances/0123456789ab/restart", "read", {})).toBe(403);
+    expect(await status("GET", "/api/hosts/nas/instance-settings", "read")).not.toBe(403);
+  });
+  test("write passes the role check on a settings change and restart", async () => {
+    expect(await status("PATCH", "/api/hosts/nas/instances/0123456789ab", "write", { createSession: false })).not.toBe(403);
+    expect(await status("POST", "/api/hosts/nas/instances/0123456789ab/restart", "write", {})).not.toBe(403);
+  });
   test("write starts and stops instances and renames a node", async () => {
     expect(await status("POST", "/api/hosts/local/instances", "write", { path: "/tmp" })).toBe(201);
     expect(await status("DELETE", "/api/hosts/local/instances/0123456789ab", "write")).toBe(204);

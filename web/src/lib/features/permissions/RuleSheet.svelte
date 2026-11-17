@@ -1,6 +1,10 @@
 <script lang="ts">
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { Checkbox } from "#lib/components/ui/checkbox/index.js";
+  import * as Collapsible from "#lib/components/ui/collapsible/index.js";
+  import { Input } from "#lib/components/ui/input/index.js";
+  import { Label } from "#lib/components/ui/label/index.js";
   import * as Tabs from "#lib/components/ui/tabs/index.js";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
@@ -85,10 +89,12 @@
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
       {#if call}
-        <details class="text-sm">
-          <summary class="cursor-pointer {wrap}">Blocked: {summaryOf(call)}</summary>
-          <p class="m-0 mt-1 whitespace-pre-wrap text-muted-foreground {wrap}">{call.text}</p>
-        </details>
+        <Collapsible.Root class="text-sm">
+          <Collapsible.Trigger class="min-h-11 cursor-pointer text-left {wrap}">Blocked: {summaryOf(call)}</Collapsible.Trigger>
+          <Collapsible.Content>
+            <p class="m-0 mt-1 whitespace-pre-wrap text-muted-foreground {wrap}">{call.text}</p>
+          </Collapsible.Content>
+        </Collapsible.Root>
       {/if}
 
       {#if offered.length > 1}
@@ -115,9 +121,10 @@
         </Tabs.List>
       </Tabs.Root>
 
-      <label class="grid gap-1 text-sm font-medium">Rule
-        <input aria-label="Rule" class="h-11 min-w-0 rounded-md border bg-background px-3 font-mono text-sm" bind:value={rule} readonly={mode === "remove"} autocapitalize="off" autocomplete="off" spellcheck="false" />
-      </label>
+      <div class="grid gap-1">
+        <Label for="rule-input">Rule</Label>
+        <Input id="rule-input" class="h-11 font-mono text-sm" bind:value={rule} readonly={mode === "remove"} autocapitalize="off" autocomplete="off" spellcheck="false" />
+      </div>
       {#if mode === "add" && suggestions.length > 1}
         <div class="flex flex-wrap gap-1.5" role="group" aria-label="Other rules">
           {#each suggestions as s (s.raw)}
@@ -135,9 +142,10 @@
       {/if}
       {#each warnings as w (w)}<p class="m-0 text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
       {#if canNudge && !result}
-        <label class="flex min-h-11 items-center gap-3 text-sm {wrap}">
-          <input type="checkbox" bind:checked={nudge} disabled={live !== true} class="size-5 w-auto shrink-0 accent-primary" />{NUDGE_LABEL}
-        </label>
+        <div class="flex min-h-11 items-center gap-3 {wrap}">
+          <Checkbox id="nudge" bind:checked={nudge} disabled={live !== true} />
+          <Label for="nudge" class="leading-snug font-normal">{NUDGE_LABEL}</Label>
+        </div>
         {#if live !== true}<p class="m-0 text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
       {/if}
       {#if result}<p class="m-0 text-sm {wrap}" role="status">Rule saved. {result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}

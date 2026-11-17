@@ -14,5 +14,5 @@
 </script>
 
 {#if !isUnsupported(q.error)}
-  <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" href={sessionsHref({ host, instance })} title="Sessions"><Messages aria-hidden="true" /><span class={stripLabel}>Sessions</span></Button>
+  <Button variant="ghost" size="sm" class="h-8 px-2" href={sessionsHref({ host, instance })} title="Sessions"><Messages aria-hidden="true" /><span class={stripLabel}>Sessions</span></Button>
 {/if}

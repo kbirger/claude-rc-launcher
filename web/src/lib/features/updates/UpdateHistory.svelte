@@ -13,9 +13,9 @@
 </script>
 
 {#if historyQ.isError}
-  <p class="muted">The history is not available.</p>
+  <p class="text-muted-foreground">The history is not available.</p>
 {:else if entries.length === 0}
-  <p class="muted">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
+  <p class="text-muted-foreground">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
 {:else}
   <ul class="m-0 grid list-none gap-3 p-0">
     {#each entries as { host, item } (host + item.entry.startedAt)}

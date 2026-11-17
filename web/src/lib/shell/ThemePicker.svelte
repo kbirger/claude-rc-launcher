@@ -22,7 +22,7 @@
         type="button"
         role="radio"
         aria-checked={appearance.theme === p.id}
-        class={cn("flex min-h-11 flex-col gap-1.5 rounded-lg border p-1.5 text-xs transition-colors", appearance.theme === p.id ? "border-primary ring-1 ring-primary" : "hover:border-muted-foreground/40")}
+        class={cn("flex min-h-11 flex-col gap-1.5 rounded-lg border bg-card p-1.5 text-xs transition-colors", appearance.theme === p.id ? "border-primary ring-1 ring-primary" : "hover:border-muted-foreground/40")}
         onclick={() => setTheme(p.id)}
       >
         <span class="flex h-8 w-full gap-1 rounded-md border p-1" style={`background:${swatch[0]}`}>

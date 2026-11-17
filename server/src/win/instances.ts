@@ -1,8 +1,11 @@
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { HttpError, type Instance, type Instances, type UsersInfo } from "../instances";
+import { ChangeLock, isValidPatch, PROBE_INTERVAL_MS, REFUSED_EXIT_CODE, sameSettings, SETTLE_MS, settleReason, waitSettled, type ProbeResult } from "../instancechange";
+import { HttpError, type Instance, type Instances, type UpdateResult, type UsersInfo } from "../instances";
+import { argsWith, settingsFromArgs, type InstanceSettings, type SettingsPatch, type SpawnMode } from "../instancesettings";
 import { resolveWithinRoots } from "../paths";
+import { repoKind, type RepoKind } from "../repokind";
 import type { Runner } from "../runner";
 import type { TrustStore } from "../trust";
 import { defaultName, instanceId, isValidName } from "../unit";
@@ -42,10 +45,14 @@ export type WinDeps = {
   resolvePath(p: string, roots: string[]): Promise<string>;
   trust: TrustStore;
   restartDelayMs: number;
+  /** Tells if a folder is a git repository. `undefined` means it is not one. */
+  repoKind(dir: string): Promise<RepoKind | undefined>;
 };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const MAX_LOG_READ = 256 * 1024;
+/** The text that a server writes when a terminal `claude remote-control` already serves its folder. */
+const REFUSED_TEXT = "already served";
 
 type Entry = {
   id: string;
@@ -53,13 +60,32 @@ type Entry = {
   name: string;
   /** Runs with the full service token (only an administrator service has this choice). */
   admin: boolean;
+  settings: InstanceSettings;
   state: "active" | "activating" | "failed";
   startedAt: string | null;
   proc?: Spawned;
   stopping: boolean;
   wake?: () => void;
   done: Promise<void>;
+  /** The exit of the last process. A new process clears it, so an old exit cannot count for the new one. */
+  lastExit?: { code: number | null };
+  /** The next start of a process comes at once, with no restart delay. This works for one start only. */
+  skipWait?: boolean;
+  /** Called when the supervisor has tried the next start, or when it ends. */
+  onStart?: () => void;
+  /** True when the supervisor loop has returned. */
+  ended?: boolean;
 };
+
+type EntryBase = Pick<Entry, "id" | "path" | "name" | "admin" | "settings">;
+
+/** Copies only the fields of the patch that have a value. */
+function definedFields(p: SettingsPatch): SettingsPatch {
+  const out: SettingsPatch = {};
+  if (p.createSession !== undefined) out.createSession = p.createSession;
+  if (p.spawnMode !== undefined) out.spawnMode = p.spawnMode;
+  return out;
+}
 
 export function bunSpawn(): WinDeps["spawn"] {
   return (cmd, args, { cwd, logFile }) => {
@@ -87,6 +113,9 @@ const sleepUnref = (ms: number) => new Promise<void>((r) => { const t = setTimeo
 export class WinInstances implements Instances {
   private entries = new Map<string, Entry>();
   private inflight = new Set<string>();
+  private changes = new ChangeLock();
+  /** The last save of the state file. Saves run one after another, so two saves never share the .tmp file. */
+  private saving: Promise<void> = Promise.resolve();
   private deps: WinDeps;
 
   constructor(private o: WinInstanceOptions, deps: Partial<WinDeps> & Pick<WinDeps, "killTree">) {
@@ -97,6 +126,7 @@ export class WinInstances implements Instances {
       resolvePath: resolveWithinRoots,
       trust: windowsTrust(),
       restartDelayMs: 10_000,
+      repoKind,
       ...deps,
     };
     if (o.serviceIsAdmin && !this.deps.spawnRestricted) throw new Error("serviceIsAdmin needs spawnRestricted");
@@ -131,7 +161,7 @@ export class WinInstances implements Instances {
   }
 
   private describe(e: Entry): Instance {
-    const inst: Instance = { id: e.id, path: e.path, name: e.name, state: e.state, startedAt: e.startedAt };
+    const inst: Instance = { id: e.id, path: e.path, name: e.name, state: e.state, startedAt: e.startedAt, settings: { ...e.settings } };
     if (this.o.serviceIsAdmin) inst.user = e.admin ? this.adminName() : this.o.serviceUser;
     return inst;
   }
@@ -140,8 +170,17 @@ export class WinInstances implements Instances {
     return [...this.entries.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((e) => this.describe(e));
   }
 
-  private async persist(): Promise<void> {
-    const body = { version: 1, instances: [...this.entries.values()].map((e) => ({ id: e.id, path: e.path, name: e.name, ...(e.admin ? { admin: true } : {}) })) };
+  /** Saves the list. A save waits for the one before it and reads the list when it runs, so the last call wins. */
+  private persist(): Promise<void> {
+    const next = this.saving.catch(() => {}).then(() => this.writeState());
+    this.saving = next;
+    return next;
+  }
+
+  private async writeState(): Promise<void> {
+    const body = { version: 1, instances: [...this.entries.values()].map((e) => ({
+      id: e.id, path: e.path, name: e.name, ...(e.admin ? { admin: true } : {}), createSession: e.settings.createSession, spawnMode: e.settings.spawnMode,
+    })) };
     await mkdir(this.o.instanceDir, { recursive: true });
     const tmp = `${this.stateFile()}.tmp`;
     try {
@@ -153,20 +192,41 @@ export class WinInstances implements Instances {
     }
   }
 
-  private spawnFor(e: Pick<Entry, "id" | "path" | "name" | "admin">): Spawned {
+  private spawnFor(e: EntryBase): Spawned {
     const spawn = this.o.serviceIsAdmin && !e.admin ? this.deps.spawnRestricted! : this.deps.spawn;
-    return spawn(this.o.claudeBin, ["remote-control", "--name", e.name, ...this.o.claudeRcArgs], { cwd: e.path, logFile: this.logFile(e.id) });
+    const args = ["remote-control", "--name", e.name, ...argsWith(this.o.claudeRcArgs, e.settings)];
+    return spawn(this.o.claudeBin, args, { cwd: e.path, logFile: this.logFile(e.id) });
   }
 
   private wait(e: Entry): Promise<void> {
+    if (e.skipWait) {
+      e.skipWait = false;
+      return Promise.resolve();
+    }
     return Promise.race([this.deps.sleep(this.deps.restartDelayMs), new Promise<void>((r) => { e.wake = r; })]);
+  }
+
+  private started(e: Entry): void {
+    const f = e.onStart;
+    e.onStart = undefined;
+    f?.();
   }
 
   /** Keeps one instance running until it is stopped: starts it again after an exit, like `Restart=always`. */
   private async supervise(e: Entry, first?: Spawned): Promise<void> {
+    try {
+      await this.superviseLoop(e, first);
+    } finally {
+      e.ended = true;
+      this.started(e);
+    }
+  }
+
+  private async superviseLoop(e: Entry, first?: Spawned): Promise<void> {
     let proc = first;
     while (!e.stopping) {
       if (!proc) {
+        e.skipWait = false;
         try {
           proc = this.spawnFor(e);
         } catch (err) {
@@ -175,11 +235,14 @@ export class WinInstances implements Instances {
             console.error(`instance ${e.id}: cannot start claude with a restricted token: ${err.message}`);
             e.state = "failed";
             e.startedAt = null;
+            e.lastExit = undefined;
             return;
           }
           console.error(`instance ${e.id}: cannot start claude: ${err instanceof Error ? err.message : String(err)}`);
           e.state = "failed";
           e.startedAt = null;
+          e.lastExit = undefined;
+          this.started(e);
           await this.wait(e);
           continue;
         }
@@ -187,7 +250,10 @@ export class WinInstances implements Instances {
       e.proc = proc;
       e.state = "active";
       e.startedAt = this.deps.now().toISOString();
-      await proc.exited.catch(() => 1);
+      e.lastExit = undefined;
+      this.started(e);
+      const code = await proc.exited.catch(() => null);
+      e.lastExit = { code };
       e.proc = undefined;
       proc = undefined;
       if (e.stopping) break;
@@ -197,23 +263,34 @@ export class WinInstances implements Instances {
     }
   }
 
-  private track(base: Pick<Entry, "id" | "path" | "name" | "admin">, first?: Spawned): Entry {
+  private track(base: EntryBase, first?: Spawned): Entry {
     const e: Entry = { ...base, state: "activating", startedAt: null, stopping: false, done: Promise.resolve() };
     this.entries.set(e.id, e);
     e.done = this.supervise(e, first);
     return e;
   }
 
-  async start(input: { path: string; name?: string; user?: string; addTrust?: boolean }): Promise<Instance> {
+  /** If the settings ask for worktree and the folder is not a git repository, this throws 400. */
+  private async checkWorktree(spawnMode: SpawnMode | undefined, real: string): Promise<void> {
+    if (spawnMode === "worktree" && (await this.deps.repoKind(real)) === undefined) {
+      throw new HttpError(400, "the worktree mode needs a git repository");
+    }
+  }
+
+  async start(input: { path: string; name?: string; user?: string; addTrust?: boolean; settings?: SettingsPatch }): Promise<Instance> {
     if (input.name !== undefined && !isValidName(input.name)) throw new HttpError(400, "invalid name");
+    if (input.settings !== undefined && !isValidPatch(input.settings)) throw new HttpError(400, "invalid settings");
     const real = await this.deps.resolvePath(input.path, this.o.roots);
     const admin = this.checkUser(input.user);
+    // The operator list gives the defaults. The check uses the value that the process really gets.
+    const settings: InstanceSettings = { ...settingsFromArgs(this.o.claudeRcArgs), ...definedFields(input.settings ?? {}) };
+    await this.checkWorktree(settings.spawnMode, real);
     const id = instanceId(real);
     const name = input.name ?? defaultName(this.o, real);
 
     const conflict = (): HttpError => {
       const existing = this.entries.get(id);
-      const inst: Instance = existing ? this.describe(existing) : { id, path: real, name, state: "activating", startedAt: null, ...(this.o.serviceIsAdmin ? { user: admin ? this.adminName() : this.o.serviceUser } : {}) };
+      const inst: Instance = existing ? this.describe(existing) : { id, path: real, name, state: "activating", startedAt: null, settings, ...(this.o.serviceIsAdmin ? { user: admin ? this.adminName() : this.o.serviceUser } : {}) };
       return new HttpError(409, "instance already exists", { instance: inst });
     };
 
@@ -231,11 +308,11 @@ export class WinInstances implements Instances {
       }
       let proc: Spawned;
       try {
-        proc = this.spawnFor({ id, path: real, name, admin });
+        proc = this.spawnFor({ id, path: real, name, admin, settings });
       } catch (e) {
         throw new HttpError(500, `failed to start claude: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const e = this.track({ id, path: real, name, admin }, proc);
+      const e = this.track({ id, path: real, name, admin, settings }, proc);
       try {
         await this.persist();
       } catch (err) {
@@ -288,6 +365,152 @@ export class WinInstances implements Instances {
     }
   }
 
+  /**
+   * Ends the process tree and lets the supervisor start a new process at once, with the settings of the entry.
+   * Resolves when the supervisor has tried that start. Does nothing for an entry that stops.
+   */
+  private async respawnNow(e: Entry): Promise<void> {
+    if (e.stopping) return;
+    const started = new Promise<void>((r) => { e.onStart = r; });
+    e.skipWait = true;
+    if (e.ended) {
+      e.ended = false;
+      e.done = this.supervise(e);
+    } else if (e.proc) {
+      try {
+        await this.deps.killTree(e.proc.pid);
+      } catch (err) {
+        e.skipWait = false;
+        e.onStart = undefined;
+        throw err;
+      }
+    } else {
+      e.wake?.();
+    }
+    // A process that does not end must not hold the change forever.
+    const late = await Promise.race([started.then(() => false), this.deps.sleep(SETTLE_MS).then(() => true)]);
+    if (late) {
+      e.skipWait = false;
+      e.onStart = undefined;
+      throw new Error("the process did not start again in time");
+    }
+  }
+
+  async restart(id: string): Promise<void> {
+    if (this.inflight.has(id)) throw new HttpError(409, "operation in progress");
+    const e = this.requireEntry(id);
+    this.inflight.add(id);
+    try {
+      await this.respawnNow(e);
+    } catch (err) {
+      throw new HttpError(500, `failed to restart ${id}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.inflight.delete(id);
+    }
+  }
+
+  private async logSize(id: string): Promise<number> {
+    try {
+      return (await stat(this.logFile(id))).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** The log text that was written after `from`, at most the last `MAX_LOG_READ` bytes of it. */
+  private async logSince(id: string, from: number): Promise<string> {
+    const size = await this.logSize(id);
+    if (size <= from) return "";
+    const start = Math.max(from, size - MAX_LOG_READ);
+    const fh = await open(this.logFile(id), "r");
+    try {
+      const buf = Buffer.alloc(size - start);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      return buf.toString("utf8", 0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+  }
+
+  /**
+   * One look at the instance for the wait after a change. A running process is up. A last exit with code 69 is refused.
+   * The text "already served" in the log since the change is refused too. Everything else is down.
+   */
+  private async probe(e: Entry, logFrom: number): Promise<ProbeResult> {
+    if (e.stopping) return "down";
+    if (e.state === "active") return "up";
+    if (e.lastExit?.code === REFUSED_EXIT_CODE) return "refused";
+    if ((await this.logSince(e.id, logFrom)).includes(REFUSED_TEXT)) return "refused";
+    return "down";
+  }
+
+  async update(id: string, patch: SettingsPatch): Promise<UpdateResult> {
+    if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(404, "instance not found");
+    // The two checks come before the first await, so two calls at the same time cannot both pass.
+    const release = this.changes.tryLock(id);
+    if (!release) throw new HttpError(409, "change in progress");
+    if (this.inflight.has(id)) {
+      release();
+      throw new HttpError(409, "operation in progress");
+    }
+    // While the change runs, stop, restart and start of this folder get 409.
+    this.inflight.add(id);
+    try {
+      if (!isValidPatch(patch)) throw new HttpError(400, "invalid settings");
+      const e = this.requireEntry(id);
+      const previous: InstanceSettings = { ...e.settings };
+      const next: InstanceSettings = { ...previous, ...definedFields(patch) };
+      // Windows has no pause, so a change is always applied.
+      if (sameSettings(previous, next)) return { instance: this.describe(e), previous, applied: true };
+      await this.checkWorktree(patch.spawnMode, e.path);
+
+      const logFrom = await this.logSize(id);
+      e.settings = next;
+      try {
+        await this.persist();
+      } catch (err) {
+        e.settings = previous;
+        throw new HttpError(500, `failed to save the instance list: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      let failure: { code: "settings_refused" | "settings_failed"; reason: string } | undefined;
+      let restarted = true;
+      try {
+        await this.respawnNow(e);
+      } catch (err) {
+        // The old process may still run with the old settings. Then only the record goes back.
+        restarted = e.proc === undefined;
+        failure = { code: "settings_failed", reason: `failed to restart ${id}: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      if (!failure) {
+        const settled = await waitSettled(() => this.probe(e, logFrom), { timeoutMs: SETTLE_MS, intervalMs: PROBE_INTERVAL_MS, sleep: this.deps.sleep });
+        if (settled === "ok") return { instance: this.describe(e), previous, applied: true };
+        failure = { code: settled === "refused" ? "settings_refused" : "settings_failed", reason: settleReason(settled) };
+      }
+
+      // Undo: the old record comes back, and a new process starts with the old settings.
+      const undoFailed = (why: string) => new HttpError(500, `${failure.reason}. The undo also failed: ${why}`, { code: "undo_failed" });
+      e.settings = previous;
+      let saveError: unknown;
+      try {
+        await this.persist();
+      } catch (err) {
+        saveError = err;
+      }
+      if (restarted) {
+        try {
+          await this.respawnNow(e);
+        } catch (err) {
+          throw undoFailed(`failed to restart ${id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (saveError !== undefined) throw undoFailed(`failed to save the instance list: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+      throw new HttpError(409, failure.reason, { code: failure.code, settings: previous });
+    } finally {
+      this.inflight.delete(id);
+      release();
+    }
+  }
+
   async logs(id: string, lines: number): Promise<string> {
     this.requireEntry(id);
     const n = Math.min(500, Math.max(1, Math.trunc(Number.isFinite(lines) ? lines : 100)));
@@ -326,9 +549,12 @@ export class WinInstances implements Instances {
       return 0;
     }
     const list = typeof doc === "object" && doc !== null && Array.isArray((doc as { instances?: unknown }).instances) ? (doc as { instances: unknown[] }).instances : [];
+    // A record from before settings existed reads as the current default list of the node (claude_rc_args).
+    // That can differ from what the old process ran with, for example on a node that used the built-in list.
+    const defaults = settingsFromArgs(this.o.claudeRcArgs);
     let n = 0;
     for (const item of list) {
-      const it = item as { id?: unknown; path?: unknown; name?: unknown; admin?: unknown };
+      const it = item as { id?: unknown; path?: unknown; name?: unknown; admin?: unknown; createSession?: unknown; spawnMode?: unknown };
       if (typeof it.id !== "string" || !ID_RE.test(it.id) || typeof it.path !== "string" || typeof it.name !== "string" || !isValidName(it.name)) {
         console.error("skipping an invalid entry in the instance list");
         continue;
@@ -341,7 +567,11 @@ export class WinInstances implements Instances {
         continue;
       }
       if (instanceId(real) !== it.id || this.entries.has(it.id)) continue;
-      this.track({ id: it.id, path: real, name: it.name, admin: this.o.serviceIsAdmin === true && it.admin === true });
+      const settings: InstanceSettings = {
+        createSession: typeof it.createSession === "boolean" ? it.createSession : defaults.createSession,
+        spawnMode: it.spawnMode === "same-dir" || it.spawnMode === "worktree" ? it.spawnMode : defaults.spawnMode,
+      };
+      this.track({ id: it.id, path: real, name: it.name, admin: this.o.serviceIsAdmin === true && it.admin === true, settings });
       n++;
     }
     return n;

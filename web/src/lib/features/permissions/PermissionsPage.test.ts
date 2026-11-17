@@ -42,7 +42,7 @@ test("the page lists the user file and fetches only the user permissions until t
 test("adding a rule from the page uses the user routes, with no session", async () => {
   await show();
   press("Add rule");
-  const f = document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!;
+  const f = document.querySelector<HTMLInputElement>("#rule-input")!;
   f.value = "Bash(git status)";
   f.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();

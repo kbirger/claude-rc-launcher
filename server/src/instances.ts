@@ -1,19 +1,26 @@
-import { access, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./config";
 import { resolveWithinRoots } from "./paths";
 import type { Runner } from "./runner";
 import { fileTrust, type TrustStore } from "./trust";
 import {
-  defaultName, defaultRunAs, instanceId, isValidName, parseManaged, parseUnitUser, renderUnit, runAsFor, unitName, type RunAs,
+  defaultName, defaultRunAs, instanceId, isValidName, parseManaged, parseUnitSettings, parseUnitUser, renderUnit, runAsFor, unitName, type RunAs,
 } from "./unit";
+import { settingsFromArgs, type InstanceSettings, type SettingsPatch } from "./instancesettings";
+import {
+  ChangeLock, isValidPatch, PROBE_INTERVAL_MS, REFUSED_EXIT_CODE, sameSettings, SETTLE_MS, settleReason, waitSettled, type ProbeResult,
+} from "./instancechange";
+import { repoKind, type RepoKind } from "./repokind";
 import type { Identity } from "./asuser";
 import { passwdDirectory, type UserDirectory } from "./users";
 
 export type { RunResult, Runner } from "./runner";
 export { bunRunner } from "./runner";
 
-export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string };
+export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string; settings?: InstanceSettings };
+/** The answer of a settings change. `applied` is false when the change was only saved (a paused instance). */
+export type UpdateResult = { instance: Instance; previous: InstanceSettings; applied: boolean };
 
 export type UsersInfo = { selectable: boolean; default: string; users: { name: string }[] };
 
@@ -23,8 +30,16 @@ export type UsersInfo = { selectable: boolean; default: string; users: { name: s
  */
 export interface Instances {
   list(): Promise<Instance[]>;
-  start(input: { path: string; name?: string; user?: string; addTrust?: boolean }): Promise<Instance>;
+  start(input: { path: string; name?: string; user?: string; addTrust?: boolean; settings?: SettingsPatch }): Promise<Instance>;
   stop(id: string): Promise<void>;
+  /** Restarts the instance with its current settings. Not every backend has it. */
+  restart?(id: string): Promise<void>;
+  /**
+   * Changes the settings and restarts the instance. If the instance does not stay up, the old settings come back
+   * and the call throws 409 with `code` and the old `settings`. A patch equal to the current settings does nothing.
+   * `applied` is false when the instance is paused: the change is only saved, and nothing checks it before the resume.
+   */
+  update?(id: string, patch: SettingsPatch): Promise<UpdateResult>;
   /** Stops the service but keeps the instance, so `resume` can start it again. Not every backend has it. */
   pause?(id: string): Promise<void>;
   resume?(id: string): Promise<void>;
@@ -56,6 +71,24 @@ function nameFromUnit(content: string): string {
   return v.startsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v;
 }
 
+/** Parse the `Key=value` lines of `systemctl show`. */
+function showValues(stdout: string): Record<string, string> {
+  const kv: Record<string, string> = {};
+  for (const line of stdout.split("\n")) {
+    const i = line.indexOf("=");
+    if (i > 0) kv[line.slice(0, i)] = line.slice(i + 1).trim();
+  }
+  return kv;
+}
+
+/** Only the fields of the patch that have a value. */
+function definedFields(p: SettingsPatch): SettingsPatch {
+  const out: SettingsPatch = {};
+  if (p.createSession !== undefined) out.createSession = p.createSession;
+  if (p.spawnMode !== undefined) out.spawnMode = p.spawnMode;
+  return out;
+}
+
 /** systemd `--timestamp=unix` prints `@<seconds>`; empty/`@0`/garbage -> null. */
 function parseUnixTimestamp(v: string | undefined): string | null {
   const m = /^@([0-9]+)$/.exec(v ?? "");
@@ -73,13 +106,21 @@ export class InstanceService implements Instances {
   private trust: TrustStore;
   private canSwitchUser: boolean;
   private isRoot: () => boolean;
+  private changes = new ChangeLock();
+  private repoKind: (dir: string) => Promise<RepoKind | undefined>;
+  private sleep?: (ms: number) => Promise<void>;
 
   constructor(
     private cfg: Config,
     private run: Runner,
     private resolvePath: (p: string, roots: string[]) => Promise<string> = resolveWithinRoots,
-    deps: { users?: UserDirectory; trust?: TrustStore; canSwitchUser?: boolean; isRoot?: () => boolean } = {},
+    deps: {
+      users?: UserDirectory; trust?: TrustStore; canSwitchUser?: boolean; isRoot?: () => boolean;
+      repoKind?: (dir: string) => Promise<RepoKind | undefined>; sleep?: (ms: number) => Promise<void>;
+    } = {},
   ) {
+    this.repoKind = deps.repoKind ?? repoKind;
+    this.sleep = deps.sleep;
     this.userDir = deps.users ?? passwdDirectory();
     this.trust = deps.trust ?? fileTrust();
     // A user-scope unit has no User= line, so it can never run as another user.
@@ -159,11 +200,7 @@ export class InstanceService implements Instances {
 
   private async show(id: string): Promise<{ state: string; startedAt: string | null }> {
     const r = await this.sysctl(["show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id)]);
-    const kv: Record<string, string> = {};
-    for (const line of r.stdout.split("\n")) {
-      const i = line.indexOf("=");
-      if (i > 0) kv[line.slice(0, i)] = line.slice(i + 1).trim();
-    }
+    const kv = showValues(r.stdout);
     return { state: kv.ActiveState || "unknown", startedAt: parseUnixTimestamp(kv.ActiveEnterTimestamp) };
   }
 
@@ -171,7 +208,7 @@ export class InstanceService implements Instances {
     const managed = parseManaged(content);
     if (!managed) return null;
     const user = parseUnitUser(content);
-    return { id, path: managed.path, name: nameFromUnit(content), ...(user ? { user } : {}), ...(await this.show(id)) };
+    return { id, path: managed.path, name: nameFromUnit(content), settings: parseUnitSettings(content), ...(user ? { user } : {}), ...(await this.show(id)) };
   }
 
   async claudeHome(id: string): Promise<{ path: string; home: string; identity?: Identity }> {
@@ -242,9 +279,22 @@ export class InstanceService implements Instances {
     return out;
   }
 
-  async start(input: { path: string; name?: string; user?: string; addTrust?: boolean }): Promise<Instance> {
+  /** If the settings ask for worktree and the folder is not a git repository, this throws 400. */
+  private async checkWorktree(patch: SettingsPatch, real: string): Promise<void> {
+    if (patch.spawnMode === "worktree" && (await this.repoKind(real)) === undefined) {
+      throw new HttpError(400, "the worktree mode needs a git repository");
+    }
+  }
+
+  async start(input: { path: string; name?: string; user?: string; addTrust?: boolean; settings?: SettingsPatch }): Promise<Instance> {
     if (input.name !== undefined && !isValidName(input.name)) throw new HttpError(400, "invalid name");
+    if (input.settings !== undefined && !isValidPatch(input.settings)) throw new HttpError(400, "invalid settings");
     const real = await this.resolvePath(input.path, this.cfg.roots);
+    // The operator list gives the defaults. Without settings the unit stays as it was before settings existed.
+    const merged: InstanceSettings = { ...settingsFromArgs(this.cfg.claudeRcArgs), ...definedFields(input.settings ?? {}) };
+    const settings = input.settings === undefined ? undefined : merged;
+    // The check uses the value that the unit really gets, so an operator default of worktree is checked too.
+    await this.checkWorktree(merged, real);
     const id = instanceId(real);
     const name = input.name ?? defaultName(this.cfg, real);
     const t = await this.target(input.user);
@@ -270,7 +320,7 @@ export class InstanceService implements Instances {
     try {
       let content: string;
       try {
-        content = renderUnit(this.cfg, real, name, t.runAs);
+        content = renderUnit(this.cfg, real, name, t.runAs, settings);
       } catch (e) {
         throw new HttpError(400, e instanceof Error ? e.message : "invalid unit");
       }
@@ -301,7 +351,7 @@ export class InstanceService implements Instances {
         await this.sysctl(["daemon-reload"]);
         throw new HttpError(500, `failed to start ${unit}: ${r.stderr.trim()}`);
       }
-      return { id, path: real, name, ...(unitUser ? { user: unitUser } : {}), ...(await this.show(id)) };
+      return { id, path: real, name, settings: parseUnitSettings(content), ...(unitUser ? { user: unitUser } : {}), ...(await this.show(id)) };
     } finally {
       this.inflight.delete(id);
     }
@@ -336,6 +386,128 @@ export class InstanceService implements Instances {
 
   async resume(id: string): Promise<void> {
     await this.change(id, ["enable", "--now"], "resume");
+  }
+
+  async restart(id: string): Promise<void> {
+    if (this.inflight.has(id)) throw new HttpError(409, "operation in progress");
+    this.inflight.set(id, undefined);
+    try {
+      await this.requireManaged(id);
+      // A restart starts a unit that is not running. So a paused instance must be resumed first.
+      if (await this.isPaused(id)) throw new HttpError(409, "instance is paused, resume it first");
+      const unit = unitName(id);
+      const r = await this.sysctl(["restart", unit]);
+      if (r.code !== 0) throw new HttpError(500, `failed to restart ${unit}: ${r.stderr.trim()}`);
+    } finally {
+      this.inflight.delete(id);
+    }
+  }
+
+  /**
+   * A paused instance is one whose unit is not enabled and not active. That is the state that `pause` leaves.
+   * A unit that runs but is not enabled (started by hand) is not paused. A crash loop (enabled, activating) is not a pause.
+   */
+  private async isPaused(id: string): Promise<boolean> {
+    const unit = unitName(id);
+    const r = await this.sysctl(["show", "-p", "ActiveState,UnitFileState", unit]);
+    if (r.code !== 0) throw new HttpError(500, `failed to read the state of ${unit}: ${r.stderr.trim()}`);
+    const kv = showValues(r.stdout);
+    return kv.UnitFileState !== "enabled" && kv.ActiveState !== "active";
+  }
+
+  /** Write the file under a temporary name and rename it over the old one, so a reader never sees half a file. */
+  private async replaceFile(file: string, content: string): Promise<void> {
+    const tmp = `${file}.tmp`;
+    try {
+      await writeFile(tmp, content, { mode: 0o644 });
+      await rename(tmp, file);
+    } catch (e) {
+      await unlink(tmp).catch(() => {});
+      throw e;
+    }
+  }
+
+  /** One look at the unit for the wait after a change. Exit code 69 counts first, as the unit can show activating between restarts. */
+  private async probe(id: string): Promise<ProbeResult> {
+    const r = await this.sysctl(["show", "-p", "ActiveState,SubState,ExecMainStatus", unitName(id)]);
+    if (r.code !== 0) return "down";
+    const kv = showValues(r.stdout);
+    if (kv.ExecMainStatus === String(REFUSED_EXIT_CODE)) return "refused";
+    return kv.ActiveState === "active" ? "up" : "down";
+  }
+
+  async update(id: string, patch: SettingsPatch): Promise<UpdateResult> {
+    if (typeof id !== "string" || !ID_RE.test(id)) throw new HttpError(404, "instance not found");
+    // The two checks come before the first await, so two calls at the same time cannot both pass.
+    const release = this.changes.tryLock(id);
+    if (!release) throw new HttpError(409, "change in progress");
+    if (this.inflight.has(id)) {
+      release();
+      throw new HttpError(409, "operation in progress");
+    }
+    // While the change runs, stop, pause, resume, restart and start of this folder get 409.
+    this.inflight.set(id, undefined);
+    try {
+      if (!isValidPatch(patch)) throw new HttpError(400, "invalid settings");
+      const file = this.file(id);
+      let old: string;
+      try {
+        old = await readFile(file, "utf8");
+      } catch {
+        throw new HttpError(404, "instance not found");
+      }
+      const managed = parseManaged(old);
+      if (!managed) throw new HttpError(404, "instance not found");
+      const previous = parseUnitSettings(old);
+      const next: InstanceSettings = { ...previous, ...definedFields(patch) };
+      // Nothing changes, so there is nothing to apply later: the answer is applied true.
+      if (sameSettings(previous, next)) return { instance: (await this.describe(id, old))!, previous, applied: true };
+      await this.checkWorktree(patch, managed.path);
+      const t = await this.target(parseUnitUser(old) ?? undefined);
+      let content: string;
+      try {
+        content = renderUnit(this.cfg, managed.path, nameFromUnit(old), t.runAs, next);
+      } catch (e) {
+        throw new HttpError(400, e instanceof Error ? e.message : "invalid unit");
+      }
+
+      const unit = unitName(id);
+      const paused = await this.isPaused(id);
+      try {
+        await this.replaceFile(file, content);
+      } catch (e) {
+        throw new HttpError(500, `failed to write ${unit}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      let failure: { code: "settings_refused" | "settings_failed"; reason: string } | undefined;
+      const reload = await this.sysctl(["daemon-reload"]);
+      // A paused instance is not restarted. The new settings apply when the user resumes it.
+      const r = reload.code === 0 && !paused ? await this.sysctl(["restart", unit]) : reload;
+      if (r.code !== 0) {
+        const what = reload.code !== 0 ? "daemon-reload failed" : `failed to restart ${unit}`;
+        failure = { code: "settings_failed", reason: `${what}: ${r.stderr.trim()}` };
+      } else if (!paused) {
+        const settled = await waitSettled(() => this.probe(id), { timeoutMs: SETTLE_MS, intervalMs: PROBE_INTERVAL_MS, sleep: this.sleep });
+        if (settled !== "ok") failure = { code: settled === "refused" ? "settings_refused" : "settings_failed", reason: settleReason(settled) };
+      }
+      if (!failure) return { instance: (await this.describe(id, content))!, previous, applied: !paused };
+
+      // Undo: the old bytes go back, and the unit restarts with them.
+      const undoFailed = (why: string) =>
+        new HttpError(500, `${failure.reason}. The undo also failed: ${why}`, { code: "undo_failed" });
+      try {
+        await this.replaceFile(file, old);
+      } catch (e) {
+        throw undoFailed(`failed to write ${unit}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      const reload2 = await this.sysctl(["daemon-reload"]);
+      if (reload2.code !== 0) throw undoFailed(`daemon-reload failed: ${reload2.stderr.trim()}`);
+      const r2 = paused ? reload2 : await this.sysctl(["restart", unit]);
+      if (r2.code !== 0) throw undoFailed(`failed to restart ${unit}: ${r2.stderr.trim()}`);
+      throw new HttpError(409, failure.reason, { code: failure.code, settings: previous });
+    } finally {
+      this.inflight.delete(id);
+      release();
+    }
   }
 
   private async change(id: string, args: string[], verb: string): Promise<void> {

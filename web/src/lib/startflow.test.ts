@@ -101,4 +101,22 @@ describe("start flow", () => {
     expect(f.showNew).toBe(false);
     expect(f.newInitial).toBeUndefined();
   });
+
+  test("a 428 keeps the settings of that start for the trust start", () => {
+    const f = createStartFlow("local");
+    f.startFailed("local", trust("/a"), { path: "/a", createSession: false, spawnMode: "worktree" });
+    expect(f.newInitial?.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+  });
+
+  test("a 428 for a start without settings carries none", () => {
+    const f = createStartFlow("local");
+    f.startFailed("local", trust("/a"), { path: "/a" });
+    expect(f.newInitial).toEqual({ path: "/a", user: undefined, name: undefined, trust: { path: "/a", user: "kir" } });
+  });
+
+  test("a 428 keeps only the settings fields that the start sent", () => {
+    const f = createStartFlow("local");
+    f.startFailed("local", trust("/a"), { path: "/a", spawnMode: "worktree" });
+    expect(f.newInitial?.settings).toEqual({ spawnMode: "worktree" });
+  });
 });

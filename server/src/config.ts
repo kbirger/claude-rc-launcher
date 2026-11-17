@@ -411,7 +411,7 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
   const unitDir = windows ? "" : (inst?.absStr("unit_dir") ?? (scope === "user" ? `${serviceHome}/.config/systemd/user` : "/etc/systemd/system"));
   const roots = inst?.strs("roots", { abs: true, nonEmpty: true }) ?? [serviceHome];
   const claudeBin = inst?.absStr("claude_bin") ?? (windows ? path.win32.join(serviceHome, ".local", "bin", "claude.exe") : `${serviceHome}/.local/bin/claude`);
-  const claudeRcArgs = inst?.strs("claude_rc_args") ?? ["--spawn", "same-dir", "--no-create-session-in-dir"];
+  const claudeRcArgs = inst?.strs("claude_rc_args") ?? ["--spawn", "same-dir"];
   const servicePath = windows
     ? ""
     : (inst?.str("service_path") ?? `${serviceHome}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`);

@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { createMutation, createQuery, type QueryClient } from "@tanstack/svelte-query";
 import { ApiError } from "../../shared/http";
-import type { StartArgs } from "../instances";
+import { DEFAULT_SETTINGS, settingsHelpQuery, type InstanceSettings, type SettingsHelp, type SettingsPatch, type StartArgs } from "../instances";
 import type { DirListing } from "./api";
 import { breadcrumbs } from "./crumbs";
 import { browseQuery, mkdirMutation, nodeQuery, usersQuery } from "./queries";
@@ -32,6 +32,8 @@ export function createNewDialogModel(opts: {
   let folderName = $state("");
   let userPick = $state<string | undefined>(init?.user);
   let trustPrompt = $state<TrustPrompt | null>(init?.trust ?? null);
+  // The settings that the user changed from the node defaults. After a 428 they are the changes of that start.
+  let picked = $state<SettingsPatch>({ ...(init?.settings ?? {}) });
   // The clone view is open.
   let cloning = $state(false);
   // True while a clone runs (the panel can be open with no clone running). Close is locked then.
@@ -41,6 +43,14 @@ export function createNewDialogModel(opts: {
   const usersQ = createQuery(() => usersQuery(host), () => client);
   // An old node or an error: no clone button, no message.
   const nodeQ = createQuery(() => nodeQuery(host), () => client);
+  // An old node (no settings route) or an error: no settings part, no message, and the start sends no settings.
+  const helpQ = createQuery(() => settingsHelpQuery(host), () => client);
+  const settingsHelp = $derived(helpQ.data ?? null);
+  // The form starts at the node defaults, which the operator list decides. An older node sends none: then the built-in values.
+  const seed = $derived(nodeDefaults(settingsHelp));
+  const settings = $derived<InstanceSettings>({ ...seed, ...picked });
+  // Only the fields that differ from the node defaults go to the node. An untouched form sends none, so the node decides.
+  const changes = $derived(diff(settings, seed));
   // A person who cannot name a user gets no selector, and no request names one: the hub lets only an admin do that.
   const usersInfo = $derived(usersQ.data?.selectable && (opts.canChooseUser?.() ?? true) ? usersQ.data : null);
   const user = $derived(userPick ?? usersInfo?.default ?? "");
@@ -85,6 +95,7 @@ export function createNewDialogModel(opts: {
         go(next.path);
         userPick = next.user;
       }
+      if (next.settings) picked = { ...next.settings };
       trustPrompt = next.trust;
       latePrompts++;
       if (!name.trim()) name = next.name ?? "";
@@ -103,7 +114,7 @@ export function createNewDialogModel(opts: {
     if (needsAck) return;
     const a = trustStartArgs(trustPrompt, l, u, addTrust);
     if (!a) return;
-    opts.onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust });
+    opts.onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust, ...(settingsHelp ? changes : {}) });
   }
 
   return {
@@ -129,6 +140,10 @@ export function createNewDialogModel(opts: {
     get mkdirPending() { return mkdirM.isPending; },
     get cloning() { return cloning; },
     get cloneBusy() { return cloneBusy; },
+    /** The settings help of the node, or null: then the dialog shows no settings part. */
+    get settingsHelp() { return settingsHelp; },
+    get settings() { return settings; },
+    set settings(v: InstanceSettings) { picked = diff(v, seed); },
 
     go,
 
@@ -196,5 +211,19 @@ export function createNewDialogModel(opts: {
     setCloneBusy(b: boolean) {
       cloneBusy = b;
     },
+  };
+}
+
+const isSettings = (v: unknown): v is InstanceSettings =>
+  !!v && typeof (v as InstanceSettings).createSession === "boolean" && ((v as InstanceSettings).spawnMode === "same-dir" || (v as InstanceSettings).spawnMode === "worktree");
+
+function nodeDefaults(help: SettingsHelp | null): InstanceSettings {
+  return isSettings(help?.defaults) ? { createSession: help.defaults.createSession, spawnMode: help.defaults.spawnMode } : DEFAULT_SETTINGS;
+}
+
+function diff(v: InstanceSettings, base: InstanceSettings): SettingsPatch {
+  return {
+    ...(v.createSession !== base.createSession ? { createSession: v.createSession } : {}),
+    ...(v.spawnMode !== base.spawnMode ? { spawnMode: v.spawnMode } : {}),
   };
 }

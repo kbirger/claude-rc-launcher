@@ -12,13 +12,25 @@ let list: any[];
 let stops: string[];
 let pauses: string[];
 let stopHangs: boolean;
+// The settings help answer. Null is an old node: the hub answers 404.
+let help: unknown;
+let patches: { url: string; body: any }[];
+let patchAnswer: () => Response | Promise<Response>;
 beforeEach(() => {
+  help = null;
+  patches = [];
+  patchAnswer = () => new Response(JSON.stringify({ instance: inst(), previous: {} }), { status: 200 });
   list = [inst()];
   stops = [];
   pauses = [];
   stopHangs = false;
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
     const u = String(url);
+    if (u.endsWith("/instance-settings") && help) return new Response(JSON.stringify(help), { status: 200 });
+    if (init.method === "PATCH") {
+      patches.push({ url: u, body: JSON.parse(String(init.body)) });
+      return patchAnswer();
+    }
     if (init.method === "DELETE") {
       stops.push(decodeURIComponent(u.split("/").pop()!));
       if (stopHangs) return new Promise(() => {});
@@ -42,10 +54,10 @@ async function until(f: () => boolean) {
   for (let i = 0; i < 100 && !f(); i++) { await new Promise((r) => setTimeout(r, 10)); flushSync(); }
   expect(f()).toBe(true);
 }
-async function show() {
+async function show(props: { canWrite?: boolean } = {}) {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(InstanceListHarness, { target, props: { host: "h", client: createQueryClient() } });
+  const c = mount(InstanceListHarness, { target, props: { host: "h", client: createQueryClient(), ...props } });
   open.push(() => unmount(c));
   flushSync();
   await until(() => !!document.querySelector("h3"));
@@ -196,4 +208,132 @@ test("a strip label is screen-reader text at narrow width, and the button keeps 
   expect(label.className).toContain("@md/strip:not-sr-only");
   expect(label.closest("a")!.getAttribute("title")).toBe("Sessions");
   expect(label.closest("a")!.textContent).toBe("Sessions");
+});
+
+const SETTINGS = { createSession: true, spawnMode: "same-dir" };
+const HELP = {
+  settings: [
+    { key: "createSession", label: "Create a session at start", values: [{ value: true, label: "On", explanation: "Node text for on." }, { value: false, label: "Off", explanation: "Node text for off." }], limits: "Node limits text." },
+    { key: "spawnMode", label: "Session folders", values: [{ value: "same-dir", label: "Same folder", explanation: "Node text for same." }, { value: "worktree", label: "Worktree", explanation: "Node text for worktree." }] },
+  ],
+};
+const RESTART_TEXT = "If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.";
+const menuLabels = () => items().map((i) => i.textContent?.trim());
+const radio = (label: string) => [...document.querySelectorAll("label")].find((l) => l.querySelector("[data-slot=field-title]")?.textContent?.trim() === label)?.querySelector("[role=radio]") as HTMLButtonElement | null;
+const checked = (label: string) => radio(label)?.getAttribute("aria-checked") === "true";
+const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined;
+async function openSettings() {
+  await show();
+  await until(() => { openMenu(); return menuLabels().includes("Settings"); });
+  items().find((i) => i.textContent?.trim() === "Settings")!.click();
+  flushSync();
+  await until(() => !!button("Apply"));
+}
+const pick = (label: string) => { radio(label)!.click(); flushSync(); };
+
+test("an old node (help 404) shows no Settings action and no error banner", async () => {
+  list = [inst({ settings: SETTINGS })];
+  const t = await show();
+  await new Promise((r) => setTimeout(r, 50));
+  flushSync();
+  openMenu();
+  expect(menuLabels()).toEqual(["Stop"]);
+  expect(t.querySelector(".error")).toBeNull();
+  expect(document.body.textContent).not.toContain("Settings");
+});
+
+test("an instance without settings (an old node) has no Settings action", async () => {
+  help = HELP;
+  await show();
+  await new Promise((r) => setTimeout(r, 50));
+  flushSync();
+  openMenu();
+  expect(menuLabels()).toEqual(["Stop"]);
+});
+
+test("a user who cannot write gets no Settings action", async () => {
+  help = HELP;
+  list = [inst({ settings: SETTINGS })];
+  await show({ canWrite: false });
+  await new Promise((r) => setTimeout(r, 50));
+  flushSync();
+  expect(btn("More actions for alpha")).toBeNull();
+  expect(document.body.textContent).not.toContain("Settings");
+});
+
+test("Settings opens a dialog with the node text, prefilled, and sends nothing until Apply", async () => {
+  help = HELP;
+  list = [inst({ settings: { createSession: false, spawnMode: "worktree" } })];
+  await openSettings();
+  const text = document.body.textContent!;
+  expect(text).toContain(RESTART_TEXT);
+  for (const s of ["Create a session at start", "Session folders", "Node text for on.", "Node text for off.", "Node text for same.", "Node text for worktree.", "Node limits text."]) expect(text).toContain(s);
+  expect(checked("Off")).toBe(true);
+  expect(checked("Worktree")).toBe(true);
+  expect(button("Apply")!.disabled).toBe(true);
+  pick("On");
+  pick("Same folder");
+  expect(checked("On")).toBe(true);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(patches).toEqual([]);
+  button("Apply")!.click();
+  flushSync();
+  await until(() => patches.length === 1);
+  expect(patches[0]).toEqual({ url: "/api/hosts/h/instances/a", body: { createSession: true, spawnMode: "same-dir" } });
+  await until(() => !button("Apply"));
+});
+
+test("while the change runs the dialog is busy and cannot apply twice", async () => {
+  help = HELP;
+  list = [inst({ settings: SETTINGS })];
+  patchAnswer = () => new Promise(() => {});
+  await openSettings();
+  pick("Worktree");
+  button("Apply")!.click();
+  flushSync();
+  await until(() => patches.length === 1);
+  await until(() => button("Applying...")?.disabled === true);
+  expect(document.body.textContent).toContain("This can take up to a minute.");
+  button("Applying...")!.click();
+  flushSync();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(patches.length).toBe(1);
+});
+
+test("a 409 shows the node reason and says that the old settings stay", async () => {
+  help = HELP;
+  list = [inst({ settings: SETTINGS })];
+  patchAnswer = () => new Response(JSON.stringify({ error: "The folder is not a git repository.", code: "settings_failed", settings: SETTINGS }), { status: 409 });
+  await openSettings();
+  pick("Worktree");
+  button("Apply")!.click();
+  flushSync();
+  await until(() => !!document.querySelector("[role=alert]"));
+  const alert = document.querySelector("[role=alert]")!.textContent!;
+  expect(alert).toContain("The folder is not a git repository.");
+  expect(alert).toContain("The old settings stay.");
+  expect(button("Apply")).toBeDefined();
+});
+
+test("a network error shows an error and keeps the dialog open", async () => {
+  help = HELP;
+  list = [inst({ settings: SETTINGS })];
+  patchAnswer = () => { throw new TypeError("Failed to fetch"); };
+  await openSettings();
+  pick("Off");
+  button("Apply")!.click();
+  flushSync();
+  await until(() => !!document.querySelector("[role=alert]"));
+  expect(button("Apply")).toBeDefined();
+  expect(button("Apply")!.disabled).toBe(false);
+});
+
+test("node text renders as text, never as HTML", async () => {
+  help = { settings: [{ ...HELP.settings[0], label: "<b>bold</b>", values: [{ value: true, label: "On", explanation: "<img src=x onerror=alert(1)>" }, HELP.settings[0]!.values[1]] }, HELP.settings[1]] };
+  list = [inst({ settings: SETTINGS })];
+  await openSettings();
+  expect(document.body.textContent).toContain("<img src=x onerror=alert(1)>");
+  expect(document.body.textContent).toContain("<b>bold</b>");
+  expect(document.querySelector("img")).toBeNull();
+  expect(document.querySelector("b")).toBeNull();
 });

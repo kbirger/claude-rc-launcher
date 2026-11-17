@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from "#lib/components/ui/button/index.js";
+  import { Input } from "#lib/components/ui/input/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Circle from "@tabler/icons-svelte/icons/circle";
   import Close from "@tabler/icons-svelte/icons/x";
@@ -63,7 +64,7 @@
     {#snippet titleEditor()}
       <form id="rename-{h.id}" class="flex min-w-0 flex-1 basis-32" onsubmit={(e) => { e.preventDefault(); void save(h); }}>
         <!-- svelte-ignore a11y_autofocus -->
-        <input autofocus bind:value={draft} maxlength="64" aria-label="Node name" class="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-base font-semibold" onkeydown={(e) => e.key === "Escape" && (editing = null)} />
+        <Input autofocus bind:value={draft} maxlength={64} aria-label="Node name" class="h-7 flex-1 px-2 font-semibold" onkeydown={(e) => e.key === "Escape" && (editing = null)} />
       </form>
     {/snippet}
     <!-- The hub is the special node, so its pill has the primary tone. An agent has the plain pill. -->
@@ -92,18 +93,18 @@
     {/snippet}
     {#snippet actions()}
       {#if editing === h.id}
-        <Button type="button" variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => (editing = null)} aria-label="Cancel rename">
+        <Button type="button" variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground" onclick={() => (editing = null)} aria-label="Cancel rename">
           <Close aria-hidden="true" />Cancel
         </Button>
       {:else}
-        <Button variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground hover:border-border" onclick={() => edit(h)} aria-label="Rename {h.name}">
+        <Button variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground" onclick={() => edit(h)} aria-label="Rename {h.name}">
           <Pencil aria-hidden="true" />Rename
         </Button>
       {/if}
     {/snippet}
     {#snippet actionsEnd()}
       {#if editing === h.id}
-        <Button type="submit" form="rename-{h.id}" variant="ghost" size="sm" class="h-8 px-2 text-primary hover:border-border" disabled={saving} aria-label="Save name">
+        <Button type="submit" form="rename-{h.id}" variant="ghost" size="sm" class="h-8 px-2 text-primary" disabled={saving} aria-label="Save name">
           <Check aria-hidden="true" />Save
         </Button>
       {:else}
@@ -114,7 +115,7 @@
           </Button>
         {/if}
         <!-- One button for the state of the node in the app: Active (the node in use), Use (it can be used), or Unavailable (it is not running). -->
-        <Button variant="ghost" size="sm" class={cn("h-8 min-w-24 px-2 hover:border-border", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
+        <Button variant="ghost" size="sm" class={cn("h-8 min-w-24 px-2", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
           {#if h.id === selected}<Check aria-hidden="true" />Active{:else if h.status === "ok"}<Circle aria-hidden="true" />Use{:else}<Circle aria-hidden="true" />Unavailable{/if}
         </Button>
       {/if}
