@@ -75,9 +75,9 @@
   }
 </script>
 
-{#each model.errors as e}<p class="error">{e}</p>{/each}
+{#each model.errors as e}<p class="text-destructive">{e}</p>{/each}
 {#if model.loaded && model.rows.length === 0}
-  <p class="muted empty">No running instances. Tap New to start one.</p>
+  <p class="text-muted-foreground">No running instances. Tap New to start one.</p>
 {/if}
 <ul class="m-0 grid list-none gap-3 p-0">
   {#each model.rows as r (r.key)}
@@ -100,7 +100,7 @@
     {/snippet}
     {#snippet actions()}
       {#if i}
-        <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open} title="Logs">
+        <Button variant="ghost" size="sm" class="h-8 px-2" disabled={!!r.pending} onclick={() => toggleLogs(i.id)} aria-expanded={i.id in open} title="Logs">
           <FileText aria-hidden="true" /><span class={stripLabel}>Logs</span><ChevronDown class={cn("transition-transform", i.id in open && "rotate-180")} aria-hidden="true" />
         </Button>
         <SessionsLink {host} instance={i.id} />

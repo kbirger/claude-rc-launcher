@@ -1,5 +1,8 @@
 <script lang="ts">
+  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { Input } from "#lib/components/ui/input/index.js";
+  import { Label } from "#lib/components/ui/label/index.js";
   import { onDestroy, untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
   import { createCloneModel } from "./model.svelte";
@@ -34,82 +37,59 @@
   }
 </script>
 
-<div class="panel">
-  <div class="top">
+<div class="mt-2 flex min-h-0 flex-1 flex-col gap-2">
+  <div class="flex items-center justify-between">
     <strong>Clone repo</strong>
     <Button variant="outline" size="touch" disabled={model.cloning} onclick={onclose}>Back</Button>
   </div>
-  <form onsubmit={(e) => { e.preventDefault(); model.clone(); }}>
-    <label class="lbl" for="clone-repo">Repository</label>
-    <input id="clone-repo" placeholder="owner/repo or GitHub link" bind:value={model.repo} disabled={model.cloning} />
+  <form class="grid gap-2" onsubmit={(e) => { e.preventDefault(); model.clone(); }}>
+    <Label for="clone-repo" class="text-muted-foreground">Repository</Label>
+    <Input id="clone-repo" class="h-11" placeholder="owner/repo or GitHub link" bind:value={model.repo} disabled={model.cloning} />
     <Button size="touch" class="h-auto min-h-11 py-2 whitespace-normal [overflow-wrap:anywhere]" type="submit" disabled={!model.repo.trim() || model.cloning}>
       {#if model.cloning}Cloning...{:else}Clone into {parent}{/if}
     </Button>
   </form>
-  {#if model.cloneError}<p class="error" role="status">{model.cloneError}</p>{/if}
+  {#if model.cloneError}<p class="m-0 text-destructive [overflow-wrap:anywhere]" role="status">{model.cloneError}</p>{/if}
 
-  <input class="search" type="search" placeholder="Search your repos" bind:value={model.query} aria-label="Search repos" />
-  {#if model.listError}<p class="muted note" role="status">{model.listError}</p>{/if}
+  <Input class="h-11" type="search" placeholder="Search your repos" bind:value={model.query} aria-label="Search repos" />
+  {#if model.listError}<p class="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]" role="status">{model.listError}</p>{/if}
   {#if model.needLogin}
-    <div class="login">
+    <div class="grid gap-1 rounded-lg border bg-card p-2 [&_p]:m-0">
       {#if model.login}
         <p>Enter this code on GitHub:</p>
-        <p class="code" role="status">{model.login.code}</p>
-        <a href={model.login.url} target="_blank" rel="noopener noreferrer">Open {model.login.url}</a>
-        <p class="muted">Waiting for you to finish...</p>
+        <p class="font-mono text-2xl tracking-widest" role="status">{model.login.code}</p>
+        <a class="text-primary [overflow-wrap:anywhere]" href={model.login.url} target="_blank" rel="noopener noreferrer">Open {model.login.url}</a>
+        <p class="text-muted-foreground">Waiting for you to finish...</p>
       {:else}
         {#if canSignIn}
-          <p class="muted">Sign in to GitHub to list your repos. A pasted link works without it.</p>
+          <p class="text-muted-foreground">Sign in to GitHub to list your repos. A pasted link works without it.</p>
           <Button size="touch" disabled={model.signingIn} onclick={() => model.signIn()}>Sign in to GitHub</Button>
         {:else}
-          <p class="muted">An admin signs in to GitHub. A pasted link works without it.</p>
+          <p class="text-muted-foreground">An admin signs in to GitHub. A pasted link works without it.</p>
         {/if}
       {/if}
-      {#if model.loginError}<p class="error" role="status">{model.loginError}</p>{/if}
+      {#if model.loginError}<p class="text-destructive [overflow-wrap:anywhere]" role="status">{model.loginError}</p>{/if}
     </div>
   {/if}
-  <div class="list">
+  <div class="min-h-[120px] flex-1 overflow-auto rounded-lg border bg-card">
     {#if model.listLoading}
-      <p class="muted pad">Loading repos...</p>
+      <p class="m-0 p-3 text-muted-foreground">Loading repos...</p>
     {:else}
       {#each model.shown as g (g.owner)}
-        <div class="owner muted">{g.owner}</div>
-        <ul>
+        <div class="border-b bg-background px-3 py-1.5 text-xs text-muted-foreground">{g.owner}</div>
+        <ul class="m-0 list-none p-0">
           {#each g.repos as r (r.name)}
-            <li>
-              <button class="repo" class:picked={model.repo === r.name} disabled={model.cloning} onclick={() => model.pick(r.name)}>
-                <span class="rname">{r.name}</span>
-                {#if r.private}<span class="badge">private</span>{/if}
-                {#if date(r.pushedAt)}<span class="muted when">{date(r.pushedAt)}</span>{/if}
-              </button>
+            <li class="[&+li]:border-t">
+              <Button variant="ghost" class="h-auto min-h-11 w-full flex-wrap justify-start gap-2 rounded-none px-3 py-1.5 text-left font-normal {model.repo === r.name ? 'text-primary' : ''}" disabled={model.cloning} onclick={() => model.pick(r.name)}>
+                <span class="flex-1 [overflow-wrap:anywhere]">{r.name}</span>
+                {#if r.private}<Badge variant="outline" class="text-muted-foreground">private</Badge>{/if}
+                {#if date(r.pushedAt)}<span class="text-xs text-muted-foreground">{date(r.pushedAt)}</span>{/if}
+              </Button>
             </li>
           {/each}
         </ul>
       {/each}
-      {#if model.shown.length === 0 && !model.listError && !model.needLogin}<p class="muted pad">{model.query.trim() ? "No matching repos" : "No repos"}</p>{/if}
+      {#if model.shown.length === 0 && !model.listError && !model.needLogin}<p class="m-0 p-3 text-muted-foreground">{model.query.trim() ? "No matching repos" : "No repos"}</p>{/if}
     {/if}
   </div>
 </div>
-
-<style>
-  .panel { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; margin-top: 8px; }
-  .top { display: flex; justify-content: space-between; align-items: center; }
-  form { display: grid; gap: 8px; }
-  .lbl { font-size: 0.85rem; color: var(--muted-foreground); }
-  .error, .note { margin: 0; overflow-wrap: anywhere; }
-  .note { font-size: 0.85rem; }
-  .login { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); display: grid; gap: 4px; }
-  .login p { margin: 0; }
-  .code { font-family: var(--font-mono); font-size: 1.4rem; letter-spacing: 0.1em; }
-  .login a { color: var(--primary); overflow-wrap: anywhere; }
-  .list { flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-height: 120px; }
-  .owner { padding: 6px 12px; font-size: 0.8rem; background: var(--background); border-bottom: 1px solid var(--border); }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li + li { border-top: 1px solid var(--border); }
-  .repo { width: 100%; text-align: left; border: none; border-radius: 0; background: transparent; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; }
-  .repo.picked { background: var(--background); color: var(--primary); }
-  .rname { overflow-wrap: anywhere; flex: 1; }
-  .badge { font-size: 0.75rem; padding: 0 8px; border-radius: 999px; border: 1px solid var(--muted-foreground); color: var(--muted-foreground); }
-  .when { font-size: 0.8rem; }
-  .pad { padding: 12px; margin: 0; }
-</style>

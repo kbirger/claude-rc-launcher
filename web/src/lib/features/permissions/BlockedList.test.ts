@@ -72,11 +72,11 @@ test("the Allow button shows on needs_approval, user_rejected and classifier, an
 
 test("the Allow button opens the sheet in add mode with the first suggestion, and nothing is mounted before", async () => {
   const t = await show([call({ input: { command: "git push origin main" } })], [layer()]);
-  expect(document.querySelector("input[aria-label='Rule']")).toBeNull();
+  expect(document.querySelector("#rule-input")).toBeNull();
   btn(t, "Allow...")!.click();
   flushSync();
   expect(body()).toContain("Add a rule");
-  expect(document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!.value).toBe("Bash(git push origin main)");
+  expect(document.querySelector<HTMLInputElement>("#rule-input")!.value).toBe("Bash(git push origin main)");
 });
 
 test("a user_rejected call needs a second tap before it can be saved", async () => {

@@ -25,7 +25,7 @@
 {:else if isUnsupported(q.error)}
   <p class="text-muted-foreground">This node does not support permissions. Update the node.</p>
 {:else if q.error}
-  <p class="error">Could not load the blocked calls: {q.error.message}</p>
+  <p class="text-destructive">Could not load the blocked calls: {q.error.message}</p>
 {:else if !q.data?.length}
   <p class="text-muted-foreground">Nothing was blocked in this session.</p>
 {:else}

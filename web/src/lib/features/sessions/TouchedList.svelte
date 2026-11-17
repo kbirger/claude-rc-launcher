@@ -24,7 +24,7 @@
 {#if q.isPending}
   <p class="text-muted-foreground">Loading files...</p>
 {:else if q.error}
-  <p class="error">{q.error.message}</p>
+  <p class="text-destructive">{q.error.message}</p>
 {:else if !q.data?.length}
   <p class="text-muted-foreground">{kind === "changed" ? "Git shows no changed file in this folder since the session started, or the folder is not a git work tree." : "Claude has not written or edited a file in this session."}</p>
 {:else}

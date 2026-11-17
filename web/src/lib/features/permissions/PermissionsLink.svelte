@@ -14,5 +14,5 @@
 </script>
 
 {#if !isUnsupported(q.error)}
-  <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" href={permissionsHref(host, instance)} title="Permissions"><ShieldLock aria-hidden="true" /><span class={stripLabel}>Permissions</span></Button>
+  <Button variant="ghost" size="sm" class="h-8 px-2" href={permissionsHref(host, instance)} title="Permissions"><ShieldLock aria-hidden="true" /><span class={stripLabel}>Permissions</span></Button>
 {/if}

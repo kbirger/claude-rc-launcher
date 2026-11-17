@@ -13,6 +13,7 @@
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
   import { createStartFlow } from "../startflow.svelte";
+  import ActionIcon from "../shared/ui/ActionIcon.svelte";
   import BottomNav from "./BottomNav.svelte";
   import { setShell } from "./context";
 
@@ -131,7 +132,7 @@
   {#if reloadBar}
     <section class="reload" role="status">
       <span>The hub was updated. Reload to get the new page.</span>
-      <Button size="touch" onclick={() => location.reload()}>Reload</Button>
+      <Button size="icon-touch" aria-label="Reload" title="Reload" onclick={() => location.reload()}><ActionIcon name="refresh" /></Button>
     </section>
   {/if}
   <!-- The Updates page shows the whole panel itself. -->

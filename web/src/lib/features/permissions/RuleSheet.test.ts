@@ -38,7 +38,7 @@ function show(props: Record<string, unknown>, client = createQueryClient()) {
 }
 const text = () => document.body.textContent ?? "";
 const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes(label)) as HTMLButtonElement | undefined;
-const field = () => document.querySelector<HTMLInputElement>("input[aria-label='Rule']")!;
+const field = () => document.querySelector<HTMLInputElement>("#rule-input")!;
 const type = (v: string) => { const f = field(); f.value = v; f.dispatchEvent(new Event("input", { bubbles: true })); flushSync(); };
 const group = (name: string) => [...document.querySelectorAll("[aria-labelledby]")].find((e) => document.getElementById(e.getAttribute("aria-labelledby")!)?.textContent === name) ?? null;
 const items = (name: string) => [...(group(name)?.querySelectorAll<HTMLElement>("[role=tab]") ?? [])];
@@ -253,19 +253,20 @@ test("the body follows a file switch: scope and hash of the picked file", async 
   expect(sent[0]!.body).toEqual({ scope: "project", list: "allow", rule: "Bash(ls)", expectedHash: "hash-project" });
 });
 
-const box = () => document.querySelector<HTMLInputElement>("input[type=checkbox]");
+const box = () => document.querySelector<HTMLButtonElement>("button[role=checkbox]");
+const on = () => box()!.getAttribute("aria-checked") === "true";
 
 test("shows the checkbox on for a live session", () => {
   show({ call: call(), live: true });
   expect(text()).toContain("Tell the session to try again");
-  expect(box()!.checked).toBe(true);
+  expect(on()).toBe(true);
   expect(box()!.disabled).toBe(false);
   expect(text()).not.toContain("The session is not running.");
 });
 
 test("shows it off and disabled for a session that is not live", () => {
   show({ call: call(), live: false });
-  expect(box()!.checked).toBe(false);
+  expect(on()).toBe(false);
   expect(box()!.disabled).toBe(true);
   expect(text()).toContain("The session is not running.");
 });
@@ -366,16 +367,16 @@ test("the box returns with its previous state when the list goes back to allow",
   show({ call: call(), live: true });
   box()!.click();
   flushSync();
-  expect(box()!.checked).toBe(false);
+  expect(on()).toBe(false);
   pickList("ask");
   expect(box()).toBeNull();
   pickList("allow");
-  expect(box()!.checked).toBe(false);
+  expect(on()).toBe(false);
   box()!.click();
   flushSync();
   pickList("deny");
   pickList("allow");
-  expect(box()!.checked).toBe(true);
+  expect(on()).toBe(true);
 });
 
 test("the box is not shown when the sheet starts on a list other than allow", () => {

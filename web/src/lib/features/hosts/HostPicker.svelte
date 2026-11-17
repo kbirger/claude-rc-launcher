@@ -66,7 +66,7 @@
   <Button size="touch" disabled={busy || isRunning(lastEntry(updates, current?.id ?? ""), now)} onclick={update}>Update</Button>
 {/if}
 {#if step && stepText(step)}<span class:error={stepIsError(step)} class="step" role="status">{stepText(step)}</span>{/if}
-{#if error}<span class="error" role="alert">{error}</span>{/if}
+{#if error}<span class="text-destructive" role="alert">{error}</span>{/if}
 
 <style>
   .step { font-size: 0.85rem; color: var(--muted-foreground); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

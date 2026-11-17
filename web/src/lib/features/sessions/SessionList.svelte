@@ -3,6 +3,7 @@
   import Search from "@tabler/icons-svelte/icons/search";
   import Broadcast from "@tabler/icons-svelte/icons/broadcast";
   import * as Card from "#lib/components/ui/card/index.js";
+  import { Input } from "#lib/components/ui/input/index.js";
   import { isUnsupported } from "./api";
   import { sessionDetail, sessionMatches, sessionState, sessionsHref, sessionTitle, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
@@ -19,7 +20,7 @@
 {:else if isUnsupported(q.error)}
   <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
 {:else if q.error}
-  <p class="error">{q.error.message}</p>
+  <p class="text-destructive">{q.error.message}</p>
 {:else if !q.data?.length}
   <p class="text-muted-foreground">No sessions yet for this instance.</p>
 {:else}
@@ -27,13 +28,7 @@
   <div class="mb-3 grid gap-2 border-b pb-3">
     <div class="relative">
       <Search size={18} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-      <input
-        type="search"
-        bind:value={filter}
-        placeholder="Filter by name, id, branch or folder"
-        aria-label="Filter sessions"
-        class="h-11 w-full rounded-lg border bg-card pr-3 pl-10 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-      />
+      <Input type="search" bind:value={filter} placeholder="Filter by name, id, branch or folder" aria-label="Filter sessions" class="h-11 pl-10" />
     </div>
     <p class="m-0 text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${q.data.length} sessions` : `${q.data.length} ${q.data.length === 1 ? "session" : "sessions"}`}</p>
   </div>

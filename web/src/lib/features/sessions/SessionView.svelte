@@ -50,7 +50,7 @@
 <div class="grid grid-cols-[minmax(0,1fr)] gap-3">
   <!-- A file preview needs the room: it has its own Back button, so the session header is left out while a file is open. -->
   {#if !abs && !file}
-    <Button variant="ghost" size="sm" class="-ml-2 h-8 w-fit px-2 text-muted-foreground hover:border-border" href={sessionsHref({ host, instance })}>
+    <Button variant="ghost" size="sm" class="-ml-2 h-8 w-fit px-2 text-muted-foreground" href={sessionsHref({ host, instance })}>
       <ArrowLeft aria-hidden="true" />Back to {instanceName ? `${instanceName} sessions` : "sessions"}
     </Button>
     {#if s}
@@ -96,9 +96,9 @@
         {:else if isUnsupported(q.error)}
           <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
         {:else if q.error}
-          <p class="error">Could not load the session: {q.error.message}</p>
+          <p class="text-destructive">Could not load the session: {q.error.message}</p>
         {:else if !s}
-          <p class="error">Session not found.</p>
+          <p class="text-destructive">Session not found.</p>
         {:else if current === "folder"}
           <FileBrowser {host} {instance} {session} {path} {hidden} {now} />
         {:else}

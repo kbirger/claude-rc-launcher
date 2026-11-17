@@ -38,7 +38,7 @@
     {:else if isUnsupported(rules.error)}
       <p class="text-muted-foreground">This node does not support permissions. Update the node.</p>
     {:else if rules.error}
-      <p class="error">Could not load the permissions: {rules.error.message}</p>
+      <p class="text-destructive">Could not load the permissions: {rules.error.message}</p>
     {:else if rules.data}
       <RuleList layers={rules.data.layers} {host} {instance} {session} />
     {/if}

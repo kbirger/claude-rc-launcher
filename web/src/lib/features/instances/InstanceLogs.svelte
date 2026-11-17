@@ -8,11 +8,11 @@
 </script>
 
 {#if logsQ.isError}
-  <p class="error">{logsQ.error instanceof ApiError ? logsQ.error.message : "Failed to load logs"}</p>
+  <p class="text-destructive">{logsQ.error instanceof ApiError ? logsQ.error.message : "Failed to load logs"}</p>
 {:else if logsQ.data !== undefined}
   <pre>{logsQ.data}</pre>
 {:else}
-  <p class="muted">Loading logs...</p>
+  <p class="text-muted-foreground">Loading logs...</p>
 {/if}
 
 <style>

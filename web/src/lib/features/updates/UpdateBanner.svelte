@@ -139,9 +139,9 @@
               {@render action(item.hosts.length > 1 ? "Update all nodes" : "Update node", "nodes", () => updateNodes(item.hosts))}
             {/if}
           {:else if item.kind === "nodes-after-hub"}
-            <span class="muted">Also behind the latest release: {item.hosts.join(", ")}. Update the hub first, then these nodes.</span>
+            <span class="text-muted-foreground">Also behind the latest release: {item.hosts.join(", ")}. Update the hub first, then these nodes.</span>
           {:else if item.kind === "hub-local-build"}
-            <span class="muted">The hub runs an unversioned build, so it is not compared with the latest release.</span>
+            <span class="text-muted-foreground">The hub runs an unversioned build, so it is not compared with the latest release.</span>
           {:else if item.kind === "by-hand"}
             <span>{item.host}: {item.message}.</span>
           {:else if item.kind === "offline-after-hub-update"}
@@ -152,7 +152,7 @@
             <span>Update of {item.host} failed: {item.error}</span>
             {#if item.id}<UpdateOutput host={item.id} open={panelOpenByDefault(lastEntry(updates, item.id))} />{/if}
           {:else}
-            <span class="muted">Could not check for the latest release.</span>
+            <span class="text-muted-foreground">Could not check for the latest release.</span>
           {/if}
         </li>
       {/each}
