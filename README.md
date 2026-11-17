@@ -914,6 +914,7 @@ Set them when you start an instance, or change them later:
 
 ```sh
 claude-rc start <path> [--create-session|--no-create-session] [--spawn same-dir|worktree]
+claude-rc clone <repo> <parent> [--create-session|--no-create-session] [--spawn same-dir|worktree]
 claude-rc settings <id>                                   # show the current settings and their meaning
 claude-rc settings <id> [--create-session|--no-create-session] [--spawn same-dir|worktree] [--yes]
 ```
@@ -921,10 +922,23 @@ claude-rc settings <id> [--create-session|--no-create-session] [--spawn same-dir
 The `list` command shows the settings in a SETTINGS column. In the web UI, the start form has a Settings part.
 Each instance has a Settings action. Its dialog warns that applying the change restarts the server. The restart starts when you press Apply.
 
-A change restarts the instance. The node waits up to 20 seconds for the new server. If the server exits with code
+A change restarts a running instance. The node waits up to 20 seconds for the new server. If the server exits with code
 69 (the "already served" refusal) or does not stay up, the node puts the old settings back. You then see the reason:
-HTTP status 409 with `settings_refused` or `settings_failed`. On Linux, a paused instance saves the new settings
-and applies them when you resume it. The Windows node does the same work in its supervisor loop. It has no pause.
+HTTP status 409 with `settings_refused` or `settings_failed`. The Windows node does the same work in its supervisor
+loop. It has no pause.
+
+On Linux, a change on a paused instance is only saved. The answer then has `applied: false`. The new settings start
+when you resume the instance, and nothing checks them before then. If the server cannot start with the new settings,
+it fails at the resume. The node does not put the old settings back then.
+
+If the answer of a change does not come back (no connection, or HTTP status 502 from the hub), the change can still
+run on the node. Look at the instance list before you try again.
+
+When you give a settings flag to `start` or `clone`, the client first asks the node for its settings help. If the
+node or the hub is too old, the client stops with an error and starts nothing.
+
+After this version, an old Windows record without settings starts with the current default list of the node. An old
+Linux unit keeps the flags that its unit file has.
 
 Only one change runs for each instance at a time. A change needs the `write` role, and the hub writes an audit line
 for each one. If a node is too old to have the settings route, the web page shows no settings controls for it.
