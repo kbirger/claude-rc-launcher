@@ -155,11 +155,17 @@ test("a call starts the rule at the first suggestion, the others are chips with 
   expect(field().value).toBe("Bash(git push *)");
 });
 
-test("the call text shows only in a closed details", () => {
+test("the call text shows only after the Blocked line opens", () => {
   show({ call: call() });
-  const d = document.querySelector("details");
-  expect(d?.open).toBe(false);
-  expect(d?.textContent).toContain("secret denial text");
+  const trigger = document.querySelector<HTMLButtonElement>("[data-slot=collapsible-trigger]")!;
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  const body = document.querySelector<HTMLElement>("[data-slot=collapsible-content]")!;
+  expect(body.getAttribute("data-state")).toBe("closed");
+  expect(body.textContent).toContain("secret denial text");
+  trigger.click();
+  flushSync();
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  expect(body.getAttribute("data-state")).toBe("open");
 });
 
 test("the classifier warning shows for a classifier call", () => {

@@ -9,34 +9,9 @@
 /* The dark palettes apply when <html> has the "dark" class (see src/lib/shared/theme.ts and the script in src/app.html). */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* shadcn token names. The palette itself (--background, --foreground, --card, --primary, --border, ...) lives in
-   src/app.css, one block per theme. The tokens below that the palette does not name are derived from it, so every
-   theme keeps working with the generated components. */
+/* Every shadcn token (colors) is set by each palette block in src/app.css. Only the radius lives here. */
 :root {
   --radius: 0.5rem;
-  --card-foreground: var(--foreground);
-  --popover: var(--card);
-  --popover-foreground: var(--foreground);
-  --secondary: color-mix(in srgb, var(--foreground) 6%, var(--card));
-  --secondary-foreground: var(--foreground);
-  --muted: color-mix(in srgb, var(--foreground) 6%, var(--card));
-  --accent: color-mix(in srgb, var(--foreground) 10%, var(--card));
-  --accent-foreground: var(--foreground);
-  --input: var(--border);
-  --ring: var(--primary);
-  --chart-1: var(--primary);
-  --chart-2: var(--ok);
-  --chart-3: var(--warn);
-  --chart-4: var(--destructive);
-  --chart-5: var(--muted-foreground);
-  --sidebar: var(--card);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
 }
 
 @theme inline {

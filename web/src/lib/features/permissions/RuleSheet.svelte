@@ -2,6 +2,7 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { Checkbox } from "#lib/components/ui/checkbox/index.js";
+  import * as Collapsible from "#lib/components/ui/collapsible/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
   import * as Tabs from "#lib/components/ui/tabs/index.js";
@@ -88,10 +89,12 @@
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
       {#if call}
-        <details class="text-sm">
-          <summary class="cursor-pointer {wrap}">Blocked: {summaryOf(call)}</summary>
-          <p class="m-0 mt-1 whitespace-pre-wrap text-muted-foreground {wrap}">{call.text}</p>
-        </details>
+        <Collapsible.Root class="text-sm">
+          <Collapsible.Trigger class="min-h-11 cursor-pointer text-left {wrap}">Blocked: {summaryOf(call)}</Collapsible.Trigger>
+          <Collapsible.Content>
+            <p class="m-0 mt-1 whitespace-pre-wrap text-muted-foreground {wrap}">{call.text}</p>
+          </Collapsible.Content>
+        </Collapsible.Root>
       {/if}
 
       {#if offered.length > 1}

@@ -42,7 +42,7 @@
   }
 </script>
 
-<div class="picker">
+<div class="inline-flex min-w-0 flex-auto">
   <Select.Root type="single" value={selected} onValueChange={(v) => { error = ""; onselect(v); }}>
     <Select.Trigger class="w-full min-w-0 data-[size=default]:h-11" aria-label="Host">
       <span class="flex min-w-0 items-center gap-1.5">
@@ -65,11 +65,5 @@
 {#if canUpdate && allowUpdate}
   <Button size="touch" disabled={busy || isRunning(lastEntry(updates, current?.id ?? ""), now)} onclick={update}>Update</Button>
 {/if}
-{#if step && stepText(step)}<span class:error={stepIsError(step)} class="step" role="status">{stepText(step)}</span>{/if}
+{#if step && stepText(step)}<span class="max-w-56 truncate text-[0.85rem] {stepIsError(step) ? 'text-destructive' : 'text-muted-foreground'}" role="status">{stepText(step)}</span>{/if}
 {#if error}<span class="text-destructive" role="alert">{error}</span>{/if}
-
-<style>
-  .step { font-size: 0.85rem; color: var(--muted-foreground); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .step.error { color: var(--destructive); margin: 0; }
-  .picker { display: inline-flex; flex: 1 1 auto; min-width: 0; }
-</style>

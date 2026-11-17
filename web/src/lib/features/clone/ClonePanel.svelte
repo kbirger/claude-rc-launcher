@@ -1,7 +1,9 @@
 <script lang="ts">
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import * as Empty from "#lib/components/ui/empty/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
+  import * as Item from "#lib/components/ui/item/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
   import { onDestroy, untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
@@ -77,19 +79,23 @@
     {:else}
       {#each model.shown as g (g.owner)}
         <div class="border-b bg-background px-3 py-1.5 text-xs text-muted-foreground">{g.owner}</div>
-        <ul class="m-0 list-none p-0">
+        <Item.Group class="gap-0 divide-y">
           {#each g.repos as r (r.name)}
-            <li class="[&+li]:border-t">
-              <Button variant="ghost" class="h-auto min-h-11 w-full flex-wrap justify-start gap-2 rounded-none px-3 py-1.5 text-left font-normal {model.repo === r.name ? 'text-primary' : ''}" disabled={model.cloning} onclick={() => model.pick(r.name)}>
-                <span class="flex-1 [overflow-wrap:anywhere]">{r.name}</span>
-                {#if r.private}<Badge variant="outline" class="text-muted-foreground">private</Badge>{/if}
-                {#if date(r.pushedAt)}<span class="text-xs text-muted-foreground">{date(r.pushedAt)}</span>{/if}
-              </Button>
-            </li>
+            <Item.Root size="xs" class="min-h-11 rounded-none border-0 hover:bg-muted {model.repo === r.name ? 'text-primary' : ''}">
+              {#snippet child({ props })}
+                <button {...props} type="button" class="{props.class} cursor-pointer text-left disabled:pointer-events-none disabled:opacity-50" disabled={model.cloning} onclick={() => model.pick(r.name)}>
+                  <Item.Content class="min-w-0 flex-1"><Item.Title class="line-clamp-none [overflow-wrap:anywhere]">{r.name}</Item.Title></Item.Content>
+                  {#if r.private}<Badge variant="outline" class="text-muted-foreground">private</Badge>{/if}
+                  {#if date(r.pushedAt)}<span class="text-xs text-muted-foreground">{date(r.pushedAt)}</span>{/if}
+                </button>
+              {/snippet}
+            </Item.Root>
           {/each}
-        </ul>
+        </Item.Group>
       {/each}
-      {#if model.shown.length === 0 && !model.listError && !model.needLogin}<p class="m-0 p-3 text-muted-foreground">{model.query.trim() ? "No matching repos" : "No repos"}</p>{/if}
+      {#if model.shown.length === 0 && !model.listError && !model.needLogin}
+        <Empty.Root class="border-0 p-4"><Empty.Header><Empty.Title class="font-sans font-normal text-muted-foreground">{model.query.trim() ? "No matching repos" : "No repos"}</Empty.Title></Empty.Header></Empty.Root>
+      {/if}
     {/if}
   </div>
 </div>
