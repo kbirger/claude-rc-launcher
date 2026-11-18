@@ -30,9 +30,14 @@ const NAME_MAX = 80;
 
 const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:", "[Request interrupted"];
 
-/** The text of a real user prompt, or undefined for meta records, command echoes and system messages. */
+/** A "user" record that Claude Code wrote, not the user: a meta record, or the summary that /compact puts at the start of the transcript. */
+function writtenByClaudeCode(r: Record<string, any>): boolean {
+  return r.isMeta === true || r.isCompactSummary === true;
+}
+
+/** The text of a real user prompt, or undefined for records Claude Code wrote, command echoes and system messages. */
 function promptText(r: Record<string, any>): string | undefined {
-  if (r.type !== "user" || r.isMeta === true) return undefined;
+  if (r.type !== "user" || writtenByClaudeCode(r)) return undefined;
   const c = r.message?.content;
   let text: unknown = c;
   if (Array.isArray(c)) text = c.find((b) => b && b.type === "text" && typeof b.text === "string")?.text;
@@ -94,6 +99,30 @@ async function readName(fs: TranscriptFs, file: string): Promise<string | undefi
     // keep what was found
   }
   return tidy(tail.custom ?? head.custom ?? tail.ai ?? head.ai ?? tail.agent ?? head.agent ?? first);
+}
+
+/** The names that one session can have, from the places that know them. Each one is already tidy. */
+export type NameParts = {
+  /** The name in the running-session file. */
+  live?: string;
+  /** True when Claude Code made `live` up (see `nameIsDefault` in livesessions.ts). */
+  liveIsDefault?: boolean;
+  /** The name of the first transcript of the chain, when `/clear` joined several. The app names the whole connection from it. */
+  chain?: string;
+  /** The name from this transcript: a title, or the first real prompt (see readName). */
+  transcript?: string;
+};
+
+/**
+ * The name of a session. This is the only place that orders the sources:
+ * 1. A live name that someone set. The Claude app shows it, and it changes while the session runs.
+ * 2. The name of the first transcript of the chain.
+ * 3. The name of this transcript.
+ * 4. A live name that Claude Code made up. It comes last: the titles in the transcript say more.
+ */
+export function chooseName(p: NameParts): string | undefined {
+  const set = p.liveIsDefault ? undefined : p.live;
+  return set ?? p.chain ?? p.transcript ?? p.live;
 }
 
 export async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<string | undefined> {

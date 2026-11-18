@@ -83,7 +83,10 @@ A transcript has one JSON record on each line. These short examples show the rec
 
 - The first record with a `cwd` gives the session folder, the branch and the start time.
 - The title records give the name. A custom title comes first, then an AI title, then an agent name, then the first
-  real prompt.
+  real prompt. A record that Claude Code wrote is not a prompt. This includes the summary that `/compact` puts at the
+  start of a transcript (`isCompactSummary`).
+- `chooseName` in `sessionnames.ts` orders the sources of the name of a session: a live name that someone set, the name
+  of the first transcript of the chain, the name of this transcript, and last a live name that Claude Code made up.
 - A `tool_use` block is a call. A `tool_result` block with the same id is its answer. When `is_error` is absent or
   false, the write succeeded. The code then sets `confirmed` to true for the file.
 - Claude Code can write one tool call more than once while it streams. A repeat with the same id, the same tool name

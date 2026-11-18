@@ -8,7 +8,7 @@ import { realpath } from "node:fs/promises";
 import { readLiveSessions, type LiveInfo } from "./livesessions";
 import { SessionChains } from "./sessionchains";
 import { PinnedRoot } from "./pinnedroot";
-import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
+import { chooseName, newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
 import { openDownload, previewIn } from "./sessionfs";
 import { blockedIn, type BlockedCall } from "./blocked";
@@ -150,12 +150,12 @@ export class InstanceSessions {
       const lastActiveAt = new Date(f.mtimeMs).toISOString();
       const s: SessionSummary = { id: f.id, root: f.root, startedAt: first?.startedAt ?? f.startedAt ?? lastActiveAt, lastActiveAt };
       const liveInfo = live?.get(f.id);
-      // A name that someone set is what the Claude app shows, so it comes first. It is not cached: it changes while the
-      // session runs. A default name (made by Claude Code) comes last: the titles in the transcript say more.
-      // In a chain the name of the first transcript comes next, because the app names the whole connection from it.
-      const liveName = tidy(liveInfo?.name);
-      const chainName = first ? await nameOf(fs, first, this.catalog.names) : undefined;
-      const name = (liveInfo?.nameIsDefault ? undefined : liveName) ?? chainName ?? (await nameOf(fs, f, this.catalog.names)) ?? liveName;
+      const name = chooseName({
+        live: tidy(liveInfo?.name),
+        liveIsDefault: liveInfo?.nameIsDefault,
+        chain: first ? await nameOf(fs, first, this.catalog.names) : undefined,
+        transcript: await nameOf(fs, f, this.catalog.names),
+      });
       if (name) s.name = name;
       // Field by field: nothing else from the running-session file reaches the answer.
       if (liveInfo) {
