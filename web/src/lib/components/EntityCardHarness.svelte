@@ -2,7 +2,7 @@
   // Test helper: EntityCard takes snippets, so this fills each slot with a marker element.
   import type { ComponentProps } from "svelte";
   import EntityCard from "./EntityCard.svelte";
-  import Pill from "./Pill.svelte";
+  import { Badge } from "#lib/components/ui/badge/index.js";
 
   type Slot = "subtitle" | "status" | "content" | "actions" | "actionsEnd" | "footer" | "titleAside" | "titleEditor";
   let { slots = [], ...rest }: { slots?: Slot[] } & Omit<ComponentProps<typeof EntityCard>, "title" | Slot | "children" | "footer" | "actionsEnd"> = $props();
@@ -11,7 +11,7 @@
 {#snippet title()}Card name{/snippet}
 {#snippet subtitle()}<span data-testid="subtitle">Sub</span>{/snippet}
 {#snippet status()}<span data-testid="status">Running</span>{/snippet}
-{#snippet content()}<Pill>pill one</Pill>{/snippet}
+{#snippet content()}<Badge>pill one</Badge>{/snippet}
 {#snippet footer()}<div data-testid="footer">Foot</div>{/snippet}
 {#snippet titleAside()}<span data-testid="aside">hub</span>{/snippet}
 {#snippet titleEditor()}<form data-testid="editor"><input aria-label="Node name" /></form>{/snippet}

@@ -8,11 +8,16 @@
   import Pencil from "@tabler/icons-svelte/icons/pencil";
   import EntityCard from "#lib/components/EntityCard.svelte";
   import StatusDot from "#lib/components/StatusDot.svelte";
-  import Pill from "#lib/components/Pill.svelte";
+  import { Badge } from "#lib/components/ui/badge/index.js";
   import { cn } from "#lib/utils.js";
   import ConfirmDialog, { type Ask } from "../../shared/ui/ConfirmDialog.svelte";
   import type { HostInfo } from "./api";
   import { components, roleOf } from "./nodeline";
+
+  // The look of a node badge: it grows with its text and wraps (the shadcn Badge is one fixed-height line). Primary marks the hub.
+  const BADGE = "h-auto min-h-6 max-w-full gap-1.5 px-2.5 whitespace-normal [overflow-wrap:anywhere]";
+  const PRIMARY = "border-primary/40 bg-primary/10 text-primary";
+  const MUTED = "bg-muted text-muted-foreground";
 
   // `latest` is the newest release; a component behind it (or a service behind the hub) gets the update badge.
   // `onrename` makes the name of a node (one that was paired with the CLI, not the hub) editable. It rejects with the error to show.
@@ -70,7 +75,7 @@
       </form>
     {/snippet}
     <!-- The hub is the special node, so its pill has the primary tone. An agent has the plain pill. -->
-    {#snippet titleAside()}<Pill tone={roleOf(h) === "hub" ? "primary" : "default"}>{roleOf(h)}</Pill>{/snippet}
+    {#snippet titleAside()}<Badge variant="outline" class={cn(BADGE, roleOf(h) === "hub" ? PRIMARY : MUTED)}>{roleOf(h)}</Badge>{/snippet}
     <!-- The health of the node is a plain dot: green (ok), orange (restarting) or red (any other status). The status is the tooltip and the label for a screen reader. -->
     {#snippet status()}
       <StatusDot tone={h.status === "ok" ? "ok" : h.status === "restarting" ? "warn" : "bad"} label="Status: {h.status}" />
@@ -79,12 +84,12 @@
     {#snippet content()}
       {#if h.status === "ok"}
         {#each components(h, latest) as c (c.key)}
-          <Pill>
+          <Badge variant="outline" class={cn(BADGE, MUTED)}>
             {c.text}
             {#if c.outdated}
               <span class="size-2 flex-none rounded-full bg-warning" title="Update available" role="img" aria-label="Update available for the {c.key}"></span>
             {/if}
-          </Pill>
+          </Badge>
         {/each}
       {/if}
       {#if editing === h.id && error}<span class="w-full text-xs text-destructive" role="alert">{error}</span>{/if}

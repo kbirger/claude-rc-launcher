@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import EntityCard, { stripLabel } from "#lib/components/EntityCard.svelte";
   import StatusDot from "#lib/components/StatusDot.svelte";
@@ -88,7 +89,7 @@
   }
 </script>
 
-{#each model.errors as e}<p class="text-destructive">{e}</p>{/each}
+{#each model.errors as e}<Alert.Root variant="destructive"><Alert.Description>{e}</Alert.Description></Alert.Root>{/each}
 {#if model.loaded && model.rows.length === 0}
   <p class="text-muted-foreground">No running instances. Tap New to start one.</p>
 {/if}

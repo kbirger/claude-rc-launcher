@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
@@ -28,10 +29,10 @@
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
       <InstanceSettingsFields {help} value={model.value} onchange={(v) => model.set(v)} disabled={model.busy} />
-      <p class="text-sm {wrap}" role="note">If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.</p>
-      {#if model.busy}<p class="text-sm text-muted-foreground {wrap}" role="status">If this folder runs, its server restarts with the new settings. This can take up to a minute.</p>{/if}
-      {#if model.notice}<p class="text-sm {wrap}" role="status">{model.notice}</p>{/if}
-      {#if model.error}<p class="text-sm text-destructive {wrap}" role="alert">{model.error}</p>{/if}
+      <Alert.Root role="note"><Alert.Description class={wrap}>If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.</Alert.Description></Alert.Root>
+      {#if model.busy}<Alert.Root role="status"><Alert.Description class={wrap}>If this folder runs, its server restarts with the new settings. This can take up to a minute.</Alert.Description></Alert.Root>{/if}
+      {#if model.notice}<Alert.Root role="status"><Alert.Description class={wrap}>{model.notice}</Alert.Description></Alert.Root>{/if}
+      {#if model.error}<Alert.Root variant="destructive" role="alert"><Alert.Description class={wrap}>{model.error}</Alert.Description></Alert.Root>{/if}
     </div>
     <Sheet.Footer class="px-4">
       <Button type="button" size="touch" disabled={model.busy || !model.changed} onclick={() => model.apply()}>{model.busy ? "Applying..." : "Apply"}</Button>

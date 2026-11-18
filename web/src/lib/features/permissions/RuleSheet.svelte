@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { Checkbox } from "#lib/components/ui/checkbox/index.js";
@@ -140,7 +141,7 @@
         <p class="text-sm {wrap}" data-testid="confirm">{words[0]} <code class="font-mono text-xs {wrap}">{trimmed}</code> {words[1]} <code class="font-mono text-xs {wrap}">{layer.path}</code></p>
         {#if layer.resolvedPath && layer.resolvedPath !== layer.path}<p class="text-xs text-muted-foreground {wrap}">Link to {layer.resolvedPath}</p>{/if}
       {/if}
-      {#each warnings as w (w)}<p class="text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
+      {#each warnings as w (w)}<Alert.Root role="note" class="border-l-[3px] border-l-warning"><Alert.Description class={wrap}>{w}</Alert.Description></Alert.Root>{/each}
       {#if canNudge && !result}
         <div class="flex min-h-11 items-center gap-3 {wrap}">
           <Checkbox id="nudge" bind:checked={nudge} disabled={live !== true} />
@@ -148,8 +149,8 @@
         </div>
         {#if live !== true}<p class="text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
       {/if}
-      {#if result}<p class="text-sm {wrap}" role="status">Rule saved. {result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}
-      {#if error}<p class="text-sm text-destructive {wrap}" role="alert">{error}</p>{/if}
+      {#if result}<Alert.Root role="status"><Alert.Description class={wrap}>Rule saved. {result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</Alert.Description></Alert.Root>{/if}
+      {#if error}<Alert.Root variant="destructive" role="alert"><Alert.Description class={wrap}>{error}</Alert.Description></Alert.Root>{/if}
     </div>
     <Sheet.Footer class="px-4">
       {#if result}

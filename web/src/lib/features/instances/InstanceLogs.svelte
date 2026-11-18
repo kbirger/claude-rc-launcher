@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import { ApiError } from "../../shared/http";
   import { instanceLogsQuery } from "./queries";
@@ -8,7 +9,7 @@
 </script>
 
 {#if logsQ.isError}
-  <p class="text-destructive">{logsQ.error instanceof ApiError ? logsQ.error.message : "Failed to load logs"}</p>
+  <Alert.Root variant="destructive"><Alert.Description>{logsQ.error instanceof ApiError ? logsQ.error.message : "Failed to load logs"}</Alert.Description></Alert.Root>
 {:else if logsQ.data !== undefined}
   <pre class="max-h-[40vh] overflow-auto rounded-lg bg-background p-2 text-xs [overflow-wrap:anywhere] whitespace-pre-wrap">{logsQ.data}</pre>
 {:else}

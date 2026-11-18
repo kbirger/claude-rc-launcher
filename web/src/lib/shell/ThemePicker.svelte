@@ -1,8 +1,11 @@
 <script lang="ts">
+  import * as Field from "#lib/components/ui/field/index.js";
+  import * as RadioGroup from "#lib/components/ui/radio-group/index.js";
   import * as ToggleGroup from "#lib/components/ui/toggle-group/index.js";
   import { appearance, setMode, setTheme } from "#lib/shared/theme.svelte";
   import { isMode, isTheme, type ThemeName } from "#lib/shared/theme";
-  import { cn } from "#lib/utils.js";
+
+  const uid = $props.id();
 
   // A small preview of each palette in its light and its dark variant: the page color, the card color and the primary color (the values in src/app.css).
   type Swatch = [string, string, string];
@@ -15,24 +18,23 @@
 </script>
 
 <div class="grid gap-3">
-  <div role="radiogroup" aria-label="Palette" class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+  <RadioGroup.Root value={appearance.theme} aria-label="Palette" class="grid-cols-2 sm:grid-cols-4" onValueChange={(v) => { if (isTheme(v)) setTheme(v); }}>
     {#each palettes as p (p.id)}
       {@const swatch = appearance.dark ? p.dark : p.light}
-      <button
-        type="button"
-        role="radio"
-        aria-checked={appearance.theme === p.id}
-        class={cn("flex min-h-11 flex-col gap-1.5 rounded-lg border bg-card p-1.5 text-xs transition-colors", appearance.theme === p.id ? "border-primary ring-1 ring-primary" : "hover:border-muted-foreground/40")}
-        onclick={() => setTheme(p.id)}
-      >
-        <span class="flex h-8 w-full gap-1 rounded-md border p-1" style={`background:${swatch[0]}`}>
-          <span class="flex-1 rounded-sm" style={`background:${swatch[1]}`}></span>
-          <span class="w-3 rounded-sm" style={`background:${swatch[2]}`}></span>
-        </span>
-        <span class="text-center">{p.label}</span>
-      </button>
+      <Field.Label for="{uid}-{p.id}" class="min-h-11">
+        <Field.Field orientation="horizontal" class="items-start">
+          <Field.Content class="gap-1.5">
+            <span class="flex h-8 w-full gap-1 rounded-md border p-1" style={`background:${swatch[0]}`}>
+              <span class="flex-1 rounded-sm" style={`background:${swatch[1]}`}></span>
+              <span class="w-3 rounded-sm" style={`background:${swatch[2]}`}></span>
+            </span>
+            <Field.Title>{p.label}</Field.Title>
+          </Field.Content>
+          <RadioGroup.Item value={p.id} id="{uid}-{p.id}" class="mt-0.5" />
+        </Field.Field>
+      </Field.Label>
     {/each}
-  </div>
+  </RadioGroup.Root>
   <div class="grid gap-1">
     <ToggleGroup.Root type="single" variant="outline" class="w-full" aria-label="Light or dark" value={appearance.mode} onValueChange={(v) => { if (isMode(v)) setMode(v); }}>
       <ToggleGroup.Item value="system" class="h-11 flex-1">System</ToggleGroup.Item>

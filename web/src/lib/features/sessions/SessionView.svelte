@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { replaceState } from "$app/navigation";
   import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -96,9 +97,9 @@
         {:else if isUnsupported(q.error)}
           <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
         {:else if q.error}
-          <p class="text-destructive">Could not load the session: {q.error.message}</p>
+          <Alert.Root variant="destructive"><Alert.Description>Could not load the session: {q.error.message}</Alert.Description></Alert.Root>
         {:else if !s}
-          <p class="text-destructive">Session not found.</p>
+          <Alert.Root variant="destructive"><Alert.Description>Session not found.</Alert.Description></Alert.Root>
         {:else if current === "folder"}
           <FileBrowser {host} {instance} {session} {path} {hidden} {now} />
         {:else}
