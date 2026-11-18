@@ -96,8 +96,9 @@ A transcript has one JSON record on each line. These short examples show the rec
 Each function reads only what it needs:
 
 - `scan` reads the start of each transcript, up to the first record with a `cwd`.
-- The name code reads from the start up to the first real prompt (at most 256 KB). It also reads the last 256 KB for
-  title records. A cache keeps the name until the size or the modification time of the file changes.
+- The name code reads from the start up to the first real prompt (at most 256 KB). After a `/compact` summary it reads
+  up to 2 MB more, because the first prompt of a compacted transcript can come far below the summary. It also reads the
+  last 256 KB for title records. A cache keeps the name until the size or the modification time of the file changes.
 - `touchedIn` reads the whole transcript line by line. It parses only lines that contain `"tool_use"` or
   `"tool_result"`.
 

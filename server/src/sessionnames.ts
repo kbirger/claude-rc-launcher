@@ -1,6 +1,6 @@
 /*
  * The name of a session, read from its transcript. This file only READS TRANSCRIPTS. See docs/session-files.md.
- * readName reads from the start up to the first real prompt (at most 256 KB), and the last 256 KB for title
+ * readName reads from the start up to the first real prompt (at most 256 KB, or 2 MB past a /compact summary), and the last 256 KB for title
  * records. Its result is cached by file size and modification time.
  */
 import { parse } from "./transcript";
@@ -26,13 +26,20 @@ export function newNameCache(max = 2000): NameCache {
 }
 
 const NAME_WINDOW = 256 * 1024;
+/** After /compact the transcript starts with the summary, and the first prompt can come far below it (the work of the old session is not kept, but the tool output that follows can be large). The read goes on this many bytes past the summary. */
+const COMPACT_WINDOW = 2 * 1024 * 1024;
 const NAME_MAX = 80;
 
 const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:", "[Request interrupted"];
 
-/** A "user" record that Claude Code wrote, not the user: a meta record, or the summary that /compact puts at the start of the transcript. */
+/** The summary that /compact puts at the start of a transcript. */
+function isCompactSummary(r: Record<string, any>): boolean {
+  return r.isCompactSummary === true;
+}
+
+/** A "user" record that Claude Code wrote, not the user: a meta record or a compact summary. */
 function writtenByClaudeCode(r: Record<string, any>): boolean {
-  return r.isMeta === true || r.isCompactSummary === true;
+  return r.isMeta === true || isCompactSummary(r);
 }
 
 /** The text of a real user prompt, or undefined for records Claude Code wrote, command echoes and system messages. */
@@ -76,14 +83,16 @@ async function readName(fs: TranscriptFs, file: string): Promise<string | undefi
   let first: string | undefined;
   try {
     let bytes = 0;
+    let limit = NAME_WINDOW;
     for await (const line of fs.lines(file)) {
       bytes += line.length + 1;
       const r = parse(line);
       if (r) {
         takeTitle(head, r);
+        if (isCompactSummary(r)) limit = Math.max(limit, bytes + COMPACT_WINDOW);
         first = promptText(r);
       }
-      if (first !== undefined || bytes > NAME_WINDOW) break;
+      if (first !== undefined || bytes > limit) break;
     }
   } catch {
     // keep what was found
