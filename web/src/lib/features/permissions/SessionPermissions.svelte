@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import { Badge } from "#lib/components/ui/badge/index.js";
   import * as Tabs from "#lib/components/ui/tabs/index.js";
@@ -38,7 +39,7 @@
     {:else if isUnsupported(rules.error)}
       <p class="text-muted-foreground">This node does not support permissions. Update the node.</p>
     {:else if rules.error}
-      <p class="text-destructive">Could not load the permissions: {rules.error.message}</p>
+      <Alert.Root variant="destructive"><Alert.Description>Could not load the permissions: {rules.error.message}</Alert.Description></Alert.Root>
     {:else if rules.data}
       <RuleList layers={rules.data.layers} {host} {instance} {session} />
     {/if}

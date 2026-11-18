@@ -4,6 +4,7 @@
   import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import Logo from "../shared/ui/Logo.svelte";
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
@@ -130,10 +131,12 @@
 </header>
 <div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
   {#if reloadBar}
-    <section class="flex items-center gap-3 rounded-lg border border-l-[3px] border-l-warning bg-card px-3 py-2" role="status">
-      <span>The hub was updated. Reload to get the new page.</span>
-      <Button size="icon-touch" aria-label="Reload" title="Reload" onclick={() => location.reload()}><ActionIcon name="refresh" /></Button>
-    </section>
+    <Alert.Root role="status" class="border-l-[3px] border-l-warning">
+      <Alert.Description class="text-foreground">The hub was updated. Reload to get the new page.</Alert.Description>
+      <Alert.Action class="top-1/2 -translate-y-1/2">
+        <Button size="icon-touch" aria-label="Reload" title="Reload" onclick={() => location.reload()}><ActionIcon name="refresh" /></Button>
+      </Alert.Action>
+    </Alert.Root>
   {/if}
   <!-- The Updates page shows the whole panel itself. -->
   {#if page.url.pathname !== "/updates"}

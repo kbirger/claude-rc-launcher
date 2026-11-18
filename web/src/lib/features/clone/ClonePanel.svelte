@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import * as Empty from "#lib/components/ui/empty/index.js";
@@ -51,7 +52,7 @@
       {#if model.cloning}Cloning...{:else}Clone into {parent}{/if}
     </Button>
   </form>
-  {#if model.cloneError}<p class="text-destructive [overflow-wrap:anywhere]" role="status">{model.cloneError}</p>{/if}
+  {#if model.cloneError}<Alert.Root variant="destructive" role="status"><Alert.Description class="[overflow-wrap:anywhere]">{model.cloneError}</Alert.Description></Alert.Root>{/if}
 
   <Input class="h-11" type="search" placeholder="Search your repos" bind:value={model.query} aria-label="Search repos" />
   {#if model.listError}<p class="text-sm text-muted-foreground [overflow-wrap:anywhere]" role="status">{model.listError}</p>{/if}
@@ -70,7 +71,7 @@
           <p class="text-muted-foreground">An admin signs in to GitHub. A pasted link works without it.</p>
         {/if}
       {/if}
-      {#if model.loginError}<p class="text-destructive [overflow-wrap:anywhere]" role="status">{model.loginError}</p>{/if}
+      {#if model.loginError}<Alert.Root variant="destructive" role="status"><Alert.Description class="[overflow-wrap:anywhere]">{model.loginError}</Alert.Description></Alert.Root>{/if}
     </div>
   {/if}
   <div class="min-h-[120px] flex-1 overflow-auto rounded-lg border bg-card">

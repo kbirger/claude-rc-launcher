@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import Code from "@tabler/icons-svelte/icons/code";
   import Download from "@tabler/icons-svelte/icons/download";
@@ -110,7 +111,7 @@
   {#if q.isPending}
     <p class="text-muted-foreground">Loading file...</p>
   {:else if q.error}
-    <p class="text-destructive">{q.error.message}</p>
+    <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
   {:else if q.data}
     {@const p = q.data}
     {#if p.kind === "text"}

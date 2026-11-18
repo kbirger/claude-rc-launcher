@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import Search from "@tabler/icons-svelte/icons/search";
   import Desktop from "@tabler/icons-svelte/icons/device-desktop";
@@ -20,7 +21,7 @@
 {:else if isUnsupported(q.error)}
   <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
 {:else if q.error}
-  <p class="text-destructive">{q.error.message}</p>
+  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else if !q.data?.length}
   <p class="text-muted-foreground">No sessions yet for this instance.</p>
 {:else}

@@ -29,9 +29,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 test("the card shows name, role, and component pills", () => {
   const t = show({ hosts: [host({ id: "local", name: "hub", source: undefined })] });
   expect(t.querySelector("h3")?.textContent).toBe("hub");
-  const pills = [...t.querySelectorAll('[data-slot="pill"]')].map((p) => p.textContent!.trim());
+  const pills = [...t.querySelectorAll('[data-slot="badge"]')].map((p) => p.textContent!.trim());
   expect(pills).toEqual(["hub", "service 1.0.0", "client 1.0.0"]);
-  expect(t.querySelector('[data-slot="pill"]')!.className).toContain("text-primary");
+  expect(t.querySelector('[data-slot="badge"]')!.className).toContain("text-primary");
   expect(t.querySelector('[role="img"][aria-label="Status: ok"]')).not.toBeNull();
 });
 
@@ -50,7 +50,7 @@ test("the status dot colours", () => {
 
 test("an agent role pill is not primary", () => {
   const t = show({});
-  const first = t.querySelector('[data-slot="pill"]')!;
+  const first = t.querySelector('[data-slot="badge"]')!;
   expect(first.textContent!.trim()).toBe("agent");
   expect(first.className).not.toContain("text-primary");
 });
@@ -77,7 +77,7 @@ test("Use is disabled for a node that is not ok", () => {
   const b = byText("Unavailable")!;
   expect(b.disabled).toBe(true);
   expect(t.textContent).toContain("down");
-  expect(t.querySelectorAll('[data-slot="pill"]').length).toBe(1);
+  expect(t.querySelectorAll('[data-slot="badge"]').length).toBe(1);
 });
 
 test("Rename switches the title to the form and the strip to Cancel and Save", () => {

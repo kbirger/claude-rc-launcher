@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { cn } from "#lib/utils.js";
@@ -25,7 +26,7 @@
 {:else if isUnsupported(q.error)}
   <p class="text-muted-foreground">This node does not support permissions. Update the node.</p>
 {:else if q.error}
-  <p class="text-destructive">Could not load the blocked calls: {q.error.message}</p>
+  <Alert.Root variant="destructive"><Alert.Description>Could not load the blocked calls: {q.error.message}</Alert.Description></Alert.Root>
 {:else if !q.data?.length}
   <p class="text-muted-foreground">Nothing was blocked in this session.</p>
 {:else}

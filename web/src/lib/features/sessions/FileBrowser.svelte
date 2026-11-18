@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { goto } from "$app/navigation";
   import { createQuery } from "@tanstack/svelte-query";
   import ChevronRight from "@tabler/icons-svelte/icons/chevron-right";
@@ -50,7 +51,7 @@
 {#if q.isPending}
   <p class="text-muted-foreground">Loading folder...</p>
 {:else if q.error}
-  <p class="text-destructive">{q.error.message}</p>
+  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else if !q.data?.entries.length}
   <p class="text-muted-foreground">This folder is empty.</p>
 {:else}
