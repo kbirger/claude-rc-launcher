@@ -21,7 +21,7 @@ async function settle() {
   for (let i = 0; i < 5; i++) { await vi.advanceTimersByTimeAsync(10); flushSync(); }
 }
 
-type Api = { list: any[]; listFails: boolean; stopFails: string | null; stops: string[]; help: () => Response | Promise<Response>; patch: (body: any) => Response | Promise<Response>; patches: { url: string; body: any }[] };
+type Api = { list: any[]; listFails: boolean; stopFails: string | null; stops: string[]; help: () => Response | Promise<Response>; patch: (body: any) => Response | Promise<Response>; patches: { url: string; body: any }[]; restarts: string[]; restart: () => Response | Promise<Response> };
 let api: Api;
 const realFetch = globalThis.fetch;
 beforeEach(() => {
@@ -33,6 +33,8 @@ beforeEach(() => {
     help: () => new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
     patch: () => new Response(JSON.stringify({ instance: inst("a"), previous: SETTINGS }), { status: 200 }),
     patches: [],
+    restarts: [],
+    restart: () => new Response(null, { status: 204 }),
   };
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     if (url.endsWith("/instance-settings")) return api.help();
@@ -40,6 +42,10 @@ beforeEach(() => {
       const body = JSON.parse(String(init.body));
       api.patches.push({ url, body });
       return api.patch(body);
+    }
+    if (init.method === "POST" && url.endsWith("/restart")) {
+      api.restarts.push(decodeURIComponent(url.split("/").slice(-2)[0]!));
+      return api.restart();
     }
     if (init.method === "DELETE") {
       api.stops.push(decodeURIComponent(url.split("/").pop()!));
@@ -93,6 +99,57 @@ describe("instances model", () => {
     await settle();
     expect(api.stops).toEqual(["a"]);
     expect(m.model.rows.find((r) => r.key === "a")?.pending).toBeUndefined();
+    m.stop();
+  });
+
+  test("restart sends one request, shows a restarting row, and ends clean", async () => {
+    let release!: () => void;
+    api.restart = () => new Promise<Response>((r) => { release = () => r(new Response(null, { status: 204 })); });
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(api.restarts).toEqual(["a"]);
+    expect(m.model.rows.find((r) => r.key === "a")?.pending).toBe("restarting");
+    release();
+    await settle();
+    expect(m.model.rows.find((r) => r.key === "a")?.pending).toBeUndefined();
+    expect(m.model.errors).toEqual([]);
+    m.stop();
+  });
+
+  test("a second restart while one runs sends nothing", async () => {
+    api.restart = () => new Promise<Response>(() => {});
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(api.restarts).toEqual(["a"]);
+    m.stop();
+  });
+
+  test("a failed restart shows the message of the node, and the next action clears it", async () => {
+    api.restart = () => new Response(JSON.stringify({ error: "instance is paused, resume it first" }), { status: 409 });
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(m.model.errors).toEqual(["instance is paused, resume it first"]);
+    m.model.pause("b");
+    flushSync();
+    expect(m.model.errors).toEqual([]);
+    m.stop();
+  });
+
+  test("a restart that fails with no message from the node shows a fixed text", async () => {
+    api.restart = () => { throw new Error("offline"); };
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(m.model.errors).toEqual(["Failed to restart"]);
     m.stop();
   });
 
