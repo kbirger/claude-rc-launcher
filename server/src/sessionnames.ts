@@ -7,14 +7,23 @@ import { parse } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 import type { Found } from "./sessionscan";
 
+/**
+ * Where a name came from. The order of trust is `live` and `custom` (someone set it, it is what the app shows), then
+ * `ai`, then `agent`, then `prompt` (the first real prompt), then `default` (made by Claude Code, last resort).
+ */
+export type NameSource = "live" | "custom" | "ai" | "agent" | "prompt" | "default";
+export const NAME_RANK: Record<NameSource, number> = { live: 4, custom: 4, ai: 3, agent: 2, prompt: 1, default: 0 };
+export type NameInfo = { name: string; source: NameSource };
+
+type CacheValue = { size: number | undefined; mtimeMs: number; name: string | undefined; source?: NameSource };
 export type NameCache = {
-  get(file: string): { size: number | undefined; mtimeMs: number; name: string | undefined } | undefined;
-  set(file: string, v: { size: number | undefined; mtimeMs: number; name: string | undefined }): void;
+  get(file: string): CacheValue | undefined;
+  set(file: string, v: CacheValue): void;
 };
 
 /** A bounded map: when full, the oldest entry goes. */
 export function newNameCache(max = 2000): NameCache {
-  const m = new Map<string, { size: number | undefined; mtimeMs: number; name: string | undefined }>();
+  const m = new Map<string, CacheValue>();
   return {
     get: (f) => m.get(f),
     set(f, v) {
@@ -77,7 +86,7 @@ function takeTitle(t: Titles, r: Record<string, any>): void {
 }
 
 /** Read the head (to the first real prompt, at most 256 KB) and the tail (last 256 KB). Tail titles beat head titles of the same kind. */
-async function readName(fs: TranscriptFs, file: string): Promise<string | undefined> {
+async function readName(fs: TranscriptFs, file: string): Promise<NameInfo | undefined> {
   const head: Titles = {};
   const tail: Titles = {};
   let first: string | undefined;
@@ -107,7 +116,22 @@ async function readName(fs: TranscriptFs, file: string): Promise<string | undefi
   } catch {
     // keep what was found
   }
-  return tidy(tail.custom ?? head.custom ?? tail.ai ?? head.ai ?? tail.agent ?? head.agent ?? first);
+  const pick = (raw: string | undefined, source: NameSource): NameInfo | undefined => {
+    const name = tidy(raw);
+    return name ? { name, source } : undefined;
+  };
+  return (
+    pick(tail.custom ?? head.custom, "custom") ?? pick(tail.ai ?? head.ai, "ai") ?? pick(tail.agent ?? head.agent, "agent") ?? pick(first, "prompt")
+  );
+}
+
+/** The name of the transcript and where it came from. Cached by file size and modification time. */
+export async function nameInfoOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<NameInfo | undefined> {
+  const hit = cache.get(f.file);
+  if (hit && hit.size === f.size && hit.mtimeMs === f.mtimeMs) return hit.name && hit.source ? { name: hit.name, source: hit.source } : undefined;
+  const info = await readName(fs, f.file);
+  cache.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, name: info?.name, source: info?.source });
+  return info;
 }
 
 /** The names that one session can have, from the places that know them. Each one is already tidy. */
@@ -135,9 +159,5 @@ export function chooseName(p: NameParts): string | undefined {
 }
 
 export async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<string | undefined> {
-  const hit = cache.get(f.file);
-  if (hit && hit.size === f.size && hit.mtimeMs === f.mtimeMs) return hit.name;
-  const name = await readName(fs, f.file);
-  cache.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, name });
-  return name;
+  return (await nameInfoOf(fs, f, cache))?.name;
 }
