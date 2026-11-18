@@ -32,6 +32,17 @@ describe("SETTINGS_HELP", () => {
     expect(SETTINGS_HELP.settings.length).toBe(2);
     for (const s of SETTINGS_HELP.settings) for (const v of s.values) expect(v.explanation.length).toBeGreaterThan(0);
   });
+  test("createSession text says how sessions come back", () => {
+    const vals = SETTINGS_HELP.settings.find((s) => s.key === "createSession")!.values;
+    const on = vals.find((x) => x.value === true)!.explanation;
+    const off = vals.find((x) => x.value === false)!.explanation;
+    expect(on).toContain("claude.ai");
+    expect(on).toContain("four hours");
+    expect(on).not.toContain("brings back its recorded sessions");
+    expect(off).toContain("archives");
+    expect(off).toContain("none comes back");
+    expect(off).toContain("refuses to start");
+  });
   test("worktree needs a git repository", () => {
     const v = SETTINGS_HELP.settings.find((s) => s.key === "spawnMode")!.values.find((x) => x.value === "worktree")!;
     expect(v.explanation).toContain("git repository");
