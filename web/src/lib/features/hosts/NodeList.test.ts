@@ -23,6 +23,7 @@ function show(props: Record<string, unknown>) {
 }
 const btn = (label: string) => document.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement | null;
 const byText = (t: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === t) as HTMLButtonElement | undefined;
+const inDialog = (t: string) => [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent?.trim() === t) as HTMLButtonElement | undefined;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 test("the card shows name, role, and component pills", () => {
@@ -128,12 +129,15 @@ test("Update shows only for an outdated component", () => {
 
 test("Update asks to confirm, then calls onupdate, an error shows in the content", async () => {
   const onupdate = vi.fn().mockRejectedValue(new Error("update failed"));
-  const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
   const t = show({ onupdate, latest: "1.1.0" });
   btn("Update node-one")!.click();
   await tick();
   flushSync();
-  expect(confirmSpy).toHaveBeenCalled();
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Update node-one?");
+  expect(onupdate).not.toHaveBeenCalled();
+  inDialog("Update")!.click();
+  await tick();
+  flushSync();
   expect(onupdate).toHaveBeenCalled();
   expect(t.querySelector('[role="alert"]')?.textContent).toBe("update failed");
 });
@@ -175,13 +179,15 @@ test("a Save that succeeds leaves edit mode", async () => {
   expect(btn("Rename node-one")).not.toBeNull();
 });
 
-test("a cancelled confirm does not call onupdate", async () => {
+test("Cancel in the dialog does not call onupdate", async () => {
   const onupdate = vi.fn();
-  const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
   show({ onupdate, latest: "1.1.0" });
   btn("Update node-one")!.click();
   await tick();
   flushSync();
-  expect(confirmSpy).toHaveBeenCalled();
+  expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+  inDialog("Cancel")!.click();
+  await tick();
+  flushSync();
   expect(onupdate).not.toHaveBeenCalled();
 });

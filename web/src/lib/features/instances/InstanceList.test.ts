@@ -57,6 +57,14 @@ async function until(f: () => boolean) {
   for (let i = 0; i < 100 && !f(); i++) { await new Promise((r) => setTimeout(r, 10)); flushSync(); }
   expect(f()).toBe(true);
 }
+// The question dialog (a shadcn AlertDialog in the body). Answer it by the label of its button.
+const dialogText = () => document.querySelector('[role="alertdialog"]')?.textContent ?? null;
+const answer = async (label: string) => {
+  const b = [...document.querySelectorAll('[role="alertdialog"] button')].find((x) => x.textContent?.trim() === label) as HTMLButtonElement;
+  b.click();
+  await new Promise((r) => setTimeout(r, 30));
+  flushSync();
+};
 async function show(props: { canWrite?: boolean } = {}) {
   const target = document.createElement("div");
   document.body.append(target);
@@ -89,7 +97,7 @@ test("Pause and Resume stay in the strip", async () => {
   await until(() => pauses.length === 1);
 });
 
-const RESTART_ASK = "Restart alpha? The sessions of this folder stop. After the restart, open a session on claude.ai to bring it back. This works for about four hours.";
+const RESTART_ASK = "The sessions of this folder stop. After the restart, open a session on claude.ai to bring it back. This works for about four hours.";
 
 test("a running instance shows Restart in the strip, and Restart is not in the overflow menu", async () => {
   const t = await show();
@@ -111,25 +119,26 @@ test("a reader gets no Restart", async () => {
 });
 
 test("Restart asks first and sends one request only after yes", async () => {
-  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   await show();
   btn("Restart alpha")!.click();
-  flushSync();
-  expect(confirm).toHaveBeenCalledWith(RESTART_ASK);
-  await new Promise((r) => setTimeout(r, 50));
+  await until(() => dialogText() !== null);
+  expect(dialogText()).toContain("Restart alpha?");
+  expect(dialogText()).toContain(RESTART_ASK);
+  await answer("Cancel");
   expect(restarts).toEqual([]);
   btn("Restart alpha")!.click();
-  flushSync();
+  await until(() => dialogText() !== null);
+  await answer("Restart");
   await until(() => restarts.length === 1);
   expect(restarts[0]).toMatch(/\/instances\/a\/restart$/);
 });
 
 test("the Restart text adds a warning when the instance starts with no session", async () => {
   list = [inst({ settings: { createSession: false, spawnMode: "same-dir" } })];
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   await show();
   btn("Restart alpha")!.click();
-  expect(confirm).toHaveBeenCalledWith(`${RESTART_ASK} This instance starts with no session. Its sessions are archived at each stop and do not come back.`);
+  await until(() => dialogText() !== null);
+  expect(dialogText()).toContain(`${RESTART_ASK} This instance starts with no session. Its sessions are archived at each stop and do not come back.`);
 });
 
 test("a paused instance shows Resume", async () => {
@@ -147,28 +156,29 @@ test("Stop is not in the strip but in the overflow menu", async () => {
 });
 
 test("choosing Stop asks to confirm and calls stop only after yes", async () => {
-  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   await show();
   openMenu();
   items()[0]!.click();
-  flushSync();
-  expect(confirm).toHaveBeenCalledWith("Stop alpha? This removes it from the list. Use Pause to keep it.");
-  await new Promise((r) => setTimeout(r, 50));
+  await until(() => dialogText() !== null);
+  expect(dialogText()).toContain("Stop alpha?");
+  expect(dialogText()).toContain("This removes it from the list. Use Pause to keep it.");
+  await answer("Cancel");
   expect(stops).toEqual([]);
   openMenu();
   items()[0]!.click();
-  flushSync();
+  await until(() => dialogText() !== null);
+  await answer("Stop");
   await until(() => stops.length === 1);
   expect(stops).toEqual(["a"]);
 });
 
 test("a pending instance has the overflow item disabled", async () => {
   stopHangs = true;
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   await show();
   openMenu();
   items()[0]!.click();
-  flushSync();
+  await until(() => dialogText() !== null);
+  await answer("Stop");
   await until(() => stops.length === 1);
   await until(() => !!btn("More actions for alpha"));
   openMenu();

@@ -10,6 +10,7 @@
   import StatusDot from "#lib/components/StatusDot.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import { cn } from "#lib/utils.js";
+  import ConfirmDialog, { type Ask } from "../../shared/ui/ConfirmDialog.svelte";
   import type { HostInfo } from "./api";
   import { components, roleOf } from "./nodeline";
 
@@ -23,6 +24,7 @@
   let error = $state("");
   let saving = $state(false);
   let updating = $state<string | null>(null);
+  let ask = $state<Ask | null>(null);
   let updateError = $state<Record<string, string>>({});
   const renamable = (h: HostInfo) => !!onrename && h.id !== "local" && h.source === "managed";
   function edit(h: HostInfo) {
@@ -110,7 +112,7 @@
       {:else}
         {#if onupdate && h.status === "ok" && components(h, latest).some((c) => c.outdated)}
           <!-- The yellow dot on the pill shows that a component is behind. This button updates the service and the client of the node. -->
-          <Button variant="ghost" size="sm" class="h-8 px-2 text-warning hover:border-warning/40 hover:bg-warning/10 hover:text-warning" disabled={updating === h.id} onclick={() => confirm(`Update ${h.name}? The update replaces the service and the client of this node.`) && update(h)} aria-label="Update {h.name}">
+          <Button variant="ghost" size="sm" class="h-8 px-2 text-warning hover:bg-warning/10 hover:text-warning" disabled={updating === h.id} onclick={() => (ask = { title: `Update ${h.name}?`, body: "The update replaces the service and the client of this node.", label: "Update", run: () => update(h) })} aria-label="Update {h.name}">
             <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
           </Button>
         {/if}
@@ -135,3 +137,4 @@
     </li>
   {/each}
 </ul>
+<ConfirmDialog bind:ask />
