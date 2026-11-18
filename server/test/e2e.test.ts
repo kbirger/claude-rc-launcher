@@ -1,3 +1,4 @@
+import { DEFAULT_ROLES } from "../src/roles";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
@@ -47,7 +48,7 @@ function fakeInstances(tag: string) {
 }
 
 const stubOidc: OidcClient = { authorizationUrl: async () => "https://idp/authorize", exchange: async () => ({ sub: "u1", name: "Ann" }) };
-const user = { sub: "u1", name: "Ann", username: "kir" };
+const user = { sub: "u1", name: "Ann", username: "kir", role: "admin" as const };
 
 async function setup() {
   const nodeRoot = tmp();
@@ -65,7 +66,7 @@ async function setup() {
   const hubFake = fakeInstances("hub");
   const hubCfg = {
     ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
-    userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+    userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
     hosts: [{ id: "nas", name: "NAS", url: `https://localhost:${node.port}`, ca: certPem, auth: { type: "secret", secret: sec.secret } }],
   } as unknown as Config;
   const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc }));
@@ -127,7 +128,7 @@ describe("hub key enrollment end to end", () => {
     const hubFake = fakeInstances("hub");
     const hubCfg = {
       ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
-      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
       cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
       hosts: [],
     } as unknown as Config;
@@ -172,7 +173,7 @@ describe("update end to end", () => {
     const nodeUp = recorder("node-old");
     const hubCfg = {
       ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
-      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
       cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
       hosts: [],
     } as unknown as Config;
@@ -218,7 +219,7 @@ describe("a slow update end to end", () => {
     const slow = { run: async (): Promise<UpdateReport> => (await Bun.sleep(9_000), { status: "up-to-date", from: "1", clients: [] }) };
     const hubCfg = {
       ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
-      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
       cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
       hosts: [],
     } as unknown as Config;
@@ -260,7 +261,7 @@ describe("hub key log line", () => {
   test("startHub logs the public key that node-enrollment returns", async () => {
     const hubCfg = {
       ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
-      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
       cliAuth: { issuer: "https://idp", clientId: "cli", jwksUrl: "https://idp/jwks" },
       hosts: [],
     } as unknown as Config;
@@ -395,7 +396,7 @@ describe("node events end to end", () => {
     const certPem = readFileSync(path.join(stateDir, "node-cert.pem"), "utf8");
     const hubCfg = {
       ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
-      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false } },
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
       hosts: [{ id: "nas", name: "NAS", url: `https://localhost:${port}`, ca: certPem, auth: { type: "secret", secret: sec.secret } }],
     } as unknown as Config;
     // Short reconnect waits stand in for the real 1 to 30 seconds.

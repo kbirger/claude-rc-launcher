@@ -22,3 +22,7 @@ export const getUpdates = () => request<UpdateEntry[]>("GET", "/api/updates");
 // The body carries at most the release; the hub picks the download itself.
 export const updateHost = (host: string, release?: string) =>
   request<{ status: string; from: string; to?: string; clients?: unknown; error?: string }>("POST", `${hostUrl(host)}/update`, release ? { release } : {});
+
+export type ReleaseNote = { version: string; name: string; body: string; url: string; publishedAt: string };
+export type ReleaseNotes = { releases: ReleaseNote[]; complete: boolean };
+export const getReleaseNotes = (from: string, to: string) => request<ReleaseNotes>("GET", `/api/release-notes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);

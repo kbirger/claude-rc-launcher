@@ -2,23 +2,51 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
 import { inRoot } from "../../../../test/effect-root.svelte";
-import { createInstancesModel } from "./model.svelte";
+import type { Instance, SettingsHelp } from "./api";
+import { createInstancesModel, createSettingsDialogModel } from "./model.svelte";
 
-const inst = (id: string, path = `/p/${id}`) => ({ id, path, name: id, state: "active", startedAt: null });
+const SETTINGS = { createSession: true, spawnMode: "same-dir" as const };
+const inst = (id: string, path = `/p/${id}`): Instance => ({ id, path, name: id, state: "active", startedAt: null });
+const HELP: SettingsHelp = {
+  settings: [
+    { key: "createSession", label: "Create a session at start", values: [{ value: true, label: "On", explanation: "on text" }, { value: false, label: "Off", explanation: "off text" }] },
+    { key: "spawnMode", label: "Session folders", values: [{ value: "same-dir", label: "Same folder", explanation: "same text" }, { value: "worktree", label: "Worktree", explanation: "tree text" }] },
+  ],
+};
+const LOST = "The answer did not come back. The change may still be running. Look at the instance list before you try again.";
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 // Moves the fake clock in small steps (TanStack batches its notifications on a timer) and runs the Svelte effects
 // after each step, so the fetch answers and the cache updates land.
 async function settle() {
   for (let i = 0; i < 5; i++) { await vi.advanceTimersByTimeAsync(10); flushSync(); }
 }
 
-type Api = { list: any[]; listFails: boolean; stopFails: string | null; stops: string[] };
+type Api = { list: any[]; listFails: boolean; stopFails: string | null; stops: string[]; help: () => Response | Promise<Response>; patch: (body: any) => Response | Promise<Response>; patches: { url: string; body: any }[]; restarts: string[]; restart: () => Response | Promise<Response> };
 let api: Api;
 const realFetch = globalThis.fetch;
 beforeEach(() => {
   // Only the timers are fake: Svelte's effect flush and the fetch promises need real microtasks.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
-  api = { list: [inst("a"), inst("b")], listFails: false, stopFails: null, stops: [] };
+  api = {
+    list: [inst("a"), inst("b")], listFails: false, stopFails: null, stops: [],
+    // An old node: the hub answers 404 for the help route.
+    help: () => new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+    patch: () => new Response(JSON.stringify({ instance: inst("a"), previous: SETTINGS }), { status: 200 }),
+    patches: [],
+    restarts: [],
+    restart: () => new Response(null, { status: 204 }),
+  };
   globalThis.fetch = (async (url: string, init: RequestInit) => {
+    if (url.endsWith("/instance-settings")) return api.help();
+    if (init.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      api.patches.push({ url, body });
+      return api.patch(body);
+    }
+    if (init.method === "POST" && url.endsWith("/restart")) {
+      api.restarts.push(decodeURIComponent(url.split("/").slice(-2)[0]!));
+      return api.restart();
+    }
     if (init.method === "DELETE") {
       api.stops.push(decodeURIComponent(url.split("/").pop()!));
       return api.stopFails
@@ -71,6 +99,57 @@ describe("instances model", () => {
     await settle();
     expect(api.stops).toEqual(["a"]);
     expect(m.model.rows.find((r) => r.key === "a")?.pending).toBeUndefined();
+    m.stop();
+  });
+
+  test("restart sends one request, shows a restarting row, and ends clean", async () => {
+    let release!: () => void;
+    api.restart = () => new Promise<Response>((r) => { release = () => r(new Response(null, { status: 204 })); });
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(api.restarts).toEqual(["a"]);
+    expect(m.model.rows.find((r) => r.key === "a")?.pending).toBe("restarting");
+    release();
+    await settle();
+    expect(m.model.rows.find((r) => r.key === "a")?.pending).toBeUndefined();
+    expect(m.model.errors).toEqual([]);
+    m.stop();
+  });
+
+  test("a second restart while one runs sends nothing", async () => {
+    api.restart = () => new Promise<Response>(() => {});
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(api.restarts).toEqual(["a"]);
+    m.stop();
+  });
+
+  test("a failed restart shows the message of the node, and the next action clears it", async () => {
+    api.restart = () => new Response(JSON.stringify({ error: "instance is paused, resume it first" }), { status: 409 });
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(m.model.errors).toEqual(["instance is paused, resume it first"]);
+    m.model.pause("b");
+    flushSync();
+    expect(m.model.errors).toEqual([]);
+    m.stop();
+  });
+
+  test("a restart that fails with no message from the node shows a fixed text", async () => {
+    api.restart = () => { throw new Error("offline"); };
+    const m = mount();
+    await settle();
+    m.model.restart("a");
+    await settle();
+    expect(m.model.errors).toEqual(["Failed to restart"]);
     m.stop();
   });
 
@@ -178,5 +257,180 @@ describe("instances model", () => {
     expect(m.model.rows.some((r) => r.key.startsWith("start:"))).toBe(false);
     expect(m.model.rows.map((r) => r.key)).toEqual(["new", "a", "b"]);
     m.stop();
+  });
+
+  test("an old node (help 404) gives no settings help and no error", async () => {
+    const m = mount();
+    await settle();
+    expect(m.model.settingsHelp).toBeNull();
+    expect(m.model.errors).toEqual([]);
+    m.stop();
+  });
+
+  test("a new node gives the settings help", async () => {
+    api.help = () => json(HELP);
+    const m = mount();
+    await settle();
+    expect(m.model.settingsHelp).toEqual(HELP);
+    m.stop();
+  });
+
+  test("a failed help read gives no help and no error", async () => {
+    api.help = () => json({ error: "down" }, 500);
+    const m = mount();
+    await settle();
+    expect(m.model.settingsHelp).toBeNull();
+    expect(m.model.errors).toEqual([]);
+    m.stop();
+  });
+
+  test("a running settings change marks the row as applying", async () => {
+    const m = mount();
+    await settle();
+    void m.client.getMutationCache().build(m.client, {
+      mutationKey: ["instances", "h", "settings"],
+      mutationFn: () => new Promise(() => {}),
+    }).execute({ id: "a", patch: { spawnMode: "worktree" } });
+    flushSync();
+    expect(m.model.rows.find((r) => r.key === "a")?.pending).toBe("applying");
+    m.stop();
+  });
+});
+
+describe("settings dialog model", () => {
+  function dialog(settings = SETTINGS) {
+    const client = new QueryClient();
+    let closed = 0;
+    const { value: model, dispose } = inRoot(() =>
+      createSettingsDialogModel({ host: "h", client, instance: { ...inst("a"), settings }, onclose: () => closed++ }),
+    );
+    flushSync();
+    return { model, closed: () => closed, stop: () => { dispose(); client.clear(); } };
+  }
+
+  test("starts with the settings of the instance and sends nothing until apply", async () => {
+    const d = dialog({ createSession: false, spawnMode: "worktree" });
+    expect(d.model.value).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(d.model.changed).toBe(false);
+    d.model.set({ createSession: true, spawnMode: "worktree" });
+    flushSync();
+    expect(d.model.changed).toBe(true);
+    await settle();
+    expect(api.patches).toEqual([]);
+    d.stop();
+  });
+
+  test("apply sends only the changed values and closes on success", async () => {
+    const d = dialog();
+    d.model.set({ createSession: true, spawnMode: "worktree" });
+    d.model.apply();
+    flushSync();
+    expect(d.model.busy).toBe(true);
+    await settle();
+    expect(api.patches).toEqual([{ url: "/api/hosts/h/instances/a", body: { spawnMode: "worktree" } }]);
+    expect(d.closed()).toBe(1);
+    d.stop();
+  });
+
+  test("apply with no change sends nothing", async () => {
+    const d = dialog();
+    d.model.apply();
+    await settle();
+    expect(api.patches).toEqual([]);
+    d.stop();
+  });
+
+  test("a second apply while the change runs sends nothing", async () => {
+    api.patch = () => new Promise(() => {});
+    const d = dialog();
+    d.model.set({ createSession: false, spawnMode: "same-dir" });
+    d.model.apply();
+    await settle();
+    d.model.apply();
+    await settle();
+    expect(api.patches.length).toBe(1);
+    expect(d.model.busy).toBe(true);
+    d.stop();
+  });
+
+  test("a 409 shows the node reason, says the old settings stay, and keeps the dialog open", async () => {
+    api.patch = () => json({ error: "the folder is not a git repository", code: "settings_failed", settings: SETTINGS }, 409);
+    const d = dialog();
+    d.model.set({ createSession: true, spawnMode: "worktree" });
+    d.model.apply();
+    await settle();
+    expect(d.model.error).toContain("the folder is not a git repository");
+    expect(d.model.error).toContain("The old settings stay.");
+    expect(d.model.busy).toBe(false);
+    expect(d.closed()).toBe(0);
+    d.stop();
+  });
+
+  test("each 409 says what happened: refused, undone, or another change running", async () => {
+    const cases: [Record<string, unknown>, string, boolean][] = [
+      [{ error: "claude refused it", code: "settings_refused", settings: SETTINGS }, "The node refused the change. The old settings stay. Reason: claude refused it", true],
+      [{ error: "it did not stay up", code: "settings_failed", settings: SETTINGS }, "The node undid the change. The old settings stay. Reason: it did not stay up", true],
+      [{ error: "operation in progress" }, "Another change is running for this folder. Try again in a minute. Reason: operation in progress", false],
+    ];
+    for (const [body, message, saysOldStay] of cases) {
+      api.patch = () => json(body, 409);
+      const d = dialog();
+      d.model.set({ createSession: false, spawnMode: "same-dir" });
+      d.model.apply();
+      await settle();
+      expect(d.model.error).toBe(message);
+      expect(d.model.error.includes("The old settings stay.")).toBe(saysOldStay);
+      expect(d.closed()).toBe(0);
+      d.stop();
+    }
+  });
+
+  test("a network error says the change may still run and keeps the dialog open", async () => {
+    api.patch = () => { throw new TypeError("Failed to fetch"); };
+    const d = dialog();
+    d.model.set({ createSession: false, spawnMode: "same-dir" });
+    d.model.apply();
+    await settle();
+    expect(d.model.error).toBe(LOST);
+    expect(d.closed()).toBe(0);
+    expect(d.model.busy).toBe(false);
+    d.stop();
+  });
+
+  test("a hub 502 says the change may still run", async () => {
+    api.patch = () => json({ error: "nas: unreachable" }, 502);
+    const d = dialog();
+    d.model.set({ createSession: false, spawnMode: "same-dir" });
+    d.model.apply();
+    await settle();
+    expect(d.model.error).toBe(LOST);
+    expect(d.closed()).toBe(0);
+    d.stop();
+  });
+
+  test("applied false keeps the dialog open with the saved notice, and nothing is left to apply", async () => {
+    api.patch = () => json({ instance: { ...inst("a"), settings: { createSession: false, spawnMode: "same-dir" } }, previous: SETTINGS, applied: false });
+    const d = dialog();
+    d.model.set({ createSession: false, spawnMode: "same-dir" });
+    d.model.apply();
+    await settle();
+    expect(d.model.notice).toBe("Saved. The new settings start when you resume this folder. The node does not check them before then.");
+    expect(d.model.error).toBe("");
+    expect(d.model.changed).toBe(false);
+    expect(d.closed()).toBe(0);
+    d.stop();
+  });
+
+  test("applied true or an answer without applied closes the dialog with no notice", async () => {
+    for (const applied of [true, undefined]) {
+      api.patch = () => json({ instance: inst("a"), previous: SETTINGS, ...(applied === undefined ? {} : { applied }) });
+      const d = dialog();
+      d.model.set({ createSession: false, spawnMode: "same-dir" });
+      d.model.apply();
+      await settle();
+      expect(d.model.notice).toBe("");
+      expect(d.closed()).toBe(1);
+      d.stop();
+    }
   });
 });

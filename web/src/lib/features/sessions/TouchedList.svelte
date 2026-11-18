@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import { cn } from "#lib/utils.js";
   import { ago, sessionsHref, splitPath, touchedRows } from "./format";
@@ -24,11 +25,11 @@
 {#if q.isPending}
   <p class="text-muted-foreground">Loading files...</p>
 {:else if q.error}
-  <p class="error">{q.error.message}</p>
+  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else if !q.data?.length}
   <p class="text-muted-foreground">{kind === "changed" ? "Git shows no changed file in this folder since the session started, or the folder is not a git work tree." : "Claude has not written or edited a file in this session."}</p>
 {:else}
-  <ul class="m-0 min-w-0 list-none rounded-lg border bg-card p-0">
+  <ul class="min-w-0 rounded-lg border bg-card">
     {#each touchedRows(q.data, root) as { file: f, rel, link } (f.path)}
       <li class="min-w-0">
         {#if link}

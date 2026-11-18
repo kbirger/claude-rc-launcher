@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Collapsible from "#lib/components/ui/collapsible/index.js";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { logsQuery } from "./queries";
@@ -29,15 +30,11 @@
 </script>
 
 {#if lines.length}
-  <details class="output" bind:open>
-    <summary>{outputSummary(lines.length)}</summary>
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
-    <pre bind:this={box} {onscroll} tabindex="0" role="log" aria-label={`Output of ${host}`}>{lines.map((l) => l.line).join("\n")}</pre>
-  </details>
+  <Collapsible.Root bind:open class="basis-full">
+    <Collapsible.Trigger class="flex min-h-11 cursor-pointer items-center text-muted-foreground">{outputSummary(lines.length)}</Collapsible.Trigger>
+    <Collapsible.Content>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
+      <pre bind:this={box} {onscroll} tabindex="0" role="log" aria-label={`Output of ${host}`} class="max-h-48 overflow-auto rounded-md border bg-card p-2 text-[0.8rem] break-all whitespace-pre-wrap">{lines.map((l) => l.line).join("\n")}</pre>
+    </Collapsible.Content>
+  </Collapsible.Root>
 {/if}
-
-<style>
-  .output { flex-basis: 100%; }
-  summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted-foreground); }
-  pre { margin: 0; max-height: 12rem; overflow: auto; padding: 8px; font-size: 0.8rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
-</style>

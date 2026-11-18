@@ -23,6 +23,10 @@ export type Flags = {
   release?: string;
   binary?: string;
   "all-nodes"?: boolean;
+  "create-session"?: boolean;
+  "no-create-session"?: boolean;
+  spawn?: string;
+  yes?: boolean;
   help?: boolean;
   version?: boolean;
 };
@@ -55,6 +59,10 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         release: { type: "string" },
         binary: { type: "string" },
         "all-nodes": { type: "boolean" },
+        "create-session": { type: "boolean" },
+        "no-create-session": { type: "boolean" },
+        spawn: { type: "string" },
+        yes: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },

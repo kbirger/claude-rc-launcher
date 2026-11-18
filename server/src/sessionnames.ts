@@ -1,6 +1,6 @@
 /*
  * The name of a session, read from its transcript. This file only READS TRANSCRIPTS. See docs/session-files.md.
- * readName reads from the start up to the first real prompt (at most 256 KB), and the last 256 KB for title
+ * readName reads from the start up to the first real prompt (at most 256 KB, or 2 MB past a /compact summary), and the last 256 KB for title
  * records. Its result is cached by file size and modification time.
  */
 import { parse } from "./transcript";
@@ -35,13 +35,25 @@ export function newNameCache(max = 2000): NameCache {
 }
 
 const NAME_WINDOW = 256 * 1024;
+/** After /compact the transcript starts with the summary, and the first prompt can come far below it (the work of the old session is not kept, but the tool output that follows can be large). The read goes on this many bytes past the summary. */
+const COMPACT_WINDOW = 2 * 1024 * 1024;
 const NAME_MAX = 80;
 
 const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:", "[Request interrupted"];
 
-/** The text of a real user prompt, or undefined for meta records, command echoes and system messages. */
+/** The summary that /compact puts at the start of a transcript. */
+function isCompactSummary(r: Record<string, any>): boolean {
+  return r.isCompactSummary === true;
+}
+
+/** A "user" record that Claude Code wrote, not the user: a meta record or a compact summary. */
+function writtenByClaudeCode(r: Record<string, any>): boolean {
+  return r.isMeta === true || isCompactSummary(r);
+}
+
+/** The text of a real user prompt, or undefined for records Claude Code wrote, command echoes and system messages. */
 function promptText(r: Record<string, any>): string | undefined {
-  if (r.type !== "user" || r.isMeta === true) return undefined;
+  if (r.type !== "user" || writtenByClaudeCode(r)) return undefined;
   const c = r.message?.content;
   let text: unknown = c;
   if (Array.isArray(c)) text = c.find((b) => b && b.type === "text" && typeof b.text === "string")?.text;
@@ -80,14 +92,16 @@ async function readName(fs: TranscriptFs, file: string): Promise<NameInfo | unde
   let first: string | undefined;
   try {
     let bytes = 0;
+    let limit = NAME_WINDOW;
     for await (const line of fs.lines(file)) {
       bytes += line.length + 1;
       const r = parse(line);
       if (r) {
         takeTitle(head, r);
+        if (isCompactSummary(r)) limit = Math.max(limit, bytes + COMPACT_WINDOW);
         first = promptText(r);
       }
-      if (first !== undefined || bytes > NAME_WINDOW) break;
+      if (first !== undefined || bytes > limit) break;
     }
   } catch {
     // keep what was found
@@ -118,6 +132,30 @@ export async function nameInfoOf(fs: TranscriptFs, f: Found, cache: NameCache): 
   const info = await readName(fs, f.file);
   cache.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, name: info?.name, source: info?.source });
   return info;
+}
+
+/** The names that one session can have, from the places that know them. Each one is already tidy. */
+export type NameParts = {
+  /** The name in the running-session file. */
+  live?: string;
+  /** True when Claude Code made `live` up (see `nameIsDefault` in livesessions.ts). */
+  liveIsDefault?: boolean;
+  /** The name of the first transcript of the chain, when `/clear` joined several. The app names the whole connection from it. */
+  chain?: string;
+  /** The name from this transcript: a title, or the first real prompt (see readName). */
+  transcript?: string;
+};
+
+/**
+ * The name of a session. This is the only place that orders the sources:
+ * 1. A live name that someone set. The Claude app shows it, and it changes while the session runs.
+ * 2. The name of the first transcript of the chain.
+ * 3. The name of this transcript.
+ * 4. A live name that Claude Code made up. It comes last: the titles in the transcript say more.
+ */
+export function chooseName(p: NameParts): string | undefined {
+  const set = p.liveIsDefault ? undefined : p.live;
+  return set ?? p.chain ?? p.transcript ?? p.live;
 }
 
 export async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<string | undefined> {

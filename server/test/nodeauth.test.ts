@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { loadOrCreateHubKey, signProof, type HubKey } from "../src/hubproof";
+import { actStore } from "../src/roles";
 import { generateSecret, hashSecret, nodeAuth, type NodeAuthSettings } from "../src/nodeauth";
 
 const FP = "sha256:" + "ab".repeat(32);
@@ -193,5 +194,17 @@ describe("hub proof", () => {
       expect((await a.request("/x", { headers: hp(await k.proof("GET", "/x")) })).status).toBe(200);
       expect(lines()).toEqual([]);
     });
+  });
+});
+
+describe("hub proof acting user", () => {
+  test("the node sets act from the proof", async () => {
+    const k = await hubKit();
+    const a = new Hono();
+    a.use("*", nodeAuth(k.settings()));
+    a.get("/x", (c) => c.json({ act: c.get("act" as never) }));
+    const jwt = await actStore.run({ sub: "kir", role: "admin" }, () => k.proof("GET", "/x"));
+    const r = await a.request("/x", { headers: { authorization: `Hub-Proof ${jwt}` } });
+    expect(await r.json()).toEqual({ act: { actSub: "kir", actRole: "admin" } });
   });
 });

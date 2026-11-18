@@ -11,8 +11,4 @@
   const Icon = $derived(icons[kind]);
 </script>
 
-<span class="icon" title={titles[kind]} aria-hidden="true"><Icon size="1em" /></span>
-
-<style>
-  .icon { display: inline-flex; flex: none; align-self: center; line-height: 1; }
-</style>
+<span class="inline-flex flex-none self-center leading-none" title={titles[kind]} aria-hidden="true"><Icon size="1em" /></span>

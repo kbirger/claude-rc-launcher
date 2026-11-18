@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+// jsdom: the model reads the settings help query and the defaults from the instances index, which also loads the list components and the SvelteKit client.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
@@ -28,6 +30,8 @@ type Api = {
   // The browse answer for a folder and user. The default lists the folder as asked, or the roots.
   fs: (path: string, user: string) => Response | Promise<Response>;
   mkdir: (body: any) => Response | Promise<Response>;
+  // The settings help. The default is an old node: the route is not there.
+  help: () => Response | Promise<Response>;
   calls: Call[];
 };
 let api: Api;
@@ -40,6 +44,7 @@ beforeEach(() => {
     users: () => res({ selectable: true, default: "dev", users: [{ name: "dev" }, { name: "alice" }] }),
     fs: (path) => res(path ? listing(path) : roots()),
     mkdir: (body) => res({ path: `${body.parent}/${body.name}` }),
+    help: () => res({ error: "not found" }, 404),
     calls: [],
   };
   globalThis.fetch = (async (url: string, init: RequestInit) => {
@@ -51,6 +56,7 @@ beforeEach(() => {
     api.calls.push({ method, path, query, body });
     if (path === "/users") return api.users();
     if (path === "/node") return res({ clone: true });
+    if (path === "/instance-settings") return api.help();
     if (path === "/fs/mkdir" && method === "POST") return api.mkdir(body);
     if (path === "/fs") return api.fs(query.get("path") ?? "", query.get("user") ?? "");
     return res({ error: `no route ${method} ${path}` }, 500);
@@ -76,7 +82,7 @@ async function tick(ms = 0) {
 
 const trust = (path: string, user = "dev") => ({ path, user });
 
-function mount(start: { initial?: NewInitial; busyReason?: string } = {}) {
+function mount(start: { initial?: NewInitial; busyReason?: string; canChooseUser?: boolean } = {}) {
   const client = new QueryClient();
   const props = reactive({ initial: start.initial, busyReason: start.busyReason });
   const started: StartArgs[] = [];
@@ -86,6 +92,7 @@ function mount(start: { initial?: NewInitial; busyReason?: string } = {}) {
       client,
       initial: () => props.initial,
       busyReason: () => props.busyReason,
+      ...(start.canChooseUser === undefined ? {} : { canChooseUser: () => start.canChooseUser! }),
       onstart: (a) => started.push(a),
     }),
   );
@@ -537,5 +544,101 @@ describe("new dialog model", () => {
     expect(m.model.cloneBusy).toBe(false);
     m.model.closeClone();
     expect(m.model.cloning).toBe(false);
+  });
+});
+
+describe("a person who cannot name a user", () => {
+  test("gets no selector and no request names a user", async () => {
+    const m = mount({ canChooseUser: false });
+    await tick();
+    expect(m.model.usersInfo).toBeNull();
+    expect(m.model.chosenUser).toBeUndefined();
+    expect(browses().every((c) => !c.query.has("user"))).toBe(true);
+  });
+  test("an admin gets the selector", async () => {
+    const m = mount();
+    await tick();
+    expect(m.model.usersInfo?.default).toBe("dev");
+  });
+});
+
+const HELP = {
+  settings: [
+    { key: "createSession", label: "Create a session at start", values: [{ value: true, label: "On", explanation: "on" }, { value: false, label: "Off", explanation: "off" }] },
+    { key: "spawnMode", label: "Session folders", values: [{ value: "same-dir", label: "Same folder", explanation: "same" }, { value: "worktree", label: "Worktree", explanation: "tree" }] },
+  ],
+};
+
+describe("instance settings in the start form", () => {
+  test("an old node (help 404) shows no settings, no error, and the start sends no settings", async () => {
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    expect(m.model.settingsHelp).toBeNull();
+    expect(m.model.error).toBe("");
+    m.model.start();
+    expect(m.started).toEqual([{ path: HOME, name: undefined, user: "dev", addTrust: false }]);
+  });
+
+  test("an untouched form sends no settings, so the node defaults decide", async () => {
+    api.help = () => res(HELP);
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    expect(m.model.settingsHelp).toEqual(HELP);
+    // HELP has no defaults (an older node): the form shows the built-in values.
+    expect(m.model.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    m.model.start();
+    expect(m.started).toEqual([{ path: HOME, name: undefined, user: "dev", addTrust: false }]);
+  });
+
+  test("a changed field sends only that field", async () => {
+    api.help = () => res(HELP);
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    m.model.settings = { createSession: true, spawnMode: "worktree" };
+    m.model.start();
+    // A field set back to the default is no longer sent.
+    m.model.settings = { createSession: true, spawnMode: "same-dir" };
+    m.model.start();
+    expect(m.started).toEqual([
+      { path: HOME, name: undefined, user: "dev", addTrust: false, spawnMode: "worktree" },
+      { path: HOME, name: undefined, user: "dev", addTrust: false },
+    ]);
+  });
+
+  test("the node defaults seed the form, and only a change from them is sent", async () => {
+    api.help = () => res({ ...HELP, defaults: { createSession: false, spawnMode: "worktree" } });
+    const m = mount();
+    m.model.go(HOME);
+    await tick();
+    expect(m.model.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+    m.model.start();
+    m.model.settings = { createSession: true, spawnMode: "worktree" };
+    m.model.start();
+    expect(m.started).toEqual([
+      { path: HOME, name: undefined, user: "dev", addTrust: false },
+      { path: HOME, name: undefined, user: "dev", addTrust: false, createSession: true },
+    ]);
+  });
+
+  test("after a 428 the dialog keeps the settings of that start and the trust start sends them", async () => {
+    api.help = () => res(HELP);
+    const settings = { createSession: false, spawnMode: "worktree" as const };
+    const m = mount({ initial: { path: HOME, trust: trust(HOME), settings } });
+    await tick();
+    expect(m.model.settings).toEqual(settings);
+    m.model.start(true);
+    expect(m.started).toEqual([{ path: HOME, name: undefined, user: "dev", addTrust: true, ...settings }]);
+  });
+
+  test("a late prompt brings the settings of its start", async () => {
+    api.help = () => res(HELP);
+    const m = mount();
+    await tick();
+    m.props.initial = { path: HOME, trust: trust(HOME), settings: { createSession: false, spawnMode: "worktree" } };
+    await tick();
+    expect(m.model.settings).toEqual({ createSession: false, spawnMode: "worktree" });
   });
 });

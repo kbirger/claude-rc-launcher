@@ -1,8 +1,11 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { goto } from "$app/navigation";
   import { createQuery } from "@tanstack/svelte-query";
   import ChevronRight from "@tabler/icons-svelte/icons/chevron-right";
   import FolderOpen from "@tabler/icons-svelte/icons/folder-open";
+  import { Checkbox } from "#lib/components/ui/checkbox/index.js";
+  import { Label } from "#lib/components/ui/label/index.js";
   import { cn } from "#lib/utils.js";
   import { crumbs } from "./crumbs";
   import { ago, humanSize, inHiddenPath, joinPath, sessionsHref } from "./format";
@@ -36,25 +39,23 @@
       {/if}
     {/each}
   </nav>
-  <label class="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground">
-    <input
-      type="checkbox"
-      class="m-0 size-4 min-h-0 shrink-0 p-0"
+  <Label class="min-h-11 text-muted-foreground">
+    <Checkbox
       checked={hidden}
       disabled={forced}
-      onchange={(e) => goto(link(path, undefined, e.currentTarget.checked), { replace: true, reset: false })}
+      onCheckedChange={(v) => goto(link(path, undefined, v), { replace: true, reset: false })}
     />Show hidden
-  </label>
+  </Label>
 </div>
 
 {#if q.isPending}
   <p class="text-muted-foreground">Loading folder...</p>
 {:else if q.error}
-  <p class="error">{q.error.message}</p>
+  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else if !q.data?.entries.length}
   <p class="text-muted-foreground">This folder is empty.</p>
 {:else}
-  <ul class="m-0 min-w-0 list-none rounded-lg border bg-card p-0">
+  <ul class="min-w-0 rounded-lg border bg-card">
     {#each q.data.entries as e (e.name)}
       <li class="min-w-0">
         {#if e.kind === "other"}

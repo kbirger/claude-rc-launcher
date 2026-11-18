@@ -30,6 +30,137 @@ describe("hub session JSON routes", () => {
     expect(calls[2][2].query).toEqual({ path: "a b", hidden: "1" });
     expect(calls[3][2].query).toEqual({ path: "x.txt" });
   });
+  test("forward the permissions and blocked routes to the node with the same paths", async () => {
+    const calls: any[] = [];
+    const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 200, body: { ok: p } })) as any });
+    expect((await app.request(`/api/hosts/nas/instances/${ID}/permissions`)).status).toBe(200);
+    expect((await app.request(`${base}/${SID}/permissions`)).status).toBe(200);
+    expect((await app.request(`${base}/${SID}/blocked`)).status).toBe(200);
+    expect(calls.map((c) => [c[0], c[1]])).toEqual([
+      ["GET", `/api/instances/${ID}/permissions`],
+      ["GET", `/api/instances/${ID}/sessions/${SID}/permissions`],
+      ["GET", `/api/instances/${ID}/sessions/${SID}/blocked`],
+    ]);
+  });
+  test("the permissions routes reject bad ids with 400", async () => {
+    const app = build({});
+    expect((await app.request(`/api/hosts/nas/instances/zz/permissions`)).status).toBe(400);
+    expect((await app.request(`${base}/nope/permissions`)).status).toBe(400);
+    expect((await app.request(`${base}/nope/blocked`)).status).toBe(400);
+  });
+  describe("rule edit routes", () => {
+    const sbase = `/api/hosts/nas/instances/${ID}`;
+    const post = (app: Hono, method: string, p: string, body: unknown) =>
+      app.request(p, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const good = { scope: "user", list: "allow", rule: "Bash(git *)", expectedHash: null };
+    const routes: [string, string, string][] = [
+      ["POST", `${sbase}/permissions/rules`, `/api/instances/${ID}/permissions/rules`],
+      ["DELETE", `${sbase}/permissions/rules`, `/api/instances/${ID}/permissions/rules`],
+      ["POST", `${sbase}/sessions/${SID}/permissions/rules`, `/api/instances/${ID}/sessions/${SID}/permissions/rules`],
+      ["DELETE", `${sbase}/sessions/${SID}/permissions/rules`, `/api/instances/${ID}/sessions/${SID}/permissions/rules`],
+    ];
+    test("the four routes forward the body and the status", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (m: string, p: string, o: any) => (calls.push([m, p, o]), { status: 409, body: { error: "changed" } })) as any });
+      for (const [m, url] of routes) {
+        const r = await post(app, m, url, good);
+        expect(r.status).toBe(409);
+        expect(await r.json()).toEqual({ error: "changed" });
+      }
+      expect(calls.map((c) => [c[0], c[1]])).toEqual(routes.map(([m, , node]) => [m, node]));
+      expect(calls[0][2].json).toEqual(good);
+    });
+    test("an invalid body is 400 and nothing is forwarded", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (...a: any[]) => (calls.push(a), { status: 200, body: {} })) as any });
+      const bad: unknown[] = [
+        { ...good, scope: "managed" },
+        { ...good, scope: "legacy-local" },
+        { ...good, list: "nope" },
+        { ...good, rule: 5 },
+        { ...good, rule: "" },
+        { ...good, rule: "a\nb" },
+        { ...good, rule: "(x)" },
+        { ...good, rule: "B".repeat(2001) },
+        { ...good, expectedHash: 5 },
+        { scope: "user", list: "allow", rule: "Bash" },
+        [],
+      ];
+      for (const [m, url] of routes) for (const b of bad) expect((await post(app, m, url, b)).status).toBe(400);
+      expect((await app.request(routes[0]![1], { method: "POST", headers: { "content-type": "application/json" }, body: "{" })).status).toBe(400);
+      expect(calls).toEqual([]);
+    });
+    test("the audit line has the hub user and the rule, as one line", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+      try {
+        const app = build({ call: (async () => ({ status: 200, body: {} })) as any });
+        await post(app, "DELETE", `${sbase}/sessions/${SID}/permissions/rules`, { ...good, scope: "local", list: "deny", rule: "Bash(rm *)", expectedHash: "ab" });
+      } finally {
+        console.log = orig;
+      }
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown role=read host=nas action=remove instance=${ID} scope=local list=deny rule="Bash(rm *)" status=200 nudge=off`]);
+    });
+    const sp = `${sbase}/sessions/${SID}/permissions/rules`;
+    test("forwards nudge true in the body", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (m: string, p: string, o: any) => (calls.push(o), { status: 200, body: {} })) as any });
+      expect((await post(app, "POST", sp, { ...good, nudge: true })).status).toBe(200);
+      expect(calls[0].json).toEqual({ ...good, nudge: true });
+    });
+    test("omits the key when the flag is false or missing", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (m: string, p: string, o: any) => (calls.push(o), { status: 200, body: {} })) as any });
+      await post(app, "POST", sp, { ...good, nudge: false });
+      await post(app, "POST", sp, good);
+      expect(calls.map((c) => "nudge" in c.json)).toEqual([false, false]);
+    });
+    test("audit line ends with nudge=on", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+      try {
+        const app = build({ call: (async () => ({ status: 200, body: {} })) as any });
+        await post(app, "POST", sp, { ...good, nudge: true });
+      } finally {
+        console.log = orig;
+      }
+      expect(logs.filter((l) => l.includes("instance="))).toEqual([`audit user=unknown role=read host=nas action=add instance=${ID} scope=user list=allow rule="Bash(git *)" status=200 nudge=on`]);
+    });
+    test("refuses a non boolean flag with 400 before any forward, and nudge true on the user route", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (...a: any[]) => (calls.push(a), { status: 200, body: {} })) as any });
+      for (const v of ["true", 1, null]) expect((await post(app, "POST", sp, { ...good, nudge: v })).status).toBe(400);
+      expect((await post(app, "POST", routes[0]![1], { ...good, nudge: true })).status).toBe(400);
+      expect(calls).toEqual([]);
+    });
+    test("refuses nudge on a remove or with a list other than allow, before any forward", async () => {
+      const calls: any[] = [];
+      const app = build({ call: (async (...a: any[]) => (calls.push(a), { status: 200, body: {} })) as any });
+      expect((await post(app, "DELETE", sp, { ...good, nudge: true, expectedHash: "ab" })).status).toBe(400);
+      expect((await post(app, "POST", sp, { ...good, list: "deny", nudge: true })).status).toBe(400);
+      expect(calls).toEqual([]);
+    });
+    test("a hostile scope, list or instance id writes no audit line", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+      try {
+        const app = build({});
+        const evil = "user\naudit user=x";
+        expect((await post(app, "POST", routes[0]![1], { ...good, scope: evil, list: evil })).status).toBe(400);
+        expect((await post(app, "POST", `/api/hosts/nas/instances/zz/permissions/rules`, good)).status).toBe(400);
+      } finally {
+        console.log = orig;
+      }
+      expect(logs.filter((l) => l.includes("action="))).toEqual([]);
+    });
+    test("a HostError gives 502", async () => {
+      const app = build({ call: (async () => { throw new HostError("nas", "timeout"); }) as any });
+      expect((await post(app, "POST", routes[0]![1], good)).status).toBe(502);
+    });
+  });
   test("rejects bad ids and bad paths with 400", async () => {
     const app = build({});
     expect((await app.request(`/api/hosts/nas/instances/zz/sessions`)).status).toBe(400);
@@ -160,7 +291,7 @@ describe("hub download", () => {
       console.log = orig;
     }
     const line = logs.find((l) => l.startsWith("audit"));
-    expect(line).toBe("audit user=unknown host=nas GET download 200");
+    expect(line).toBe("audit user=unknown role=read host=nas GET download 200");
     expect(logs.join("\n")).not.toContain("secret.txt");
   });
 });
@@ -202,10 +333,10 @@ describe("hub abs for touched files outside the session folder", () => {
       Object.assign(console, orig);
     }
     expect(logs.filter((l) => l.startsWith("audit"))).toEqual([
-      "audit user=unknown host=nas GET preview abs 200",
-      "audit user=unknown host=nas GET preview abs 404",
-      "audit user=unknown host=nas GET preview abs 502",
-      "audit user=unknown host=nas GET download 200",
+      "audit user=unknown role=read host=nas GET preview abs 200",
+      "audit user=unknown role=read host=nas GET preview abs 404",
+      "audit user=unknown role=read host=nas GET preview abs 502",
+      "audit user=unknown role=read host=nas GET download 200",
     ]);
     expect(logs.join("\n")).not.toContain("secret-name");
     expect(logs.join("\n")).not.toContain(".ssh");

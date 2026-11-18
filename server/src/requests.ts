@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { HttpError } from "./instances";
+import type { SettingsPatch, SpawnMode } from "./instancesettings";
 import { RELEASE_TAG_RE } from "./release";
 import { normalizeVersion } from "./versions";
 
@@ -33,7 +34,33 @@ function optionalUser(body: Record<string, unknown>): string | undefined {
   return body.user;
 }
 
-export type StartRequest = { path: string; name?: string; user?: string; addTrust?: boolean };
+const SPAWN_MODES: readonly SpawnMode[] = ["same-dir", "worktree"];
+
+function optionalCreateSession(body: Record<string, unknown>): boolean | undefined {
+  if (body.createSession === undefined) return undefined;
+  if (typeof body.createSession !== "boolean") throw new HttpError(400, "createSession must be a boolean");
+  return body.createSession;
+}
+
+function optionalSpawnMode(body: Record<string, unknown>): SpawnMode | undefined {
+  if (body.spawnMode === undefined) return undefined;
+  if (typeof body.spawnMode !== "string" || !SPAWN_MODES.includes(body.spawnMode as SpawnMode)) throw new HttpError(400, "spawnMode must be same-dir or worktree");
+  return body.spawnMode as SpawnMode;
+}
+
+export type StartRequest = { path: string; name?: string; user?: string; addTrust?: boolean; createSession?: boolean; spawnMode?: SpawnMode };
+
+/** The body of `PATCH /instances/:id`. At least one known field is required. An unknown field is an error. */
+export function parseSettingsPatch(body: unknown): SettingsPatch {
+  if (!isObject(body)) throw new HttpError(400, "body must be an object");
+  for (const k of Object.keys(body)) {
+    if (k !== "createSession" && k !== "spawnMode") throw new HttpError(400, `unknown field: ${k}`);
+  }
+  const createSession = optionalCreateSession(body);
+  const spawnMode = optionalSpawnMode(body);
+  if (createSession === undefined && spawnMode === undefined) throw new HttpError(400, "at least one of createSession and spawnMode is required");
+  return { ...(createSession === undefined ? {} : { createSession }), ...(spawnMode === undefined ? {} : { spawnMode }) };
+}
 
 /** The body of `POST /instances`. Only the known fields are returned. */
 export function parseStartRequest(body: unknown): StartRequest {
@@ -42,11 +69,15 @@ export function parseStartRequest(body: unknown): StartRequest {
   if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be a string");
   const user = optionalUser(body);
   if (body.addTrust !== undefined && typeof body.addTrust !== "boolean") throw new HttpError(400, "addTrust must be a boolean");
+  const createSession = optionalCreateSession(body);
+  const spawnMode = optionalSpawnMode(body);
   return {
     path: body.path,
     ...(body.name === undefined ? {} : { name: body.name }),
     ...(user === undefined ? {} : { user }),
     ...(body.addTrust === undefined ? {} : { addTrust: body.addTrust }),
+    ...(createSession === undefined ? {} : { createSession }),
+    ...(spawnMode === undefined ? {} : { spawnMode }),
   };
 }
 

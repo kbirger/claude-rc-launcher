@@ -39,7 +39,7 @@ describe("parseConfig", () => {
     expect(c.host).toBe("0.0.0.0");
     expect(c.scope).toBe("system");
     expect(c.unitDir).toBe("/etc/systemd/system");
-    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir", "--no-create-session-in-dir"]);
+    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir"]);
     expect(c.claudeBin).toBe("/root/.local/bin/claude");
     expect(c.roots).toEqual(["/root"]);
     expect(c.serviceUser).toBe("root");
@@ -101,6 +101,36 @@ describe("parseConfig", () => {
     expect(oa(parseConfig({ ...b, user_auth: { ...b.user_auth, allowed_users: ["kir"] } }, io)).allowedUsers).toEqual(["kir"]);
     expect(problems({ ...b, user_auth: { ...b.user_auth, allowed_users: [] } })).toContain("user_auth.allowed_users");
     expect(oa(parseConfig(b, io)).allowedUsers).toBeUndefined();
+  });
+
+  test("role keys have defaults", () => {
+    const u = oa(parseConfig(base(), io));
+    expect(u.roles).toEqual({ claim: "clauderc_role", scope: "clauderc", defaultRole: "read", map: {} });
+    expect(u.sessionTtlHours).toBe(12);
+  });
+
+  test("role keys parse", () => {
+    const b = base();
+    const u = oa(
+      parseConfig(
+        { ...b, user_auth: { ...b.user_auth, default_role: "admin", role_claim: "groups", role_scope: "", session_ttl_hours: 3, role_map: { "clauderc-admins": "admin", off: "none" } } },
+        io,
+      ),
+    );
+    expect(u.roles).toEqual({ claim: "groups", scope: undefined, defaultRole: "admin", map: { "clauderc-admins": "admin", off: "none" } });
+    expect(u.sessionTtlHours).toBe(3);
+  });
+
+  test("bad role keys are errors naming the key", () => {
+    const b = base();
+    const ua = (o: Record<string, unknown>) => ({ ...b, user_auth: { ...b.user_auth, ...o } });
+    expect(problems(ua({ default_role: "none" }))).toContain("user_auth.default_role");
+    expect(problems(ua({ default_role: "root" }))).toContain("user_auth.default_role");
+    expect(problems(ua({ role_map: { g: "root" } }))).toContain("user_auth.role_map.g");
+    expect(problems(ua({ session_ttl_hours: 0 }))).toContain("user_auth.session_ttl_hours");
+    expect(problems(ua({ session_ttl_hours: 1.5 }))).toContain("user_auth.session_ttl_hours");
+    expect(problems(ua({ session_ttl_hours: "12" }))).toContain("user_auth.session_ttl_hours");
+    expect(problems(ua({ role_scope: 5 }))).toContain("user_auth.role_scope");
   });
 
   test("short session secret", () => {

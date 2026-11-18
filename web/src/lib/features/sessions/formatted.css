@@ -1,6 +1,17 @@
 /* Typography for rendered markdown. Only theme variables are used (app.css and routes/layout.css), so light, dark, Ayu and
    Tokyo Night all work. The colors of code come from codetheme.ts, not from here. */
 .formatted-md { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+/* Tailwind's reset clears the browser styles of headings, paragraphs and lists. Rendered markdown needs them, so they are set here and nowhere else. */
+.formatted-md h1, .formatted-md h2, .formatted-md h3, .formatted-md h4, .formatted-md h5, .formatted-md h6 { font-family: var(--font-heading); font-weight: bold; margin-block: 0.67em; }
+.formatted-md h1 { font-size: 2em; }
+.formatted-md h2 { font-size: 1.5em; }
+.formatted-md h3 { font-size: 1.17em; margin-block: 1em; }
+.formatted-md h4 { margin-block: 1.33em; }
+.formatted-md h5 { font-size: 0.83em; margin-block: 1.67em; }
+.formatted-md h6 { font-size: 0.67em; margin-block: 2.33em; }
+.formatted-md p, .formatted-md ul, .formatted-md ol, .formatted-md dl, .formatted-md blockquote, .formatted-md pre, .formatted-md figure { margin-block: 1em; }
+.formatted-md ul, .formatted-md ol { list-style: revert; padding-inline-start: 40px; }
+.formatted-md hr { margin-block: 0.5em; }
 .formatted-md > :first-child { margin-top: 0; }
 .formatted-md > :last-child { margin-bottom: 0; }
 .formatted-md pre { overflow: auto; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--card); padding: 0.75rem; font: 0.875rem/1.45 var(--font-mono); }

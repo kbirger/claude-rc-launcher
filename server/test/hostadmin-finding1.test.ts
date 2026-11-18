@@ -44,7 +44,7 @@ describe("finding 1: a credential sent to a new host cannot be replayed against 
     const registry = await HostRegistry.load({ stateDir: tmp(), hosts: [], clients: new Map(), makeClient });
     const admin = new Hono();
     admin.use("*", async (c, next) => {
-      c.set("user" as never, { sub: "u1", name: "Ann", username: "kir" } as never);
+      c.set("user" as never, { sub: "u1", name: "Ann", username: "kir", role: "admin" } as never);
       await next();
     });
     admin.route("/hosts", hostAdminApi({ registry, makeClient }));

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { getLogs, listInstances, startInstance, stopInstance } from "./api";
+import { getInstanceSettingsHelp, getLogs, listInstances, restartInstance, startInstance, stopInstance, updateInstanceSettings } from "./api";
 
 const realFetch = globalThis.fetch;
 const realLoc = (globalThis as any).location;
@@ -64,4 +64,41 @@ test("addTrust false is omitted from the body", async () => {
   stub(201, {});
   await startInstance("local", "/p", undefined, { addTrust: false });
   expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ path: "/p" });
+});
+
+test("startInstance sends createSession and spawnMode only when set", async () => {
+  stub(201, {});
+  await startInstance("local", "/p", undefined, { createSession: false, spawnMode: "worktree" });
+  await startInstance("local", "/p", undefined, { createSession: true, spawnMode: "same-dir" });
+  expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ path: "/p", createSession: false, spawnMode: "worktree" });
+  expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({ path: "/p", createSession: true, spawnMode: "same-dir" });
+});
+
+test("getInstanceSettingsHelp reads the help and gives null for an old node (404)", async () => {
+  const help = { settings: [{ key: "createSession", label: "L", values: [{ value: true, label: "On", explanation: "E" }] }] };
+  stub(200, help);
+  expect(await getInstanceSettingsHelp("a/b")).toEqual(help);
+  expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/instance-settings");
+  stub(404, { error: "not found" });
+  expect(await getInstanceSettingsHelp("local")).toBeNull();
+  stub(500, { error: "down" });
+  await expect(getInstanceSettingsHelp("local")).rejects.toThrow("down");
+});
+
+test("getInstanceSettingsHelp gives null for an answer that is not a help object", async () => {
+  stub(200, [{ id: "a" }]);
+  expect(await getInstanceSettingsHelp("local")).toBeNull();
+});
+
+test("updateInstanceSettings PATCHes the patch, restartInstance POSTs restart", async () => {
+  stub(200, { instance: { id: "x" }, previous: { createSession: true, spawnMode: "same-dir" } });
+  const out = await updateInstanceSettings("local", "x/y", { spawnMode: "worktree" });
+  expect(out.instance.id).toBe("x");
+  expect(calls[0]!.url).toBe("/api/hosts/local/instances/x%2Fy");
+  expect(calls[0]!.init?.method).toBe("PATCH");
+  expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ spawnMode: "worktree" });
+  stub(204, null);
+  await restartInstance("local", "x");
+  expect(calls[1]!.url).toBe("/api/hosts/local/instances/x/restart");
+  expect(calls[1]!.init?.method).toBe("POST");
 });

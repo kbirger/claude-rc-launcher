@@ -1,5 +1,5 @@
 import { commonQuery } from "../../shared/query";
-import { type LogLine, getHistory, getLatest, getUpdates } from "./api";
+import { type LogLine, getHistory, getLatest, getReleaseNotes, getUpdates } from "./api";
 
 export const UPDATES_KEY = ["updates"] as const;
 export const HISTORY_KEY = ["history"] as const;
@@ -15,3 +15,6 @@ export const updatesQuery = () => ({ queryKey: UPDATES_KEY, queryFn: getUpdates,
 export const historyQuery = () => ({ queryKey: HISTORY_KEY, queryFn: getHistory, ...commonQuery, retry: false });
 // The lines only come from the event stream, so the query never fetches by itself. No observer exists while the panel is closed, so the cache must not be collected.
 export const logsQuery = () => ({ queryKey: LOGS_KEY, queryFn: async (): Promise<Record<string, LogLine[]>> => ({}), enabled: false, gcTime: Infinity });
+export const RELEASE_NOTES_KEY = ["release-notes"] as const;
+/** The notes of two fixed releases do not change, so a complete answer never goes stale. An incomplete answer (the hub could not read every release) is stale at once. */
+export const releaseNotesQuery = (from: string, to: string) => ({ queryKey: [...RELEASE_NOTES_KEY, from, to] as const, queryFn: () => getReleaseNotes(from, to), ...commonQuery, retry: false, staleTime: (q: { state: { data: { complete: boolean } | undefined } }) => (q.state.data?.complete ? Infinity : 0) });

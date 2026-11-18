@@ -19,6 +19,12 @@ export const GITHUB_IDLE_TIMEOUT_SECONDS = 125;
 
 const GITHUB_PATH_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?github\/(?:repos|login)$/;
 
+/**
+ * A settings change on an instance waits for the node (20 s) and, if it fails, for the undo (up to 20 s more), and the hub waits up to
+ * 180 s for a node (`UPDATE_TIMEOUT_MS`). So `PATCH` and `POST .../restart` of one instance get the update limit.
+ */
+const INSTANCE_CHANGE_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?instances\/[0-9a-f]{12}(?:\/restart)?$/;
+
 /** The update event stream sends nothing between events, so it must not hit the idle limit. */
 const EVENTS_PATH_RE = /^\/(?:cli\/)?api\/events$/;
 
@@ -34,6 +40,7 @@ export function withLongUpdates(
     const { pathname } = new URL(req.url);
     if (req.method === "GET" && EVENTS_PATH_RE.test(pathname)) server.timeout(req, 0);
     else if (req.method === "POST" && UPDATE_PATH_RE.test(pathname)) server.timeout(req, seconds);
+    else if (INSTANCE_CHANGE_RE.test(pathname) && (pathname.endsWith("/restart") ? req.method === "POST" : req.method === "PATCH")) server.timeout(req, seconds);
     else if (GITHUB_PATH_RE.test(pathname) && ((req.method === "GET" && pathname.endsWith("/repos")) || (req.method === "POST" && pathname.endsWith("/login")))) server.timeout(req, githubSeconds);
     return app.fetch(req, server);
   };

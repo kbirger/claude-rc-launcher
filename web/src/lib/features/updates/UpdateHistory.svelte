@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import * as Card from "#lib/components/ui/card/index.js";
+  import ReleaseNotes from "./ReleaseNotes.svelte";
   import { historyQuery } from "./queries";
   import { historyEntries, historyTitle, linesSummary } from "./updatehistory";
 
@@ -12,14 +13,14 @@
 </script>
 
 {#if historyQ.isError}
-  <p class="muted">The history is not available.</p>
+  <p class="text-muted-foreground">The history is not available.</p>
 {:else if entries.length === 0}
-  <p class="muted">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
+  <p class="text-muted-foreground">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
 {:else}
-  <ul class="m-0 grid list-none gap-3 p-0">
+  <ul class="grid gap-3">
     {#each entries as { host, item } (host + item.entry.startedAt)}
       <li>
-        <Card.Root size="sm" class="gap-2">
+        <Card.Root size="sm" class="gap-2 *:px-4">
           <Card.Header>
             <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{names[host] ?? host}</Card.Title>
             <Card.Description class={item.entry.status === "failed" || item.entry.status === "rolled back" ? "text-destructive" : ""}>{historyTitle(item)}</Card.Description>
@@ -27,10 +28,11 @@
           <Card.Content>
             {#if item.lines.length}
               <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
-              <pre tabindex="0" role="log" aria-label={`Output of the update of ${names[host] ?? host} (${linesSummary(item.lines.length)})`} class="m-0 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs break-all whitespace-pre-wrap">{item.lines.map((l) => l.line).join("\n")}</pre>
+              <pre tabindex="0" role="log" aria-label={`Output of the update of ${names[host] ?? host} (${linesSummary(item.lines.length)})`} class="max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs break-all whitespace-pre-wrap">{item.lines.map((l) => l.line).join("\n")}</pre>
             {:else}
-              <p class="m-0 text-xs text-muted-foreground">No output was recorded for this update.</p>
+              <p class="text-xs text-muted-foreground">No output was recorded for this update.</p>
             {/if}
+            <ReleaseNotes entry={item.entry} />
           </Card.Content>
         </Card.Root>
       </li>

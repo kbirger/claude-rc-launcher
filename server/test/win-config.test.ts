@@ -33,7 +33,7 @@ describe("Windows node config", () => {
     // Built with Windows path rules whatever the host is: a Linux host has a different home folder.
     expect(c.claudeBin).toBe(path.win32.join(c.serviceHome, ".local", "bin", "claude.exe"));
     expect(c.claudeBin.toLowerCase()).toEndWith("\\.local\\bin\\claude.exe");
-    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir", "--no-create-session-in-dir"]);
+    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir"]);
     expect(c.node!.tls.stateDir).toBe(windowsDataDir());
     expect(c.unitDir).toBe("");
     expect(c.servicePath).toBe("");

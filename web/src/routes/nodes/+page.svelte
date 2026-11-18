@@ -20,5 +20,5 @@
   const latest = $derived(shell.hosts.find((h) => h.id === "local")?.target ?? shell.hosts.find((h) => h.target)?.target);
 </script>
 
-<h2 class="mt-0 text-lg">Nodes</h2>
-<NodeList hosts={shell.hosts} selected={shell.flow.selected} onselect={shell.select} {latest} onrename={(id, name) => rename.mutateAsync({ id, name })} onupdate={updateNode} />
+<h2 class="font-heading mb-3 text-lg font-bold">Nodes</h2>
+<NodeList hosts={shell.hosts} selected={shell.flow.selected} onselect={shell.select} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />

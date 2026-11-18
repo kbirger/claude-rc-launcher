@@ -12,6 +12,7 @@
   import type { UpdateEntry } from "./api";
   import { updateHostMutation } from "./mutations";
   import { versionsText, type HostInfo } from "../hosts";
+  import { releasePageUrl } from "./releasenotes";
   import UpdateOutput from "./UpdateOutput.svelte";
   import { panelOpenByDefault } from "./updateoutput";
   import { windowsNames } from "./updatewarn";
@@ -20,7 +21,7 @@
   // The short form (default) is the notice on the other pages: the buttons lead to the Updates page, where `full` shows
   // the whole panel with the version table and the buttons run the update. `start` runs the update that the short form asked for.
   // `onrun` replaces the update call (the temporary mock on the Updates page uses it so that no real update runs).
-  let { hosts, updates, latestError, full = false, start, onstarted, onrun }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; full?: boolean; start?: "hub" | "nodes"; onstarted?: () => void; onrun?: (id: string, release?: string) => void } = $props();
+  let { hosts, updates, latestError, full = false, canRun = true, start, onstarted, onrun }: { hosts: HostInfo[]; updates: UpdateEntry[]; latestError: boolean; full?: boolean; /** False hides the update buttons: the hub only lets an admin update. */ canRun?: boolean; start?: "hub" | "nodes"; onstarted?: () => void; onrun?: (id: string, release?: string) => void } = $props();
   let dismissed = $state("");
 
   const client = useQueryClient();
@@ -98,18 +99,18 @@
 </script>
 
 {#snippet action(label: string, kind: "hub" | "nodes", onclick: () => void)}
-  <Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} href={full ? undefined : `/updates?start=${kind}`} onclick={full ? onclick : undefined}>
+  {#if canRun}<Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} href={full ? undefined : `/updates?start=${kind}`} onclick={full ? onclick : undefined}>
     <ArrowUp size={16} aria-hidden="true" />{label}
-  </Button>
+  </Button>{/if}
 {/snippet}
 
 {#if full || (items.length && dismissed !== key)}
   <Alert role={actionable ? "alert" : "status"} aria-label="Updates" class="flex flex-col gap-2 p-2 pt-1">
     <div class="flex items-center justify-between gap-2 pl-1">
-      <h2 class="m-0 text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
+      <h2 class="font-heading text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
       {#if !full}<Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={18} aria-hidden="true" /></Button>{/if}
     </div>
-    <ul class="m-0 flex list-none flex-col gap-3 p-0 px-1">
+    <ul class="flex flex-col gap-3 px-1">
       {#each ordered as item, i (bannerKey(item) + ":" + i)}
         <li class={cn("flex flex-col items-start gap-1", item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating" && "border-l-3 border-warning pl-2")}>
           {#if item.kind === "hub-update"}
@@ -122,12 +123,12 @@
             {#if full}
               <!-- One row for each node, so that every out-of-date node shows with its own versions and its own button. -->
               <span>Out of date nodes:</span>
-              <ul class="m-0 flex w-full list-none flex-col gap-1 p-0">
+              <ul class="flex w-full flex-col gap-1">
                 {#each item.hosts as n (n.id)}
                   {@const h = hosts.find((x) => x.id === n.id)}
                   <li class="flex flex-wrap items-center justify-between gap-x-3">
                     <span class="min-w-0 [overflow-wrap:anywhere]">{n.name}{#if h}<span class="text-xs text-muted-foreground"> · {versionsText(h)}</span>{/if}</span>
-                    <Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} onclick={() => updateNodes([n])}><ArrowUp size={16} aria-hidden="true" />Update to {n.target}</Button>
+                    {#if canRun}<Button variant="ghost" size="sm" class="h-9 w-fit px-1.5 text-primary hover:bg-primary/10 hover:text-primary" disabled={busy} onclick={() => updateNodes([n])}><ArrowUp size={16} aria-hidden="true" />Update to {n.target}</Button>{/if}
                   </li>
                 {/each}
               </ul>
@@ -138,9 +139,9 @@
               {@render action(item.hosts.length > 1 ? "Update all nodes" : "Update node", "nodes", () => updateNodes(item.hosts))}
             {/if}
           {:else if item.kind === "nodes-after-hub"}
-            <span class="muted">Also behind the latest release: {item.hosts.join(", ")}. Update the hub first, then these nodes.</span>
+            <span class="text-muted-foreground">Also behind the latest release: {item.hosts.join(", ")}. Update the hub first, then these nodes.</span>
           {:else if item.kind === "hub-local-build"}
-            <span class="muted">The hub runs an unversioned build, so it is not compared with the latest release.</span>
+            <span class="text-muted-foreground">The hub runs an unversioned build, so it is not compared with the latest release.</span>
           {:else if item.kind === "by-hand"}
             <span>{item.host}: {item.message}.</span>
           {:else if item.kind === "offline-after-hub-update"}
@@ -151,13 +152,13 @@
             <span>Update of {item.host} failed: {item.error}</span>
             {#if item.id}<UpdateOutput host={item.id} open={panelOpenByDefault(lastEntry(updates, item.id))} />{/if}
           {:else}
-            <span class="muted">Could not check for the latest release.</span>
+            <span class="text-muted-foreground">Could not check for the latest release.</span>
           {/if}
         </li>
       {/each}
     </ul>
-    {#if full && items.length === 0}<p class="m-0 px-1 text-muted-foreground">Everything is up to date.</p>{/if}
-    {#if full && latest}<p class="m-0 px-1 text-xs text-muted-foreground">Latest release: {latest}</p>{/if}
+    {#if full && items.length === 0}<p class="px-1 text-muted-foreground">Everything is up to date.</p>{/if}
+    {#if full && latest}<p class="px-1 text-xs text-muted-foreground">Latest release: {latest} <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(latest)} target="_blank" rel="noreferrer">Release notes</a></p>{/if}
     <!-- The versions of every machine as it reports them: a local build shows its full version (release, branch, commit). -->
     {#if full}
     <Table.Root class="w-full text-xs">

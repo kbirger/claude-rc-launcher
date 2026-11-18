@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { instanceLogsQuery, instancesQuery } from "./queries";
+import { instanceLogsQuery, instancesQuery, settingsHelpQuery } from "./queries";
 
 test("instance list polls every 5 seconds and stays fresh for 2 seconds", () => {
   const q = instancesQuery("h");
@@ -17,4 +17,10 @@ test("logs are read once on each open", () => {
   expect(q.gcTime).toBe(0);
   expect(q.retry).toBe(false);
   expect(q.refetchOnWindowFocus).toBe(false);
+});
+
+test("the settings help has its own key, outside the instance list key", () => {
+  const q = settingsHelpQuery("h");
+  expect(q.queryKey).toEqual(["instance-settings", "h"]);
+  expect(q.retry).toBe(false);
 });

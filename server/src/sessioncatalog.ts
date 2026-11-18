@@ -9,9 +9,11 @@ import { readLiveSessions, type LiveInfo } from "./livesessions";
 import { SessionChains } from "./sessionchains";
 import { PinnedRoot } from "./pinnedroot";
 import { NameMemory } from "./namememory";
-import { newNameCache, nameInfoOf, tidy, type NameCache, type NameInfo } from "./sessionnames";
+import { chooseName, newNameCache, nameInfoOf, tidy, type NameCache, type NameInfo } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
 import { openDownload, previewIn } from "./sessionfs";
+import { blockedIn, type BlockedCall } from "./blocked";
+import type { ClaudeSettings, PermissionLayers } from "./settingsfile";
 import { touchedIn, type TouchedFile } from "./touched";
 import { SESSION_ID } from "./transcript";
 import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
@@ -154,15 +156,17 @@ export class InstanceSessions {
       const lastActiveAt = new Date(f.mtimeMs).toISOString();
       const s: SessionSummary = { id: f.id, root: f.root, startedAt: first?.startedAt ?? f.startedAt ?? lastActiveAt, lastActiveAt };
       const liveInfo = live?.get(f.id);
-      // A name that someone set is what the Claude app shows, so it comes first. It is not cached: it changes while the
-      // session runs. A default name (made by Claude Code) comes last: the titles in the transcript say more.
-      // In a chain the name of the first transcript comes next, because the app names the whole connection from it.
-      // Then the name memory decides: a name that the launcher learned from a better source stays, also after `/compact`.
+      // The order of the sources is chooseName (sessionnames.ts). The name memory then decides: a name that the launcher
+      // learned from a better source stays, also after `/compact`.
       const liveName = tidy(liveInfo?.name);
-      let cand: NameInfo | undefined = liveName && !liveInfo?.nameIsDefault ? { name: liveName, source: "live" } : undefined;
-      cand ??= first ? await nameInfoOf(fs, first, this.catalog.names) : undefined;
-      cand ??= await nameInfoOf(fs, f, this.catalog.names);
-      if (!cand && liveName) cand = { name: liveName, source: "default" };
+      const chainInfo = first ? await nameInfoOf(fs, first, this.catalog.names) : undefined;
+      const ownInfo = await nameInfoOf(fs, f, this.catalog.names);
+      const picked = chooseName({ live: liveName, liveIsDefault: liveInfo?.nameIsDefault, chain: chainInfo?.name, transcript: ownInfo?.name });
+      let cand: NameInfo | undefined;
+      if (picked !== undefined) {
+        const source = !liveInfo?.nameIsDefault && picked === liveName ? "live" : picked === chainInfo?.name ? chainInfo.source : picked === ownInfo?.name ? ownInfo.source : "default";
+        cand = { name: picked, source };
+      }
       const chain = [f.id, ...(earlier ?? []).map((m) => m.id)];
       const name = (await this.catalog.nameMemory.resolve({ id: f.id, chain, candidate: cand, file: f.file }))?.name;
       if (name) s.name = name;
@@ -216,6 +220,21 @@ export class Session {
   touched(o: { dirs: readonly string[] }): Promise<TouchedFile[]> {
     const catalog = this.instance.catalog;
     return touchedIn({ fs: catalog.fs, file: this.file, root: this.root, platform: catalog.platform, dirs: o.dirs });
+  }
+
+  /** The blocked tool calls of this transcript, newest first. It reads this transcript and never scans again. */
+  blocked(): Promise<BlockedCall[]> {
+    return blockedIn({ fs: this.instance.catalog.fs, file: this.file });
+  }
+
+  /** The settings layers that apply to this session. It runs the real-root check first (a failed check is a 404). */
+  async permissions(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
+    return (await this.open()).permissions(o);
+  }
+
+  /** The settings files that apply to this session. It runs the real-root check first (a failed check is a 404). */
+  async settings(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
+    return (await this.open()).settings(o);
   }
 
   /** Runs the real-root check and gives the checked root. A failed check is a 404. */

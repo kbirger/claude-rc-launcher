@@ -48,6 +48,7 @@
   {hosts}
   {updates}
   latestError={shell.latestError}
+  canRun={shell.can("admin")}
   start={mock ? undefined : start}
   onstarted={() => goto(mockable ? "/updates?mock" : "/updates", { replaceState: true })}
   onrun={mock ? () => pick("started") : undefined}
@@ -55,7 +56,7 @@
 
 <!-- A finished update leaves the panel above, so its output stays here. -->
 <div class="mt-4 flex items-baseline justify-between">
-  <h2 class="m-0 text-sm font-semibold">Recent updates</h2>
+  <h2 class="font-heading text-sm font-semibold">Recent updates</h2>
   <a class="text-sm text-primary underline-offset-4 hover:underline" href="/history">All history</a>
 </div>
 <div class="mt-2"><UpdateHistory {names} limit={3} /></div>

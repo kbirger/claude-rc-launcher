@@ -4,11 +4,15 @@ import path from "node:path";
 import type { HostConfig } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import { validPeer } from "./proxyauth";
+import { DEFAULT_ROLES, isRole, isRoleValue, type RoleSettings, type RoleValue } from "./roles";
 
 export type OidcUserAuth = {
   mode: "oidc";
   oidc: { issuer: string; clientId: string; clientSecret: string; allowInsecure: boolean };
   sessionSecret: string;
+  /** Lifetime of the browser session cookie, in hours. `parseConfig` always sets it. A hand-made config can leave it out (12). */
+  sessionTtlHours?: number;
+  roles?: RoleSettings;
   allowedUsers?: string[];
 };
 
@@ -20,6 +24,7 @@ export type ProxyJwtUserAuth = {
   audience: string;
   trustedPeers: string[];
   logoutUrl?: string;
+  roles?: RoleSettings;
   allowedUsers?: string[];
 };
 
@@ -193,6 +198,50 @@ export function checkUrl(t: Tbl, k: string, value: string, o: { allowInsecure?: 
   return false;
 }
 
+const DEFAULT_SESSION_TTL_HOURS = 12;
+
+/** Reads `default_role`, `role_claim`, `role_scope` and `[role_map]` of `user_auth`. */
+function parseRoles(ua: Tbl): RoleSettings {
+  const claim = ua.str("role_claim") ?? DEFAULT_ROLES.claim;
+  let defaultRole = DEFAULT_ROLES.defaultRole;
+  const dr = ua.str("default_role");
+  if (dr !== undefined) {
+    if (isRole(dr)) defaultRole = dr;
+    else ua.problems.push(`user_auth.default_role must be "read", "write" or "admin" (got ${JSON.stringify(dr)})`);
+  }
+  // An empty string turns the extra scope off, so this key reads the raw value.
+  let scope = DEFAULT_ROLES.scope;
+  if (ua.has("role_scope")) {
+    const v = ua.v.role_scope;
+    if (typeof v !== "string") ua.problems.push("user_auth.role_scope must be a string");
+    else scope = v === "" ? undefined : v;
+    ua.skip("role_scope");
+  }
+  const map: Record<string, RoleValue> = {};
+  const rm = ua.table("role_map");
+  if (rm) {
+    for (const k of Object.keys(rm.v)) {
+      const v = rm.str(k);
+      if (v === undefined) continue;
+      if (isRoleValue(v)) map[k] = v;
+      else ua.problems.push(`${rm.path(k)} must be "read", "write", "admin" or "none" (got ${JSON.stringify(v)})`);
+    }
+  }
+  return { claim, scope, defaultRole, map };
+}
+
+/** `session_ttl_hours`: a whole number of hours, at least 1. */
+function parseSessionTtl(ua: Tbl): number {
+  if (!ua.has("session_ttl_hours")) return DEFAULT_SESSION_TTL_HOURS;
+  const v = ua.v.session_ttl_hours;
+  ua.skip("session_ttl_hours");
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
+    ua.problems.push("user_auth.session_ttl_hours must be a whole number of hours, at least 1");
+    return DEFAULT_SESSION_TTL_HOURS;
+  }
+  return v;
+}
+
 function parseCliAuth(t: Tbl): CliAuthSettings | undefined {
   const ca = t.table("cli_auth");
   if (!ca) return undefined;
@@ -362,7 +411,7 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
   const unitDir = windows ? "" : (inst?.absStr("unit_dir") ?? (scope === "user" ? `${serviceHome}/.config/systemd/user` : "/etc/systemd/system"));
   const roots = inst?.strs("roots", { abs: true, nonEmpty: true }) ?? [serviceHome];
   const claudeBin = inst?.absStr("claude_bin") ?? (windows ? path.win32.join(serviceHome, ".local", "bin", "claude.exe") : `${serviceHome}/.local/bin/claude`);
-  const claudeRcArgs = inst?.strs("claude_rc_args") ?? ["--spawn", "same-dir", "--no-create-session-in-dir"];
+  const claudeRcArgs = inst?.strs("claude_rc_args") ?? ["--spawn", "same-dir"];
   const servicePath = windows
     ? ""
     : (inst?.str("service_path") ?? `${serviceHome}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`);
@@ -390,6 +439,7 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
   if (ua) {
     const m = ua.str("mode", { req: true });
     const allowedUsers = ua.strs("allowed_users", { nonEmpty: true });
+    const roles = parseRoles(ua);
     const forbid = (...ks: string[]) => {
       for (const k of ks) if (ua.has(k)) problems.push(`user_auth.${k} is not allowed when user_auth.mode = "${m}"`);
     };
@@ -411,10 +461,11 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
       oi?.finish();
       const sessionSecret = ua.file("session_secret_file", "secret", { req: true }) ?? "";
       if (sessionSecret && sessionSecret.length < 32) problems.push("user_auth.session_secret_file must contain at least 32 characters");
-      userAuth = { mode: "oidc", oidc: { issuer, clientId, clientSecret, allowInsecure }, sessionSecret, ...(allowedUsers ? { allowedUsers } : {}) };
+      const sessionTtlHours = parseSessionTtl(ua);
+      userAuth = { mode: "oidc", oidc: { issuer, clientId, clientSecret, allowInsecure }, sessionSecret, sessionTtlHours, roles, ...(allowedUsers ? { allowedUsers } : {}) };
     } else if (m === "proxy-jwt") {
-      forbid("oidc", "session_secret_file");
-      ua.skip("oidc", "session_secret_file");
+      forbid("oidc", "session_secret_file", "session_ttl_hours");
+      ua.skip("oidc", "session_secret_file", "session_ttl_hours");
       const pj = ua.table("proxy_jwt");
       if (!pj) problems.push('user_auth.proxy_jwt is required when user_auth.mode = "proxy-jwt"');
       const header = pj?.str("header", { req: true }) ?? "";
@@ -427,7 +478,7 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
       for (const e of trustedPeers) if (!validPeer(e)) problems.push(`user_auth.proxy_jwt.trusted_peers entry is not an IP address or CIDR: ${e}`);
       const logoutUrl = pj?.str("logout_url");
       pj?.finish();
-      userAuth = { mode: "proxy-jwt", header, jwksUrl, issuer, audience, trustedPeers, ...(logoutUrl ? { logoutUrl } : {}), ...(allowedUsers ? { allowedUsers } : {}) };
+      userAuth = { mode: "proxy-jwt", header, jwksUrl, issuer, audience, trustedPeers, roles, ...(logoutUrl ? { logoutUrl } : {}), ...(allowedUsers ? { allowedUsers } : {}) };
     } else if (m !== undefined) {
       problems.push(`user_auth.mode must be "oidc" or "proxy-jwt" (got ${JSON.stringify(m)})`);
       ua.skip("oidc", "session_secret_file", "proxy_jwt");

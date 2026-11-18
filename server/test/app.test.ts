@@ -1,3 +1,4 @@
+import { staticHandler } from "../src/static";
 import { closeStreams } from "../src/sse";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -9,6 +10,7 @@ import { mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../
 import type { UserAuthStrategy } from "../src/userauth";
 import type { Config } from "../src/config";
 import { HttpError, type Instance } from "../src/instances";
+import { SETTINGS_HELP } from "../src/instancesettings";
 import { PathError } from "../src/paths";
 import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
 import { VERSION } from "../src/version";
@@ -17,7 +19,7 @@ import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
 import { UpdateLog } from "../src/updatelog";
 import type { Presence } from "../src/nodewatcher";
 
-const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
+const user: User = { sub: "u1", name: "Ann", email: "a@x.io", role: "admin" };
 const ID = "0123456789ab";
 let root: string;
 let cfg: Config;
@@ -63,6 +65,27 @@ const mk = (over: Record<string, any> = {}, staticHandler?: any) => {
 const H = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "application/json", ...extra });
 const post = (app: any, body: unknown, headers = H()) =>
   app.request("/api/hosts/local/instances", { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+describe("PWA files", () => {
+  const files = new Map([
+    ["/index.html", { path: "/dev/null", type: "text/html" }],
+    ["/manifest.webmanifest", { path: "/dev/null", type: "application/manifest+json" }],
+    ["/service-worker.js", { path: "/dev/null", type: "text/javascript" }],
+  ]);
+  let app: any;
+  beforeAll(() => {
+    app = mk({}, staticHandler(files)).app;
+  });
+  test("the manifest and the service worker load without a login", async () => {
+    expect((await app.request("/manifest.webmanifest")).status).toBe(200);
+    expect((await app.request("/service-worker.js")).status).toBe(200);
+  });
+  test("other pages still redirect to login", async () => {
+    const r = await app.request("/");
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe("/auth/login");
+  });
+});
 
 describe("error handling", () => {
   test("non-HttpError with numeric status becomes 500 internal error", async () => {
@@ -185,6 +208,55 @@ describe("instances", () => {
     expect(calls).toEqual([["pause", ID], ["resume", ID]]);
     const none = mk({ pause: undefined });
     expect((await none.app.request(`/api/hosts/local/instances/${ID}/pause`, { method: "POST", headers: H() })).status).toBe(501);
+  });
+  test("PATCH settings: 200 with previous, bad body 400, bad id 400, no backend support 501, 409 keeps its extra fields", async () => {
+    const prev = { createSession: true, spawnMode: "same-dir" };
+    const { app, calls } = mk({ update: async (id: string, p: any) => { calls.push(["update", id, p]); return { instance: inst, previous: prev, applied: false }; } });
+    const url = `/api/hosts/local/instances/${ID}`;
+    const patch = (u: string, body: unknown) => app.request(u, { method: "PATCH", headers: H(), body: JSON.stringify(body) });
+    const r = await patch(url, { createSession: false });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ instance: inst, previous: prev, applied: false });
+    expect(calls).toEqual([["update", ID, { createSession: false }]]);
+    expect((await patch(url, {})).status).toBe(400);
+    expect((await patch("/api/hosts/local/instances/..%2Fx", { createSession: false })).status).toBe(400);
+    const none = mk({ update: undefined });
+    expect((await none.app.request(url, { method: "PATCH", headers: H(), body: JSON.stringify({ createSession: false }) })).status).toBe(501);
+    const refused = mk({ update: async () => { throw new HttpError(409, "claude refused the setting", { code: "settings_refused", settings: prev }); } });
+    const r2 = await refused.app.request(url, { method: "PATCH", headers: H(), body: JSON.stringify({ spawnMode: "worktree" }) });
+    expect(r2.status).toBe(409);
+    expect(await r2.json()).toEqual({ code: "settings_refused", settings: prev, error: "claude refused the setting" });
+  });
+  test("POST restart: 204, bad id 400, no backend support 501", async () => {
+    const { app, calls } = mk({ restart: async (id: string) => { calls.push(["restart", id]); } });
+    expect((await app.request(`/api/hosts/local/instances/${ID}/restart`, { method: "POST", headers: H() })).status).toBe(204);
+    expect((await app.request("/api/hosts/local/instances/..%2Fx/restart", { method: "POST", headers: H() })).status).toBe(400);
+    expect(calls).toEqual([["restart", ID]]);
+    const none = mk({ restart: undefined });
+    expect((await none.app.request(`/api/hosts/local/instances/${ID}/restart`, { method: "POST", headers: H() })).status).toBe(501);
+  });
+  test("GET instance-settings returns the help object", async () => {
+    const { app } = mk();
+    const r = await app.request("/api/hosts/local/instance-settings", { headers: H() });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ...SETTINGS_HELP, defaults: { createSession: true, spawnMode: "same-dir" } });
+  });
+  test("GET instance-settings returns the node defaults from the operator list", async () => {
+    const get = async (claudeRcArgs: string[]) => {
+      const local = { ...cfg, claudeRcArgs } as Config;
+      const app = createApp({ cfg: local, instances: fake().svc, userAuth: oidcUserAuth(local, oidc) });
+      return (await (await app.request("/api/hosts/local/instance-settings", { headers: H() })).json()).defaults;
+    };
+    expect(await get(["--no-create-session-in-dir", "--spawn", "worktree"])).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(await get(["--spawn", "same-dir"])).toEqual({ createSession: true, spawnMode: "same-dir" });
+  });
+  test("POST start passes the sent settings to the backend and none when absent", async () => {
+    const { app, calls } = mk();
+    const post = (body: unknown) => app.request("/api/hosts/local/instances", { method: "POST", headers: H(), body: JSON.stringify(body) });
+    expect((await post({ path: root, spawnMode: "worktree" })).status).toBe(201);
+    expect((await post({ path: root })).status).toBe(201);
+    expect(calls[0][1].settings).toEqual({ spawnMode: "worktree" });
+    expect("settings" in calls[1][1]).toBe(false);
   });
   test("DELETE unknown -> 404 from service", async () => {
     const { app } = mk({ stop: async () => { throw new HttpError(404, "instance not found"); } });

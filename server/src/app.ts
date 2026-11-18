@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { isPwaFile } from "./static";
 import { sseResponse, trackStreams } from "./sse";
 import type { DefinitionStatus } from "./win/definition";
 import type { UpdateHistory } from "./updatehistory";
@@ -7,6 +8,7 @@ import type { NodeEvents } from "./updateevents";
 import type { User, UserAuthStrategy } from "./userauth";
 import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
+import { enforceRoles, logToken } from "./roles";
 import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
 import { enrollmentApi } from "./enrollment";
@@ -21,21 +23,24 @@ import { createUpdateTracker } from "./updatetracker";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
 import { LatestError, type createLatestRelease } from "./latest";
+import type { createReleaseList } from "./releaselist";
 import { HttpError, type Instances } from "./instances";
+import { SETTINGS_HELP, settingsFromArgs } from "./instancesettings";
 import { PathError, within } from "./paths";
+import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
-import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
+import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
-export type CliDeps = { issuer: string; clientId: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
+export type CliDeps = { issuer: string; clientId: string; roleScope?: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
 
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -112,7 +117,9 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
       const real = await resolveChecked(input.path, cfg.roots).catch(() => undefined);
       if (real !== undefined && busy.some((t) => within(real, t))) throw new HttpError(409, "a clone is still running in that folder");
     }
-    return c.json(await instances.start(input), 201);
+    const { createSession, spawnMode, ...rest } = input;
+    const settings = { ...(createSession === undefined ? {} : { createSession }), ...(spawnMode === undefined ? {} : { spawnMode }) };
+    return c.json(await instances.start({ ...rest, ...(Object.keys(settings).length > 0 ? { settings } : {}) }), 201);
   });
   r.delete("/instances/:id", async (c) => {
     const id = c.req.param("id");
@@ -132,6 +139,22 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.resume) throw new HttpError(501, "resume is not supported on this node");
     await instances.resume(id);
+    return c.body(null, 204);
+  });
+  // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
+  r.get("/instance-settings", (c) => c.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs ?? []) }));
+  r.patch("/instances/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    const patch = parseSettingsPatch(await readJson(c));
+    if (!instances.update) throw new HttpError(501, "settings are not supported on this node");
+    return c.json(await instances.update(id, patch));
+  });
+  r.post("/instances/:id/restart", async (c) => {
+    const id = c.req.param("id");
+    if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
+    if (!instances.restart) throw new HttpError(501, "restart is not supported on this node");
+    await instances.restart(id);
     return c.body(null, 204);
   });
   r.get("/instances/:id/logs", async (c) => {
@@ -180,7 +203,9 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     });
   }
 
-  r.route("/instances/:id/sessions", sessionApi({ instances, sessions: deps.sessions ?? sessionCatalogFor(cfg) }));
+  const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
+  r.route("/instances/:id/sessions", sessionApi({ instances, sessions: sessionCatalog }));
+  r.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
   return r;
@@ -218,7 +243,9 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
   api.use("*", async (c, next) => {
     await next();
     if (isWrite(c.req.method)) {
-      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+      const act = c.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
+      const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
+      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")}${actPart} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
     }
   });
   if (events) {
@@ -266,6 +293,7 @@ export function createApp(deps: Deps): Hono {
 
   const api = new Hono();
   api.use("*", userAuth.middleware);
+  api.use("*", enforceRoles("/api"));
   api.use("*", csrf(cfg));
 
   api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
@@ -278,6 +306,14 @@ export function createApp(deps: Deps): Hono {
       if (e instanceof LatestError) throw new HttpError(503, e.message);
       throw e;
     }
+  });
+
+  api.get("/release-notes", async (c) => {
+    if (!deps.releaseList) throw new HttpError(501, "release notes are not available on this host");
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    if (!from || !to) throw new HttpError(400, "from and to are required");
+    return c.json(await deps.releaseList.between(from, to));
   });
 
   const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
@@ -309,7 +345,7 @@ export function createApp(deps: Deps): Hono {
   api.patch("/hosts/:id", async (c, next) => {
     await renameHandler(registry)(c, next);
     const u = c.get("user" as never) as User | undefined;
-    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
+    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
@@ -364,6 +400,7 @@ export function createApp(deps: Deps): Hono {
     app.route("/cli/config", cliConfigRoute(cli));
     const cliApi = new Hono();
     cliApi.use("*", cli.auth);
+    cliApi.use("*", enforceRoles("/cli/api"));
     cliApi.use("*", csrf(cfg));
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
     cliApi.get("/events", hubEvents);
@@ -376,7 +413,7 @@ export function createApp(deps: Deps): Hono {
     app.all("/cli/*", (c) => c.json({ error: "not found" }, 404));
   }
 
-  if (staticHandler) app.get("*", userAuth.middleware, staticHandler);
+  if (staticHandler) app.get("*", (c, next) => (isPwaFile(new URL(c.req.url).pathname) ? next() : userAuth.middleware(c, next)), staticHandler);
 
   app.onError(onError);
 

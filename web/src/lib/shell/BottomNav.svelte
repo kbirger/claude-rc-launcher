@@ -3,6 +3,7 @@
   import Server from "@tabler/icons-svelte/icons/server";
   import Home from "@tabler/icons-svelte/icons/home";
   import LayoutGrid from "@tabler/icons-svelte/icons/layout-grid";
+  import { Button } from "#lib/components/ui/button/index.js";
   import { cn } from "#lib/utils.js";
   import MenuSheet from "./MenuSheet.svelte";
 
@@ -27,16 +28,16 @@
     {#each left as it (it.href)}
       {@render item(it)}
     {/each}
-    <button
-      type="button"
-      class="flex size-14 flex-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform active:scale-95"
+    <Button
+      size="icon-touch"
+      class="size-14 flex-none rounded-full shadow-md active:scale-95"
       aria-label="Menu"
       aria-haspopup="dialog"
       aria-expanded={menuOpen}
       onclick={() => (menuOpen = true)}
     >
-      <LayoutGrid size={28} aria-hidden="true" />
-    </button>
+      <LayoutGrid class="size-7" aria-hidden="true" />
+    </Button>
     {#each right as it (it.href)}
       {@render item(it)}
     {/each}

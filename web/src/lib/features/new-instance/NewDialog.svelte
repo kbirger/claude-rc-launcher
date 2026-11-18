@@ -1,5 +1,13 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
+  import * as Breadcrumb from "#lib/components/ui/breadcrumb/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { Checkbox } from "#lib/components/ui/checkbox/index.js";
+  import * as Dialog from "#lib/components/ui/dialog/index.js";
+  import * as Empty from "#lib/components/ui/empty/index.js";
+  import { Input } from "#lib/components/ui/input/index.js";
+  import * as Item from "#lib/components/ui/item/index.js";
+  import { Label } from "#lib/components/ui/label/index.js";
   import * as Select from "#lib/components/ui/select/index.js";
   import { untrack } from "svelte";
   import Lock from "@tabler/icons-svelte/icons/lock";
@@ -12,8 +20,12 @@
   import type { StartArgs } from "../instances";
   import { createNewDialogModel } from "./model.svelte";
 
-  let { host, onclose, onstart, busyReason, initial }: {
+  let { host, onclose, onstart, busyReason, initial, canChooseUser = true, canSignInGitHub = true }: {
     host: string;
+    /** False hides Run as: the hub only lets an admin start an instance as another user. */
+    canChooseUser?: boolean;
+    /** False hides the GitHub sign-in: the hub only lets an admin start it. */
+    canSignInGitHub?: boolean;
     onclose: () => void;
     onstart: (a: StartArgs) => void;
     busyReason?: string;
@@ -27,25 +39,40 @@
     client: useQueryClient(),
     initial: () => initial,
     busyReason: () => busyReason,
+    canChooseUser: () => canChooseUser,
     onstart: (a) => onstart(a),
   });
+
+  // Escape and a click outside ask to close. A clone in progress keeps the dialog open, like the disabled Close button.
+  function openChange(open: boolean) {
+    if (!open && !model.cloneBusy) onclose();
+  }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true" aria-label="New instance">
-  <div class="dialog">
-    <div class="top">
-      <h2>New instance</h2>
-      <Button variant="outline" size="touch" onclick={onclose} disabled={model.cloneBusy} aria-label="Close">Close</Button>
+<Dialog.Root open={true} onOpenChange={openChange}>
+  <Dialog.Content
+    showCloseButton={false}
+    class="flex h-dvh max-w-full flex-col gap-0 overflow-hidden rounded-none bg-background p-4 sm:h-auto sm:max-h-[80vh] sm:max-w-[560px] sm:rounded-xl"
+  >
+    <div class="flex items-center justify-between">
+      <Dialog.Title class="font-heading text-lg">New instance</Dialog.Title>
+      <Button variant="outline" size="touch" onclick={onclose} disabled={model.cloneBusy}>Close</Button>
     </div>
+    <Dialog.Description class="sr-only">Choose a folder, then start an instance in it.</Dialog.Description>
     {#if busyReason}
-      <div class="warn" role="alert">
-        <p>This machine {busyReason}. A session or a clone that you start now can be cut off, and the page can show an error for something that worked.</p>
-        <label><input type="checkbox" bind:checked={model.ack} /> Start anyway</label>
-      </div>
+      <Alert.Root class="my-2 border-l-[3px] border-l-warning">
+        <Alert.Description>
+          This machine {busyReason}. A session or a clone that you start now can be cut off, and the page can show an error for something that worked.
+        </Alert.Description>
+        <div class="flex items-center gap-2">
+          <Checkbox id="start-anyway" bind:checked={model.ack} />
+          <Label for="start-anyway" class="min-h-11">Start anyway</Label>
+        </div>
+      </Alert.Root>
     {/if}
     {#if model.usersInfo}
-      <div class="runas">
-        <span id="runas-label">Run as</span>
+      <div class="my-1 flex items-center gap-2">
+        <Label id="runas-label">Run as</Label>
         <Select.Root type="single" value={model.user} disabled={model.cloning} onValueChange={(v) => model.changeUser(v)}>
           <Select.Trigger class="w-48 data-[size=default]:h-11" aria-labelledby="runas-label">{model.user}</Select.Trigger>
           <Select.Content>
@@ -54,74 +81,73 @@
         </Select.Root>
       </div>
     {/if}
-    <nav class="crumbs">
-      <button class="crumb" disabled={model.cloning} onclick={() => model.go()}>Roots</button>
-      {#each model.crumbs as c (c.path)}
-        <span class="muted">/</span><button class="crumb" disabled={model.cloning} onclick={() => model.go(c.path)}>{c.label}</button>
-      {/each}
-    </nav>
-    <div class="bar">
+    <Breadcrumb.Root aria-label="Folder" class="my-1">
+      <Breadcrumb.List class="gap-0">
+        {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as c, i (c.path ?? "")}
+          {#if i > 0}<Breadcrumb.Separator />{/if}
+          <Breadcrumb.Item>
+            {#if i === model.crumbs.length}
+              <Breadcrumb.Page class="inline-flex min-h-11 items-center px-1.5">{c.label}</Breadcrumb.Page>
+            {:else}
+              <Breadcrumb.Link>
+                {#snippet child({ props })}
+                  <button {...(props as Record<string, unknown>)} type="button" class="inline-flex min-h-11 items-center px-1.5 hover:underline disabled:pointer-events-none disabled:opacity-50" disabled={model.cloning} onclick={() => model.go(c.path)}>{c.label}</button>
+                {/snippet}
+              </Breadcrumb.Link>
+            {/if}
+          </Breadcrumb.Item>
+        {/each}
+      </Breadcrumb.List>
+    </Breadcrumb.Root>
+    <div class="mb-2 flex gap-2">
       <Button variant="outline" size="icon-touch" aria-label="Up one folder" title="Up one folder" disabled={!model.listing || model.listing.parent === null || model.cloning} onclick={() => model.go(model.listing!.parent!)}><ActionIcon name="up" /></Button>
       <Button variant="outline" size="icon-touch" aria-label="New folder" title="New folder" aria-pressed={model.creating} disabled={model.atTop} onclick={() => (model.creating = !model.creating)}><ActionIcon name="new-folder" /></Button>
-      {#if model.canClone}<Button size="touch" class="bg-[#0969da] text-white hover:bg-[#0969da]/90 dark:bg-[#1f6feb] dark:hover:bg-[#1f6feb]/90" disabled={model.atTop || model.cloning || model.needsAck} onclick={() => model.openClone()}><ActionIcon name="github" />Clone with GitHub</Button>{/if}
+      {#if model.canClone}<Button size="touch" disabled={model.atTop || model.cloning || model.needsAck} onclick={() => model.openClone()}><ActionIcon name="github" />Clone with GitHub</Button>{/if}
     </div>
     {#if model.creating}
-      <form class="bar" onsubmit={(e) => { e.preventDefault(); model.createFolder(); }}>
-        <input placeholder="Folder name" bind:value={model.folderName} />
-        <Button size="touch" type="submit" disabled={model.mkdirPending}>Create</Button>
+      <form class="mb-2 flex gap-2" onsubmit={(e) => { e.preventDefault(); model.createFolder(); }}>
+        <Input class="h-11" placeholder="Folder name" aria-label="Folder name" bind:value={model.folderName} />
+        <Button size="icon-touch" type="submit" aria-label="Create folder" title="Create folder" disabled={model.mkdirPending}><ActionIcon name="new-folder" /></Button>
       </form>
     {/if}
     {#if model.cloning && model.listing}
-      <ClonePanel {host} parent={model.listing.path} user={model.chosenUser} oncloned={model.cloned} onclose={model.closeClone} onbusy={model.setCloneBusy} />
+      <ClonePanel {host} parent={model.listing.path} user={model.chosenUser} oncloned={model.cloned} onclose={model.closeClone} onbusy={model.setCloneBusy} canSignIn={canSignInGitHub} />
     {:else}
-    <ul>
-      {#each model.listing?.dirs ?? [] as d (d.path)}
-        <li><button class="dir" class:untrusted={d.trusted === false} onclick={() => model.go(d.path)}><FolderIcon kind={iconKind(d)} /><span class="name">{d.name}</span>{#if d.trusted === false}<span class="lock" role="img" aria-label="not trusted"><Lock size={18} aria-hidden="true" /></span>{/if}</button></li>
-      {/each}
-      {#if model.listing && model.listing.dirs.length === 0}<li class="muted pad">No subfolders</li>{/if}
-    </ul>
-    <div class="footer">
-      <input placeholder="Name (optional)" bind:value={model.name} />
-      {#if model.error}<p class="error">{model.error}</p>{/if}
-      {#if model.trustPrompt}
-        <div class="trust" role="alert">
-          <p><code>{model.trustPrompt.path}</code> is not trusted for <code>{model.trustPrompt.user}</code>.</p>
-          <div class="bar">
-            <Button size="touch" disabled={model.needsAck} onclick={() => model.start(true)}>Trust and start</Button>
-            <Button variant="outline" size="touch" onclick={() => model.cancelTrust()}>Cancel</Button>
-          </div>
-        </div>
-      {/if}
-      <Button size="touch" disabled={model.atTop || model.needsAck} onclick={() => model.start()}>Start here</Button>
-    </div>
+      <div class="mb-2 min-h-0 flex-1 overflow-auto rounded-lg border bg-card">
+        {#if model.listing && model.listing.dirs.length === 0}
+          <Empty.Root class="border-0 p-4"><Empty.Header><Empty.Title class="font-sans font-normal text-muted-foreground">No subfolders</Empty.Title></Empty.Header></Empty.Root>
+        {:else}
+          <Item.Group class="gap-0 divide-y">
+            {#each model.listing?.dirs ?? [] as d (d.path)}
+              <Item.Root size="xs" class="min-h-11 rounded-none border-0 hover:bg-muted {d.trusted === false ? 'text-muted-foreground' : ''}">
+                {#snippet child({ props })}
+                  <button {...props} type="button" class="{props.class} cursor-pointer text-left" onclick={() => model.go(d.path)}>
+                    <Item.Media><FolderIcon kind={iconKind(d)} /></Item.Media>
+                    <Item.Content><Item.Title class="line-clamp-none [overflow-wrap:anywhere]">{d.name}</Item.Title></Item.Content>
+                    {#if d.trusted === false}<span class="inline-flex flex-none" role="img" aria-label="not trusted"><Lock size={18} aria-hidden="true" /></span>{/if}
+                  </button>
+                {/snippet}
+              </Item.Root>
+            {/each}
+          </Item.Group>
+        {/if}
+      </div>
+      <div class="grid gap-2">
+        <Input class="h-11" placeholder="Name (optional)" aria-label="Name" bind:value={model.name} />
+        {#if model.error}<Alert.Root variant="destructive"><Alert.Description>{model.error}</Alert.Description></Alert.Root>{/if}
+        {#if model.trustPrompt}
+          <Alert.Root>
+            <Alert.Description class="[overflow-wrap:anywhere]">
+              <code>{model.trustPrompt.path}</code> is not trusted for <code>{model.trustPrompt.user}</code>.
+            </Alert.Description>
+            <div class="flex gap-2 pt-1">
+              <Button size="touch" disabled={model.needsAck} onclick={() => model.start(true)}>Trust and start</Button>
+              <Button variant="outline" size="touch" onclick={() => model.cancelTrust()}>Cancel</Button>
+            </div>
+          </Alert.Root>
+        {/if}
+        <Button size="touch" disabled={model.atTop || model.needsAck} onclick={() => model.start()}>Start here</Button>
+      </div>
     {/if}
-  </div>
-</div>
-
-<style>
-  .warn { border-left: 3px solid var(--warn); padding: 4px 8px; margin: 0 0 8px; }
-  .warn p { margin: 0 0 4px; }
-  .warn label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
-  .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.5); display: flex; align-items: stretch; justify-content: center; }
-  .dialog { background: var(--background); width: 100%; display: flex; flex-direction: column; padding: 12px 16px; overflow: hidden; }
-  @media (min-width: 640px) {
-    .overlay { align-items: center; }
-    .dialog { max-width: 560px; max-height: 80vh; border-radius: 12px; }
-  }
-  .top { display: flex; justify-content: space-between; align-items: center; }
-  h2 { margin: 0; font-size: 1.1rem; }
-  .crumbs { display: flex; flex-wrap: wrap; align-items: center; margin: 4px 0; }
-  .crumb { border: none; background: transparent; padding: 0 6px; color: var(--primary); }
-  .bar { display: flex; gap: 8px; margin-bottom: 8px; }
-  ul { list-style: none; margin: 0 0 8px; padding: 0; flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
-  li + li { border-top: 1px solid var(--border); }
-  .dir { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; border: none; border-radius: 0; background: transparent; }
-  .name { min-width: 0; overflow-wrap: anywhere; }
-  .runas { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-  .untrusted { color: var(--muted-foreground); }
-  .lock { flex: none; display: inline-flex; }
-  .trust { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); }
-  .trust p { margin: 0 0 8px; overflow-wrap: anywhere; }
-  .pad { padding: 12px; }
-  .footer { display: grid; gap: 8px; }
-</style>
+  </Dialog.Content>
+</Dialog.Root>

@@ -4,15 +4,17 @@
   import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import Logo from "../shared/ui/Logo.svelte";
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { meQuery } from "../features/auth";
+  import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
   import { HostPicker, hostsQuery, selectionAfter, type HostInfo } from "../features/hosts";
   import { UpdateBanner, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "../features/updates";
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
   import { createStartFlow } from "../startflow.svelte";
+  import ActionIcon from "../shared/ui/ActionIcon.svelte";
   import BottomNav from "./BottomNav.svelte";
   import { setShell } from "./context";
 
@@ -101,6 +103,8 @@
     get now() { return now; },
     get user() { return meQ.data?.name ?? ""; },
     get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
+    // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
+    can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
     select,
     get latestError() { return latestQ.isError; },
   });
@@ -115,30 +119,32 @@
   });
 </script>
 
-<header>
-  <h1><a class="home" href="/instances" aria-label="Claude RC: home"><Logo /></a></h1>
+<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2">
+  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/instances" aria-label="Claude RC: home"><Logo /></a></h1>
   {#if hosts.length > 1}
-    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} />
+    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
   {/if}
-  <span class="user"><span class="uname">{meQ.data?.name ?? ""}</span></span>
-  <a class="logout" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
+  <span class="ml-auto hidden min-w-0 text-[0.9rem] text-muted-foreground min-[481px]:inline-flex"><span class="truncate">{meQ.data?.name ?? ""}</span></span>
+  <a class="inline-flex min-h-11 min-w-11 flex-none items-center justify-center text-primary" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
     <LogOut size={22} aria-hidden="true" />
   </a>
 </header>
-<div class="column">
+<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
   {#if reloadBar}
-    <section class="reload" role="status">
-      <span>The hub was updated. Reload to get the new page.</span>
-      <Button size="touch" onclick={() => location.reload()}>Reload</Button>
-    </section>
+    <Alert.Root role="status" class="border-l-[3px] border-l-warning">
+      <Alert.Description class="text-foreground">The hub was updated. Reload to get the new page.</Alert.Description>
+      <Alert.Action class="top-1/2 -translate-y-1/2">
+        <Button size="icon-touch" aria-label="Reload" title="Reload" onclick={() => location.reload()}><ActionIcon name="refresh" /></Button>
+      </Alert.Action>
+    </Alert.Root>
   {/if}
   <!-- The Updates page shows the whole panel itself. -->
   {#if page.url.pathname !== "/updates"}
-    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
+    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} canRun={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
   {/if}
   {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
     {#key flow.selected}
-      <div class="finished"><UpdateOutput host={flow.selected} open={false} /></div>
+      <div><UpdateOutput host={flow.selected} open={false} /></div>
     {/key}
   {/if}
   <main>
@@ -154,21 +160,8 @@
       initial={flow.newInitial}
       onclose={() => flow.closeNew()}
       onstart={startNew}
+      canChooseUser={can(meQ.data?.role, "admin", meQ.data !== undefined)}
+      canSignInGitHub={can(meQ.data?.role, "admin", meQ.data !== undefined)}
     />
   {/key}
 {/if}
-
-<style>
-  /* One column for everything under the header (the header spans the full width). */
-  .column { max-width: 720px; margin: 0 auto; padding: 16px 16px calc(6.5rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
-  .reload { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; }
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
-  h1 { display: flex; flex-direction: column; align-items: center; align-self: stretch; min-height: 0; margin: 0; flex: none; min-width: 44px; }
-  .home { display: flex; flex-direction: column; align-items: center; flex: 1 1 0; min-height: 0; min-width: 44px; border-radius: 8px; }
-  .user { display: inline-flex; flex-grow: 0; flex-basis: auto; min-width: 0; margin-left: auto; color: var(--muted-foreground); font-size: 0.9rem; }
-  .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .logout { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 44px; min-height: 44px; color: var(--primary); }
-  @media (max-width: 480px) {
-    .user { display: none; }
-  }
-</style>

@@ -1,4 +1,5 @@
 // Small helpers for the session screens. They only use values the API gave.
+import { ago } from "../../shared/time";
 import type { Session, TouchedFile } from "./api";
 
 const fwd = (p: string): string => p.replace(/\\/g, "/");
@@ -26,17 +27,7 @@ export function humanSize(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Short relative time, in the style of the instance uptime. */
-export function ago(iso: string, now: number): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "—";
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d > 0) return `${d}d ago`;
-  if (h > 0) return `${h}h ago`;
-  if (m > 0) return `${m}m ago`;
-  return "now";
-}
+export { ago };
 
 /** The calendar date and time of an instant, for a reader's locale ("Nov 12, 2:05 PM"). The year shows only when it is not the year of `now`. */
 export function shortDate(iso: string, now: number): string {
@@ -111,13 +102,13 @@ export function sessionDetail(s: Session, now: number): string[] {
   return out;
 }
 
-/** Badges of a running session: "live" with its status (busy looks active, idle muted), and "Remote
- *  Control" when the session is attached to it. Use them with the outline Badge, as the instance card does. */
-export function liveBadges(s: Session): { label: string; class: string }[] {
-  if (!s.live) return [];
-  // Only the two known statuses are shown. No status, or any other value (another node version), shows as "live" alone.
-  const known = s.live.status === "busy" || s.live.status === "idle";
-  const out = [{ label: known ? `live · ${s.live.status}` : "live", class: s.live.status === "busy" ? "text-success" : "text-muted-foreground" }];
-  if (s.live.remoteControl) out.push({ label: "Remote Control", class: "" });
-  return out;
+/**
+ * The state of a session for the list: one indicator and a Remote Control flag. A running session is "live" (green; the dot
+ * pulses while it is busy), a session that is not running is "offline" (gray). `title` is the longer text for a tooltip and a screen reader.
+ */
+export function sessionState(s: Session): { live: boolean; busy: boolean; label: "live" | "offline"; title: string; remoteControl: boolean } {
+  if (!s.live) return { live: false, busy: false, label: "offline", title: "Not running", remoteControl: false };
+  // Only the two known statuses are named. No status, or any other value (another node version), is "Running" alone.
+  const status = s.live.status === "busy" ? "busy" : s.live.status === "idle" ? "idle" : "";
+  return { live: true, busy: status === "busy", label: "live", title: status ? `Running, ${status}` : "Running", remoteControl: s.live.remoteControl };
 }

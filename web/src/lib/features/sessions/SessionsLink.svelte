@@ -2,6 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import Messages from "@tabler/icons-svelte/icons/messages";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { stripLabel } from "#lib/components/EntityCard.svelte";
   import { isUnsupported } from "./api";
   import { sessionsHref } from "./format";
   import { sessionsQuery } from "./queries";
@@ -13,5 +14,5 @@
 </script>
 
 {#if !isUnsupported(q.error)}
-  <Button variant="ghost" size="sm" class="h-8 px-2 hover:border-border" href={sessionsHref({ host, instance })}><Messages aria-hidden="true" />Sessions</Button>
+  <Button variant="ghost" size="sm" class="h-8 px-2" href={sessionsHref({ host, instance })} title="Sessions"><Messages aria-hidden="true" /><span class={stripLabel}>Sessions</span></Button>
 {/if}

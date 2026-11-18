@@ -13,9 +13,11 @@ see [Multiple hosts](#multiple-hosts).
 - The launcher typically runs as **root** (it must write unit files to `/etc/systemd/system`).
   A successful login therefore gives **root-level command execution** as the configured
   `instance.service_user` (Claude running in any directory under `instance.roots`).
-- **Access control is the OIDC provider's, plus an optional flat allow-list** (`user_auth.allowed_users`).
-  Without it anyone who completes login is allowed. Bind the application in Authentik to the intended
-  users/groups, and/or set `allowed_users`.
+- **Access control is the OIDC provider's, plus roles.** The provider decides who can sign in. A role claim in the
+  login token decides what a person can do: `read`, `write`, or `admin`. See [Roles](#roles). Only an `admin` is
+  root-equivalent on every host. A user with no role claim gets `user_auth.default_role`, which is `read` by
+  default. The optional `user_auth.allowed_users` list adds a second check for a provider that cannot limit who
+  signs in. Bind the application in your provider to the intended users or groups.
 - Prefer a dedicated non-root `instance.service_user` where possible, and keep `instance.roots` narrow.
 - Sessions are stateless signed cookies valid for 12 hours. Logout clears the cookie but cannot
   revoke a copy of it; replace `session.secret` to invalidate all sessions.
@@ -259,9 +261,37 @@ checkout, or a run from source, prints `dev`. Neither binary needs a login, a ne
 
 ### Publishing a release (maintainers)
 
-Push a tag. The `Release` workflow tests, builds the Linux server binaries, the command-line client, the Windows node
-binary and its installer zip, adds `SHA256SUMS`, and publishes them. `install.ps1` is also published as a separate
-asset, because the one-line Windows install (`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name:
+Start the `Release` workflow by hand. It runs only from the `main` branch.
+
+1. Open the Actions tab of the repository, choose `Release`, and select Run workflow. Or run
+   `gh workflow run release.yml -f dry_run=true`.
+2. Run it with `dry_run` on first. The default is on. The run prints the next version and the release notes in the job
+   log and in the job summary. It builds and publishes nothing.
+3. Read the version and the notes. If they are right, run the workflow again with `dry_run` off. Or run
+   `gh workflow run release.yml -f dry_run=false`.
+
+The real run tests, builds the Linux server binaries, the command-line client, the Windows node binary and its
+installer zip, adds `SHA256SUMS`, creates the tag, and publishes the release with the notes. `install.ps1` is also
+published as a separate asset, because the one-line Windows install
+(`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name.
+
+A version with a hyphen, such as `1.0.0-rc.1`, is published as a pre-release and not as the latest release, so hubs do not offer it as an update.
+
+[git-cliff](https://git-cliff.org) works out the version and the notes from the commit messages since the last tag.
+The rules are in `cliff.toml`.
+
+- A `feat` commit raises the minor number. A `fix` commit raises the patch number.
+- A breaking change (`!` after the type, or `BREAKING CHANGE:` in the message) raises the major number. While the
+  version is below 1.0, it raises the minor number.
+- If no commit deserves a new version, the run prints "Nothing to release" and stops.
+- To choose the version yourself, fill in the `version` input, for example `1.0.0`. A leading `v` is allowed.
+
+The notes list `feat` commits as Features, `fix` as Fixes, and `perf` as Performance. Other commits, and commits with no
+type, are listed as Other. The types `docs`, `test`, `chore`, `ci`, `build` and `style` are left out. If nothing is left,
+the notes say "No user-visible changes."
+
+As a fallback, you can push a tag. The same workflow runs, builds, and publishes. The notes for that release come from
+the commits since the previous tag:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
@@ -290,6 +320,11 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `public_url` | required | External URL; redirect URI is `public_url/auth/callback`; cookie is `Secure` when https |
 | `user_auth.mode` | required | `oidc` or `proxy-jwt`. There is no unauthenticated mode |
 | `user_auth.allowed_users` | unset | Usernames or emails allowed to log in. An email that the IdP marks `email_verified: false` never matches, so that user must match by username. The list is checked on every request. A user who is removed from it loses access as soon as the hub runs with the new list. A user who is removed at the IdP keeps a browser session for up to 12 hours. Omit = anyone the IdP admits. `[]` is an error |
+| `user_auth.default_role` | `read` | Role of a user whose token has no role claim: `read`, `write`, or `admin`. See [Roles](#roles) |
+| `user_auth.role_claim` | `clauderc_role` | Name of the claim that carries the role. The value is one text value or a list of text values |
+| `user_auth.role_scope` | `clauderc` | Extra scope that the hub and the CLI ask the provider for. An empty string asks for none |
+| `user_auth.role_map` | none | Optional table that turns claim values into roles, for example `"clauderc-admins" = "admin"`. A value of `none` refuses the person |
+| `user_auth.session_ttl_hours` | `12` | Lifetime of the browser session cookie in hours (`oidc` only). A role change reaches a browser user at the next login |
 | `user_auth.session_secret_file` | required for `oidc` | At least 32 chars: `openssl rand -hex 32` |
 | `user_auth.oidc.issuer` | required | Issuer URL (discovery). Must be https; `http://` only for localhost/127.0.0.1/::1 or with `allow_insecure = true` |
 | `user_auth.oidc.allow_insecure` | `false` | Permits a non-loopback `http://` issuer. INSECURE: ID tokens are not signature-verified, a network attacker can forge logins. Do not use in production |
@@ -302,8 +337,10 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `instance.service_path` | `<service_home>/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` of instances |
 | `instance.ssh_auth_sock` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit |
 | `instance.claude_bin` | `<service_home>/.local/bin/claude` | Claude executable used in `ExecStart`. Must be absolute |
-| `instance.claude_rc_args` | `["--spawn","same-dir","--no-create-session-in-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
+| `instance.claude_rc_args` | `["--spawn","same-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
 | `instance.name_prefix` | empty | Prefix for the default `--name`. Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` |
+
+The default does not contain `--no-create-session-in-dir`. A server that starts with this flag refuses to restart while its folder has a recoverable session.
 
 #### proxy-jwt user authentication
 
@@ -425,7 +462,7 @@ Environment="HOME=/root"
 Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # next line only if SSH_AUTH_SOCK is configured
 Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"
-ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir --no-create-session-in-dir
+ExecStart=/root/.local/bin/claude remote-control --name myhost-monitoring --spawn same-dir
 StandardOutput=null
 StandardError=journal
 Restart=always
@@ -441,6 +478,14 @@ WantedBy=multi-user.target
   back after reboot.
 - The launcher only lists/stops unit files carrying the `managed-by` marker line and the
   `claude-rc-` prefix.
+
+## Recover sessions after a crash
+
+If a server starts without `--no-create-session-in-dir`, its sessions survive a stop. This holds for a crash, an out-of-memory kill and a restart. When the server starts again, it runs one session. The other sessions have no process yet. When you open one of them on claude.ai, the server starts a process for it. This works for about four hours after the server stopped. The four hours come from the Claude Code documentation. The launcher does not test them.
+
+To restart a server, press Restart on the instance card. The button asks you first. A paused instance has no Restart button, so resume it first. Open the session on claude.ai after the restart.
+
+If the setting "Create a session at start" is off, the unit has `--no-create-session-in-dir`. In that case claude.ai archives the sessions at each stop, and none of them comes back. A server with that flag also refuses to start while its folder holds a recoverable session. To recover sessions, turn the setting on in the settings of the instance. The change restarts the instance.
 
 ## Cloning a repo
 
@@ -834,6 +879,9 @@ claude-rc mkdir /srv alice-project --user alice  # the new folder is owned by al
 claude-rc start /srv/new-project --name demo     # prints the instance id
 claude-rc start /srv/new-project --user alice    # run the instance as alice
 claude-rc start /srv/new-project --force         # add the folder to trust, then start
+claude-rc start /srv/new-project --no-create-session --spawn worktree   # start with chosen settings
+claude-rc settings <id>                          # show the settings and what they mean
+claude-rc settings <id> --spawn worktree --yes   # change a setting and restart the instance
 claude-rc logs <id> --lines 50
 claude-rc stop <id>
 claude-rc logout
@@ -851,6 +899,57 @@ Add `--json` to any command for machine-readable output. Exit code 0 is success,
 you must log in again. The login is saved in `~/.config/claude-rc/credentials.json` (`$XDG_CONFIG_HOME` is
 honored, and `%APPDATA%` is used on Windows). The CLI refuses that file if group or others can read it. The CLI
 reads no other environment variable.
+
+### Instance settings
+
+An instance is one `claude remote-control` server for one folder. Two settings control how that server starts.
+
+- `createSession` is on by default. When it is on, the server makes one empty session at start. After a crash or a
+  restart, it brings back its recorded sessions. When it is off, the server starts with no session and makes one
+  when a client asks. A server with this setting off restarts only if its folder has no recoverable session.
+  Otherwise it refuses with `This folder is already served by a terminal claude remote-control`. So crash recovery
+  does not work with it off.
+- `spawnMode` is `same-dir` by default. In that mode, every session works in the same folder, so two sessions can
+  change the same files. In `worktree` mode, each new session gets its own git worktree (a separate checkout of the
+  same repository). The first session stays in the folder. The folder must be a git repository.
+
+The settings are stored in different places. On Linux they are in the `ExecStart` line of the unit file. On
+Windows they are in the instance record in `instances.json`, as the fields `createSession` and `spawnMode`. The
+default for new instances comes from `instance.claude_rc_args` in the node config. Its built-in value is
+`["--spawn","same-dir"]`. The node also reports these defaults on its help route.
+
+Set them when you start an instance, or change them later:
+
+```sh
+claude-rc start <path> [--create-session|--no-create-session] [--spawn same-dir|worktree]
+claude-rc clone <repo> <parent> [--create-session|--no-create-session] [--spawn same-dir|worktree]
+claude-rc settings <id>                                   # show the current settings and their meaning
+claude-rc settings <id> [--create-session|--no-create-session] [--spawn same-dir|worktree] [--yes]
+```
+
+The `list` command shows the settings in a SETTINGS column. In the web UI, the start form has a Settings part.
+Each instance has a Settings action. Its dialog warns that applying the change restarts the server of a running folder, and that a paused folder only saves it. The change starts when you press Apply.
+
+A change restarts a running instance. The node waits up to 20 seconds for the new server. If the server exits with code
+69 (the "already served" refusal) or does not stay up, the node puts the old settings back. You then see the reason:
+HTTP status 409 with `settings_refused` or `settings_failed`. The Windows node does the same work in its supervisor
+loop. It has no pause.
+
+On Linux, a change on a paused instance is only saved. The answer then has `applied: false`. The new settings start
+when you resume the instance, and nothing checks them before then. If the server cannot start with the new settings,
+it fails at the resume. The node does not put the old settings back then.
+
+If the answer of a change does not come back (no connection, or HTTP status 502 from the hub), the change can still
+run on the node. Look at the instance list before you try again.
+
+When you give a settings flag to `start` or `clone`, the client first asks the node for its settings help. If the
+node or the hub is too old, the client stops with an error and starts nothing.
+
+After this version, an old Windows record without settings starts with the current default list of the node. An old
+Linux unit keeps the flags that its unit file has.
+
+Only one change runs for each instance at a time. A change needs the `write` role, and the hub writes an audit line
+for each one. If a node is too old to have the settings route, the web page shows no settings controls for it.
 
 ### Update the client
 
@@ -1059,7 +1158,70 @@ runs, and it overwrites them on the next change. Hosts that you write by hand, a
 secret, belong in `config.toml`. Those hosts show `source: config` and cannot be removed with the CLI. A new
 managed host works at once, without a restart.
 
+## Roles
+
+A person has one of three roles. The identity provider sets the role through one claim in the login token. The hub
+enforces the role on every route of the web page and of the CLI. A node never sees a user token. It trusts the hub,
+and the hub signs each request with the user and the role that it acts for. The node writes both to its audit log.
+
+| Role | Can do |
+|---|---|
+| `read` | See instances, logs, files, the event stream, and update status |
+| `write` | Everything in `read`. Also create, stop, pause, and resume instances, make folders, clone repositories, list GitHub repositories, change the permission rules of a session, and rename a node |
+| `admin` | Everything in `write`. Also register and remove nodes, run updates, start the GitHub login for a service user, and start an instance or a folder as another user or as root |
+
+A claim value of `none` refuses the person with 403. A value that is not a role name gives `read`. If the claim is a
+list, the hub uses the highest role in it. A request that names a `user` other than the default `service_user` of
+the node needs `admin`. A hub route that has no policy entry needs `admin`, and a test fails for a new route
+that has none.
+
+An existing browser session has no role. It acts as `read` until the person signs in again. After an upgrade,
+make sure that your own user has the role `admin` **before** you start the new hub. Otherwise you are a reader and
+you cannot give yourself the role from the web page.
+
+The claim is the authority. `user_auth.allowed_users` stays as an optional second check. If you set it, both checks
+must pass. The list exists for a provider that cannot limit which people can sign in to one application. With
+authentik, bind the application to the intended users or groups, and leave the list unset.
+
+### Using another identity provider
+
+The hub needs an OIDC provider with an https issuer, with the authorization code flow and PKCE. It also needs a way to
+add one claim to the ID token. Set `role_claim` to the claim name. Set `role_scope` to the scope that makes the provider
+send it, or to an empty string. Use `role_map` when the values of the claim are group names. For the CLI, the provider
+needs a public client with a loopback redirect on `127.0.0.1` (any port) and refresh tokens.
+
 ## Authentik setup
+
+The script `scripts/authentik-setup.ts` sets up authentik for the hub. It creates the web provider and application, the CLI provider and application, the role mapping, the three role groups, and the access bindings. It needs the address of authentik and an API token of an admin. It shows a plan and changes nothing, unless you pass `--apply`. You can run it again. It changes only what differs.
+
+```sh
+export AUTHENTIK_URL=https://auth.example.com
+export AUTHENTIK_TOKEN=<an API token of an admin>
+bun scripts/authentik-setup.ts --public-url https://rc.example.com --admin-user kir            # shows the plan
+bun scripts/authentik-setup.ts --public-url https://rc.example.com --admin-user kir --apply    # makes the changes
+```
+
+After a run with `--apply`, the script prints the settings for `config.toml`. It writes the client secret to the file `./oidc-client.secret` with mode 600, and it never prints the secret. It does not replace an existing file, unless you pass `--force`. Use `--secret-file <path>` to choose another file.
+
+To let the script write the hub settings, pass `--write-hub-config /etc/claude-rc-launcher`. The script then writes `oidc-client.secret` and the keys in `config.toml` in that directory. It makes the backup `config.toml.bak` first. It keeps a value that you set yourself, unless you pass `--force`. The script needs the right to write in that directory.
+
+Pass `--interactive` to answer questions instead of flags. Each question shows the current value in brackets, and an empty answer keeps it. This needs a terminal.
+
+| Flag | Environment variable | Default |
+| --- | --- | --- |
+| `--public-url` | `CLAUDERC_PUBLIC_URL` | none, required |
+| `--web-slug`, `--cli-slug` | `CLAUDERC_WEB_SLUG`, `CLAUDERC_CLI_SLUG` | `claude-rc-launcher`, `claude-rc-cli` |
+| `--web-name`, `--cli-name` | `CLAUDERC_WEB_NAME`, `CLAUDERC_CLI_NAME` | `Claude RC launcher`, `Claude RC CLI` |
+| `--group-prefix` | `CLAUDERC_GROUP_PREFIX` | `ak-clauderc` (groups `-admins`, `-writers`, `-ro`) |
+| `--claim`, `--scope` | `CLAUDERC_CLAIM`, `CLAUDERC_SCOPE` | `clauderc_role`, `clauderc` |
+| `--admin-user` | `CLAUDERC_ADMIN_USER` | none |
+| `--remove-old-hub` | none | off |
+
+If you change `--claim` or `--scope`, the printed settings carry the same names. Use them in `role_claim` and `role_scope`.
+
+### Authentik by hand
+
+Use these steps with another setup, or when you do not want to run the script.
 
 1. Applications > Providers > Create > **OAuth2/OpenID Provider**.
 2. Client type: **Confidential**. Note the client ID and secret.
@@ -1068,7 +1230,22 @@ managed host works at once, without a restart.
 5. Create an **Application** using that provider; its slug gives the issuer URL
    `https://<authentik>/application/o/<slug>/` (use this as `user_auth.oidc.issuer`).
 6. **Bind the application to the intended users/groups** (Application > Policy / Group / User
-   Bindings). This (and optionally `allowed_users`) is the access control.
+   Bindings). This is the access control.
+7. **Add the role claim.** Customization > Property Mappings > Create > **Scope Mapping**. Set the name to
+   `clauderc role` and the scope name to `clauderc`. Use this expression:
+
+   ```python
+   roles = [g.attributes.get("clauderc_role") for g in request.user.ak_groups.all()]
+   return {"clauderc_role": [r for r in roles if r]}
+   ```
+
+   Add the mapping to the provider of the web login, and to the provider of the CLI login. A user in no role group gets
+   `user_auth.default_role`.
+8. **Set the role of each group.** Directory > Groups > the group > Attributes. Add `clauderc_role: admin`, or `write`,
+   `read`, or `none`. A user who is in several role groups gets the highest role. Put each user in a group.
+   Attach the mapping (step 7) and set the groups before you upgrade the hub.
+
+9. **Let the role groups sign in.** Open each of the two applications, then Policy / Group / User Bindings. Bind each role group. A user who is in no bound group sees "Permission denied" at the login.
 
 ### Authentik: proxy outpost (`user_auth.mode = "proxy-jwt"`)
 
@@ -1220,7 +1397,7 @@ labels:
 The command-line client uses the same handlers under `/cli/api` with `Authorization: Bearer <ID token>`:
 `GET /cli/api/me`, the host routes below, and the host management routes `POST /cli/api/hosts/probe
 {url, server_name?}`, `POST /cli/api/hosts {id, name?, url, server_name?, fingerprint, force?}` and
-`DELETE /cli/api/hosts/:id`. `GET /cli/config` returns `{issuer, client_id}` and needs no token.
+`DELETE /cli/api/hosts/:id`. `GET /cli/config` returns `{issuer, client_id}` and, when a role scope is set, `role_scope`. It needs no token.
 
 `GET /instances`, `POST /instances {path, name?, user?, addTrust?}` (201), `DELETE /instances/:id`,
 `GET /instances/:id/logs`, `GET /users`, `GET /fs?path=&user=`,

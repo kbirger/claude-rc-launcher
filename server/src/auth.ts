@@ -3,6 +3,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
 import type { Config, OidcUserAuth } from "./config";
+import { isRole, rolesFrom, type RoleSettings } from "./roles";
 import { isAllowed, userFromClaims, type User, type UserAuthStrategy } from "./userauth";
 
 export type { User };
@@ -21,8 +22,14 @@ function oidcOf(cfg: Config): OidcUserAuth {
 
 const SESSION_COOKIE = "session";
 const STATE_COOKIE = "oidc_state";
-const SESSION_TTL_S = 12 * 60 * 60;
+const DEFAULT_SESSION_TTL_HOURS = 12;
 const STATE_TTL_S = 10 * 60;
+
+/** Lifetime of the session cookie in seconds. */
+const sessionTtlS = (cfg: Config) => (oidcOf(cfg).sessionTtlHours ?? DEFAULT_SESSION_TTL_HOURS) * 60 * 60;
+
+/** The scope that the hub asks the identity provider for. */
+export const scopeFor = (roles: RoleSettings): string => ["openid", "email", "profile", ...(roles.scope ? [roles.scope] : [])].join(" ");
 
 const redirectUriOf = (cfg: Config) => `${cfg.publicUrl.replace(/\/+$/, "")}/auth/callback`;
 const isSecure = (cfg: Config) => cfg.publicUrl.startsWith("https:");
@@ -55,7 +62,7 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
       const config = await getConfig();
       const url = client.buildAuthorizationUrl(config, {
         redirect_uri: redirectUri,
-        scope: "openid email profile",
+        scope: scopeFor(rolesFrom(oidcOf(cfg))),
         state,
         code_challenge: await client.calculatePKCECodeChallenge(codeVerifier),
         code_challenge_method: "S256",
@@ -70,7 +77,7 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
       });
       const claims = tokens.claims();
       if (!claims || typeof claims.sub !== "string" || !claims.sub) throw new Error("ID token missing sub");
-      return userFromClaims(claims)!;
+      return userFromClaims(claims, rolesFrom(oidcOf(cfg)))!;
     },
     async endSessionUrl({ postLogoutRedirectUri }) {
       const config = await getConfig();
@@ -142,13 +149,14 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
     }
     clearState(c);
     if (!isAllowed(user, oidcOf(cfg).allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
-    const payload = { user, exp: now() + SESSION_TTL_S * 1000 };
+    if (user.role === "none") return c.json({ error: "access refused" }, 403);
+    const payload = { user, exp: now() + sessionTtlS(cfg) * 1000 };
     await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), oidcOf(cfg).sessionSecret, {
       path: "/",
       httpOnly: true,
       sameSite: "Lax",
       secure,
-      maxAge: SESSION_TTL_S,
+      maxAge: sessionTtlS(cfg),
     });
     return c.redirect("/", 302);
   });
@@ -212,6 +220,7 @@ async function readSession(c: Parameters<typeof getSignedCookie>[0], cfg: Config
     const out: User = { sub: u.sub, name: u.name };
     if (typeof u.email === "string") out.email = u.email;
     if (typeof u.username === "string") out.username = u.username;
+    if (isRole(u.role)) out.role = u.role; // a cookie from before roles, or an unknown value, has no role and acts as read
     return out;
   } catch {
     return null;

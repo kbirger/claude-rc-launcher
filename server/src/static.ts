@@ -12,9 +12,17 @@ const TYPES: Record<string, string> = {
   png: "image/png",
   ico: "image/x-icon",
   json: "application/json; charset=utf-8",
+  webmanifest: "application/manifest+json; charset=utf-8",
   woff2: "font/woff2",
   map: "application/json; charset=utf-8",
 };
+
+/**
+ * The files that a browser fetches without the login cookie when it installs the app: the manifest, its icons and the
+ * service worker. They hold nothing private, and behind login they would redirect to the login page and break install.
+ */
+const PWA_FILES = new Set(["/manifest.webmanifest", "/service-worker.js", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png"]);
+export const isPwaFile = (path: string): boolean => PWA_FILES.has(path);
 
 export function contentType(name: string): string {
   const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();

@@ -83,7 +83,10 @@ A transcript has one JSON record on each line. These short examples show the rec
 
 - The first record with a `cwd` gives the session folder, the branch and the start time.
 - The title records give the name. A custom title comes first, then an AI title, then an agent name, then the first
-  real prompt.
+  real prompt. A record that Claude Code wrote is not a prompt. This includes the summary that `/compact` puts at the
+  start of a transcript (`isCompactSummary`).
+- `chooseName` in `sessionnames.ts` orders the sources of the name of a session: a live name that someone set, the name
+  of the first transcript of the chain, the name of this transcript, and last a live name that Claude Code made up.
 - A `tool_use` block is a call. A `tool_result` block with the same id is its answer. When `is_error` is absent or
   false, the write succeeded. The code then sets `confirmed` to true for the file.
 - Claude Code can write one tool call more than once while it streams. A repeat with the same id, the same tool name
@@ -93,8 +96,9 @@ A transcript has one JSON record on each line. These short examples show the rec
 Each function reads only what it needs:
 
 - `scan` reads the start of each transcript, up to the first record with a `cwd`.
-- The name code reads from the start up to the first real prompt (at most 256 KB). It also reads the last 256 KB for
-  title records. A cache keeps the name until the size or the modification time of the file changes.
+- The name code reads from the start up to the first real prompt (at most 256 KB). After a `/compact` summary it reads
+  up to 2 MB more, because the first prompt of a compacted transcript can come far below the summary. It also reads the
+  last 256 KB for title records. A cache keeps the name until the size or the modification time of the file changes.
 - `touchedIn` reads the whole transcript line by line. It parses only lines that contain `"tool_use"` or
   `"tool_result"`.
 

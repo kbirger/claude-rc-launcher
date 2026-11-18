@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import Code from "@tabler/icons-svelte/icons/code";
   import Download from "@tabler/icons-svelte/icons/download";
@@ -86,7 +87,7 @@
 {#snippet plain(text: string, code: boolean = false)}
   {#if !code && showsInPre(text)}
     {@render controls(false, false)}
-    <pre use:track data-preview="plain" class="{PANE} m-0 rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
+    <pre use:track data-preview="plain" class="{PANE} rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
   {:else}
     {@render controls(false, true)}
     <div use:track data-preview="plain" class="min-w-0"><CodeView {text} {wrap} /></div>
@@ -95,7 +96,7 @@
 
 <div class="grid gap-3" style="--pane-max: max(150px, calc(100dvh - {paneTop}px - 6.5rem - env(safe-area-inset-bottom) - 1px))">
   <!-- Back on a row of its own, then the name and the size under it. -->
-  <Button class="-ml-2 h-8 w-fit px-2 text-muted-foreground hover:border-border" variant="ghost" size="sm" href={back}><ArrowLeft aria-hidden="true" />{backLabel}</Button>
+  <Button class="-ml-2 h-8 w-fit px-2 text-muted-foreground" variant="ghost" size="sm" href={back}><ArrowLeft aria-hidden="true" />{backLabel}</Button>
   {#if q.data}
     {@const p = q.data}
     <div class="grid min-w-0 gap-0.5">
@@ -110,7 +111,7 @@
   {#if q.isPending}
     <p class="text-muted-foreground">Loading file...</p>
   {:else if q.error}
-    <p class="error">{q.error.message}</p>
+    <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
   {:else if q.data}
     {@const p = q.data}
     {#if p.kind === "text"}
