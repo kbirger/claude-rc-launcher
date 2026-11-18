@@ -428,6 +428,14 @@ describe("session names", () => {
     expect(await nameOf([...skipped, prompt("real one", { isMeta: true }), prompt("the real prompt")])).toBe("the real prompt");
   });
 
+  test("a compact summary is not the first prompt", async () => {
+    // After /compact, Claude Code starts the transcript with its own summary, flagged as a user record.
+    const summary = prompt("This session is being continued from a previous conversation that ran out of context.", { isCompactSummary: true });
+    expect(await nameOf([summary, prompt("the real prompt")])).toBe("the real prompt");
+    expect(await nameOf([summary])).toBeUndefined();
+    expect(await nameOf([summary, title("aiTitle", "ai name")])).toBe("ai name");
+  });
+
   test("array content uses the first text block", async () => {
     expect(await nameOf([prompt([{ type: "image" }, { type: "text", text: "from blocks" }, { type: "text", text: "no" }])])).toBe("from blocks");
   });
