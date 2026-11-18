@@ -56,7 +56,7 @@
     {#if s}
       {@const wt = worktreeName(s.root)}
       <header class="grid gap-1">
-        <h2 class="m-0 text-xl leading-tight font-semibold [overflow-wrap:anywhere]">{sessionTitle(s) ?? "Untitled session"}</h2>
+        <h2 class="font-heading text-xl leading-tight font-semibold [overflow-wrap:anywhere]">{sessionTitle(s) ?? "Untitled session"}</h2>
         <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
           {#if s.branch}<span class="min-w-0 [overflow-wrap:anywhere]">{s.branch}</span><span aria-hidden="true">·</span>{/if}
           <span class="font-mono text-xs">{s.id.slice(0, 8)}</span>
@@ -82,14 +82,14 @@
   {:else if inPermissions}
     <SessionPermissions {host} {instance} {session} view={current === "blocked" ? "blocked" : "permissions"} {now} live={s?.live !== undefined} onpick={pick} />
   {:else}
-    <h3 class="m-0 text-sm font-semibold">Files</h3>
+    <h3 class="font-heading text-sm font-semibold">Files</h3>
     <Tabs.Root value={current} onValueChange={pick}>
       <Tabs.List aria-label="Session files" class="group-data-horizontal/tabs:h-auto w-full">
         <Tabs.Trigger value="touched" class="h-11 text-sm">Touched</Tabs.Trigger>
         <Tabs.Trigger value="changed" class="h-11 text-sm">Changed</Tabs.Trigger>
         <Tabs.Trigger value="folder" class="h-11 text-sm">Folder</Tabs.Trigger>
       </Tabs.List>
-      <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[fileView]}</p>
+      <p class="mt-2 mb-3 text-xs text-muted-foreground">{help[fileView]}</p>
       <Tabs.Content value={current} class="min-w-0">
         {#if q.isPending}
           <p class="text-muted-foreground">Loading session...</p>

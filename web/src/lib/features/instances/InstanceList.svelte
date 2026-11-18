@@ -105,9 +105,9 @@
     {/snippet}
     {#snippet subtitle()}
       {#if i}
-        <p class="m-0 font-mono [overflow-wrap:anywhere]">{i.path}</p>
+        <p class="font-mono [overflow-wrap:anywhere]">{i.path}</p>
         {#if i.user || uptime(i.state, i.startedAt)}
-          <p class="m-0">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
+          <p>{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
         {/if}
       {/if}
     {/snippet}

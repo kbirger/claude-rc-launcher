@@ -2,7 +2,7 @@
    Tokyo Night all work. The colors of code come from codetheme.ts, not from here. */
 .formatted-md { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
 /* Tailwind's reset clears the browser styles of headings, paragraphs and lists. Rendered markdown needs them, so they are set here and nowhere else. */
-.formatted-md h1, .formatted-md h2, .formatted-md h3, .formatted-md h4, .formatted-md h5, .formatted-md h6 { font-weight: bold; margin-block: 0.67em; }
+.formatted-md h1, .formatted-md h2, .formatted-md h3, .formatted-md h4, .formatted-md h5, .formatted-md h6 { font-family: var(--font-heading); font-weight: bold; margin-block: 0.67em; }
 .formatted-md h1 { font-size: 2em; }
 .formatted-md h2 { font-size: 1.5em; }
 .formatted-md h3 { font-size: 1.17em; margin-block: 1em; }

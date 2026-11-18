@@ -107,7 +107,7 @@
 {#if full || (items.length && dismissed !== key)}
   <Alert role={actionable ? "alert" : "status"} aria-label="Updates" class="flex flex-col gap-2 p-2 pt-1">
     <div class="flex items-center justify-between gap-2 pl-1">
-      <h2 class="m-0 text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
+      <h2 class="font-heading text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
       {#if !full}<Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={18} aria-hidden="true" /></Button>{/if}
     </div>
     <ul class="flex flex-col gap-3 px-1">
@@ -157,8 +157,8 @@
         </li>
       {/each}
     </ul>
-    {#if full && items.length === 0}<p class="m-0 px-1 text-muted-foreground">Everything is up to date.</p>{/if}
-    {#if full && latest}<p class="m-0 px-1 text-xs text-muted-foreground">Latest release: {latest} <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(latest)} target="_blank" rel="noreferrer">Release notes</a></p>{/if}
+    {#if full && items.length === 0}<p class="px-1 text-muted-foreground">Everything is up to date.</p>{/if}
+    {#if full && latest}<p class="px-1 text-xs text-muted-foreground">Latest release: {latest} <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(latest)} target="_blank" rel="noreferrer">Release notes</a></p>{/if}
     <!-- The versions of every machine as it reports them: a local build shows its full version (release, branch, commit). -->
     {#if full}
     <Table.Root class="w-full text-xs">

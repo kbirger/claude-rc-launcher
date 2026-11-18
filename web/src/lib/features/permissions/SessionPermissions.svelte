@@ -23,13 +23,13 @@
   };
 </script>
 
-<h3 class="m-0 text-sm font-semibold">Permissions</h3>
+<h3 class="font-heading text-sm font-semibold">Permissions</h3>
 <Tabs.Root value={view} onValueChange={pick}>
   <Tabs.List aria-label="Session permissions" class="group-data-horizontal/tabs:h-auto w-full">
     <Tabs.Trigger value="permissions" class="h-11 text-sm">Rules</Tabs.Trigger>
     <Tabs.Trigger value="blocked" class="h-11 text-sm">Blocked{#if blocked.data?.length}<Badge variant="secondary" class="ml-1.5">{blocked.data.length}</Badge>{/if}</Tabs.Trigger>
   </Tabs.List>
-  <p class="mx-0 mt-2 mb-3 text-xs text-muted-foreground">{help[view]}</p>
+  <p class="mt-2 mb-3 text-xs text-muted-foreground">{help[view]}</p>
   <Tabs.Content value={view} class="min-w-0">
     {#if view === "blocked"}
       <BlockedList {host} {instance} {session} {now} {live} layers={rules.data?.layers} />

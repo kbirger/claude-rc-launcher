@@ -92,7 +92,7 @@
         <Collapsible.Root class="text-sm">
           <Collapsible.Trigger class="min-h-11 cursor-pointer text-left {wrap}">Blocked: {summaryOf(call)}</Collapsible.Trigger>
           <Collapsible.Content>
-            <p class="m-0 mt-1 whitespace-pre-wrap text-muted-foreground {wrap}">{call.text}</p>
+            <p class="mt-1 whitespace-pre-wrap text-muted-foreground {wrap}">{call.text}</p>
           </Collapsible.Content>
         </Collapsible.Root>
       {/if}
@@ -108,9 +108,9 @@
         </Tabs.Root>
       {/if}
       {#each blocked as l (l.scope)}
-        <p class="m-0 text-sm text-muted-foreground {wrap}">{scopeBadge(l.scope)}: {l.reason ?? "The node cannot tell where Claude Code keeps this file."} It cannot be changed here.</p>
+        <p class="text-sm text-muted-foreground {wrap}">{scopeBadge(l.scope)}: {l.reason ?? "The node cannot tell where Claude Code keeps this file."} It cannot be changed here.</p>
       {/each}
-      {#if offered.length === 0 && blocked.length === 0}<p class="m-0 text-sm text-muted-foreground">No file can be changed here.</p>{/if}
+      {#if offered.length === 0 && blocked.length === 0}<p class="text-sm text-muted-foreground">No file can be changed here.</p>{/if}
 
       <span id="{uid}-list" class="text-sm font-medium">List</span>
       <Tabs.Root value={list} onValueChange={(v) => (list = v as typeof list)}>
@@ -137,19 +137,19 @@
 
       {#if layer && trimmed}
         {@const words = confirmWords(mode, list)}
-        <p class="m-0 text-sm {wrap}" data-testid="confirm">{words[0]} <code class="font-mono text-xs {wrap}">{trimmed}</code> {words[1]} <code class="font-mono text-xs {wrap}">{layer.path}</code></p>
-        {#if layer.resolvedPath && layer.resolvedPath !== layer.path}<p class="m-0 text-xs text-muted-foreground {wrap}">Link to {layer.resolvedPath}</p>{/if}
+        <p class="text-sm {wrap}" data-testid="confirm">{words[0]} <code class="font-mono text-xs {wrap}">{trimmed}</code> {words[1]} <code class="font-mono text-xs {wrap}">{layer.path}</code></p>
+        {#if layer.resolvedPath && layer.resolvedPath !== layer.path}<p class="text-xs text-muted-foreground {wrap}">Link to {layer.resolvedPath}</p>{/if}
       {/if}
-      {#each warnings as w (w)}<p class="m-0 text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
+      {#each warnings as w (w)}<p class="text-sm text-amber-700 dark:text-amber-400 {wrap}" role="note">{w}</p>{/each}
       {#if canNudge && !result}
         <div class="flex min-h-11 items-center gap-3 {wrap}">
           <Checkbox id="nudge" bind:checked={nudge} disabled={live !== true} />
           <Label for="nudge" class="leading-snug font-normal">{NUDGE_LABEL}</Label>
         </div>
-        {#if live !== true}<p class="m-0 text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
+        {#if live !== true}<p class="text-sm text-muted-foreground {wrap}">{NOT_LIVE_NOTE}</p>{/if}
       {/if}
-      {#if result}<p class="m-0 text-sm {wrap}" role="status">Rule saved. {result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}
-      {#if error}<p class="m-0 text-sm text-destructive {wrap}" role="alert">{error}</p>{/if}
+      {#if result}<p class="text-sm {wrap}" role="status">Rule saved. {result.sent ? NUDGE_SENT : nudgeFailure(result.reason)}</p>{/if}
+      {#if error}<p class="text-sm text-destructive {wrap}" role="alert">{error}</p>{/if}
     </div>
     <Sheet.Footer class="px-4">
       {#if result}

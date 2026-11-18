@@ -134,7 +134,7 @@
       </div>
       <div class="grid gap-2">
         <Input class="h-11" placeholder="Name (optional)" aria-label="Name" bind:value={model.name} />
-        {#if model.error}<p class="m-0 text-destructive">{model.error}</p>{/if}
+        {#if model.error}<p class="text-destructive">{model.error}</p>{/if}
         {#if model.trustPrompt}
           <Alert.Root>
             <Alert.Description class="[overflow-wrap:anywhere]">

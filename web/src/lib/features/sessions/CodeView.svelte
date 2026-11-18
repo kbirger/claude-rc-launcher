@@ -70,13 +70,13 @@
 <!-- The note takes 1.75rem, so the box under it is that much lower: the page keeps no scroll bar of its own. -->
 <div class="contents" style:--code-note={(failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0) > 0 ? `${((failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0)) * 1.75}rem` : null}>
   {#if failed || colorsFailed}
-    <p data-code-note class="m-0 mb-2 text-sm text-muted-foreground">Colors could not load. Showing plain text.</p>
+    <p data-code-note class="mb-2 text-sm text-muted-foreground">Colors could not load. Showing plain text.</p>
   {/if}
   {#if unmarked}
-    <p data-code-note data-special-note class="m-0 mb-2 text-sm text-muted-foreground">{SPECIAL_CHARS_NOTE}</p>
+    <p data-code-note data-special-note class="mb-2 text-sm text-muted-foreground">{SPECIAL_CHARS_NOTE}</p>
   {/if}
   {#if failed}
-    <pre class="m-0 max-h-[calc(var(--pane-max,100dvh)-var(--code-note,0rem))] overflow-auto overscroll-contain rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
+    <pre class="max-h-[calc(var(--pane-max,100dvh)-var(--code-note,0rem))] overflow-auto overscroll-contain rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
   {:else}
     <div bind:this={host} class="code-view min-w-0 max-w-full rounded-lg border bg-card"></div>
   {/if}
