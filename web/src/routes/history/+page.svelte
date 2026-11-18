@@ -9,7 +9,7 @@
 </script>
 
 <Button variant="ghost" size="sm" class="-ml-2 mb-1 h-8 w-fit px-2 text-muted-foreground" href="/updates"><ArrowLeft aria-hidden="true" />Back to updates</Button>
-<h2 class="mt-0 text-lg">Update history</h2>
+<h2 class="font-heading mb-3 text-lg font-bold">Update history</h2>
 
 <!-- Every update of every machine, newest first, with its output. -->
 <UpdateHistory {names} />

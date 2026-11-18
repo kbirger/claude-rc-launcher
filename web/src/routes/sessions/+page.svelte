@@ -16,7 +16,7 @@
   const now = $derived(shell.now.getTime());
 </script>
 
-{#if !session}<h2 class="mt-0 text-lg">Sessions</h2>{/if}
+{#if !session}<h2 class="font-heading mb-3 text-lg font-bold">Sessions</h2>{/if}
 {#if !instance}
   <p class="text-muted-foreground">Pick an instance and tap Sessions.</p>
 {:else}

@@ -82,7 +82,7 @@
       </div>
     {/if}
     <Breadcrumb.Root aria-label="Folder" class="my-1">
-      <Breadcrumb.List class="m-0 list-none gap-0 p-0">
+      <Breadcrumb.List class="gap-0">
         {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as c, i (c.path ?? "")}
           {#if i > 0}<Breadcrumb.Separator />{/if}
           <Breadcrumb.Item>
@@ -134,7 +134,7 @@
       </div>
       <div class="grid gap-2">
         <Input class="h-11" placeholder="Name (optional)" aria-label="Name" bind:value={model.name} />
-        {#if model.error}<p class="m-0 text-destructive">{model.error}</p>{/if}
+        {#if model.error}<p class="text-destructive">{model.error}</p>{/if}
         {#if model.trustPrompt}
           <Alert.Root>
             <Alert.Description class="[overflow-wrap:anywhere]">

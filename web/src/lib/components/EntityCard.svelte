@@ -69,7 +69,7 @@
         {#if titleEditor}
           <div class="min-w-0 flex-1">{@render titleEditor()}</div>
         {:else}
-          <h3 class="m-0 min-w-0 truncate text-base leading-tight font-semibold" title={titleText}>{@render title()}</h3>
+          <h3 class="font-heading min-w-0 truncate text-base leading-tight font-semibold" title={titleText}>{@render title()}</h3>
         {/if}
         {#if titleAside}<span class="flex flex-none items-center">{@render titleAside()}</span>{/if}
       </div>

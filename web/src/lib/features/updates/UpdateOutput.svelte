@@ -34,7 +34,7 @@
     <Collapsible.Trigger class="flex min-h-11 cursor-pointer items-center text-muted-foreground">{outputSummary(lines.length)}</Collapsible.Trigger>
     <Collapsible.Content>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
-      <pre bind:this={box} {onscroll} tabindex="0" role="log" aria-label={`Output of ${host}`} class="m-0 max-h-48 overflow-auto rounded-md border bg-card p-2 text-[0.8rem] break-all whitespace-pre-wrap">{lines.map((l) => l.line).join("\n")}</pre>
+      <pre bind:this={box} {onscroll} tabindex="0" role="log" aria-label={`Output of ${host}`} class="max-h-48 overflow-auto rounded-md border bg-card p-2 text-[0.8rem] break-all whitespace-pre-wrap">{lines.map((l) => l.line).join("\n")}</pre>
     </Collapsible.Content>
   </Collapsible.Root>
 {/if}

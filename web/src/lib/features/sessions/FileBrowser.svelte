@@ -54,7 +54,7 @@
 {:else if !q.data?.entries.length}
   <p class="text-muted-foreground">This folder is empty.</p>
 {:else}
-  <ul class="m-0 min-w-0 list-none rounded-lg border bg-card p-0">
+  <ul class="min-w-0 rounded-lg border bg-card">
     {#each q.data.entries as e (e.name)}
       <li class="min-w-0">
         {#if e.kind === "other"}

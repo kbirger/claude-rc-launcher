@@ -30,10 +30,10 @@
       <Search size={18} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
       <Input type="search" bind:value={filter} placeholder="Filter by name, id, branch or folder" aria-label="Filter sessions" class="h-11 pl-10" />
     </div>
-    <p class="m-0 text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${q.data.length} sessions` : `${q.data.length} ${q.data.length === 1 ? "session" : "sessions"}`}</p>
+    <p class="text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${q.data.length} sessions` : `${q.data.length} ${q.data.length === 1 ? "session" : "sessions"}`}</p>
   </div>
   {#if !shown.length}<p class="text-muted-foreground">No session matches "{filter}".</p>{/if}
-  <ul class="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-3 p-0">
+  <ul class="grid grid-cols-[minmax(0,1fr)] gap-3">
     {#each shown as s (s.id)}
       {@const wt = worktreeName(s.root)}
       <li class="min-w-0">

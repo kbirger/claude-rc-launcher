@@ -107,10 +107,10 @@
 {#if full || (items.length && dismissed !== key)}
   <Alert role={actionable ? "alert" : "status"} aria-label="Updates" class="flex flex-col gap-2 p-2 pt-1">
     <div class="flex items-center justify-between gap-2 pl-1">
-      <h2 class="m-0 text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
+      <h2 class="font-heading text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
       {#if !full}<Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={18} aria-hidden="true" /></Button>{/if}
     </div>
-    <ul class="m-0 flex list-none flex-col gap-3 p-0 px-1">
+    <ul class="flex flex-col gap-3 px-1">
       {#each ordered as item, i (bannerKey(item) + ":" + i)}
         <li class={cn("flex flex-col items-start gap-1", item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating" && "border-l-3 border-warning pl-2")}>
           {#if item.kind === "hub-update"}
@@ -123,7 +123,7 @@
             {#if full}
               <!-- One row for each node, so that every out-of-date node shows with its own versions and its own button. -->
               <span>Out of date nodes:</span>
-              <ul class="m-0 flex w-full list-none flex-col gap-1 p-0">
+              <ul class="flex w-full flex-col gap-1">
                 {#each item.hosts as n (n.id)}
                   {@const h = hosts.find((x) => x.id === n.id)}
                   <li class="flex flex-wrap items-center justify-between gap-x-3">
@@ -157,8 +157,8 @@
         </li>
       {/each}
     </ul>
-    {#if full && items.length === 0}<p class="m-0 px-1 text-muted-foreground">Everything is up to date.</p>{/if}
-    {#if full && latest}<p class="m-0 px-1 text-xs text-muted-foreground">Latest release: {latest} <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(latest)} target="_blank" rel="noreferrer">Release notes</a></p>{/if}
+    {#if full && items.length === 0}<p class="px-1 text-muted-foreground">Everything is up to date.</p>{/if}
+    {#if full && latest}<p class="px-1 text-xs text-muted-foreground">Latest release: {latest} <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(latest)} target="_blank" rel="noreferrer">Release notes</a></p>{/if}
     <!-- The versions of every machine as it reports them: a local build shows its full version (release, branch, commit). -->
     {#if full}
     <Table.Root class="w-full text-xs">

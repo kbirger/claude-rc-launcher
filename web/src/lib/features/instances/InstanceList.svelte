@@ -92,7 +92,7 @@
 {#if model.loaded && model.rows.length === 0}
   <p class="text-muted-foreground">No running instances. Tap New to start one.</p>
 {/if}
-<ul class="m-0 grid list-none gap-3 p-0">
+<ul class="grid gap-3">
   {#each model.rows as r (r.key)}
     {@const i = r.instance}
     {#snippet title()}{r.name}{/snippet}
@@ -105,9 +105,9 @@
     {/snippet}
     {#snippet subtitle()}
       {#if i}
-        <p class="m-0 font-mono [overflow-wrap:anywhere]">{i.path}</p>
+        <p class="font-mono [overflow-wrap:anywhere]">{i.path}</p>
         {#if i.user || uptime(i.state, i.startedAt)}
-          <p class="m-0">{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
+          <p>{[i.user, uptime(i.state, i.startedAt)].filter(Boolean).join(" · ")}</p>
         {/if}
       {/if}
     {/snippet}

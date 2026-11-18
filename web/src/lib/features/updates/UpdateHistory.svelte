@@ -17,7 +17,7 @@
 {:else if entries.length === 0}
   <p class="text-muted-foreground">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
 {:else}
-  <ul class="m-0 grid list-none gap-3 p-0">
+  <ul class="grid gap-3">
     {#each entries as { host, item } (host + item.entry.startedAt)}
       <li>
         <Card.Root size="sm" class="gap-2 *:px-4">
@@ -28,9 +28,9 @@
           <Card.Content>
             {#if item.lines.length}
               <!-- svelte-ignore a11y_no_noninteractive_tabindex: a scrollable region must be reachable by keyboard -->
-              <pre tabindex="0" role="log" aria-label={`Output of the update of ${names[host] ?? host} (${linesSummary(item.lines.length)})`} class="m-0 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs break-all whitespace-pre-wrap">{item.lines.map((l) => l.line).join("\n")}</pre>
+              <pre tabindex="0" role="log" aria-label={`Output of the update of ${names[host] ?? host} (${linesSummary(item.lines.length)})`} class="max-h-48 overflow-auto rounded-md border bg-muted/40 p-2 text-xs break-all whitespace-pre-wrap">{item.lines.map((l) => l.line).join("\n")}</pre>
             {:else}
-              <p class="m-0 text-xs text-muted-foreground">No output was recorded for this update.</p>
+              <p class="text-xs text-muted-foreground">No output was recorded for this update.</p>
             {/if}
             <ReleaseNotes entry={item.entry} />
           </Card.Content>

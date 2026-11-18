@@ -29,7 +29,7 @@
 {:else if !q.data?.length}
   <p class="text-muted-foreground">Nothing was blocked in this session.</p>
 {:else}
-  <ul class="m-0 min-w-0 list-none rounded-lg border bg-card p-0">
+  <ul class="min-w-0 rounded-lg border bg-card">
     {#each q.data as c (c.id)}
       <li class="flex min-h-11 min-w-0 flex-col justify-center gap-1 border-b px-3 py-2 last:border-b-0">
         <span class={cn(wrap, "font-mono text-xs")}>{summaryOf(c)}</span>

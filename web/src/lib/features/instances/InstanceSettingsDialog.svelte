@@ -28,10 +28,10 @@
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
       <InstanceSettingsFields {help} value={model.value} onchange={(v) => model.set(v)} disabled={model.busy} />
-      <p class="m-0 text-sm {wrap}" role="note">If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.</p>
-      {#if model.busy}<p class="m-0 text-sm text-muted-foreground {wrap}" role="status">If this folder runs, its server restarts with the new settings. This can take up to a minute.</p>{/if}
-      {#if model.notice}<p class="m-0 text-sm {wrap}" role="status">{model.notice}</p>{/if}
-      {#if model.error}<p class="m-0 text-sm text-destructive {wrap}" role="alert">{model.error}</p>{/if}
+      <p class="text-sm {wrap}" role="note">If this folder runs, applying this restarts its server. If Create a session at start is on, its sessions come back. If this folder is paused, the change is only saved.</p>
+      {#if model.busy}<p class="text-sm text-muted-foreground {wrap}" role="status">If this folder runs, its server restarts with the new settings. This can take up to a minute.</p>{/if}
+      {#if model.notice}<p class="text-sm {wrap}" role="status">{model.notice}</p>{/if}
+      {#if model.error}<p class="text-sm text-destructive {wrap}" role="alert">{model.error}</p>{/if}
     </div>
     <Sheet.Footer class="px-4">
       <Button type="button" size="touch" disabled={model.busy || !model.changed} onclick={() => model.apply()}>{model.busy ? "Applying..." : "Apply"}</Button>

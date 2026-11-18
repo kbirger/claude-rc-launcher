@@ -86,7 +86,7 @@
 {#snippet plain(text: string, code: boolean = false)}
   {#if !code && showsInPre(text)}
     {@render controls(false, false)}
-    <pre use:track data-preview="plain" class="{PANE} m-0 rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
+    <pre use:track data-preview="plain" class="{PANE} rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
   {:else}
     {@render controls(false, true)}
     <div use:track data-preview="plain" class="min-w-0"><CodeView {text} {wrap} /></div>

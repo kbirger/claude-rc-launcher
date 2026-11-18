@@ -51,12 +51,12 @@
       {#if model.cloning}Cloning...{:else}Clone into {parent}{/if}
     </Button>
   </form>
-  {#if model.cloneError}<p class="m-0 text-destructive [overflow-wrap:anywhere]" role="status">{model.cloneError}</p>{/if}
+  {#if model.cloneError}<p class="text-destructive [overflow-wrap:anywhere]" role="status">{model.cloneError}</p>{/if}
 
   <Input class="h-11" type="search" placeholder="Search your repos" bind:value={model.query} aria-label="Search repos" />
-  {#if model.listError}<p class="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]" role="status">{model.listError}</p>{/if}
+  {#if model.listError}<p class="text-sm text-muted-foreground [overflow-wrap:anywhere]" role="status">{model.listError}</p>{/if}
   {#if model.needLogin}
-    <div class="grid gap-1 rounded-lg border bg-card p-2 [&_p]:m-0">
+    <div class="grid gap-1 rounded-lg border bg-card p-2">
       {#if model.login}
         <p>Enter this code on GitHub:</p>
         <p class="font-mono text-2xl tracking-widest" role="status">{model.login.code}</p>
@@ -75,7 +75,7 @@
   {/if}
   <div class="min-h-[120px] flex-1 overflow-auto rounded-lg border bg-card">
     {#if model.listLoading}
-      <p class="m-0 p-3 text-muted-foreground">Loading repos...</p>
+      <p class="p-3 text-muted-foreground">Loading repos...</p>
     {:else}
       {#each model.shown as g (g.owner)}
         <div class="border-b bg-background px-3 py-1.5 text-xs text-muted-foreground">{g.owner}</div>

@@ -54,21 +54,21 @@
 {#if range}
   {#if unavailable}
     <section class="mt-3 grid gap-1">
-      <h3 class="m-0 text-sm font-semibold">What changed</h3>
-      <p class="m-0 text-xs text-muted-foreground">The notes are not available. <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(range.to)} target="_blank" rel="noreferrer">Open the release page.</a></p>
+      <h3 class="font-heading text-sm font-semibold">What changed</h3>
+      <p class="text-xs text-muted-foreground">The notes are not available. <a class="text-primary underline-offset-4 hover:underline" href={releasePageUrl(range.to)} target="_blank" rel="noreferrer">Open the release page.</a></p>
     </section>
   {:else if ready}
     <section class="mt-3 grid gap-3">
-      <h3 class="m-0 text-sm font-semibold">What changed</h3>
+      <h3 class="font-heading text-sm font-semibold">What changed</h3>
       {#each ready as r (r.version)}
         <div data-release={r.version} class="grid gap-1">
-          <h4 class="m-0 text-sm font-semibold">{r.version} <time class="font-normal text-muted-foreground" datetime={r.publishedAt}>{date(r.publishedAt)}</time></h4>
+          <h4 class="font-heading text-sm font-semibold">{r.version} <time class="font-normal text-muted-foreground" datetime={r.publishedAt}>{date(r.publishedAt)}</time></h4>
           {#if !r.body.trim()}
-            <p class="m-0 text-xs text-muted-foreground">No notes.</p>
+            <p class="text-xs text-muted-foreground">No notes.</p>
           {:else if r.version in rendered && rendered[r.version]}
             <FormattedText html={rendered[r.version]!} />
           {:else if r.version in rendered}
-            <pre class="m-0 text-xs break-all whitespace-pre-wrap">{r.body}</pre>
+            <pre class="text-xs break-all whitespace-pre-wrap">{r.body}</pre>
           {/if}
         </div>
       {/each}

@@ -41,7 +41,7 @@
           </Field.Label>
         {/each}
       </RadioGroup.Root>
-      {#if s.limits}<p class="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{s.limits}</p>{/if}
+      {#if s.limits}<p class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{s.limits}</p>{/if}
     </fieldset>
   {/each}
 </div>
