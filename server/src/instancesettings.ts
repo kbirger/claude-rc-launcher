@@ -53,13 +53,13 @@ export const SETTINGS_HELP: SettingsHelp = {
           value: true,
           label: "On",
           explanation:
-            "When the server starts, it makes one empty session. After a crash or a restart, it brings back its recorded sessions.",
+            "When the server starts, it makes one empty session. After a crash or a restart, each recorded session wakes when you open it on claude.ai. This works for about four hours.",
         },
         {
           value: false,
           label: "Off",
           explanation:
-            "The server starts with no session. When a client asks, the server makes a session. While the folder holds a recoverable session, the server refuses to restart, so crash recovery does not work.",
+            "The server starts with no session. When a client asks, the server makes a session. At each stop, claude.ai archives the sessions of the server, so none comes back after a crash or a restart. While the folder holds a recoverable session, the server refuses to start.",
         },
       ],
       limits: "A change restarts a running instance and checks that it stays up. A paused instance only saves the change.",

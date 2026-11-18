@@ -2,7 +2,7 @@ import { untrack } from "svelte";
 import { createMutation, createQuery, useMutationState, type QueryClient } from "@tanstack/svelte-query";
 import { ApiError } from "../../shared/http";
 import { DEFAULT_SETTINGS, type Instance, type InstanceSettings, type SettingsPatch } from "./api";
-import { pauseInstanceMutation, resumeInstanceMutation, stopInstanceMutation, updateSettingsMutation, type SettingsArgs, type StartArgs } from "./mutations";
+import { pauseInstanceMutation, restartInstanceMutation, resumeInstanceMutation, stopInstanceMutation, updateSettingsMutation, type SettingsArgs, type StartArgs } from "./mutations";
 import { mergePending } from "./pending";
 import { instancesQuery, settingsHelpQuery } from "./queries";
 
@@ -19,6 +19,7 @@ export function createInstancesModel(opts: { host: string; client: QueryClient; 
   );
   const pauseM = createMutation(() => pauseInstanceMutation(host, client), () => client);
   const resumeM = createMutation(() => resumeInstanceMutation(host, client), () => client);
+  const restartM = createMutation(() => restartInstanceMutation(host, client), () => client);
   const pausing = useMutationState(
     { filters: { mutationKey: ["instances", host, "pause"], status: "pending" }, select: (m) => m.state.variables as string },
     client,
@@ -27,13 +28,17 @@ export function createInstancesModel(opts: { host: string; client: QueryClient; 
     { filters: { mutationKey: ["instances", host, "resume"], status: "pending" }, select: (m) => m.state.variables as string },
     client,
   );
+  const restarting = useMutationState(
+    { filters: { mutationKey: ["instances", host, "restart"], status: "pending" }, select: (m) => m.state.variables as string },
+    client,
+  );
   const applying = useMutationState(
     { filters: { mutationKey: ["instances", host, "settings"], status: "pending" }, select: (m) => (m.state.variables as SettingsArgs).id },
     client,
   );
   // Null for an old node (no settings route) and for a failed read: the list then shows no settings controls and no message.
   const helpQ = createQuery(() => settingsHelpQuery(host), () => client);
-  // The message of the last pause or resume that failed. The next pause or resume clears it.
+  // The message of the last pause, resume or restart that failed. The next one clears it.
   let actionError = $state("");
   const starting = useMutationState(
     { filters: { mutationKey: ["instances", host, "start"], status: "pending" }, select: (m) => m.state.variables as StartArgs },
@@ -48,7 +53,7 @@ export function createInstancesModel(opts: { host: string; client: QueryClient; 
     client,
   );
 
-  const rows = $derived(mergePending(listQ.data ?? [], starting, [...stopping.map((id) => ({ id, kind: "stopping" as const })), ...pausing.map((id) => ({ id, kind: "pausing" as const })), ...resuming.map((id) => ({ id, kind: "resuming" as const })), ...applying.map((id) => ({ id, kind: "applying" as const }))]));
+  const rows = $derived(mergePending(listQ.data ?? [], starting, [...stopping.map((id) => ({ id, kind: "stopping" as const })), ...pausing.map((id) => ({ id, kind: "pausing" as const })), ...resuming.map((id) => ({ id, kind: "resuming" as const })), ...restarting.map((id) => ({ id, kind: "restarting" as const })), ...applying.map((id) => ({ id, kind: "applying" as const }))]));
   // Reading dataUpdatedAt makes the uptimes recompute (with a fresh Date.now()) on each list refresh.
   const now = $derived.by(() => (listQ.dataUpdatedAt, Date.now()));
 
@@ -88,6 +93,12 @@ export function createInstancesModel(opts: { host: string; client: QueryClient; 
     resume(id: string) {
       actionError = "";
       resumeM.mutate(id, { onError: (e) => (actionError = e instanceof ApiError ? e.message : "Failed to resume") });
+    },
+    /** Restarts the server of a running instance. The caller asks the user first. A second call while one runs does nothing. */
+    restart(id: string) {
+      if (restarting.includes(id)) return;
+      actionError = "";
+      restartM.mutate(id, { onError: (e) => (actionError = e instanceof ApiError ? e.message : "Failed to restart") });
     },
     /** The caller asks the user first. This hides the old stop messages and starts the stop. */
     stop(id: string) {

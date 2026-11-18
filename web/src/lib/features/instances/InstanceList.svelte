@@ -13,6 +13,7 @@
   import { useQueryClient } from "@tanstack/svelte-query";
   import { PermissionsLink } from "#lib/features/permissions";
   import { SessionsLink } from "#lib/features/sessions";
+  import ActionIcon from "../../shared/ui/ActionIcon.svelte";
   import InstanceLogs from "./InstanceLogs.svelte";
   import InstanceSettingsDialog from "./InstanceSettingsDialog.svelte";
   import { createInstancesModel } from "./model.svelte";
@@ -70,6 +71,14 @@
     ];
   }
 
+  // The sessions of the folder stop with the server. They wake when the user opens them on claude.ai, for about four hours.
+  // A server that starts with no session is archived at each stop, so nothing comes back.
+  function restart(i: Instance) {
+    const ask = `Restart ${i.name}? The sessions of this folder stop. After the restart, open a session on claude.ai to bring it back. This works for about four hours.`;
+    const warn = i.settings?.createSession === false ? " This instance starts with no session. Its sessions are archived at each stop and do not come back." : "";
+    if (confirm(ask + warn)) model.restart(i.id);
+  }
+
   function stop(i: Instance) {
     if (confirm(`Stop ${i.name}? This removes it from the list. Use Pause to keep it.`)) model.stop(i.id);
   }
@@ -114,6 +123,9 @@
             <Play aria-hidden="true" />
           </Button>
         {:else}
+          <Button variant="ghost" size="icon" disabled={!!r.pending} onclick={() => restart(i)} aria-label="Restart {r.name}" title="Restart: stops and starts the server">
+            <ActionIcon name="refresh" />
+          </Button>
           <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
             <Pause aria-hidden="true" />
           </Button>

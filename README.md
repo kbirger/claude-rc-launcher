@@ -479,6 +479,14 @@ WantedBy=multi-user.target
 - The launcher only lists/stops unit files carrying the `managed-by` marker line and the
   `claude-rc-` prefix.
 
+## Recover sessions after a crash
+
+If a server starts without `--no-create-session-in-dir`, its sessions survive a stop. This holds for a crash, an out-of-memory kill and a restart. When the server starts again, it runs one session. The other sessions have no process yet. When you open one of them on claude.ai, the server starts a process for it. This works for about four hours after the server stopped. The four hours come from the Claude Code documentation. The launcher does not test them.
+
+To restart a server, press Restart on the instance card. The button asks you first. A paused instance has no Restart button, so resume it first. Open the session on claude.ai after the restart.
+
+If the setting "Create a session at start" is off, the unit has `--no-create-session-in-dir`. In that case claude.ai archives the sessions at each stop, and none of them comes back. A server with that flag also refuses to start while its folder holds a recoverable session. To recover sessions, turn the setting on in the settings of the instance. The change restarts the instance.
+
 ## Cloning a repo
 
 You can clone a GitHub repo into a folder on a host and start an instance in it. The host must be a Linux host.
