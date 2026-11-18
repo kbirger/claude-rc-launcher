@@ -110,7 +110,7 @@
       <h2 class="m-0 text-sm font-semibold">{#if full}Updates{:else}<a href="/updates">Updates</a>{/if}</h2>
       {#if !full}<Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label="Dismiss" title="Dismiss" onclick={() => (dismissed = key)}><X size={18} aria-hidden="true" /></Button>{/if}
     </div>
-    <ul class="m-0 flex list-none flex-col gap-3 p-0 px-1">
+    <ul class="flex flex-col gap-3 px-1">
       {#each ordered as item, i (bannerKey(item) + ":" + i)}
         <li class={cn("flex flex-col items-start gap-1", item.kind !== "latest-unknown" && item.kind !== "hub-local-build" && item.kind !== "updating" && "border-l-3 border-warning pl-2")}>
           {#if item.kind === "hub-update"}
@@ -123,7 +123,7 @@
             {#if full}
               <!-- One row for each node, so that every out-of-date node shows with its own versions and its own button. -->
               <span>Out of date nodes:</span>
-              <ul class="m-0 flex w-full list-none flex-col gap-1 p-0">
+              <ul class="flex w-full flex-col gap-1">
                 {#each item.hosts as n (n.id)}
                   {@const h = hosts.find((x) => x.id === n.id)}
                   <li class="flex flex-wrap items-center justify-between gap-x-3">

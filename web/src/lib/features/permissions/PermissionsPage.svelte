@@ -9,7 +9,7 @@
   const q = createQuery(() => userPermissionsQuery(host, instance));
 </script>
 
-<h2 class="mt-0 text-lg">Permissions</h2>
+<h2 class="mt-0 mb-3 text-lg font-bold">Permissions</h2>
 <p class="mx-0 mt-0 mb-3 text-xs text-muted-foreground">The permission rules in the user settings file of this instance. They apply to every project of its user. The rules of a project are on the session screen.</p>
 {#if q.isPending}
   <p class="text-muted-foreground">Loading permissions...</p>

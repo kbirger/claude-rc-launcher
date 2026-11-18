@@ -46,7 +46,7 @@
   {#each groups as g (g.list)}
     <section class="min-w-0 rounded-lg border bg-card px-3 py-2">
       <h4 class="m-0 text-xs font-semibold text-muted-foreground uppercase">{g.title} ({g.rules.length})</h4>
-      <ul class="m-0 min-w-0 list-none p-0">
+      <ul class="min-w-0">
         {#each g.rules as r (r.raw)}
           <li data-rule class="flex min-w-0 items-center gap-2 border-b py-2 last:border-b-0">
             <div class="min-w-0 flex-1">
@@ -71,7 +71,7 @@
 
   <section class="min-w-0 rounded-lg border bg-card px-3 py-2">
     <h4 class="m-0 text-xs font-semibold text-muted-foreground uppercase">Files</h4>
-    <ul class="m-0 min-w-0 list-none p-0">
+    <ul class="min-w-0">
       {#each layers as l (l.scope)}
         <li class="grid min-w-0 gap-0.5 border-b py-2 last:border-b-0">
           <span class="text-sm font-semibold">{scopeLabel(l.scope)}</span>

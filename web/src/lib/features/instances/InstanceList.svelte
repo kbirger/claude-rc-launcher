@@ -92,7 +92,7 @@
 {#if model.loaded && model.rows.length === 0}
   <p class="text-muted-foreground">No running instances. Tap New to start one.</p>
 {/if}
-<ul class="m-0 grid list-none gap-3 p-0">
+<ul class="grid gap-3">
   {#each model.rows as r (r.key)}
     {@const i = r.instance}
     {#snippet title()}{r.name}{/snippet}

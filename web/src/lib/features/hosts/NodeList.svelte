@@ -60,7 +60,7 @@
   const hasContent = (h: HostInfo) => h.status === "ok" || (editing === h.id && !!error) || !!updateError[h.id] || !!h.error;
 </script>
 
-<ul class="m-0 grid list-none gap-3 p-0" aria-label="Nodes">
+<ul class="grid gap-3" aria-label="Nodes">
   {#each hosts as h (h.id)}
     {#snippet title()}{h.name}{/snippet}
     {#snippet titleEditor()}

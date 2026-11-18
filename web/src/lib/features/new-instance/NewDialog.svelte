@@ -82,7 +82,7 @@
       </div>
     {/if}
     <Breadcrumb.Root aria-label="Folder" class="my-1">
-      <Breadcrumb.List class="m-0 list-none gap-0 p-0">
+      <Breadcrumb.List class="gap-0">
         {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as c, i (c.path ?? "")}
           {#if i > 0}<Breadcrumb.Separator />{/if}
           <Breadcrumb.Item>

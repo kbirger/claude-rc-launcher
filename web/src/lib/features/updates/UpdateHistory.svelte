@@ -17,7 +17,7 @@
 {:else if entries.length === 0}
   <p class="text-muted-foreground">{historyQ.isPending ? "Loading..." : "No finished updates yet."}</p>
 {:else}
-  <ul class="m-0 grid list-none gap-3 p-0">
+  <ul class="grid gap-3">
     {#each entries as { host, item } (host + item.entry.startedAt)}
       <li>
         <Card.Root size="sm" class="gap-2 *:px-4">
