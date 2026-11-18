@@ -65,7 +65,7 @@ function sessionCatalogFor(cfg: Config): SessionCatalog {
   // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
   const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
   const dir = cfg.node?.tls.stateDir ?? cfg.stateDir;
-  return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json") } : {}) });
+  return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json"), nameFile: join(dir, "session-names.json") } : {}) });
 }
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */

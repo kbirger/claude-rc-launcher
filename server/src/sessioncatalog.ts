@@ -8,7 +8,8 @@ import { realpath } from "node:fs/promises";
 import { readLiveSessions, type LiveInfo } from "./livesessions";
 import { SessionChains } from "./sessionchains";
 import { PinnedRoot } from "./pinnedroot";
-import { newNameCache, nameOf, tidy, type NameCache } from "./sessionnames";
+import { NameMemory } from "./namememory";
+import { newNameCache, nameInfoOf, tidy, type NameCache, type NameInfo } from "./sessionnames";
 import { scan, type Found } from "./sessionscan";
 import { openDownload, previewIn } from "./sessionfs";
 import { touchedIn, type TouchedFile } from "./touched";
@@ -29,6 +30,8 @@ export type SessionCatalogOptions = {
   live?: LiveReader;
   /** Where the session chains are kept (a JSON file). Without it they live in memory only. */
   chainFile?: string;
+  /** Where the remembered session names are kept (a JSON file). Without it they live in memory only. */
+  nameFile?: string;
   /** The node's own state folders: an `abs` there is never served. */
   refuseDirs?: readonly string[];
   platform?: NodeJS.Platform;
@@ -57,6 +60,7 @@ export class SessionCatalog {
   readonly fs: TranscriptFs;
   readonly names: NameCache;
   readonly chains: SessionChains;
+  readonly nameMemory: NameMemory;
   readonly platform: NodeJS.Platform;
   readonly openDownload: typeof openDownload;
   readonly previewIn: typeof previewIn;
@@ -67,6 +71,8 @@ export class SessionCatalog {
     this.fs = o.fs ?? defaultTranscriptFs;
     this.names = o.names ?? newNameCache();
     this.chains = new SessionChains(o.chainFile);
+    this.nameMemory = new NameMemory(o.nameFile);
+    this.nameMemory.useFs(this.fs);
     this.platform = o.platform ?? process.platform;
     this.openDownload = o.openDownload ?? openDownload;
     this.previewIn = o.previewIn ?? previewIn;
@@ -151,9 +157,14 @@ export class InstanceSessions {
       // A name that someone set is what the Claude app shows, so it comes first. It is not cached: it changes while the
       // session runs. A default name (made by Claude Code) comes last: the titles in the transcript say more.
       // In a chain the name of the first transcript comes next, because the app names the whole connection from it.
+      // Then the name memory decides: a name that the launcher learned from a better source stays, also after `/compact`.
       const liveName = tidy(liveInfo?.name);
-      const chainName = first ? await nameOf(fs, first, this.catalog.names) : undefined;
-      const name = (liveInfo?.nameIsDefault ? undefined : liveName) ?? chainName ?? (await nameOf(fs, f, this.catalog.names)) ?? liveName;
+      let cand: NameInfo | undefined = liveName && !liveInfo?.nameIsDefault ? { name: liveName, source: "live" } : undefined;
+      cand ??= first ? await nameInfoOf(fs, first, this.catalog.names) : undefined;
+      cand ??= await nameInfoOf(fs, f, this.catalog.names);
+      if (!cand && liveName) cand = { name: liveName, source: "default" };
+      const chain = [f.id, ...(earlier ?? []).map((m) => m.id)];
+      const name = (await this.catalog.nameMemory.resolve({ id: f.id, chain, candidate: cand, file: f.file }))?.name;
       if (name) s.name = name;
       // Field by field: nothing else from the running-session file reaches the answer.
       if (liveInfo) {

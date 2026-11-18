@@ -337,3 +337,19 @@ note, "... N more characters not shown". The text is not changed. At four times 
 - It has no JSON or CSV view, no search, no line numbers and no editor.
 - The code viewer builds only the lines in view. A selection covers only the lines that are built, so use Download
   to get the whole file.
+
+## Name memory
+
+A Remote Control session has no title record in its transcript: the server that started it keeps the title in memory.
+After `/compact` the transcript holds only a summary and the later prompts, so the first prompt is gone. `namememory.ts`
+therefore remembers the best name that the launcher ever read for each session, in the file `session-names.json` in the
+state folder of the node. Each entry holds the name, where it came from, the transcript file and the time it was last seen.
+
+- **Trust order.** A name that someone set (the running-session file or `custom-title`) beats `ai-title`, then
+  `agent-name`, then the first prompt. A default name from Claude Code is shown only when nothing else is known and is
+  never saved. A better source is never replaced by a worse one. A first-prompt name is never replaced by a later first prompt.
+- **Chains.** The name is looked up for every session id of the `/clear` chain, so a new transcript keeps the name of an older one.
+- **Cleanup.** At most 1000 names, each cut to 200 characters, and a file over 1 MB is not loaded. The oldest `seen` is
+  dropped first. `seen` is refreshed each time the session is listed (the file is written again at most once an hour for
+  that). A name whose transcript file is gone (a missing file, not another error) is deleted at the first list after a
+  start and at most once a day after that. There is no expiry by time alone, so a session that is resumed after two months keeps its name.
