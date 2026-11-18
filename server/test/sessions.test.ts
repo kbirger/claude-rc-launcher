@@ -436,6 +436,25 @@ describe("session names", () => {
     expect(await nameOf([summary, title("aiTitle", "ai name")])).toBe("ai name");
   });
 
+  describe("a compacted transcript", () => {
+    // After /compact the transcript starts with the summary and often a long stretch of work before the first prompt.
+    const summary = prompt("This session is being continued from a previous conversation that ran out of context.", { isCompactSummary: true });
+    const filler = (kb: number) => Array.from({ length: kb }, () => rec({ type: "assistant", message: { content: [{ type: "text", text: "x".repeat(1000) }] } }));
+
+    test("the first prompt is found past the usual 256 KB window", async () => {
+      expect(await nameOf([summary, ...filler(400), prompt("the real prompt")])).toBe("the real prompt");
+    });
+
+    test("a transcript that was never compacted keeps the 256 KB window", async () => {
+      expect(await nameOf([...filler(400), prompt("too far")])).toBeUndefined();
+    });
+
+    test("the extra window has an end", async () => {
+      const huge = rec({ type: "assistant", message: { content: [{ type: "text", text: "x".repeat(5 * 1024 * 1024) }] } });
+      expect(await nameOf([summary, huge, prompt("too far")])).toBeUndefined();
+    });
+  });
+
   test("array content uses the first text block", async () => {
     expect(await nameOf([prompt([{ type: "image" }, { type: "text", text: "from blocks" }, { type: "text", text: "no" }])])).toBe("from blocks");
   });
