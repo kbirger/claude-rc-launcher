@@ -20,7 +20,7 @@
   <ul class="m-0 grid list-none gap-3 p-0">
     {#each entries as { host, item } (host + item.entry.startedAt)}
       <li>
-        <Card.Root size="sm" class="gap-2">
+        <Card.Root size="sm" class="gap-2 *:px-4">
           <Card.Header>
             <Card.Title class="text-base font-semibold [overflow-wrap:anywhere]">{names[host] ?? host}</Card.Title>
             <Card.Description class={item.entry.status === "failed" || item.entry.status === "rolled back" ? "text-destructive" : ""}>{historyTitle(item)}</Card.Description>

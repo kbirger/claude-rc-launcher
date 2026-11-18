@@ -14,6 +14,7 @@
   import { PermissionsLink } from "#lib/features/permissions";
   import { SessionsLink } from "#lib/features/sessions";
   import ActionIcon from "../../shared/ui/ActionIcon.svelte";
+  import ConfirmDialog, { type Ask } from "../../shared/ui/ConfirmDialog.svelte";
   import InstanceLogs from "./InstanceLogs.svelte";
   import InstanceSettingsDialog from "./InstanceSettingsDialog.svelte";
   import { createInstancesModel } from "./model.svelte";
@@ -71,16 +72,19 @@
     ];
   }
 
+  // The question that waits for the user (Stop and Restart).
+  let ask = $state<Ask | null>(null);
+
   // The sessions of the folder stop with the server. They wake when the user opens them on claude.ai, for about four hours.
   // A server that starts with no session is archived at each stop, so nothing comes back.
   function restart(i: Instance) {
-    const ask = `Restart ${i.name}? The sessions of this folder stop. After the restart, open a session on claude.ai to bring it back. This works for about four hours.`;
+    const body = "The sessions of this folder stop. After the restart, open a session on claude.ai to bring it back. This works for about four hours.";
     const warn = i.settings?.createSession === false ? " This instance starts with no session. Its sessions are archived at each stop and do not come back." : "";
-    if (confirm(ask + warn)) model.restart(i.id);
+    ask = { title: `Restart ${i.name}?`, body: body + warn, label: "Restart", run: () => model.restart(i.id) };
   }
 
   function stop(i: Instance) {
-    if (confirm(`Stop ${i.name}? This removes it from the list. Use Pause to keep it.`)) model.stop(i.id);
+    ask = { title: `Stop ${i.name}?`, body: "This removes it from the list. Use Pause to keep it.", label: "Stop", destructive: true, run: () => model.stop(i.id) };
   }
 </script>
 
@@ -119,14 +123,14 @@
     {#snippet actionsEnd()}
       {#if i && canWrite}
         {#if isPaused(i.state)}
-          <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
+          <Button variant="ghost" size="icon" disabled={!!r.pending} onclick={() => model.resume(i.id)} aria-label="Resume {r.name}" title="Resume">
             <Play aria-hidden="true" />
           </Button>
         {:else}
           <Button variant="ghost" size="icon" disabled={!!r.pending} onclick={() => restart(i)} aria-label="Restart {r.name}" title="Restart: stops and starts the server">
             <ActionIcon name="refresh" />
           </Button>
-          <Button variant="ghost" size="icon" class="hover:border-border" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
+          <Button variant="ghost" size="icon" disabled={!!r.pending} onclick={() => model.pause(i.id)} aria-label="Pause {r.name}" title="Pause: stops the service and keeps the instance">
             <Pause aria-hidden="true" />
           </Button>
         {/if}
@@ -157,3 +161,4 @@
     <InstanceSettingsDialog bind:open={editOpen} {host} instance={editing} help={model.settingsHelp} />
   {/key}
 {/if}
+<ConfirmDialog bind:ask />

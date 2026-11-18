@@ -60,7 +60,7 @@
 <Card.Root
   {size}
   data-slot="entity-card"
-  class={cn("gap-2", selected && "ring-2 ring-primary", pending && "opacity-60", pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50", className)}
+  class={cn("gap-2 *:px-4", selected && "ring-2 ring-primary", pending && "opacity-60", pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50", className)}
 >
   <Card.Content class="flex flex-col gap-1.5">
     <div class="flex items-start justify-between gap-2">
@@ -88,7 +88,7 @@
             <DropdownMenu.Root>
               <DropdownMenu.Trigger>
                 {#snippet child({ props })}
-                  <Button {...props} variant="ghost" size="icon" class="hover:border-border" aria-label={overflowLabel}>
+                  <Button {...props} variant="ghost" size="icon" aria-label={overflowLabel}>
                     <DotsVertical aria-hidden="true" />
                   </Button>
                 {/snippet}
