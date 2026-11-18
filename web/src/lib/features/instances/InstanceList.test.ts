@@ -11,6 +11,7 @@ const realFetch = globalThis.fetch;
 let list: any[];
 let stops: string[];
 let pauses: string[];
+let restarts: string[];
 let stopHangs: boolean;
 // The settings help answer. Null is an old node: the hub answers 404.
 let help: unknown;
@@ -23,6 +24,7 @@ beforeEach(() => {
   list = [inst()];
   stops = [];
   pauses = [];
+  restarts = [];
   stopHangs = false;
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
     const u = String(url);
@@ -36,6 +38,7 @@ beforeEach(() => {
       if (stopHangs) return new Promise(() => {});
       return new Response(null, { status: 204 });
     }
+    if (init.method === "POST" && u.endsWith("/restart")) { restarts.push(u); return new Response(null, { status: 204 }); }
     if (init.method === "POST" && u.endsWith("/pause")) { pauses.push(u); return new Response(null, { status: 204 }); }
     if (u.includes("/sessions") || u.includes("/permissions")) return new Response("[]", { status: 200 });
     if (u.includes("/logs")) return new Response(JSON.stringify({ log: "LOG LINE" }), { status: 200 });
@@ -84,6 +87,49 @@ test("Pause and Resume stay in the strip", async () => {
   expect(t.querySelector('[data-slot="entity-card-actions"]')!.contains(btn("Pause alpha"))).toBe(true);
   btn("Pause alpha")!.click();
   await until(() => pauses.length === 1);
+});
+
+const RESTART_ASK = "Restart alpha? The sessions of this folder stop. After the restart, open a session on claude.ai to bring it back. This works for about four hours.";
+
+test("a running instance shows Restart in the strip, and Restart is not in the overflow menu", async () => {
+  const t = await show();
+  expect(btn("Restart alpha")).not.toBeNull();
+  expect(t.querySelector('[data-slot="entity-card-actions"]')!.contains(btn("Restart alpha"))).toBe(true);
+  openMenu();
+  expect(items().map((i) => i.textContent?.trim())).toEqual(["Stop"]);
+});
+
+test("a paused instance gets no Restart", async () => {
+  list = [inst({ state: "inactive" })];
+  await show();
+  expect(btn("Restart alpha")).toBeNull();
+});
+
+test("a reader gets no Restart", async () => {
+  await show({ canWrite: false });
+  expect(btn("Restart alpha")).toBeNull();
+});
+
+test("Restart asks first and sends one request only after yes", async () => {
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  await show();
+  btn("Restart alpha")!.click();
+  flushSync();
+  expect(confirm).toHaveBeenCalledWith(RESTART_ASK);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(restarts).toEqual([]);
+  btn("Restart alpha")!.click();
+  flushSync();
+  await until(() => restarts.length === 1);
+  expect(restarts[0]).toMatch(/\/instances\/a\/restart$/);
+});
+
+test("the Restart text adds a warning when the instance starts with no session", async () => {
+  list = [inst({ settings: { createSession: false, spawnMode: "same-dir" } })];
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await show();
+  btn("Restart alpha")!.click();
+  expect(confirm).toHaveBeenCalledWith(`${RESTART_ASK} This instance starts with no session. Its sessions are archived at each stop and do not come back.`);
 });
 
 test("a paused instance shows Resume", async () => {
