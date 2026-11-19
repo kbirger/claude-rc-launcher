@@ -11,6 +11,8 @@ export type Shell = {
   readonly updates: UpdateEntry[];
   readonly now: Date;
   readonly user: string;
+  /** The email of the user, for the avatar. Absent when the identity provider gave none or did not verify it. */
+  readonly email: string | undefined;
   /** The role to show: a user with no role acts as read. Empty while the user is loading. */
   readonly role: Role | "";
   readonly logoutUrl: string;

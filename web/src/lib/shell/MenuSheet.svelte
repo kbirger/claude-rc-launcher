@@ -8,6 +8,7 @@
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import Avatar from "./Avatar.svelte";
   import { getShell } from "./context";
   import { REPO_URL } from "./links";
 
@@ -25,7 +26,7 @@
 <Sheet.Root bind:open>
   <Sheet.Content side="bottom" class="mx-auto max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]">
     <Sheet.Header>
-      <Sheet.Title>{#if shell.user}{shell.user}{#if shell.role}<span class="ml-1.5 font-normal text-muted-foreground">· {shell.role}</span>{/if}{:else}Menu{/if}</Sheet.Title>
+      <Sheet.Title class="flex items-center gap-2">{#if shell.user}<Avatar name={shell.user} email={shell.email} /><span>{shell.user}{#if shell.role}<span class="ml-1.5 font-normal text-muted-foreground">· {shell.role}</span>{/if}</span>{:else}Menu{/if}</Sheet.Title>
       <Sheet.Description class="sr-only">Pages and links.</Sheet.Description>
     </Sheet.Header>
     <nav class="grid gap-1 px-4" aria-label="Menu">
