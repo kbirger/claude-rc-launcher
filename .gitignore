@@ -13,4 +13,3 @@ oidc-client.secret
 # Local secrets and tool state (not for the repo)
 /.oidc/
 /run.sh
-/.serena/
