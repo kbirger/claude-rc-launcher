@@ -163,7 +163,7 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   echo
   echo "Not enabling the service yet. Fill in:"
   for m in "${MISSING[@]}"; do echo "  - $m"; done
-  echo "(see README.md, 'Authentik setup'), then run again:  sudo $0 $FLAGS"
+  echo "(see docs/authentication.md, 'Authentik setup script'), then run again:  sudo $0 $FLAGS"
   exit 0
 fi
 
