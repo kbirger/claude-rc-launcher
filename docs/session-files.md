@@ -19,6 +19,8 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `livesessions.ts` | Reads the running-session files. It tells which sessions run now, their status, their name in the Claude app, and whether they use Remote Control. |
 | `sessionfs.ts` | Opens project files safely inside one root folder. It lists a folder, makes a preview of a file and opens a file for download. It never reads a transcript. |
 | `paths.ts` | Path helpers. `within` checks that a path is inside a folder. `absRefused` checks that a full path is in a refused place. |
+| `sessionindex.ts` | `SessionIndex`. It keeps the sessions of all instances of the node in memory and refreshes them on a timer. Read [The list of all sessions](#the-list-of-all-sessions). |
+| `allsessions.ts` | The hub route `GET /api/sessions`. It asks each node for its list and merges the answers. |
 | `sessionapi.ts` | The HTTP routes on the node. It is a thin layer over the session classes. It checks the instance id, the session id and the query, and it never holds a checked root as a string. |
 | `app.ts` | Mounts the routes. It builds one `SessionCatalog` for each app, with the state folders of the node. |
 | `hosts.ts` | The hub routes. They pass session requests to the node of the host. |
@@ -31,7 +33,7 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` is layer 1 (`markdown-it`, strict renderer, and the complexity guard) and runs both layers. `sanitize.ts` is the DOMPurify layer. Both load as one lazy chunk, only for a markdown file. |
 | `FormattedText.svelte` (web) | The only place that inserts HTML into the page. It takes only text that went through the sanitizer. |
 | `CodeView.svelte`, `editor.ts`, `codetheme.ts`, `languages.ts` (web) | The read-only code viewer. `CodeView.svelte` loads the editor and one language by `import()`. `editor.ts` builds the CodeMirror view. `codetheme.ts` maps the colors to the theme variables. `languages.ts` holds one lazy loader for each language. |
-| `SessionList.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
+| `GlobalSessionList.svelte`, `SessionCard.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
 
 ## The request flow for a download
 
@@ -200,6 +202,16 @@ Three sources join sessions. Each one is saved in the same store:
 If two or more transcripts of the folder are joined, directly or through other transcripts, the list shows one session. It is the newest transcript.
 Its name is the name that someone set, or else the name of the first transcript of the chain (the Claude app names the
 connection from it). Its start time is the start of the first transcript. The ids of the others are in `earlier`.
+
+## The list of all sessions
+
+The Sessions view shows the sessions of all instances on all nodes. A node does not scan its folders for each request. `SessionIndex` (`sessionindex.ts`) keeps the last result in memory. `GET /api/sessions` answers from it at once, with the time of the scan (`scannedAt`).
+
+A timer refreshes the result. If nobody asked in the last 2 minutes, it scans every 5 minutes (the passive interval). After a request it scans every 10 seconds (the active interval). These are starting values. Only one scan runs at a time. A request that comes before the first scan ends waits for it. If a scan fails, the old result stays. A start, stop, pause, resume, restart or settings change of an instance starts a scan at once.
+
+The running state of a session (live, busy, idle, Remote Control) is cheap to read, so each answer reads it again from the running-session files. Because of this, a session that started a moment ago shows as running at once. The age of the scan does not matter.
+
+The hub merges the answers of all nodes in `allsessions.ts`. A node that does not answer, or runs a release without the route, does not fail the call. Its status is in the `hosts` list of the answer. The data of a node can be as old as one interval.
 
 ## Cost and threading
 

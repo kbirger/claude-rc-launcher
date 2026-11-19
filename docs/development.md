@@ -77,7 +77,7 @@ Not yet executed; perform on a Linux host with systemd and Claude installed:
 Multi-host (node + hub):
 
 8. Node: the service starts and logs `node certificate fingerprint sha256:...`.
-9. Hub: after pairing, the host picker lists the node as available; stop the node and it turns offline
+9. Hub: after pairing, the Nodes page lists the node with the status `ok`; stop the node and it turns offline
    with a reason while `local` keeps working.
 10. Start an instance on the node from the UI; `systemctl status claude-rc-<id>` is active on the **node**.
 11. `curl` the node directly with a wrong bearer token: 401. A request to the hub with a forged
