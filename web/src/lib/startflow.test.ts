@@ -52,7 +52,7 @@ describe("start flow", () => {
 
   test("a failure from a host the user has left is dropped", () => {
     const f = createStartFlow("local");
-    f.select("win");
+    f.pick("win");
     f.startFailed("local", trust("/a"), { path: "/a" });
     f.startFailed("local", { kind: "error", message: "boom" }, { path: "/a" });
     expect(f.showNew).toBe(false);
@@ -60,12 +60,13 @@ describe("start flow", () => {
     expect(f.startError).toBe("");
   });
 
-  test("picking a host closes the dialog and clears the outcome", () => {
+  test("picking a host keeps the dialog open and clears the outcome", () => {
     const f = createStartFlow("local");
     f.startFailed("local", trust("/a"), { path: "/a" });
-    f.select("win");
+    expect(f.showNew).toBe(true);
+    f.pick("win");
     expect(f.selected).toBe("win");
-    expect(f.showNew).toBe(false);
+    expect(f.showNew).toBe(true);
     expect(f.newInitial).toBeUndefined();
   });
 
@@ -73,7 +74,7 @@ describe("start flow", () => {
     const f = createStartFlow("local");
     f.startFailed("local", { kind: "error", message: "boom" }, { path: "/a" });
     expect(f.startError).toBe("boom");
-    f.select("win");
+    f.pick("win");
     expect(f.startError).toBe("");
   });
 

@@ -4,7 +4,7 @@ import type { NewInitial, TrustPrompt } from "./features/new-instance";
 // What startErrorAction decided about a failed start.
 export type StartFailure = { kind: "trust"; prompt: TrustPrompt } | { kind: "error"; message: string };
 
-// The state around the selected host, the New dialog and the error of the last start, and the moves between those states.
+// The state around the host of a new instance, the New dialog and the error of the last start, and the moves between those states.
 // App holds one of these and only draws it. The mutation itself stays in App: it needs the query client.
 export function createStartFlow(initialHost: string) {
   let selected = $state(initialHost);
@@ -25,10 +25,9 @@ export function createStartFlow(initialHost: string) {
     get newInitial() { return newInitial; },
     get startError() { return startError; },
 
-    /** The user picked a host. */
-    select(id: string) {
+    /** The user picked the host for a new instance. The dialog stays as it is (it restarts for the new host, see Shell). */
+    pick(id: string) {
       selected = id;
-      showNew = false;
       clearOutcome();
     },
     /** The host list says the selected host is gone. The dialog stays as it is. */

@@ -107,10 +107,13 @@
     if (pruned.length !== nodes.length) setNodes(pruned);
   });
 
-  function select(id: string) {
-    flow.select(id);
+  // The node of a new instance. The dialog restarts for the new node (it is keyed by it), so its node field comes first.
+  function pickHost(id: string) {
+    flow.pick(id);
     remember(id);
   }
+  // Kept until the navigation change: the Nodes page still uses it.
+  const select = pickHost;
 
   setShell({
     flow,
@@ -194,6 +197,8 @@
   {#key flow.selected}
     <NewDialog
       host={flow.selected}
+      {hosts}
+      onhost={pickHost}
       busyReason={selectedBusy}
       initial={flow.newInitial}
       onclose={() => flow.closeNew()}
