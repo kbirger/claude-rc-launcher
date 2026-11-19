@@ -60,6 +60,9 @@
 }
 
 @layer base {
+  /* The browser's own pull-to-refresh would reload the page. PullToRefresh.svelte refetches the data instead. */
+  html, body { overscroll-behavior-y: none; }
+
   * {
     @apply border-border outline-ring/50;
   }

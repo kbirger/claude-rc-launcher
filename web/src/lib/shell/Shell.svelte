@@ -16,6 +16,8 @@
   import { createStartFlow } from "../startflow.svelte";
   import ActionIcon from "../shared/ui/ActionIcon.svelte";
   import BottomNav from "./BottomNav.svelte";
+  import PullToRefresh from "./PullToRefresh.svelte";
+  import RefreshBar from "./RefreshBar.svelte";
   import { setShell } from "./context";
 
   const HOST_KEY = "claude-rc-host";
@@ -128,6 +130,7 @@
   <a class="inline-flex min-h-11 min-w-11 flex-none items-center justify-center text-primary" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
     <LogOut size={22} aria-hidden="true" />
   </a>
+  <RefreshBar />
 </header>
 <div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
   {#if reloadBar}
@@ -152,6 +155,7 @@
   </main>
 </div>
 <BottomNav />
+<PullToRefresh />
 {#if flow.showNew}
   {#key flow.selected}
     <NewDialog
