@@ -169,3 +169,7 @@ bun run build           # dist/claude-rc-launcher with the web UI inside
 ```
 
 [Development](docs/development.md) has the rest, including releases.
+
+## License
+
+[MIT](LICENSE) © 2026 Kirill Birger

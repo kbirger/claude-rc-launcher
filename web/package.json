@@ -1,5 +1,6 @@
 {
   "name": "claude-rc-launcher-web",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "imports": {
