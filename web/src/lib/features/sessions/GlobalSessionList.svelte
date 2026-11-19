@@ -40,7 +40,7 @@
     {/if}
     <div class="relative">
       <Search size={18} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-      <Input type="search" bind:value={filter} placeholder="Filter by name, id, branch, folder, node or instance" aria-label="Filter sessions" class="h-11 pl-10" />
+      <Input type="search" bind:value={filter} placeholder="Filter sessions" aria-label="Filter sessions" class="h-11 pl-10" />
     </div>
     <p class="text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${scoped.length} sessions` : `${scoped.length} ${scoped.length === 1 ? "session" : "sessions"}`}</p>
   </div>
