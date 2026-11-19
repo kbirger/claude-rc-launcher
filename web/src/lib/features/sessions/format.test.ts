@@ -186,3 +186,13 @@ test("sessionMatches needs every word in the name, id, branch or folder", () => 
   expect(sessionMatches(s, "abcdef12")).toBe(true);
   expect(sessionMatches(s, "login nope")).toBe(false);
 });
+
+test("globalMatches also matches the node name and the instance name", async () => {
+  const { globalMatches } = await import("./format");
+  const s: any = { id: "abcdef12", root: "/work/proj", startedAt: "", lastActiveAt: "", instance: { id: "i", name: "Blog", path: "/p", state: "active" }, host: { id: "nas", name: "Basement NAS" } };
+  expect(globalMatches(s, "basement")).toBe(true);
+  expect(globalMatches(s, "BLOG")).toBe(true);
+  expect(globalMatches(s, "proj")).toBe(true);
+  expect(globalMatches(s, "zzz")).toBe(false);
+  expect(globalMatches(s, "")).toBe(true);
+});

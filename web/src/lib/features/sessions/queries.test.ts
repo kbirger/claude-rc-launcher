@@ -42,3 +42,11 @@ test("a preview by abs has its own key", () => {
   expect(previewQuery("h", "i", "s", "/p", true).queryKey).toEqual(["session-preview", "h", "i", "s", "abs", "/p"]);
   expect(previewQuery("h", "i", "s", "/p").queryKey).not.toEqual(previewQuery("h", "i", "s", "/p", true).queryKey);
 });
+
+test("allSessionsQuery has its own key and polls every 15 seconds", async () => {
+  const { allSessionsQuery } = await import("./queries");
+  const q = allSessionsQuery();
+  expect(q.queryKey).toEqual(["all-sessions"]);
+  expect(q.refetchInterval).toBe(15000);
+  expect(q.retry).toBe(false);
+});

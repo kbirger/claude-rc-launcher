@@ -1,4 +1,4 @@
-import { getChanged, getPreview, getTouched, listFiles, listSessions } from "./api";
+import { getChanged, getPreview, getTouched, listAllSessions, listFiles, listSessions } from "./api";
 
 export const SESSIONS_POLL_MS = 15000;
 export const SESSIONS_STALE_MS = 5000;
@@ -6,6 +6,15 @@ export const SESSIONS_STALE_MS = 5000;
 export const sessionsQuery = (host: string, instance: string) => ({
   queryKey: ["sessions", host, instance] as const,
   queryFn: () => listSessions(host, instance),
+  staleTime: SESSIONS_STALE_MS,
+  refetchInterval: SESSIONS_POLL_MS,
+  refetchOnWindowFocus: true,
+  retry: false as const,
+});
+
+export const allSessionsQuery = () => ({
+  queryKey: ["all-sessions"] as const,
+  queryFn: listAllSessions,
   staleTime: SESSIONS_STALE_MS,
   refetchInterval: SESSIONS_POLL_MS,
   refetchOnWindowFocus: true,
