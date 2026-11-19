@@ -14,4 +14,3 @@ oidc-client.secret
 /.oidc/
 /run.sh
 /.serena/
-/.mcp.json
