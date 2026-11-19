@@ -78,7 +78,7 @@ const MAX_PATH_QUERY = 4096;
 /** The most of an error body the hub reads from a node that refuses a download. */
 const MAX_ERROR_BODY = 64 * 1024;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
-const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
+export const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
 const REPORT_STATUSES: readonly string[] = ["restarting", "up-to-date", "clients-only", "failed"];
 const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";

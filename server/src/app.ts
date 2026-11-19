@@ -31,6 +31,7 @@ import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
 import { SessionIndex } from "./sessionindex";
+import { allSessionsApi } from "./allsessions";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -349,10 +350,12 @@ export function createApp(deps: Deps): Hono {
   // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
   const sessions = sessionCatalogFor(cfg);
   const sessionIndex = sessionIndexFor(instances, sessions);
+  // The node API of this machine: the host `local` for the forwarding routes and the first part of the all-sessions list.
+  const localApi = instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) });
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) }),
+      local: localApi,
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
@@ -365,6 +368,7 @@ export function createApp(deps: Deps): Hono {
     const u = c.get("user" as never) as User | undefined;
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
+  api.route("/sessions", allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.requestTimeoutMs }));
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));

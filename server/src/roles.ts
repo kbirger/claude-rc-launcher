@@ -106,6 +106,7 @@ const RULES: Rule[] = [
     "/hosts/:host/instances/:id/logs",
     "/hosts/:host/instances/:id/permissions",
     "/hosts/:host/instances/:id/sessions",
+    "/sessions",
     "/hosts/:host/sessions",
     "/hosts/:host/users",
     "/hosts/:host/clone/:id",
