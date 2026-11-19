@@ -19,6 +19,8 @@ export type Shell = {
   /** Whether the user can use a control that needs this role. The hub enforces the role: this only hides what would be refused. */
   can(need: Role): boolean;
   select(id: string): void;
+  /** The nodes that the Sessions and Instances views show. Empty means all nodes. */
+  readonly nodes: { readonly selected: string[]; toggle(id: string): void; only(id: string): void; clear(): void };
   /** True when the check for the latest release failed. */
   readonly latestError: boolean;
 };

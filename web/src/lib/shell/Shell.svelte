@@ -10,7 +10,7 @@
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
-  import { HostPicker, hostsQuery, selectionAfter, type HostInfo } from "../features/hosts";
+  import { HostPicker, hostsQuery, pruneNodes, readNodes, selectionAfter, toggleNode, writeNodes, type HostInfo } from "../features/hosts";
   import { UpdateBanner, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "../features/updates";
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
@@ -95,6 +95,18 @@
     flow.fallback(selectionAfter(hostsQ.data, flow.selected));
   });
 
+  // The nodes that the views show: kept for the tab, and a node that is gone from the host list leaves the selection.
+  let nodes = $state<string[]>(readNodes());
+  function setNodes(ids: string[]) {
+    nodes = ids;
+    writeNodes(ids);
+  }
+  $effect(() => {
+    if (!hostsQ.data) return;
+    const pruned = pruneNodes(nodes, hostsQ.data);
+    if (pruned.length !== nodes.length) setNodes(pruned);
+  });
+
   function select(id: string) {
     flow.select(id);
     remember(id);
@@ -112,6 +124,12 @@
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
     select,
+    nodes: {
+      get selected() { return nodes; },
+      toggle: (id) => setNodes(toggleNode(nodes, id)),
+      only: (id) => setNodes([id]),
+      clear: () => setNodes([]),
+    },
     get latestError() { return latestQ.isError; },
   });
 
