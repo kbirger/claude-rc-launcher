@@ -15,16 +15,18 @@
 
   const q = createQuery(() => allSessionsQuery());
   let filter = $state("");
+  // The instance filter needs both: an address with only an instance gives no filter and no chip.
+  const filtered = $derived(!!host && !!instance);
 
-  const scoped = $derived((q.data?.sessions ?? []).filter((s) => inFilter(nodes, s.host.id) && (!host || !instance || (s.host.id === host && s.instance.id === instance))));
+  const scoped = $derived((q.data?.sessions ?? []).filter((s) => inFilter(nodes, s.host.id) && (!filtered || (s.host.id === host && s.instance.id === instance))));
   const shown = $derived(sortSessions(scoped.filter((s) => globalMatches(s, filter))));
   // A node that did not answer is named, so that a missing node is not mistaken for "no sessions".
   const notices = $derived(
     (q.data?.hosts ?? [])
       .filter((h) => h.status !== "ok" && inFilter(nodes, h.id))
-      .map((h) => `${h.name}: ${h.status === "unsupported" ? "update this node to list its sessions" : h.status === "offline" ? "not answering" : (h.error ?? "error")}`),
+      .map((h) => ({ id: h.id, text: `${h.name}: ${h.status === "unsupported" ? "update this node to list its sessions" : h.status === "offline" ? "not answering" : (h.error ?? "error")}` })),
   );
-  const instanceName = $derived(instance ? ((q.data?.sessions ?? []).find((s) => s.host.id === host && s.instance.id === instance)?.instance.name ?? instance.slice(0, 8)) : "");
+  const instanceName = $derived(filtered ? ((q.data?.sessions ?? []).find((s) => s.host.id === host && s.instance.id === instance)?.instance.name ?? instance.slice(0, 8)) : "");
 </script>
 
 {#if q.isPending}
@@ -35,7 +37,7 @@
   <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px), so it stays in view while the list scrolls. -->
   <div class="sticky top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">
     <NodeChips {hosts} selected={nodes} {ontoggle} {onclear} />
-    {#if instance}
+    {#if filtered}
       <a href="/sessions" aria-label="Remove instance filter" class="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border px-3 text-sm no-underline">Instance: {instanceName}<X size={16} aria-hidden="true" /></a>
     {/if}
     <div class="relative">
@@ -44,8 +46,8 @@
     </div>
     <p class="text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${scoped.length} sessions` : `${scoped.length} ${scoped.length === 1 ? "session" : "sessions"}`}</p>
   </div>
-  {#each notices as n (n)}
-    <Alert.Root class="mb-3"><Alert.Description>{n}</Alert.Description></Alert.Root>
+  {#each notices as n (n.id)}
+    <Alert.Root class="mb-3"><Alert.Description>{n.text}</Alert.Description></Alert.Root>
   {/each}
   {#if !scoped.length}
     {#if !notices.length}<p class="text-muted-foreground">No sessions yet.</p>{/if}

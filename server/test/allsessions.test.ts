@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { onError } from "../src/app";
+import { instanceApi, onError } from "../src/app";
+import { HttpError } from "../src/instances";
 import { allSessionsApi } from "../src/allsessions";
 import { HostError, type HostClient, type HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
@@ -84,5 +85,27 @@ describe("hub all-sessions route", () => {
     const app = build({ nodes: { nas: async () => ({ status: 200, body: answer("l1") }) } });
     const { body } = await get(app);
     expect(body.sessions.map((s: any) => `${s.host.id}:${s.id}`)).toEqual(["local:l1", "nas:l1"]);
+  });
+
+  test("the real node API as the local node: a failed first scan shows as an error with its text", async () => {
+    const sessionIndex: any = { get: async () => { throw new HttpError(503, "could not list sessions"); }, invalidate: () => {} };
+    const local = instanceApi({ cfg: { name: "the-hub", mode: "hub", stateDir: "/tmp/x", roots: [], hosts: [] } as any, instances: { list: async () => [] } as any, sessionIndex });
+    const app = new Hono();
+    app.onError(onError);
+    app.route("/api/sessions", allSessionsApi({ cfg: { name: "the-hub" } as any, local, registry: HostRegistry.memory([], new Map()) }));
+    const { status, body } = await get(app);
+    expect(status).toBe(200);
+    expect(body.hosts).toEqual([{ id: "local", name: "the-hub", status: "error", error: "could not list sessions" }]);
+  });
+
+  test("the default time limit of a call to a node is the probe limit of 3 seconds", async () => {
+    const seen: number[] = [];
+    const client = { call: async (_m: string, _p: string, o: any) => (seen.push(o.timeoutMs), { status: 200, body: answer() }), stream: async () => { throw new Error("unused"); } } as unknown as HostClient;
+    const local = new Hono();
+    local.get("/sessions", (c) => c.json(answer()));
+    const app = new Hono();
+    app.route("/api/sessions", allSessionsApi({ cfg: { name: "h" } as any, local, registry: HostRegistry.memory([cfgHost("nas")], new Map([["nas", client]])) }));
+    await app.request("/api/sessions");
+    expect(seen).toEqual([3000]);
   });
 });

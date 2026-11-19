@@ -225,6 +225,8 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   r.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
+  // A caller that serves these routes by `request()` (the hub list of all sessions) gets the JSON error, not Hono's plain 500.
+  r.onError(onError);
   return r;
 }
 
@@ -368,7 +370,7 @@ export function createApp(deps: Deps): Hono {
     const u = c.get("user" as never) as User | undefined;
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
-  api.route("/sessions", allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.requestTimeoutMs }));
+  api.route("/sessions", allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.probeTimeoutMs }));
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));

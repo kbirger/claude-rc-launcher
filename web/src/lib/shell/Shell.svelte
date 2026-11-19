@@ -125,8 +125,9 @@
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
     nodes: {
-      get selected() { return nodes; },
-      toggle: (id) => setNodes(toggleNode(nodes, id)),
+      // Only nodes that exist count. While the host list loads, or if it fails, a saved choice of another node must not empty the views.
+      get selected() { return pruneNodes(nodes, hosts); },
+      toggle: (id) => setNodes(toggleNode(pruneNodes(nodes, hosts), id)),
       only: (id) => setNodes([id]),
       clear: () => setNodes([]),
     },

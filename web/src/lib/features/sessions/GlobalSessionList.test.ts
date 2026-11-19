@@ -116,3 +116,15 @@ test("says that no session matches the filter", () => {
   flushSync();
   expect(t.textContent).toContain('No session matches "zzz".');
 });
+
+test("two nodes with the same name that both fail give two notices", () => {
+  const same: HostInfo[] = [{ id: "a", name: "box", status: "ok" }, { id: "b", name: "box", status: "ok" }];
+  const t = show({ sessions: [], hosts: [{ id: "a", name: "box", status: "offline", error: "unreachable" }, { id: "b", name: "box", status: "offline", error: "unreachable" }] }, { hosts: same });
+  expect(t.textContent!.match(/box: not answering/g)).toHaveLength(2);
+});
+
+test("an address with an instance and no host shows no instance chip and no filter", () => {
+  const t = show({ sessions: [row("a", "local", {}, "aaaaaaaaaaaa"), row("b", "local", {}, "bbbbbbbbbbbb")], hosts: [status("local", "ok")] }, { host: "", instance: "bbbbbbbbbbbb" });
+  expect(t.querySelector('a[aria-label="Remove instance filter"]')).toBeNull();
+  expect(titles(t)).toHaveLength(2);
+});

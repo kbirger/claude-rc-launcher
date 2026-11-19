@@ -28,7 +28,8 @@ function partOf(host: { id: string; name: string }, status: number, body: unknow
 }
 
 export function allSessionsApi(o: { cfg: Config; local: Hono; registry: HostRegistry; timeoutMs?: number }): Hono {
-  const timeoutMs = o.timeoutMs ?? 10_000;
+  // The limit of the host probe: a node answers from its copy, so a node that needs longer is not answering.
+  const timeoutMs = o.timeoutMs ?? 3_000;
   const app = new Hono();
   app.get("/", async (c) => {
     const local = { id: "local", name: o.cfg.name };
