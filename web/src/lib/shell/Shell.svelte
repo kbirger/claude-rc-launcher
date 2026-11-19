@@ -104,6 +104,7 @@
     get updates() { return updatesQ.data ?? []; },
     get now() { return now; },
     get user() { return meQ.data?.name ?? ""; },
+    get role() { return meQ.data ? (meQ.data.role ?? "read") : ""; },
     get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),

@@ -25,7 +25,7 @@
 <Sheet.Root bind:open>
   <Sheet.Content side="bottom" class="mx-auto max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]">
     <Sheet.Header>
-      <Sheet.Title>Menu</Sheet.Title>
+      <Sheet.Title>{#if shell.user}{shell.user}{#if shell.role}<span class="ml-1.5 font-normal text-muted-foreground">· {shell.role}</span>{/if}{:else}Menu{/if}</Sheet.Title>
       <Sheet.Description class="sr-only">Pages and links.</Sheet.Description>
     </Sheet.Header>
     <nav class="grid gap-1 px-4" aria-label="Menu">
@@ -38,7 +38,7 @@
         <Github size={20} aria-hidden="true" />GitHub
       </Button>
       <Button variant="ghost" size="touch" class="justify-start" href={shell.logoutUrl}>
-        <LogOut size={20} aria-hidden="true" />Log out{shell.user ? ` (${shell.user})` : ""}
+        <LogOut size={20} aria-hidden="true" />Log out
       </Button>
     </nav>
   </Sheet.Content>
