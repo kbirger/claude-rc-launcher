@@ -10,8 +10,8 @@
   // A small preview of each palette in its light and its dark variant: the page color, the card color and the primary color (the values in src/app.css).
   type Swatch = [string, string, string];
   const palettes: { id: ThemeName; label: string; light: Swatch; dark: Swatch }[] = [
-    { id: "default", label: "Default", light: ["#f6f6f8", "#ffffff", "#5b4bdb"], dark: ["#121216", "#1d1d23", "#8a7dff"] },
     { id: "claude", label: "Claude", light: ["#ffffff", "#f4f2f1", "#c2410c"], dark: ["#0c0a09", "#1c1917", "#9a3412"] },
+    { id: "grape", label: "Grape", light: ["#f6f6f8", "#ffffff", "#5b4bdb"], dark: ["#121216", "#1d1d23", "#8a7dff"] },
     { id: "ayu", label: "Ayu", light: ["#f8f9fa", "#fcfcfc", "#925808"], dark: ["#0d1017", "#141821", "#e6b450"] },
     { id: "tokyonight", label: "Tokyo Night", light: ["#e6e7ed", "#f3f4f8", "#2959aa"], dark: ["#1a1b26", "#1f2335", "#7aa2f7"] },
   ];

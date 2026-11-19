@@ -1,4 +1,4 @@
-export const THEMES = ["default", "claude", "ayu", "tokyonight"] as const;
+export const THEMES = ["claude", "grape", "ayu", "tokyonight"] as const;
 export type ThemeName = (typeof THEMES)[number];
 export const MODES = ["system", "light", "dark"] as const;
 export type Mode = (typeof MODES)[number];
@@ -31,22 +31,22 @@ function write(key: string, value: string | null) {
   }
 }
 
-/** The saved choice. `?theme=<name>` in the URL still works and is saved; `?theme=default` goes back to the default. */
+/** The saved choice. `?theme=<name>` in the URL still works and is saved; `?theme=claude` goes back to the default (Claude). */
 export function loadChoice(): { theme: ThemeName; mode: Mode } {
   try {
     const asked = new URLSearchParams(location.search).get("theme");
-    if (asked === "default") write(THEME_KEY, null);
+    if (asked === "claude") write(THEME_KEY, null);
     else if (isTheme(asked)) write(THEME_KEY, asked);
   } catch {
     /* no location: ignore */
   }
   const theme = read(THEME_KEY);
   const mode = read(MODE_KEY);
-  return { theme: isTheme(theme) ? theme : "default", mode: isMode(mode) ? mode : "system" };
+  return { theme: isTheme(theme) ? theme : "claude", mode: isMode(mode) ? mode : "system" };
 }
 
 export function saveTheme(theme: ThemeName) {
-  write(THEME_KEY, theme === "default" ? null : theme);
+  write(THEME_KEY, theme === "claude" ? null : theme);
 }
 
 export function saveMode(mode: Mode) {
@@ -56,7 +56,7 @@ export function saveMode(mode: Mode) {
 /** Puts the choice on <html>: the `dark` class and the `data-theme` attribute that src/app.css reads. */
 export function applyToDocument(theme: ThemeName, mode: Mode, systemDark: boolean) {
   const root = document.documentElement;
-  if (theme === "default") delete root.dataset.theme;
+  if (theme === "claude") delete root.dataset.theme;
   else root.dataset.theme = theme;
   root.classList.toggle("dark", resolveDark(mode, systemDark));
 }
