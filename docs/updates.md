@@ -42,8 +42,8 @@ are at the bottom. It is open while the update runs. A finished update shows its
 gets the lines that the hub already holds. The hub keeps the last 200 lines of each machine in memory only, so a hub
 restart clears them.
 
-A node that stops during its update has the status `restarting`. The Nodes page shows `restarting`, and the node chip
-stays on the row, greyed out, with the status in its text. After 90 seconds without an answer, the status becomes `offline`. When the node
+A node that stops during its update has the status `restarting`. The Nodes page shows `restarting`, and the node
+stays in the Nodes menu with the status in its text. After 90 seconds without an answer, the status becomes `offline`. When the node
 answers again, the status returns to `ok`. A node that drops its connection without a `restarting` step is `offline`
 at once. The hub learns about these changes from an event stream that it holds open to each node, so the page does not
 wait for the next poll. The hub logs one line when the status or the reason of a node changes, and none for a repeat.

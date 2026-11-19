@@ -25,17 +25,17 @@ You can install the page as an app (a PWA, a web page that runs like an app). In
 
 What you see depends on your role. A `read` user sees the lists, logs and files, but no buttons that change something. Read [Roles](authentication.md#roles).
 
-## Sessions and node chips
+## Sessions and the node filter
 
 The Sessions view is the first page. It lists the sessions of every instance on every host. Running sessions come first (busy before idle), and the other sessions follow, newest first. Each row shows the name of the session, its state, the host and the instance, and the details.
 
-If you have more than one host, a row of node chips shows above the list on the Sessions view and on the Instances view. With no chip selected, the views show all hosts. A tap on a chip adds the host to the selection or removes it. The tab keeps the selection, and both views use it. A chip of a host that does not answer stays on the row and shows its status.
+If you have more than one host, a Nodes button shows above the list on the Sessions view and on the Instances view. It says "Nodes: all", the name of the one selected host, or a count such as "Nodes: 2 of 5". A tap opens a menu with a checkbox for each host. The menu stays open while you tick hosts, and it scrolls if the list is long. "All nodes" clears the selection. With no host ticked, the views show all hosts. The tab keeps the selection, and both views use it. A host that does not answer stays in the menu and shows its status.
 
 If a host does not answer, or runs an older release that has no session list, a note above the list names it. This way a missing host is not mistaken for "no sessions". Read [Sessions and files](#sessions-and-files) for what you can do with one session.
 
 ## Instances
 
-The instance list shows the instances of the selected hosts. If more than one host shows, each host has a heading. If you have more than one host, the New dialog starts with a Node field. If exactly one chip is selected, the dialog starts on that host. Each card shows:
+The instance list shows the instances of the selected hosts. If more than one host shows, each host has a heading. If you have more than one host, the New dialog starts with a Node field. If exactly one host is ticked, the dialog starts on that host. Each card shows:
 
 - The name of the instance. This is the `--name` that the Claude app shows.
 - The folder.
@@ -332,7 +332,7 @@ The node writes the rule into the JSON file. It keeps the indent, the key order 
 
 A host is a machine that runs instances. The hub is the host `local`. A node is another machine that the hub controls. Read [Multiple hosts](multi-host.md).
 
-The node chips select the hosts that the Sessions and Instances views show. An offline host has a chip, and its status is in the text of the chip.
+The Nodes button above the Sessions and Instances lists selects the hosts that the views show. An offline host stays in its menu, and its status is in the text.
 
 <img src="images/screens/nodes.png" alt="The Nodes page" width="300">
 

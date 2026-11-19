@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from "#lib/components/ui/button/index.js";
-  import { NodeChips, inFilter } from "#lib/features/hosts";
+  import { NodeFilter, inFilter } from "#lib/features/hosts";
   import { InstanceList } from "#lib/features/instances";
   import { getShell } from "#lib/shell/context";
 
@@ -14,9 +14,9 @@
   }
 </script>
 
-<div class="mb-4 grid gap-3">
-  <NodeChips hosts={shell.hosts} selected={shell.nodes.selected} ontoggle={shell.nodes.toggle} onclear={shell.nodes.clear} />
-  {#if shell.can("write")}<Button size="touch" class="w-full" onclick={openNew}>+ New</Button>{/if}
+<div class="mb-4 flex gap-2">
+  {#if shell.hosts.length > 1}<div class="min-w-0 max-w-[50%] shrink-0"><NodeFilter hosts={shell.hosts} selected={shell.nodes.selected} ontoggle={shell.nodes.toggle} onclear={shell.nodes.clear} /></div>{/if}
+  {#if shell.can("write")}<Button size="touch" class="min-w-0 flex-1" onclick={openNew}>+ New</Button>{/if}
 </div>
 {#each shown as h (h.id)}
   {#if shown.length > 1}<h2 class="font-heading mt-4 mb-2 text-lg font-bold">{h.name}</h2>{/if}

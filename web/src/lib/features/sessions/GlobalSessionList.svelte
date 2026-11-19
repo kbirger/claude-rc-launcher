@@ -4,7 +4,7 @@
   import Search from "@tabler/icons-svelte/icons/search";
   import X from "@tabler/icons-svelte/icons/x";
   import { Input } from "#lib/components/ui/input/index.js";
-  import { NodeChips, inFilter, type HostInfo } from "../hosts";
+  import { NodeFilter, inFilter, type HostInfo } from "../hosts";
   import { globalMatches } from "./format";
   import { allSessionsQuery } from "./queries";
   import SessionCard from "./SessionCard.svelte";
@@ -36,13 +36,16 @@
 {:else}
   <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px), so it stays in view while the list scrolls. -->
   <div class="sticky top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">
-    <NodeChips {hosts} selected={nodes} {ontoggle} {onclear} />
     {#if filtered}
       <a href="/sessions" aria-label="Remove instance filter" class="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border px-3 text-sm no-underline">Instance: {instanceName}<X size={16} aria-hidden="true" /></a>
     {/if}
-    <div class="relative">
-      <Search size={18} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-      <Input type="search" bind:value={filter} placeholder="Filter sessions" aria-label="Filter sessions" class="h-11 pl-10" />
+    <!-- The node filter is one button, so it takes the same room for any number of nodes. It shares the row with the text filter. -->
+    <div class="flex gap-2">
+      {#if hosts.length > 1}<div class="min-w-0 max-w-[50%] shrink-0"><NodeFilter {hosts} selected={nodes} {ontoggle} {onclear} /></div>{/if}
+      <div class="relative min-w-0 flex-1">
+        <Search size={18} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <Input type="search" bind:value={filter} placeholder="Filter sessions" aria-label="Filter sessions" class="h-11 pl-10" />
+      </div>
     </div>
     <p class="text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${scoped.length} sessions` : `${scoped.length} ${scoped.length === 1 ? "session" : "sessions"}`}</p>
   </div>

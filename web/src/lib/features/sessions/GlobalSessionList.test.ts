@@ -58,11 +58,16 @@ test("the node selection keeps only the rows of the selected nodes", () => {
   expect(titles(t)).toEqual(["title-b"]);
 });
 
-test("a click on a node chip calls ontoggle", () => {
+test("ticking a node in the node filter calls ontoggle", async () => {
   const ontoggle = vi.fn();
   const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok")] }, { ontoggle });
-  [...t.querySelectorAll("button")].find((b) => b.textContent?.includes("Basement NAS"))!.click();
-  expect(ontoggle).toHaveBeenCalledWith("nas");
+  const mouse = (el: Element, ...types: string[]) => { for (const type of types) el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: "mouse", button: 0 })); };
+  mouse(t.querySelector('button[aria-label="Filter by node"]')!, "pointerdown");
+  await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+  const el = [...document.querySelectorAll('[role="menuitemcheckbox"]')].find((i) => i.textContent?.includes("Basement NAS")) as HTMLElement;
+  mouse(el, "pointermove", "pointerdown", "pointerup");
+  el.click();
+  await vi.waitFor(() => expect(ontoggle).toHaveBeenCalledWith("nas"));
 });
 
 test("the text filter matches the node name", () => {
