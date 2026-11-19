@@ -20,7 +20,7 @@ vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   getTouched: async () => touched,
   listFiles: async () => listing,
-  listSessions: async () => sessions,
+  listAllSessions: async () => ({ sessions: sessions.map((s) => ({ ...s, instance: { id: "0123456789ab", name: "i", path: "/proj", state: "active" }, host: { id: "h", name: "h" } })), hosts: [{ id: "h", name: "h", status: "ok" }] }),
 }));
 
 const open: Array<() => void> = [];

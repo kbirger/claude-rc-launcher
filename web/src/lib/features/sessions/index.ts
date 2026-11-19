@@ -3,7 +3,7 @@ export { downloadUrl, getPreview, getTouched, isUnsupported, listAllSessions, li
 export { allSessionsQuery, filesQuery, previewQuery, sessionsQuery, touchedQuery } from "./queries";
 export { sessionKey, sortSessions } from "./sessionorder";
 export { crumbs } from "./crumbs";
-export { default as SessionList } from "./SessionList.svelte";
+export { default as GlobalSessionList } from "./GlobalSessionList.svelte";
 export { default as SessionView } from "./SessionView.svelte";
 export { default as SessionsLink } from "./SessionsLink.svelte";
 export { globalMatches, inHiddenPath, sessionsHref, showHidden } from "./format";
