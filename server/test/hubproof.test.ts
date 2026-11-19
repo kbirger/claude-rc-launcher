@@ -143,7 +143,7 @@ describe("loadOrCreateHubKey", () => {
     const f = path.join(dir, "hub-key.pem");
     writeFileSync(f, "", { mode: 0o600 });
     await expect(loadOrCreateHubKey(dir)).rejects.toThrow(
-      `cannot parse ${f}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in the README).`,
+      `cannot parse ${f}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in docs/multi-host.md).`,
     );
     expect(readFileSync(f, "utf8")).toBe("");
   });

@@ -7,8 +7,8 @@
 #
 # If Bun is missing it is installed with Bun's official installer into ~/.bun (no root, no system
 # changes), pinned to the version in .bun-version. To skip building on the server entirely, download
-# a prebuilt binary from the GitHub releases page instead (see README.md "Install").
-# Deploying the binary and the systemd unit is a separate, root-only step: see README.md.
+# a prebuilt binary from the GitHub releases page instead (see docs/install.md).
+# Deploying the binary and the systemd unit is a separate, root-only step: see docs/install.md.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"

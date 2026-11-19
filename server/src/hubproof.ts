@@ -52,7 +52,7 @@ export async function loadOrCreateHubKey(dir: string): Promise<HubKey> {
       return await describeKey(privateKey, jwk.x);
     } catch (e) {
       throw new Error(
-        `cannot parse ${file}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in the README).`,
+        `cannot parse ${file}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in docs/multi-host.md).`,
         { cause: e },
       );
     }
