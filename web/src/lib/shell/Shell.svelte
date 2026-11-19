@@ -19,6 +19,7 @@
   import PullToRefresh from "./PullToRefresh.svelte";
   import RefreshBar from "./RefreshBar.svelte";
   import { setShell } from "./context";
+  import Avatar from "./Avatar.svelte";
 
   const HOST_KEY = "claude-rc-host";
 
@@ -128,7 +129,7 @@
   {#if hosts.length > 1}
     <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
   {/if}
-  <span class="ml-auto hidden min-w-0 text-[0.9rem] text-muted-foreground min-[481px]:inline-flex"><span class="truncate">{meQ.data?.name ?? ""}</span></span>
+  <span class="ml-auto hidden min-w-0 items-center gap-2 text-[0.9rem] text-muted-foreground min-[481px]:inline-flex">{#if meQ.data?.name}<Avatar name={meQ.data.name} email={meQ.data.email} size={28} />{/if}<span class="truncate">{meQ.data?.name ?? ""}</span></span>
   <a class="inline-flex min-h-11 min-w-11 flex-none items-center justify-center text-primary" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
     <LogOut size={22} aria-hidden="true" />
   </a>
