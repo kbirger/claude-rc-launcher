@@ -5,6 +5,7 @@
   import { page } from "$app/state";
   import Logo from "../shared/ui/Logo.svelte";
   import * as Alert from "#lib/components/ui/alert/index.js";
+  import * as DropdownMenu from "#lib/components/ui/dropdown-menu/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
@@ -129,10 +130,21 @@
   {#if hosts.length > 1}
     <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
   {/if}
-  <span class="ml-auto hidden min-w-0 items-center gap-2 text-[0.9rem] text-muted-foreground min-[481px]:inline-flex">{#if meQ.data?.name}<Avatar name={meQ.data.name} email={meQ.data.email} size={28} />{/if}<span class="truncate">{meQ.data?.name ?? ""}</span></span>
-  <a class="inline-flex min-h-11 min-w-11 flex-none items-center justify-center text-primary" href={meQ.data?.logoutUrl ?? "/auth/logout"} aria-label="Logout" title="Logout">
-    <LogOut size={22} aria-hidden="true" />
-  </a>
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground" aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}>
+      <Avatar name={meQ.data?.name ?? ""} email={meQ.data?.email} size={28} />
+      <span class="hidden truncate min-[481px]:inline">{meQ.data?.name ?? ""}</span>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end" class="w-auto min-w-40">
+      {#if meQ.data?.name}
+        <DropdownMenu.Label class="font-normal">{meQ.data.name}{#if meQ.data.role}<span class="ml-1.5 text-muted-foreground">· {meQ.data.role}</span>{/if}</DropdownMenu.Label>
+        <DropdownMenu.Separator />
+      {/if}
+      <DropdownMenu.Item class="min-h-11" onSelect={() => (location.href = meQ.data?.logoutUrl ?? "/auth/logout")}>
+        <LogOut size={20} aria-hidden="true" />Log out
+      </DropdownMenu.Item>
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
   <RefreshBar />
 </header>
 <div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
