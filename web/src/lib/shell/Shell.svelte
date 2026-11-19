@@ -10,8 +10,8 @@
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
-  import { HostPicker, hostsQuery, pruneNodes, readNodes, selectionAfter, toggleNode, writeNodes, type HostInfo } from "../features/hosts";
-  import { UpdateBanner, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "../features/updates";
+  import { hostsQuery, pruneNodes, readNodes, selectionAfter, toggleNode, writeNodes, type HostInfo } from "../features/hosts";
+  import { UpdateBanner, busyReason, lastEntry, latestQuery, reloadDecision, updatesQuery } from "../features/updates";
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
   import { createStartFlow } from "../startflow.svelte";
@@ -112,8 +112,6 @@
     flow.pick(id);
     remember(id);
   }
-  // Kept until the navigation change: the Nodes page still uses it.
-  const select = pickHost;
 
   setShell({
     flow,
@@ -126,7 +124,6 @@
     get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
-    select,
     nodes: {
       get selected() { return nodes; },
       toggle: (id) => setNodes(toggleNode(nodes, id)),
@@ -147,10 +144,7 @@
 </script>
 
 <header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2">
-  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/instances" aria-label="Claude RC: home"><Logo /></a></h1>
-  {#if hosts.length > 1}
-    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
-  {/if}
+  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/sessions" aria-label="Claude RC: home"><Logo /></a></h1>
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground" aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}>
       <Avatar name={meQ.data?.name ?? ""} email={meQ.data?.email} size={28} />
@@ -181,11 +175,6 @@
        indicators (the arrow in the host picker, the node list) and no banner. -->
   {#if page.url.pathname !== "/updates" && can(meQ.data?.role, "admin", meQ.data !== undefined)}
     <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
-  {/if}
-  {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
-    {#key flow.selected}
-      <div><UpdateOutput host={flow.selected} open={false} /></div>
-    {/key}
   {/if}
   <main>
     {@render children()}

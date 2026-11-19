@@ -9,7 +9,7 @@
   const shown = $derived(shell.hosts.filter((h) => inFilter(shell.nodes.selected, h.id)));
   // "+ New" starts on the node of the one selected chip. With none or several selected, the dialog asks.
   function openNew() {
-    if (shell.nodes.selected.length === 1) shell.select(shell.nodes.selected[0]!);
+    if (shell.nodes.selected.length === 1) shell.flow.pick(shell.nodes.selected[0]!);
     shell.flow.openNew();
   }
 </script>
