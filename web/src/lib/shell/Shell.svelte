@@ -141,9 +141,10 @@
       </Alert.Action>
     </Alert.Root>
   {/if}
-  <!-- The Updates page shows the whole panel itself. -->
-  {#if page.url.pathname !== "/updates"}
-    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} canRun={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
+  <!-- The Updates page shows the whole panel itself. Only an admin can act on an update, so everyone else gets the small
+       indicators (the arrow in the host picker, the node list) and no banner. -->
+  {#if page.url.pathname !== "/updates" && can(meQ.data?.role, "admin", meQ.data !== undefined)}
+    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
   {/if}
   {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
     {#key flow.selected}
