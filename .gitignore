@@ -9,3 +9,9 @@ server/src/embedded.ts
 .svelte-kit
 oidc-client.secret
 *.secret
+
+# Local secrets and tool state (not for the repo)
+/.oidc/
+/run.sh
+/.serena/
+/.mcp.json
