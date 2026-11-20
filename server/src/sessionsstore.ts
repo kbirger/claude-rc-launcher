@@ -7,7 +7,8 @@ import type { HostRegistry } from "./hostregistry";
 import type { Presence } from "./nodewatcher";
 import type { SessionRow, SessionsPayload } from "./sessionindex";
 
-export type HostSessionsStatus = { id: string; name: string; status: "ok" | "offline" | "error" | "unavailable" | "loading"; error?: string; scannedAt?: string };
+/** `truncated` is true when the node sent only its newest rows (see MAX_SESSIONS_BYTES). It is absent when the list is whole. */
+export type HostSessionsStatus = { id: string; name: string; status: "ok" | "offline" | "error" | "unavailable" | "loading"; error?: string; scannedAt?: string; truncated?: boolean };
 export type HubSession = SessionRow & { host: { id: string; name: string } };
 export type HubSessions = { sessions: HubSession[]; hosts: HostSessionsStatus[] };
 export type HostPart = { host: HostSessionsStatus; rows: HubSession[] };
@@ -45,7 +46,7 @@ export class SessionsStore {
   set(host: string, e: SessionsPayload): void {
     if (host !== LOCAL && !this.o.registry.get(host)) return;
     const sessions = Array.isArray(e.sessions) ? e.sessions.filter(isRow) : [];
-    this.lists.set(host, { scannedAt: e.scannedAt, available: e.available, sessions });
+    this.lists.set(host, { scannedAt: e.scannedAt, available: e.available, sessions, ...(e.truncated === true ? { truncated: true } : {}) });
     this.emitHost(host);
   }
 
@@ -96,6 +97,6 @@ export class SessionsStore {
     const list = this.lists.get(host.id);
     if (!list) return { host: { ...host, status: "loading" }, rows: [] };
     if (!list.available) return { host: { ...host, status: "unavailable" }, rows: [] };
-    return { host: { ...host, status: "ok", scannedAt: list.scannedAt }, rows: list.sessions.map((s) => ({ ...s, host })) };
+    return { host: { ...host, status: "ok", scannedAt: list.scannedAt, ...(list.truncated ? { truncated: true } : {}) }, rows: list.sessions.map((s) => ({ ...s, host })) };
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SessionIndex, type SessionsEvent } from "../src/sessionindex";
+import { capSessions, MAX_SESSIONS_BYTES, SessionIndex, type SessionRow, type SessionsEvent } from "../src/sessionindex";
 import type { SessionSummary } from "../src/sessioncatalog";
 import type { ChangeSource, Trigger } from "../src/changesource";
 import { fakeTimers } from "./faketimers";
@@ -49,7 +49,7 @@ function fakeSource(): FakeSource {
   return s;
 }
 
-function rig(initial: Partial<Parts> = {}, o: { noHome?: boolean } = {}): Rig {
+function rig(initial: Partial<Parts> = {}, o: { noHome?: boolean; maxSessionsBytes?: number } = {}): Rig {
   const p: Parts = { instances: [inst("a")], failList: false, failHome: new Set(), live: new Map(), rows: new Map(), ...initial };
   let scans = 0;
   const reads: string[] = [];
@@ -78,7 +78,7 @@ function rig(initial: Partial<Parts> = {}, o: { noHome?: boolean } = {}): Rig {
     readLive: async (home: string) => p.live.get(home) ?? new Map(),
   };
   const source = fakeSource();
-  const index = new SessionIndex({ instances, catalog, source, timers, now: () => timers.now(), log: () => {} });
+  const index = new SessionIndex({ instances, catalog, source, timers, now: () => timers.now(), log: () => {}, ...(o.maxSessionsBytes ? { maxSessionsBytes: o.maxSessionsBytes } : {}) });
   const events: SessionsEvent[] = [];
   index.subscribe((e) => events.push(e));
   return { index, scans: () => scans, reads: () => reads, set: (f) => Object.assign(p, f), timers, source, events };
@@ -402,5 +402,81 @@ describe("SessionIndex", () => {
     await settle();
     expect(got).toEqual([]);
     expect(r.events.length).toBe(1);
+  });
+});
+
+describe("capSessions", () => {
+  const instance = { id: "a", name: "n-a", path: "/srv/a", state: "active" };
+  const big = (n: number, pad = 300): SessionRow[] =>
+    Array.from({ length: n }, (_, i) => ({ ...sess(`s-${i}`, { name: "x".repeat(pad), lastActiveAt: iso(T0 + ((i * 7919) % n) * 1_000) }), instance }));
+  const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
+
+  test("a small list comes back the same, with no truncated key", () => {
+    const rows = big(3);
+    const got = capSessions(rows);
+    expect(got).toEqual({ sessions: rows });
+    expect("truncated" in got).toBe(false);
+  });
+
+  test("a list over the cap keeps the newest rows that fit, in their order, and says truncated", () => {
+    const rows = big(4_000);
+    expect(bytes(rows)).toBeGreaterThan(1024 * 1024);
+    const got = capSessions(rows);
+    expect(got.truncated).toBe(true);
+    const payload = { scannedAt: iso(T0), available: true, ...got };
+    expect(bytes(payload)).toBeLessThanOrEqual(MAX_SESSIONS_BYTES);
+    expect(got.sessions.length).toBeGreaterThan(1_500);
+    expect(got.sessions.length).toBeLessThan(rows.length);
+    const kept = new Set(got.sessions.map((r) => r.id));
+    const oldestKept = Math.min(...got.sessions.map((r) => Date.parse(r.lastActiveAt)));
+    for (const r of rows) if (!kept.has(r.id)) expect(Date.parse(r.lastActiveAt)).toBeLessThanOrEqual(oldestKept);
+    expect(got.sessions).toEqual(rows.filter((r) => kept.has(r.id)));
+  });
+
+  test("multibyte text counts as bytes, not characters", () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ ...sess(`s-${i}`, { name: "\u00e9".repeat(100), lastActiveAt: iso(T0 + i) }), instance }));
+    const got = capSessions(rows, bytes({ scannedAt: iso(T0), available: true, truncated: true, sessions: rows }) - 1);
+    expect(got.truncated).toBe(true);
+    expect(got.sessions.map((r) => r.id)).toEqual(["s-1", "s-2", "s-3", "s-4", "s-5", "s-6", "s-7", "s-8", "s-9"]);
+  });
+});
+
+describe("SessionIndex with a capped list", () => {
+  const many = (n: number) => rowsA(...Array.from({ length: n }, (_, i) => sess(`s-${i}`, { name: "x".repeat(50), lastActiveAt: iso(T0 + i * 60_000) })));
+
+  test("a list over the cap is emitted truncated, and a later poll of the same list gives no new event", async () => {
+    const r = rig({ rows: many(40) }, { maxSessionsBytes: 2_000 });
+    r.index.start();
+    await settle();
+    expect(r.events.length).toBe(1);
+    expect(r.events[0]!.truncated).toBe(true);
+    expect(r.events[0]!.sessions.map((s) => s.id)).toContain("s-39");
+    expect(r.events[0]!.sessions.map((s) => s.id)).not.toContain("s-0");
+    await r.timers.advance(1_000);
+    await fire(r, { scope: "all" });
+    await fire(r, { scope: "live" });
+    expect(r.events.length).toBe(1);
+  });
+
+  test("a change of truncated alone gives an event", async () => {
+    const rows = many(40);
+    const r = rig({ rows }, { maxSessionsBytes: 2_000 });
+    r.index.start();
+    await settle();
+    const kept = r.events[0]!.sessions.map((s) => s.id);
+    await r.timers.advance(1_000);
+    // The same rows that were sent, now the whole list: nothing is cut any more.
+    r.set({ rows: rowsA(...rows.get("/home/a")!.filter((s) => kept.includes(s.id))) });
+    await fire(r, { scope: "all" });
+    expect(r.events.length).toBe(2);
+    expect(r.events[1]!.sessions.map((s) => s.id)).toEqual(kept);
+    expect("truncated" in r.events[1]!).toBe(false);
+  });
+
+  test("a list under the cap has no truncated key", async () => {
+    const r = rig();
+    r.index.start();
+    await settle();
+    expect("truncated" in r.events[0]!).toBe(false);
   });
 });

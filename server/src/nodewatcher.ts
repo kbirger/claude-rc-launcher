@@ -39,7 +39,8 @@ const isStr = (v: unknown): v is string => typeof v === "string";
 function asSessions(v: unknown): SessionsPayload | undefined {
   if (!v || typeof v !== "object") return undefined;
   const r = v as Record<string, unknown>;
-  return isStr(r.scannedAt) && typeof r.available === "boolean" && Array.isArray(r.sessions) ? (r as unknown as SessionsPayload) : undefined;
+  const flag = r.truncated === undefined || typeof r.truncated === "boolean";
+  return isStr(r.scannedAt) && typeof r.available === "boolean" && Array.isArray(r.sessions) && flag ? (r as unknown as SessionsPayload) : undefined;
 }
 
 function parse(data: string): Record<string, unknown> | undefined {
