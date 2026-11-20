@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { NodeList, renameHostMutation } from "#lib/features/hosts";
+  import { instancesHref } from "#lib/features/instances";
   import { UpdateOutput, lastEntry, showsFinishedPanel, updateHostMutation } from "#lib/features/updates";
   import { ApiError } from "#lib/shared/http";
   import { getShell } from "#lib/shell/context";
@@ -23,7 +24,7 @@
 
 <h2 class="font-heading mb-3 text-lg font-bold">Nodes</h2>
 <!-- A tap on a node shows the instances of that node. -->
-<NodeList hosts={shell.hosts} onselect={(id) => { shell.nodes.only(id); void goto("/instances"); }} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
+<NodeList hosts={shell.hosts} onselect={(id) => void goto(instancesHref(id))} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
 {#each shell.hosts as h (h.id)}
   {#if showsFinishedPanel(lastEntry(shell.updates, h.id))}
     <div class="mt-3"><UpdateOutput host={h.id} open={false} /></div>

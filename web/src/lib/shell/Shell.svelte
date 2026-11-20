@@ -128,7 +128,6 @@
       // Only nodes that exist count. While the host list loads, or if it fails, a saved choice of another node must not empty the views.
       get selected() { return pruneNodes(nodes, hosts); },
       toggle: (id) => setNodes(toggleNode(pruneNodes(nodes, hosts), id)),
-      only: (id) => setNodes([id]),
       clear: () => setNodes([]),
     },
     get latestError() { return latestQ.isError; },
