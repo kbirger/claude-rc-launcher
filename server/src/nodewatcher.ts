@@ -1,6 +1,7 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
 import type { StepName } from "./updateevents";
+import type { SessionsPayload } from "./sessionindex";
 import { cutLine, MAX_AT, type UpdateLog } from "./updatelog";
 
 export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
@@ -35,6 +36,12 @@ const defaultSleep = (ms: number) =>
 
 const isStr = (v: unknown): v is string => typeof v === "string";
 
+function asSessions(v: unknown): SessionsPayload | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as Record<string, unknown>;
+  return isStr(r.scannedAt) && typeof r.available === "boolean" && Array.isArray(r.sessions) ? (r as unknown as SessionsPayload) : undefined;
+}
+
 function parse(data: string): Record<string, unknown> | undefined {
   try {
     const v = JSON.parse(data);
@@ -54,6 +61,7 @@ export function createNodeWatchers(o: {
   log: UpdateLog;
   onPresence(p: Presence): void;
   onStep(host: string, e: StepEvent): void;
+  onSessions?(host: string, e: SessionsPayload): void;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -181,6 +189,8 @@ export function createNodeWatchers(o: {
             pending = new Map();
             for (const k of seen) pending.set(k, (pending.get(k) ?? 0) + 1);
             publish("online", isStr(snap.version) ? { version: snap.version.slice(0, MAX_VERSION) } : {});
+            const list = asSessions(snap.sessions);
+            if (list) safe(() => o.onSessions?.(id, list));
           } else if (ev.event === "log") {
             const e = parse(ev.data);
             if (!e || !isStr(e.line)) continue;
@@ -194,6 +204,9 @@ export function createNodeWatchers(o: {
               if (seen.length > 200) seen.shift();
               o.log.add(id, e.line, isStr(e.at) ? e.at : undefined);
             }
+          } else if (ev.event === "sessions") {
+            const list = asSessions(parse(ev.data));
+            if (list) safe(() => o.onSessions?.(id, list));
           } else if (ev.event === "step") {
             const e = parse(ev.data);
             if (!e || !isStr(e.step) || !Object.hasOwn(STEPS, e.step)) continue;
