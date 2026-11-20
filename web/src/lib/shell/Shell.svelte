@@ -144,7 +144,9 @@
   });
 </script>
 
-<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2">
+<!-- Up to 480px wide the header is hidden: the bottom bar has Sessions, and the menu sheet has the name and Log out. The refresh bar moves to the top of the screen. -->
+<div class="sticky top-0 z-40 h-0 min-[481px]:hidden"><div class="relative h-0.5"><RefreshBar /></div></div>
+<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2 max-[480px]:hidden">
   <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/sessions" aria-label="Claude RC: home"><Logo /></a></h1>
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground" aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}>
@@ -163,7 +165,7 @@
   </DropdownMenu.Root>
   <RefreshBar />
 </header>
-<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
   {#if reloadBar}
     <Alert.Root role="status" class="border-l-[3px] border-l-warning">
       <Alert.Description class="text-foreground">The hub was updated. Reload to get the new page.</Alert.Description>

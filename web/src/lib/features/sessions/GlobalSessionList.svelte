@@ -34,8 +34,8 @@
 {:else if q.error}
   <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else}
-  <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px), so it stays in view while the list scrolls. -->
-  <div class="sticky top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">
+  <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px) so it stays in view while the list scrolls. Up to 480px wide the header is hidden, so it sticks to the top there. -->
+  <div class="sticky top-[env(safe-area-inset-top)] min-[481px]:top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">
     {#if filtered}
       <a href="/sessions" aria-label="Remove instance filter" class="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border px-3 text-sm no-underline">Instance: {instanceName}<X size={16} aria-hidden="true" /></a>
     {/if}

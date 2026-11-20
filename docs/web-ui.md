@@ -15,6 +15,8 @@ The header has two parts:
 - The logo. Tap it to go back to the session list.
 - The account menu. It shows your name and the Log out entry.
 
+On a phone (480 px wide or less) the header is hidden to give the lists more room. The bottom bar has Sessions, and the menu sheet shows your name and has Log out. The thin line that shows a refresh moves to the top edge of the screen.
+
 The bar at the bottom has three buttons: Sessions, the Menu button in the middle, and Instances. The menu opens a sheet with these entries: Sessions, Instances, Nodes, Updates, Appearance, a link to the GitHub repository, and Log out with your name.
 
 <img src="images/screens/menu.png" alt="The menu sheet" width="300">

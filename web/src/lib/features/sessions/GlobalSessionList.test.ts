@@ -133,3 +133,11 @@ test("an address with an instance and no host shows no instance chip and no filt
   expect(t.querySelector('a[aria-label="Remove instance filter"]')).toBeNull();
   expect(titles(t)).toHaveLength(2);
 });
+
+test("the filter bar sticks to the top on a phone, where the header is hidden, and under the header from 481 px", () => {
+  const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok")] });
+  const bar = t.querySelector("input[type=search]")!.closest(".sticky") as HTMLElement;
+  expect(bar.className).toContain("top-[env(safe-area-inset-top)]");
+  expect(bar.className).toContain("min-[481px]:top-[61px]");
+  expect(bar.className).not.toMatch(/(^|\s)top-\[61px\]/);
+});
