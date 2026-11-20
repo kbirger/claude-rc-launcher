@@ -66,6 +66,14 @@ const H = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "ap
 const post = (app: any, body: unknown, headers = H()) =>
   app.request("/api/hosts/local/instances", { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
 
+describe("node-only heartbeat route", () => {
+  test("the hub does not serve /api/hosts/local/sessions/watch", async () => {
+    const { app } = mk();
+    const res = await app.request("/api/hosts/local/sessions/watch", { method: "POST", headers: H(), body: "{}" });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("PWA files", () => {
   const files = new Map([
     ["/index.html", { path: "/dev/null", type: "text/html" }],
