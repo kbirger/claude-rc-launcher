@@ -97,7 +97,7 @@
       <Tabs.Content value={current} class="min-w-0">
         {#if q.isPending}
           <p class="text-muted-foreground">Loading session...</p>
-        {:else if q.error}
+        {:else if q.error && !q.data}
           <Alert.Root variant="destructive"><Alert.Description>Could not load the session: {q.error.message}</Alert.Description></Alert.Root>
         {:else if !s && hostState && hostState.status !== "ok"}
           <Alert.Root><Alert.Description>{hostNotice(hostState)}</Alert.Description></Alert.Root>

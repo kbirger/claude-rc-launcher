@@ -1,4 +1,5 @@
-import { expect, test } from "vitest";
+import { QueryClient, QueryObserver } from "@tanstack/svelte-query";
+import { expect, test, vi } from "vitest";
 import * as queries from "./queries";
 import { allSessionsQuery, filesQuery, previewQuery, touchedQuery } from "./queries";
 
@@ -41,5 +42,20 @@ test("allSessionsQuery has no refetchInterval", () => {
   expect(q.queryKey).toEqual(["all-sessions"]);
   expect("refetchInterval" in q).toBe(false);
   expect(q.refetchOnWindowFocus).toBe(false);
+  expect(q.staleTime).toBe(Infinity);
   expect(q.retry).toBe(false);
+});
+
+test("a second observer on a cache written long ago makes no fetch, and invalidateQueries still fetches", async () => {
+  const queryFn = vi.fn(async () => ({ sessions: [], hosts: [] }));
+  const client = new QueryClient();
+  // Written by the stream 10 minutes ago: older than any short stale time.
+  client.setQueryData(["all-sessions"], { sessions: [], hosts: [{ id: "h", name: "h", status: "ok" }] }, { updatedAt: Date.now() - 600_000 });
+  const obs = new QueryObserver(client, { ...allSessionsQuery(), queryFn });
+  const off = obs.subscribe(() => {});
+  await Promise.resolve();
+  expect(queryFn).not.toHaveBeenCalled();
+  await client.invalidateQueries({ queryKey: ["all-sessions"] });
+  expect(queryFn).toHaveBeenCalledTimes(1);
+  off();
 });

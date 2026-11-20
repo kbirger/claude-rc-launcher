@@ -5,11 +5,12 @@ export const ALL_SESSIONS_KEY = ["all-sessions"] as const;
 
 export const SESSIONS_STALE_MS = 5000;
 
-// No poll and no refocus read: the sessions stream keeps this query fresh, and a slow read must not overwrite newer stream data.
+// No poll, no refocus read and no mount read once the data is in: the sessions stream keeps this query fresh, and a slow
+// read must not overwrite newer stream data. A cold cache fetches once. A pull to refresh still reads it through invalidateQueries.
 export const allSessionsQuery = () => ({
   queryKey: ALL_SESSIONS_KEY,
   queryFn: listAllSessions,
-  staleTime: SESSIONS_STALE_MS,
+  staleTime: Infinity,
   refetchOnWindowFocus: false as const,
   retry: false as const,
 });

@@ -192,6 +192,22 @@ test("a failed read of the list shows the error", async () => {
   }
 });
 
+test("a failed refresh keeps the rows and shows no error", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok")] }, {}, client);
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "hub: store gone" }), { status: 500, headers: { "content-type": "application/json" } })) as any;
+  try {
+    await client.invalidateQueries({ queryKey: ["all-sessions"] });
+    flushSync();
+    expect(client.getQueryState(["all-sessions"])!.error).not.toBeNull();
+    expect(titles(t)).toEqual(["title-a"]);
+    expect(t.textContent).not.toContain("hub: store gone");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("for one instance with no sessions the heading takes the instance name from the instance list", () => {
   const t = showOne(mixed([]));
   expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions: inst-bb on hub");

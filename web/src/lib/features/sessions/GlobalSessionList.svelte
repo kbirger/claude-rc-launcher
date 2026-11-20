@@ -48,7 +48,8 @@
 <h2 class="font-heading mb-3 text-lg font-bold [overflow-wrap:anywhere]">{filtered ? `Sessions: ${instanceName} on ${nodeName}` : "Sessions"}</h2>
 {#if q.isPending}
   <p class="text-muted-foreground">Loading sessions...</p>
-{:else if q.error}
+<!-- A failed refresh keeps the rows that are there: the error shows only when there is no list. -->
+{:else if q.error && !q.data}
   <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else}
   <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px) so it stays in view while the list scrolls. Up to 480px wide the header is hidden, so it sticks to the top there. -->
