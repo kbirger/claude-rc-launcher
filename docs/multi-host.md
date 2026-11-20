@@ -10,8 +10,16 @@ Browser -> reverse proxy [+ Authentik outpost] -> HUB -- HTTPS, pinned cert, Hub
 
 The hub serves the UI and proxies the instance API of each node. If more than one host is configured, a Nodes button appears above the
 Sessions and Instances lists. Its menu has a checkbox for each host. Each host has a status dot, and an offline host stays in the menu.
-The Sessions view needs the node to run the same release as the hub: an older node has no session list, and the view says so. The hub's own host is the
+The hub's own host is the
 implicit host `local`.
+
+## Session lists from nodes
+
+The hub keeps the last list of sessions of each host in memory. A node sends its list over the event stream that the hub already holds (`GET /api/events`). The `snapshot` event has a field `sessions` with the full list. After that, the node sends a `sessions` event with the full list each time the list changes. The body is `{ scannedAt, available, sessions }`. A node with no session files sends `available: false`. The hub shows such a host as `unavailable`.
+
+A node scans fast only while a hub watches. While a browser has the sessions stream open, the hub calls `POST /api/sessions/watch` on each online node every 20 seconds. The node drops back to slow scans 60 seconds after the last call. If a node returns online, the hub sends it a call at once. The hub does not call a node that is not online. Read [The list of all sessions](session-files.md#the-list-of-all-sessions) and [The sessions stream](api.md#the-sessions-stream).
+
+The Sessions view needs the node to run the same release as the hub. A node on an older release does not send `sessions`, so the view shows it as `loading`.
 
 ## Pairing a node
 

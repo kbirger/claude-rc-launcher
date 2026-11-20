@@ -33,7 +33,16 @@ The Sessions view is the first page. It lists the sessions of every instance on 
 
 If you have more than one host, a Nodes button shows above the list on the Sessions view and on the Instances view. It says "Nodes: all", the name of the one selected host, or a count such as "Nodes: 2 of 5". A tap opens a menu with a checkbox for each host. The menu stays open while you tick hosts, and it scrolls if the list is long. "All nodes" clears the selection. With no host ticked, the views show all hosts. The tab keeps the selection, and both views use it. Each host has a status dot: green for ok, yellow for restarting, and red for a host that does not answer. Such a host stays in the menu.
 
-If a host does not answer, or runs an older release that has no session list, a note above the list names it. This way a missing host is not mistaken for "no sessions". Read [Sessions and files](#sessions-and-files) for what you can do with one session.
+The Sessions page does not poll. When it opens, it opens a sessions stream (a server-sent event stream) to the hub. The stream sends the stored lists at once, and then each change as it happens. A session that starts, ends or turns busy shows up within seconds. A pull to refresh reads the list from the hub again. A return to the tab does not, because the stream keeps the data.
+
+If a host gives no rows, a note above the list names it. This way a missing host is not mistaken for "no sessions". The note says:
+
+- "not answering" for an offline host.
+- The error text for a host with an error.
+- "no session files on this node" for a host that cannot list sessions.
+- "loading" for a host that has not sent its first list yet.
+
+A tab that is not visible drops its streams. If the tab stays hidden for 30 seconds, the app closes them. A quick switch to another tab does not close them. When the tab is visible again, the app opens the streams again, and each new stream starts with a full list. The rule follows the visibility of the tab, not the focus of the window. A window that you can see next to another one keeps its streams. Read [Sessions and files](#sessions-and-files) for what you can do with one session.
 
 ## Instances
 
@@ -276,8 +285,7 @@ The preview has no editor, no line numbers, no search, no images, and no JSON or
 the lines that the view has built, so use Download to copy the whole file. Session files are not yet verified on
 Windows nodes.
 
-If a node runs an older version without this feature, the web UI hides the "Sessions" button for its instances. Update
-the node to see the button.
+If a node has no session files, the web UI hides the "Sessions" button for its instances. The hub tells the web app this in the field `sessions` of the host list.
 
 To learn how session files work inside the code, read [How session files work](session-files.md).
 
