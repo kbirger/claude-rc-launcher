@@ -64,7 +64,7 @@ Event route of a node. The hub opens it for each node, with the same authenticat
 
 ## The list of all sessions
 
-`GET /api/sessions` on the hub lists the sessions of every instance on every host. The role `read` is enough. The hub asks its own node and each paired node for `GET /api/sessions` and merges the answers. It does not sort them. The answer is:
+`GET /api/sessions` on the hub (and `GET /cli/api/sessions` for the CLI) lists the sessions of every instance on every host. The role `read` is enough. The hub asks its own node and each paired node for `GET /api/sessions` and merges the answers. It does not sort them. The answer is:
 
 ```json
 {
@@ -73,6 +73,6 @@ Event route of a node. The hub opens it for each node, with the same authenticat
 }
 ```
 
-The fields of a session are the fields of `GET /instances/:id/sessions`, plus `instance` and `host`. The `status` of a host is `ok`, `offline`, `error` or `unsupported`. A node that answers 404 or 501 is `unsupported`: it runs a release without this route. A host that does not answer has no rows, and the call still gives 200.
+The fields of a session are the fields of `GET /instances/:id/sessions`, plus `instance` and `host`. The `status` of a host is `ok`, `offline`, `error` or `unsupported`. A node that answers 404 or 501 is `unsupported`: it runs a release without this route. A host that does not answer has no rows, and the call still gives 200. The hub does not call a host that its node watcher knows is not online: it reports the status of the watcher at once, so a node that is down does not slow the list.
 
 A node serves the same route as `GET /api/sessions`. Its answer is `{ scannedAt, sessions }`, with `instance` on each session. The node answers from a copy in memory. Read [The list of all sessions](session-files.md#the-list-of-all-sessions).

@@ -108,4 +108,42 @@ describe("hub all-sessions route", () => {
     await app.request("/api/sessions");
     expect(seen).toEqual([3000]);
   });
+
+  test("a node that the watcher knows is offline is not called, and its status shows at once", async () => {
+    let called = 0;
+    const down = async () => (called++, { status: 200, body: answer("x") });
+    const local = new Hono();
+    local.get("/sessions", (c) => c.json(answer("l1")));
+    const clients = new Map([["win", { call: down, stream: async () => { throw new Error("unused"); } } as unknown as HostClient], ["ok", { call: async () => ({ status: 200, body: answer("o1") }), stream: async () => { throw new Error("unused"); } } as unknown as HostClient]]);
+    const presence = () => [{ host: "win", status: "offline" as const, reason: "timeout", at: "2026-01-01T00:00:00.000Z" }, { host: "ok", status: "online" as const, at: "2026-01-01T00:00:00.000Z" }];
+    const app = new Hono();
+    app.route("/api/sessions", allSessionsApi({ cfg: { name: "h" } as any, local, registry: HostRegistry.memory([cfgHost("win"), cfgHost("ok")], clients), presence }));
+    const body = (await (await app.request("/api/sessions")).json()) as any;
+    expect(called).toBe(0);
+    expect(body.hosts.find((h: any) => h.id === "win")).toEqual({ id: "win", name: "name-win", status: "offline", error: "timeout" });
+    expect(body.sessions.map((s: any) => s.id)).toEqual(["l1", "o1"]);
+  });
+
+  test("a node that is restarting shows as offline with the reason restarting and is not called", async () => {
+    let called = 0;
+    const client = { call: async () => (called++, { status: 200, body: answer("x") }), stream: async () => { throw new Error("unused"); } } as unknown as HostClient;
+    const local = new Hono();
+    local.get("/sessions", (c) => c.json(answer()));
+    const app = new Hono();
+    app.route("/api/sessions", allSessionsApi({ cfg: { name: "h" } as any, local, registry: HostRegistry.memory([cfgHost("nas")], new Map([["nas", client]])), presence: () => [{ host: "nas", status: "restarting", at: "2026-01-01T00:00:00.000Z" }] }));
+    const body = (await (await app.request("/api/sessions")).json()) as any;
+    expect(called).toBe(0);
+    expect(body.hosts.find((h: any) => h.id === "nas")).toEqual({ id: "nas", name: "name-nas", status: "offline", error: "restarting" });
+  });
+
+  test("a node with no presence entry is called, as before", async () => {
+    let called = 0;
+    const client = { call: async () => (called++, { status: 200, body: answer("r1") }), stream: async () => { throw new Error("unused"); } } as unknown as HostClient;
+    const local = new Hono();
+    local.get("/sessions", (c) => c.json(answer()));
+    const app = new Hono();
+    app.route("/api/sessions", allSessionsApi({ cfg: { name: "h" } as any, local, registry: HostRegistry.memory([cfgHost("nas")], new Map([["nas", client]])), presence: () => [] }));
+    await app.request("/api/sessions");
+    expect(called).toBe(1);
+  });
 });

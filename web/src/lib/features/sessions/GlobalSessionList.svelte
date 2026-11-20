@@ -6,7 +6,8 @@
   import { NodeFilter, inFilter, type HostInfo } from "../hosts";
   import { instancesQuery } from "../instances/queries";
   import { globalMatches } from "./format";
-  import { allSessionsQuery } from "./queries";
+  import { isUnsupported, type GlobalSession } from "./api";
+  import { allSessionsQuery, sessionsQuery } from "./queries";
   import SessionCard from "./SessionCard.svelte";
   import { sessionKey, sortSessions } from "./sessionorder";
 
@@ -14,33 +15,45 @@
   // the heading then names the instance and its node, and the node filter is gone, because the choice is made.
   let { hosts, nodes, host, instance, now, ontoggle, onclear }: { hosts: HostInfo[]; nodes: string[]; host: string; instance: string; now: number; ontoggle: (id: string) => void; onclear: () => void } = $props();
 
-  const q = createQuery(() => allSessionsQuery());
   let filter = $state("");
   // The instance filter needs both: an address with only an instance gives no filter.
   const filtered = $derived(!!host && !!instance);
 
-  // For one instance the node selection does not apply: it could hide the sessions of the instance that the user opened.
-  const inScope = (nodeId: string) => (filtered ? nodeId === host : inFilter(nodes, nodeId));
-  const scoped = $derived((q.data?.sessions ?? []).filter((s) => inScope(s.host.id) && (!filtered || s.instance.id === instance)));
+  // Two sources. All sessions: the hub list of all nodes (each node answers from its cache). One instance: the list of that instance on that node
+  // only, so the page never waits for another node (one that is down holds the list of all nodes for its time limit).
+  const all = createQuery(() => ({ ...allSessionsQuery(), enabled: !filtered }));
+  const one = createQuery(() => ({ ...sessionsQuery(host, instance), enabled: filtered }));
+  const q = $derived(filtered ? one : all);
+
+  // The names for the heading and the rows come from the host list and the instance list of that node.
+  const names = createQuery(() => ({ ...instancesQuery(host), refetchInterval: false as const, enabled: filtered }));
+  const instanceName = $derived(names.data?.find((i) => i.id === instance)?.name ?? instance.slice(0, 8));
+  const nodeName = $derived(hosts.find((h) => h.id === host)?.name ?? host);
+
+  const rows = $derived<GlobalSession[]>(
+    filtered
+      ? (one.data ?? []).map((s) => ({ ...s, instance: { id: instance, name: instanceName, path: "", state: "" }, host: { id: host, name: nodeName } }))
+      : (all.data?.sessions ?? []).filter((s) => inFilter(nodes, s.host.id)),
+  );
+  const scoped = $derived(rows);
   const shown = $derived(sortSessions(scoped.filter((s) => globalMatches(s, filter))));
   // A node that did not answer is named, so that a missing node is not mistaken for "no sessions".
   const notices = $derived(
-    (q.data?.hosts ?? [])
-      .filter((h) => h.status !== "ok" && inScope(h.id))
+    (filtered ? [] : (all.data?.hosts ?? []))
+      .filter((h) => h.status !== "ok" && inFilter(nodes, h.id))
       .map((h) => ({ id: h.id, text: `${h.name}: ${h.status === "unsupported" ? "update this node to list its sessions" : h.status === "offline" ? "not answering" : (h.error ?? "error")}` })),
   );
-  // The name of the instance comes from its sessions. An instance without sessions gets its name from the instance list.
-  const rowName = $derived((q.data?.sessions ?? []).find((s) => s.host.id === host && s.instance.id === instance)?.instance.name);
-  const names = createQuery(() => ({ ...instancesQuery(host), refetchInterval: false as const, enabled: filtered && !rowName }));
-  const instanceName = $derived(rowName ?? names.data?.find((i) => i.id === instance)?.name ?? instance.slice(0, 8));
-  const nodeName = $derived(hosts.find((h) => h.id === host)?.name ?? q.data?.hosts.find((h) => h.id === host)?.name ?? host);
 </script>
 
 <h2 class="font-heading mb-3 text-lg font-bold [overflow-wrap:anywhere]">{filtered ? `Sessions: ${instanceName} on ${nodeName}` : "Sessions"}</h2>
 {#if q.isPending}
   <p class="text-muted-foreground">Loading sessions...</p>
 {:else if q.error}
-  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
+  {#if filtered && isUnsupported(q.error)}
+    <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
+  {:else}
+    <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
+  {/if}
 {:else}
   <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px) so it stays in view while the list scrolls. Up to 480px wide the header is hidden, so it sticks to the top there. -->
   <div class="sticky top-[env(safe-area-inset-top)] min-[481px]:top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">

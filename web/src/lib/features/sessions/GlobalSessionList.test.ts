@@ -35,6 +35,21 @@ function show(data: AllSessions | undefined, props: Record<string, unknown> = {}
   flushSync();
   return target;
 }
+
+const INST = "bbbbbbbbbbbb";
+const plain = (id: string, over: object = {}) => ({ id, root: "/work/proj", name: `title-${id}`, startedAt: "2026-11-19T10:00:00.000Z", lastActiveAt: "2026-11-19T10:00:00.000Z", ...over });
+/** The list of one instance: it reads the per-instance sessions of that node, not the list of all nodes. */
+function showOne(sessions: unknown[] | undefined, props: Record<string, unknown> = {}, instances: unknown[] | undefined = [{ id: INST, path: "/p", name: "inst-bb", state: "active", startedAt: null }]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (sessions) client.setQueryData(["sessions", "local", INST], sessions);
+  if (instances) client.setQueryData(["instances", "local"], instances);
+  const target = document.createElement("div");
+  document.body.append(target);
+  const c = mount(Harness, { target, props: { client, hosts, host: "local", instance: INST, ...props } as any });
+  open.push(() => unmount(c));
+  flushSync();
+  return target;
+}
 const titles = (t: HTMLElement) => [...t.querySelectorAll("[data-session-title]")].map((e) => e.textContent);
 
 test("shows sessions from all nodes with the running one first", () => {
@@ -101,7 +116,7 @@ test("a node that is not in the selection gives no notice", () => {
 });
 
 test("for one instance the heading names the instance and the node, and there is no node filter and no chip", () => {
-  const t = show({ sessions: [row("a", "local", {}, "aaaaaaaaaaaa"), row("b", "local", {}, "bbbbbbbbbbbb")], hosts: [status("local", "ok")] }, { host: "local", instance: "bbbbbbbbbbbb" });
+  const t = showOne([plain("b")]);
   expect(titles(t)).toEqual(["title-b"]);
   expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions: inst-bb on hub");
   expect(t.querySelector('button[aria-label="Filter by node"]')).toBeNull();
@@ -112,19 +127,53 @@ test("for one instance the heading names the instance and the node, and there is
 test("rows show the node and instance in the all-sessions list, but not for one instance", () => {
   const data = { sessions: [row("a", "local", {}, "aaaaaaaaaaaa")], hosts: [status("local", "ok")] };
   expect(show(data).querySelector("[data-session-where]")!.textContent).toContain("hub");
-  expect(show(data, { host: "local", instance: "aaaaaaaaaaaa" }).querySelector("[data-session-where]")).toBeNull();
+  expect(showOne([plain("a")]).querySelector("[data-session-where]")).toBeNull();
 });
 
 test("for one instance the node selection is ignored", () => {
-  const t = show({ sessions: [row("a", "local", {}, "aaaaaaaaaaaa"), row("b", "nas", {}, "bbbbbbbbbbbb")], hosts: [status("local", "ok"), status("nas", "ok")] }, { host: "local", instance: "aaaaaaaaaaaa", nodes: ["nas"] });
+  const t = showOne([plain("a")], { nodes: ["nas"] });
   expect(titles(t)).toEqual(["title-a"]);
 });
 
-test("for one instance only a notice about that node shows", () => {
-  const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok"), { id: "nas", name: "Basement NAS", status: "offline", error: "unreachable" }] }, { host: "local", instance: "0123456789ab" });
-  expect(t.textContent).not.toContain("not answering");
-  const t2 = show({ sessions: [], hosts: [{ id: "local", name: "hub", status: "offline", error: "unreachable" }] }, { host: "local", instance: "0123456789ab" });
-  expect(t2.textContent).toContain("hub: not answering");
+test("for one instance only that node is asked: its own list, never the list of all nodes", async () => {
+  const urls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (u: any) => (urls.push(String(u)), new Response(JSON.stringify([plain("b")]), { status: 200, headers: { "content-type": "application/json" } }))) as any;
+  try {
+    showOne(undefined);
+    await vi.waitFor(() => expect(urls).toContain(`/api/hosts/local/instances/${INST}/sessions`));
+    expect(urls).not.toContain("/api/sessions");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("for one instance a node without session files gets the update message", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { "content-type": "application/json" } })) as any;
+  try {
+    const t = showOne(undefined);
+    await vi.waitFor(() => expect(t.textContent).toContain("This node does not support session files. Update the node."));
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("for one instance a node that fails shows the error", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "host win: timeout" }), { status: 502, headers: { "content-type": "application/json" } })) as any;
+  try {
+    const t = showOne(undefined);
+    await vi.waitFor(() => expect(t.textContent).toContain("host win: timeout"));
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("for one instance with no sessions the heading takes the instance name from the instance list", () => {
+  const t = showOne([]);
+  expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions: inst-bb on hub");
+  expect(t.textContent).toContain("No sessions yet.");
 });
 
 test("the heading says Sessions when no instance is chosen", () => {

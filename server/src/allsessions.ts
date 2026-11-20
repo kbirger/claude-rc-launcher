@@ -8,6 +8,7 @@ import type { Config } from "./config";
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
 import { OFFLINE } from "./hosts";
+import type { Presence } from "./nodewatcher";
 import type { SessionRow, SessionsAnswer } from "./sessionindex";
 
 export type HostSessionsStatus = { id: string; name: string; status: "ok" | "offline" | "error" | "unsupported"; error?: string; scannedAt?: string };
@@ -27,7 +28,11 @@ function partOf(host: { id: string; name: string }, status: number, body: unknow
   return { rows: [], host: { ...host, status: "error", error: text } };
 }
 
-export function allSessionsApi(o: { cfg: Config; local: Hono; registry: HostRegistry; timeoutMs?: number }): Hono {
+/**
+ * `presence` tells which nodes the hub watcher knows are not online. Such a node is not called: waiting for its time limit
+ * would hold the whole list on every request (a node that is down is the usual slow one). Without an entry the node is called.
+ */
+export function allSessionsApi(o: { cfg: Config; local: Hono; registry: HostRegistry; timeoutMs?: number; presence?: () => Presence[] }): Hono {
   // The limit of the host probe: a node answers from its copy, so a node that needs longer is not answering.
   const timeoutMs = o.timeoutMs ?? 3_000;
   const app = new Hono();
@@ -43,6 +48,8 @@ export function allSessionsApi(o: { cfg: Config; local: Hono; registry: HostRegi
     };
     const remotePart = async ({ host: h, client }: ReturnType<HostRegistry["list"]>[number]): Promise<Part> => {
       const host = { id: h.id, name: h.name };
+      const known = o.presence?.().find((p) => p.host === h.id);
+      if (known && known.status !== "online") return { rows: [], host: { ...host, status: known.status === "error" ? "error" : "offline", error: known.reason ?? known.status } };
       try {
         const r = await client.call("GET", "/api/sessions", { timeoutMs });
         return partOf(host, r.status, r.body);

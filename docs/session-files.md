@@ -211,7 +211,7 @@ A timer refreshes the result. If nobody asked in the last 2 minutes, it scans ev
 
 The running state of a session (live, busy, idle, Remote Control) is cheap to read, so each answer reads it again from the running-session files. Because of this, a session that started a moment ago shows as running at once. The age of the scan does not matter.
 
-The hub merges the answers of all nodes in `allsessions.ts`. A node that does not answer, or runs a release without the route, does not fail the call. Its status is in the `hosts` list of the answer. The data of a node can be as old as one interval.
+The hub merges the answers of all nodes in `allsessions.ts`. It does not call a node that its watcher knows is down. A node that does not answer, or runs a release without the route, does not fail the call. Its status is in the `hosts` list of the answer. The data of a node can be as old as one interval.
 
 ## Cost and threading
 

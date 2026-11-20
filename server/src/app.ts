@@ -370,7 +370,8 @@ export function createApp(deps: Deps): Hono {
     const u = c.get("user" as never) as User | undefined;
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
-  api.route("/sessions", allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.probeTimeoutMs }));
+  const allSessions = allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.probeTimeoutMs, ...(deps.presence ? { presence: () => deps.presence!.list() } : {}) });
+  api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
@@ -429,6 +430,7 @@ export function createApp(deps: Deps): Hono {
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
     cliApi.get("/events", hubEvents);
     cliApi.route("/node-enrollment", enrollmentApi(cli.enrollment));
+    cliApi.route("/sessions", allSessions);
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());
