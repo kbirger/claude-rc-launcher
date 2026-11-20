@@ -64,7 +64,7 @@ Event route of a node. The hub opens it for each node, with the same authenticat
 
 ## The list of all sessions
 
-`GET /api/sessions` on the hub (and `GET /cli/api/sessions` for the CLI) lists the sessions of every instance on every host. The role `read` is enough. The hub asks its own node and each paired node for `GET /api/sessions` and merges the answers. It does not sort them. The answer is:
+`GET /api/sessions` on the hub (and `GET /cli/api/sessions` for the CLI) lists the sessions of every instance on every host. The role `read` is enough. The hub answers from its own store, which holds the last list of each host. It calls no node, so a node that is down does not slow the answer. The hub does not sort the rows. The answer is:
 
 ```json
 {
@@ -73,6 +73,29 @@ Event route of a node. The hub opens it for each node, with the same authenticat
 }
 ```
 
-The fields of a session are the fields of `GET /instances/:id/sessions`, plus `instance` and `host`. The `status` of a host is `ok`, `offline`, `error` or `unsupported`. A node that answers 404 or 501 is `unsupported`: it runs a release without this route. A host that does not answer has no rows, and the call still gives 200. The hub does not call a host that its node watcher knows is not online: it reports the status of the watcher at once, so a node that is down does not slow the list.
+The fields of a session are the fields of `GET /instances/:id/sessions`, plus `instance` and `host`. The `status` of a host is one of these:
 
-A node serves the same route as `GET /api/sessions`. Its answer is `{ scannedAt, sessions }`, with `instance` on each session. The node answers from a copy in memory. Read [The list of all sessions](session-files.md#the-list-of-all-sessions).
+- `ok`: the list of the host is in the rows.
+- `offline`: the node watcher says the node is not online. The host has no rows, and `error` gives the reason.
+- `error`: the watcher reports an error for the node. The host has no rows.
+- `unavailable`: the node has no session files, so it cannot list sessions.
+- `loading`: the hub has no list of this host yet. This is the case just after a hub start or after a host is added.
+
+A host that has no rows still gives status 200 for the call. The `unsupported` status does not exist.
+
+`GET /api/hosts` gives each host a field `sessions` (`HostInfo.sessions`). It is `false` when the node has no session files, and `true` otherwise. The web app uses it to hide the Sessions button of an instance.
+
+### The sessions stream
+
+`GET /api/sessions/events` is a server-sent event stream for browsers. It is a GET, so the CSRF rule does not apply. It sends two events:
+
+- `snapshot` has the same body as `GET /api/sessions`. It is the first event. The hub sends a new `snapshot` after a host is added or removed.
+- `host` has `{ host, rows }`. It replaces the status and the rows of one host and keeps the others. The hub sends it when the list of the host changes, and when the presence of the host changes.
+
+The hub sends keepalive comments. Each open stream counts as one viewer of the beat loop. Read [The list of all sessions](session-files.md#the-list-of-all-sessions).
+
+### The node routes
+
+A node serves `GET /api/sessions` with the answer `{ scannedAt, sessions }`, with `instance` on each session. It answers from a copy in memory. The hub does not use this route now. It stays for debugging with `curl`.
+
+A node also serves `POST /api/sessions/watch`. The hub calls it with the body `{}` as a heartbeat. The answer is 204. Each call keeps the node in the active mode for 60 000 ms. The node sends its sessions to the hub in `GET /api/events`: the `snapshot` event has a field `sessions`, and the `sessions` event has `{ scannedAt, available, sessions }`.

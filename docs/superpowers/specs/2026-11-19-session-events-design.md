@@ -1,6 +1,6 @@
 # Live session events
 
-Date: 2026-11-19, revised 2026-11-20 (a stream for each view replaces topics). Status: draft, waiting for approval.
+Date: 2026-11-19, revised 2026-11-20 (a stream for each view replaces topics). Status: implemented on branch feat/session-events, awaiting review.
 
 ## Intent
 
@@ -157,7 +157,7 @@ The hub manages the heartbeat. Browsers send none. The hub counts the open sessi
 - `connectSessions` is counted. The first caller opens the stream, and the last release closes it. The global list, the one-instance list and `SessionView.svelte` can then each call it, and the tab still holds one sessions stream.
 - The reconnect waits and the hidden-tab rule are one small helper, shared by `connectEvents` and `connectSessions`. Neither client copies the other.
 - A reconnect needs no extra work, because each new stream starts with a full snapshot.
-- The sessions query stays a plain query. Its `queryFn` is `listAllSessions`, which now answers from the hub store. Its `refetchInterval` is removed. A pull to refresh or a refocus reads the store again, which is cheap and calls no node.
+- The sessions query stays a plain query. Its `queryFn` is `listAllSessions`, which now answers from the hub store. Its `refetchInterval` is removed. A pull to refresh reads the store again, which is cheap and calls no node. A refocus does not, because the stream, or its snapshot after a hidden tab, keeps the data.
 - When a Sessions page mounts, it calls `connectSessions`. When it unmounts, it calls the release function. The shared stream stays open for the other events.
 - The page of one instance and `SessionView.svelte` read the `["all-sessions"]` query and filter it by host and instance. Today both use `sessionsQuery(host, instance)`, which is removed. The notices for one instance come from the status of its host, the same as on the global page.
 - `SessionsLink.svelte` no longer probes each instance. `HostInfo` gets a field `sessions: boolean`, which the hub fills from the store (`false` for `unavailable`). The link reads it from the hosts list, which presence already keeps fresh. The Instances view therefore opens no sessions stream and does not start the beat loop.
@@ -185,8 +185,12 @@ This section is not part of this project. It records the shape that was chosen, 
 
 ## Left to the builder
 
-- The exact intervals, the 30-second grace time and the 500 ms combine time. Measure them on the real hub.
-- How the node stream sends a very large list. Measure the size at 500 sessions.
+- The exact intervals, the 30-second grace time and the 500 ms combine time. The build keeps the starting values. Change them only after a measurement on the real hub shows a need.
+- How the node stream sends a very large list. The build sends the full list and adds no deltas. The size is measured below.
+  - The measurement is synthetic. No node with real session data was started. A script built 56 sessions in 8 instances with realistic fields. The real `SessionIndex` listed them, and a local HTTP server sent the body of the node route `GET /api/sessions`. The size was counted with `curl -s ... | wc -c`.
+  - 56 sessions: 17 853 bytes (about 18 KB). This matches the earlier figure of about 20 KB.
+  - 500 sessions: 158 323 bytes (about 158 KB), or about 317 bytes for each session.
+  - A busy session sends the full list of its node about every 30 seconds. At 500 sessions this is about 158 KB for each event. Measure on the real hub before you add deltas.
 - Whether the node route `GET /api/sessions` stays. Nothing in the hub or the web uses it after this change. It can stay for debugging with `curl`.
 
 ## Risks
