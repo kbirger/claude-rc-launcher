@@ -15,7 +15,7 @@ for (const p of ["/api/update", "/api/hosts/nas/update", "/cli/api/hosts/local/u
   app.post(p, async (c) => (await Bun.sleep(SLOW_MS), c.json({ ok: true })));
 }
 // An event stream that is silent for longer than the idle limit, then sends its last chunk.
-for (const p of ["/api/events", "/cli/api/events", "/api/hosts/nas/events"]) {
+for (const p of ["/api/events", "/cli/api/events", "/api/sessions/events", "/api/hosts/nas/events"]) {
   app.get(p, () => new Response(new ReadableStream({ async start(ctl) { await Bun.sleep(SLOW_MS); ctl.enqueue(new TextEncoder().encode("late\n")); ctl.close(); } })));
 }
 const cert = await ensureNodeCert({ dir: mkdtempSync(path.join(os.tmpdir(), "rc-serve-")), names: ["localhost"] });
@@ -46,9 +46,9 @@ describe("withLongUpdates: quiet event streams", () => {
       (r) => r.text(),
       (e: Error) => e.message,
     );
-  test("a quiet stream on the node path and on the CLI path outlives the idle limit; another GET does not", async () => {
-    const [node, cli, other] = await Promise.all(["/api/events", "/cli/api/events", "/api/hosts/nas/events"].map(get));
-    expect([node, cli]).toEqual(["late\n", "late\n"]);
+  test("a quiet stream on the node path, the CLI path and the sessions path outlives the idle limit; another GET does not", async () => {
+    const [node, cli, sessions, other] = await Promise.all(["/api/events", "/cli/api/events", "/api/sessions/events", "/api/hosts/nas/events"].map(get));
+    expect([node, cli, sessions]).toEqual(["late\n", "late\n", "late\n"]);
     expect(String(other)).toMatch(/ECONNRESET|closed|timed out/i);
   }, 20_000);
 });
@@ -95,6 +95,12 @@ describe("withLongUpdates: event stream", () => {
     expect(await timeouts("GET", "/cli/api/events")).toEqual([["/cli/api/events", 0]]);
     for (const p of ["/api/hosts", "/api/updates", "/api/hosts/nas/events", "/cli/api/events/x", "/x/cli/api/events"]) expect([p, await timeouts("GET", p)]).toEqual([p, []]);
     expect(await timeouts("POST", "/api/events")).toEqual([]);
+  });
+
+  test("GET /api/sessions/events turns the idle timeout off; other methods and paths keep it", async () => {
+    expect(await timeouts("GET", "/api/sessions/events")).toEqual([["/api/sessions/events", 0]]);
+    for (const p of ["/api/sessions", "/api/sessions/events/x", "/api/hosts/nas/sessions/events", "/x/api/sessions/events"]) expect([p, await timeouts("GET", p)]).toEqual([p, []]);
+    for (const m of ["POST", "PATCH", "DELETE"]) expect([m, await timeouts(m, "/api/sessions/events")]).toEqual([m, []]);
   });
 });
 
