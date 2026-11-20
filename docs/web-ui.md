@@ -202,7 +202,7 @@ If the setting "Create a session at start" is off, the unit has `--no-create-ses
 
 ## Sessions and files
 
-Open Sessions in the bottom bar. The page lists the sessions that Claude Code recorded for the folders of all instances. Tap Sessions on an instance card to see only the sessions of that instance.
+Open Sessions in the bottom bar. The page lists the sessions that Claude Code recorded for the folders of all instances. Tap Sessions on an instance card to see only the sessions of that instance. The heading then reads, for example, "Sessions: blog on hub", and the node filter and the node and instance on each row are left out.
 
 <img src="images/screens/sessions.png" alt="The session list of an instance" width="300">
 

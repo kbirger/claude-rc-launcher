@@ -16,7 +16,6 @@
   const now = $derived(shell.now.getTime());
 </script>
 
-{#if !session}<h2 class="font-heading mb-3 text-lg font-bold">Sessions</h2>{/if}
 {#if session && host && instance}
   {#key `${host}|${instance}`}
     <SessionView {host} {instance} {session} {view} {path} {hidden} file={p.get("file") ?? ""} abs={p.get("abs") ?? ""} {now} />

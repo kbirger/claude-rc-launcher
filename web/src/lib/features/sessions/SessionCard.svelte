@@ -5,7 +5,8 @@
   import { sessionDetail, sessionState, sessionsHref, sessionTitle, worktreeName } from "./format";
 
   // One row of the session list: the name, the state, the node and the instance, and the details.
-  let { s, now }: { s: GlobalSession; now: number } = $props();
+  // `where` shows the node and the instance. The list of one instance turns it off: its heading already says it.
+  let { s, now, where = true }: { s: GlobalSession; now: number; where?: boolean } = $props();
   const wt = $derived(worktreeName(s.root));
 </script>
 
@@ -29,7 +30,7 @@
                   {/if}
                 </span>
               </div>
-              <div class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-session-where>{s.host.name} · {s.instance.name}</div>
+              {#if where}<div class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-session-where>{s.host.name} · {s.instance.name}</div>{/if}
               <div class="flex flex-wrap gap-x-2 text-muted-foreground">
                 {#each sessionDetail(s, now) as part, i (i)}
                   <span class={i === 0 ? "font-mono" : "min-w-0 [overflow-wrap:anywhere]"}>{part}</span>

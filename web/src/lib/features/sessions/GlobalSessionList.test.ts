@@ -100,12 +100,36 @@ test("a node that is not in the selection gives no notice", () => {
   expect(t.textContent).not.toContain("not answering");
 });
 
-test("an instance filter shows only that instance, with a chip that links to /sessions", () => {
+test("for one instance the heading names the instance and the node, and there is no node filter and no chip", () => {
   const t = show({ sessions: [row("a", "local", {}, "aaaaaaaaaaaa"), row("b", "local", {}, "bbbbbbbbbbbb")], hosts: [status("local", "ok")] }, { host: "local", instance: "bbbbbbbbbbbb" });
   expect(titles(t)).toEqual(["title-b"]);
-  const chip = t.querySelector('a[aria-label="Remove instance filter"]') as HTMLAnchorElement;
-  expect(chip.getAttribute("href")).toBe("/sessions");
-  expect(chip.textContent).toContain("inst-bb");
+  expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions: inst-bb on hub");
+  expect(t.querySelector('button[aria-label="Filter by node"]')).toBeNull();
+  expect(t.querySelector('a[aria-label="Remove instance filter"]')).toBeNull();
+  expect(t.querySelector("input[type=search]")).not.toBeNull();
+});
+
+test("rows show the node and instance in the all-sessions list, but not for one instance", () => {
+  const data = { sessions: [row("a", "local", {}, "aaaaaaaaaaaa")], hosts: [status("local", "ok")] };
+  expect(show(data).querySelector("[data-session-where]")!.textContent).toContain("hub");
+  expect(show(data, { host: "local", instance: "aaaaaaaaaaaa" }).querySelector("[data-session-where]")).toBeNull();
+});
+
+test("for one instance the node selection is ignored", () => {
+  const t = show({ sessions: [row("a", "local", {}, "aaaaaaaaaaaa"), row("b", "nas", {}, "bbbbbbbbbbbb")], hosts: [status("local", "ok"), status("nas", "ok")] }, { host: "local", instance: "aaaaaaaaaaaa", nodes: ["nas"] });
+  expect(titles(t)).toEqual(["title-a"]);
+});
+
+test("for one instance only a notice about that node shows", () => {
+  const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok"), { id: "nas", name: "Basement NAS", status: "offline", error: "unreachable" }] }, { host: "local", instance: "0123456789ab" });
+  expect(t.textContent).not.toContain("not answering");
+  const t2 = show({ sessions: [], hosts: [{ id: "local", name: "hub", status: "offline", error: "unreachable" }] }, { host: "local", instance: "0123456789ab" });
+  expect(t2.textContent).toContain("hub: not answering");
+});
+
+test("the heading says Sessions when no instance is chosen", () => {
+  const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok")] });
+  expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions");
 });
 
 test("says no sessions yet when there are no rows and no notice", () => {
@@ -130,7 +154,7 @@ test("two nodes with the same name that both fail give two notices", () => {
 
 test("an address with an instance and no host shows no instance chip and no filter", () => {
   const t = show({ sessions: [row("a", "local", {}, "aaaaaaaaaaaa"), row("b", "local", {}, "bbbbbbbbbbbb")], hosts: [status("local", "ok")] }, { host: "", instance: "bbbbbbbbbbbb" });
-  expect(t.querySelector('a[aria-label="Remove instance filter"]')).toBeNull();
+  expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions");
   expect(titles(t)).toHaveLength(2);
 });
 
