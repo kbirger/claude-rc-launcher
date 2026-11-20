@@ -179,3 +179,16 @@ test("stop() removes the visibility listener", () => {
   vis.set(false);
   expect(FakeES.all.length).toBe(1);
 });
+
+test("the reconnect and the used-up lines name the stream", () => {
+  const lines: string[] = [];
+  const log = { info: (m: string) => void lines.push(m), warn: (m: string) => void lines.push(m) };
+  const stop = start({ log, delays: [1000] });
+  last().readyState = 2;
+  last().emit("error");
+  fire(1000);
+  last().readyState = 2;
+  last().emit("error");
+  expect(lines.filter((l) => l.includes("reconnect"))).toEqual(["[claude-rc] x stream reconnect in 1s", "[claude-rc] x stream retries used up, will reconnect on the next focus"]);
+  stop();
+});

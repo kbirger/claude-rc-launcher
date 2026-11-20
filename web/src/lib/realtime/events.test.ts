@@ -309,7 +309,7 @@ describe("console lines and re-sync", () => {
       "[claude-rc] snapshot: 1 updates, 1 hosts",
       "[claude-rc] event stream error (ready state 0), the browser retries",
       "[claude-rc] event stream closed",
-      "[claude-rc] reconnect in 5s",
+      "[claude-rc] event stream reconnect in 5s",
     ]);
   });
 

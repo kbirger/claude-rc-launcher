@@ -119,7 +119,7 @@ export function keepStream(o: {
         return;
       }
       if (retries < delays.length) {
-        log.info(`[claude-rc] reconnect in ${delays[retries]! / 1000}s`);
+        log.info(`[claude-rc] ${o.name} reconnect in ${delays[retries]! / 1000}s`);
         timer = setT(() => {
           timer = undefined;
           if (!stopped) connect();
@@ -127,7 +127,7 @@ export function keepStream(o: {
       } else {
         // The retries are used up (for example a real 401). Try once more on the next focus.
         waiting = true;
-        log.warn("[claude-rc] retries used up, will reconnect on the next focus");
+        log.warn(`[claude-rc] ${o.name} retries used up, will reconnect on the next focus`);
         globalThis.addEventListener("focus", onFocus);
       }
     });
