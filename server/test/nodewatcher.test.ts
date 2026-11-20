@@ -882,6 +882,16 @@ describe("createNodeWatchers sessions", () => {
     expect(s.sessions).toEqual([["nas", payload]]);
   });
 
+  test("a sessions event with truncated true goes to onSessions with the flag", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("sessions", { ...payload, truncated: true });
+    s.nodes.nas!.last.push("sessions", { ...payload, truncated: "yes" });
+    await flush();
+    expect(s.sessions).toEqual([["nas", { ...payload, truncated: true }]]);
+  });
+
   test("a sessions event with a bad shape is ignored and the stream stays up", async () => {
     const s = setup();
     await flush();

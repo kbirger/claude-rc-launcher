@@ -13,8 +13,11 @@ const sessionBase = (host: string, instance: string, session: string) => `${base
 
 /** A session of the hub list: the node and the instance it belongs to come with it. */
 export type GlobalSession = Session & { instance: { id: string; name: string; path: string; state: string }; host: { id: string; name: string } };
-/** What the hub knows about one node's part of the list. `unavailable`: the node cannot list sessions. `loading`: no list yet. */
-export type HostSessions = { id: string; name: string; status: "ok" | "offline" | "error" | "unavailable" | "loading"; error?: string; scannedAt?: string };
+/**
+ * What the hub knows about one node's part of the list. `unavailable`: the node cannot list sessions. `loading`: no list yet.
+ * `truncated`: the node sent only its newest rows. The UI does not show it.
+ */
+export type HostSessions = { id: string; name: string; status: "ok" | "offline" | "error" | "unavailable" | "loading"; error?: string; scannedAt?: string; truncated?: boolean };
 export type AllSessions = { sessions: GlobalSession[]; hosts: HostSessions[] };
 /** One host's part of the list: the `host` event of the sessions stream. */
 export type HostPart = { host: HostSessions; rows: GlobalSession[] };

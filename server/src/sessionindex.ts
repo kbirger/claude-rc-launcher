@@ -12,13 +12,46 @@ import { liveOf, mapLimit, type SessionCatalog, type SessionSummary } from "./se
 
 export type SessionRow = SessionSummary & { instance: { id: string; name: string; path: string; state: string } };
 export type SessionsAnswer = { scannedAt: string; sessions: SessionRow[] };
-export type SessionsPayload = { scannedAt: string; available: boolean; sessions: SessionRow[] };
+/** `truncated` is true when the list was over MAX_SESSIONS_BYTES and only the newest rows were kept. It is absent when nothing was cut. */
+export type SessionsPayload = { scannedAt: string; available: boolean; sessions: SessionRow[]; truncated?: boolean };
 export type SessionsEvent = { type: "sessions" } & SessionsPayload;
 
 /** A `lastActiveAt` move smaller than this from the last event does not count as a change. */
 export const ACTIVE_THRESHOLD_MS = 30_000,
   /** At most one event in this time. */
-  COMBINE_MS = 500;
+  COMBINE_MS = 500,
+  /**
+   * The most bytes of one sessions payload as JSON. The SSE reader of the hub stops at 1 MiB for one event, and the
+   * node snapshot also holds the version and the update, so this leaves room for them.
+   */
+  MAX_SESSIONS_BYTES = 900_000;
+
+/** Room for the fields around the rows: `scannedAt`, `available`, `truncated` and the brackets. */
+const WRAP_BYTES = 200;
+const bytesOf = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
+
+/**
+ * Keeps the rows under `maxBytes` as JSON. A list that fits comes back as it is. A list that does not fit keeps the
+ * newest rows (by `lastActiveAt`) that fit, in their old order, and says `truncated: true`.
+ */
+export function capSessions(rows: SessionRow[], maxBytes = MAX_SESSIONS_BYTES): { sessions: SessionRow[]; truncated?: true } {
+  const budget = maxBytes - WRAP_BYTES;
+  if (bytesOf(rows) <= budget) return { sessions: rows };
+  const time = (r: SessionRow) => {
+    const t = Date.parse(r.lastActiveAt);
+    return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+  };
+  const order = rows.map((r, i) => ({ i, t: time(r) })).sort((a, b) => b.t - a.t || a.i - b.i);
+  const keep = new Set<number>();
+  let used = 2; // the brackets of the array
+  for (const { i } of order) {
+    const size = bytesOf(rows[i]) + (keep.size > 0 ? 1 : 0);
+    if (used + size > budget) break;
+    used += size;
+    keep.add(i);
+  }
+  return { sessions: rows.filter((_r, i) => keep.has(i)), truncated: true };
+}
 
 export type SessionIndexOptions = {
   instances: Instances;
@@ -29,6 +62,8 @@ export type SessionIndexOptions = {
   concurrency?: number;
   thresholdMs?: number;
   combineMs?: number;
+  /** The most bytes of the rows of one event. Default: MAX_SESSIONS_BYTES. */
+  maxSessionsBytes?: number;
   timers?: Timers;
   now?: () => number;
   log?: (message: string) => void;
@@ -50,6 +85,7 @@ export class SessionIndex {
   private readonly concurrency: number;
   private readonly thresholdMs: number;
   private readonly combineMs: number;
+  private readonly maxSessionsBytes: number;
   private readonly timers: Timers;
   private readonly source: ChangeSource;
   private readonly now: () => number;
@@ -69,6 +105,7 @@ export class SessionIndex {
     this.concurrency = o.concurrency ?? 4;
     this.thresholdMs = o.thresholdMs ?? ACTIVE_THRESHOLD_MS;
     this.combineMs = o.combineMs ?? COMBINE_MS;
+    this.maxSessionsBytes = o.maxSessionsBytes ?? MAX_SESSIONS_BYTES;
     this.timers = o.timers ?? realTimers;
     this.source = o.source ?? new PollSource({ timers: this.timers });
     this.now = o.now ?? Date.now;
@@ -191,8 +228,9 @@ export class SessionIndex {
   private async publishOnce(): Promise<void> {
     const copy = this.copy;
     if (!copy) return;
-    const sessions = await this.withLive(copy);
-    if (this.last && !this.differs(this.last.sessions, sessions)) return;
+    // Cap before the compare: the last event holds the capped rows, so both sides are capped the same way.
+    const capped = capSessions(await this.withLive(copy), this.maxSessionsBytes);
+    if (this.last && !this.differs(this.last.sessions, capped.sessions) && this.last.truncated === capped.truncated) return;
     const wait = this.lastEmitAt + this.combineMs - this.now();
     if (wait > 0) {
       // Inside the window: one timer publishes the newest state at its end.
@@ -204,7 +242,7 @@ export class SessionIndex {
       }
       return;
     }
-    this.emit({ type: "sessions", scannedAt: new Date(copy.at).toISOString(), available: true, sessions });
+    this.emit({ type: "sessions", scannedAt: new Date(copy.at).toISOString(), available: true, ...capped });
   }
 
   private differs(old: SessionRow[], next: SessionRow[]): boolean {

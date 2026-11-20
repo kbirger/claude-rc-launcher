@@ -193,6 +193,15 @@ describe("SessionsStore", () => {
     expect(hostOf(store, "nas")?.status).toBe("loading");
   });
 
+  test("a truncated list keeps the flag on the host part, and a full list has none", () => {
+    const { store, changes } = build();
+    store.set("nas", list(["a"], { truncated: true }));
+    expect(hostOf(store, "nas")).toEqual({ id: "nas", name: "name-nas", status: "ok", scannedAt: "2026-01-02T00:00:00.000Z", truncated: true });
+    expect(changes.at(-1)).toMatchObject({ type: "host", part: { host: { truncated: true } } });
+    store.set("nas", list(["a"]));
+    expect(hostOf(store, "nas")).toEqual({ id: "nas", name: "name-nas", status: "ok", scannedAt: "2026-01-02T00:00:00.000Z" });
+  });
+
   test("a renamed host emits reset and keeps its list", () => {
     const { store, registry, changes } = build();
     store.set("nas", list(["a"]));

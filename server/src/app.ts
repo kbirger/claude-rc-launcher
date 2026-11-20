@@ -260,7 +260,7 @@ const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 const MAX_EVENT_CONNECTIONS = 8;
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined; sessionSource?: ChangeSource; watchTimers?: Timers }): Hono {
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined; sessionSource?: ChangeSource; watchTimers?: Timers; sessions?: SessionCatalog }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   trackStreams(app);
@@ -311,7 +311,7 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       });
     });
   }
-  const sessions = sessionCatalogFor(cfg);
+  const sessions = deps.sessions ?? sessionCatalogFor(cfg);
   const sessionIndex = sessionIndexFor(instances, sessions, events ? (e) => events.emit(e) : undefined, deps.sessionSource ? { source: deps.sessionSource } : {});
   // A hub that watches this node sends a heartbeat. Node only: the hub forwards /api/hosts/local/* to instanceApi as a whole.
   const watch = new WatchFlag({ target: sessionIndex, ...(deps.watchTimers ? { timers: deps.watchTimers } : {}) });
