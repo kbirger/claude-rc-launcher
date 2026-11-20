@@ -1,18 +1,10 @@
 import { expect, test } from "vitest";
-import { filesQuery, previewQuery, sessionsQuery, touchedQuery } from "./queries";
+import * as queries from "./queries";
+import { allSessionsQuery, filesQuery, previewQuery, touchedQuery } from "./queries";
 
-test("sessionsQuery has a distinct key for each host and instance", () => {
-  const keys = [sessionsQuery("h", "a"), sessionsQuery("h", "b"), sessionsQuery("g", "a")].map((q) => JSON.stringify(q.queryKey));
-  expect(new Set(keys).size).toBe(3);
-  expect(sessionsQuery("h", "a").queryKey).toEqual(["sessions", "h", "a"]);
-});
-
-test("sessions poll every 15 seconds", () => {
-  const q = sessionsQuery("h", "i");
-  expect(q.refetchInterval).toBe(15000);
-  expect(q.staleTime).toBe(5000);
-  expect(q.retry).toBe(false);
-  expect(q.refetchOnWindowFocus).toBe(true);
+test("the per-instance sessions query and its poll time are gone", () => {
+  expect("sessionsQuery" in queries).toBe(false);
+  expect("SESSIONS_POLL_MS" in queries).toBe(false);
 });
 
 test("touched and files do not poll", () => {
@@ -43,10 +35,11 @@ test("a preview by abs has its own key", () => {
   expect(previewQuery("h", "i", "s", "/p").queryKey).not.toEqual(previewQuery("h", "i", "s", "/p", true).queryKey);
 });
 
-test("allSessionsQuery has its own key and polls every 15 seconds", async () => {
-  const { allSessionsQuery } = await import("./queries");
+test("allSessionsQuery has no refetchInterval", () => {
+  // The sessions stream writes into this query: a slow poll or refocus read must not overwrite newer stream data.
   const q = allSessionsQuery();
   expect(q.queryKey).toEqual(["all-sessions"]);
-  expect(q.refetchInterval).toBe(15000);
+  expect("refetchInterval" in q).toBe(false);
+  expect(q.refetchOnWindowFocus).toBe(false);
   expect(q.retry).toBe(false);
 });

@@ -1,13 +1,15 @@
 <script lang="ts">
   import * as Alert from "#lib/components/ui/alert/index.js";
-  import { createQuery } from "@tanstack/svelte-query";
+  import { onMount } from "svelte";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import Search from "@tabler/icons-svelte/icons/search";
   import { Input } from "#lib/components/ui/input/index.js";
+  import { connectSessions } from "../../realtime/sessions";
   import { NodeFilter, inFilter, type HostInfo } from "../hosts";
   import { instancesQuery } from "../instances/queries";
-  import { globalMatches } from "./format";
-  import { isUnsupported, type GlobalSession } from "./api";
-  import { allSessionsQuery, sessionsQuery } from "./queries";
+  import { globalMatches, hostNotice } from "./format";
+  import type { GlobalSession } from "./api";
+  import { allSessionsQuery } from "./queries";
   import SessionCard from "./SessionCard.svelte";
   import { sessionKey, sortSessions } from "./sessionorder";
 
@@ -15,33 +17,31 @@
   // the heading then names the instance and its node, and the node filter is gone, because the choice is made.
   let { hosts, nodes, host, instance, now, ontoggle, onclear }: { hosts: HostInfo[]; nodes: string[]; host: string; instance: string; now: number; ontoggle: (id: string) => void; onclear: () => void } = $props();
 
+  // useQueryClient reads the Svelte context, so it runs at setup. The page holds the sessions stream while it is open.
+  const client = useQueryClient();
+  onMount(() => connectSessions(client));
+
   let filter = $state("");
   // The instance filter needs both: an address with only an instance gives no filter.
   const filtered = $derived(!!host && !!instance);
 
-  // Two sources. All sessions: the hub list of all nodes (each node answers from its cache). One instance: the list of that instance on that node
-  // only, so the page never waits for another node (one that is down holds the list of all nodes for its time limit).
-  const all = createQuery(() => ({ ...allSessionsQuery(), enabled: !filtered }));
-  const one = createQuery(() => ({ ...sessionsQuery(host, instance), enabled: filtered }));
-  const q = $derived(filtered ? one : all);
+  // One source for both: the hub list of all nodes, which the sessions stream keeps fresh. One instance keeps the rows of that host and instance.
+  const q = createQuery(allSessionsQuery);
 
-  // The names for the heading and the rows come from the host list and the instance list of that node.
+  // The names for the heading come from the host list and the instance list of that node.
   const names = createQuery(() => ({ ...instancesQuery(host), refetchInterval: false as const, enabled: filtered }));
   const instanceName = $derived(names.data?.find((i) => i.id === instance)?.name ?? instance.slice(0, 8));
   const nodeName = $derived(hosts.find((h) => h.id === host)?.name ?? host);
 
-  const rows = $derived<GlobalSession[]>(
-    filtered
-      ? (one.data ?? []).map((s) => ({ ...s, instance: { id: instance, name: instanceName, path: "", state: "" }, host: { id: host, name: nodeName } }))
-      : (all.data?.sessions ?? []).filter((s) => inFilter(nodes, s.host.id)),
+  const scoped = $derived<GlobalSession[]>(
+    (q.data?.sessions ?? []).filter((s) => (filtered ? s.host.id === host && s.instance.id === instance : inFilter(nodes, s.host.id))),
   );
-  const scoped = $derived(rows);
   const shown = $derived(sortSessions(scoped.filter((s) => globalMatches(s, filter))));
-  // A node that did not answer is named, so that a missing node is not mistaken for "no sessions".
+  // A node that did not answer is named, so that a missing node is not mistaken for "no sessions". One instance names its own node only.
   const notices = $derived(
-    (filtered ? [] : (all.data?.hosts ?? []))
-      .filter((h) => h.status !== "ok" && inFilter(nodes, h.id))
-      .map((h) => ({ id: h.id, text: `${h.name}: ${h.status === "unavailable" ? "no session files on this node" : h.status === "loading" ? "loading" : h.status === "offline" ? "not answering" : (h.error ?? "error")}` })),
+    (q.data?.hosts ?? [])
+      .filter((h) => h.status !== "ok" && (filtered ? h.id === host : inFilter(nodes, h.id)))
+      .map((h) => ({ id: h.id, text: hostNotice(h) })),
   );
 </script>
 
@@ -49,11 +49,7 @@
 {#if q.isPending}
   <p class="text-muted-foreground">Loading sessions...</p>
 {:else if q.error}
-  {#if filtered && isUnsupported(q.error)}
-    <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
-  {:else}
-    <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
-  {/if}
+  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
 {:else}
   <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px) so it stays in view while the list scrolls. Up to 480px wide the header is hidden, so it sticks to the top there. -->
   <div class="sticky top-[env(safe-area-inset-top)] min-[481px]:top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">

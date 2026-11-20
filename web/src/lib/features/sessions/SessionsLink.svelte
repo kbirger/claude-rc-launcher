@@ -3,16 +3,16 @@
   import Messages from "@tabler/icons-svelte/icons/messages";
   import { Button } from "#lib/components/ui/button/index.js";
   import { stripLabel } from "#lib/components/EntityCard.svelte";
-  import { isUnsupported } from "./api";
+  import { hostsQuery } from "../hosts/queries";
   import { sessionsHref } from "./format";
-  import { sessionsQuery } from "./queries";
 
   let { host, instance }: { host: string; instance: string } = $props();
 
-  // One probe per instance, no polling. A node without session files answers 404 or 501: then there is no link.
-  const q = createQuery(() => ({ ...sessionsQuery(host, instance), refetchInterval: false, staleTime: 600000 }));
+  // No request of its own: it reads the hosts list that the shell keeps fresh. Only a node known to have no session files hides the link.
+  const hosts = createQuery(() => ({ ...hostsQuery(), enabled: false }));
+  const hidden = $derived(hosts.data?.find((h) => h.id === host)?.sessions === false);
 </script>
 
-{#if !isUnsupported(q.error)}
+{#if !hidden}
   <Button variant="ghost" size="sm" class="h-8 px-2" href={sessionsHref({ host, instance })} title="Sessions"><Messages aria-hidden="true" /><span class={stripLabel}>Sessions</span></Button>
 {/if}
