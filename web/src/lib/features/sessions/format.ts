@@ -1,6 +1,6 @@
 // Small helpers for the session screens. They only use values the API gave.
 import { ago } from "../../shared/time";
-import type { GlobalSession, Session, TouchedFile } from "./api";
+import type { GlobalSession, HostSessions, Session, TouchedFile } from "./api";
 
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 
@@ -28,6 +28,10 @@ export function humanSize(n: number): string {
 }
 
 export { ago };
+
+/** The notice of a node whose part of the session list is not ok, for example "NAS: not answering". */
+export const hostNotice = (h: HostSessions): string =>
+  `${h.name}: ${h.status === "unavailable" ? "no session files on this node" : h.status === "loading" ? "loading" : h.status === "offline" ? "not answering" : (h.error ?? "error")}`;
 
 /** The calendar date and time of an instant, for a reader's locale ("Nov 12, 2:05 PM"). The year shows only when it is not the year of `now`. */
 export function shortDate(iso: string, now: number): string {

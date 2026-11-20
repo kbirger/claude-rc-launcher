@@ -1,26 +1,16 @@
-import { getChanged, getPreview, getTouched, listAllSessions, listFiles, listSessions } from "./api";
+import { getChanged, getPreview, getTouched, listAllSessions, listFiles } from "./api";
 
 /** The query of the hub session list. The sessions stream writes into it. */
 export const ALL_SESSIONS_KEY = ["all-sessions"] as const;
 
-export const SESSIONS_POLL_MS = 15000;
 export const SESSIONS_STALE_MS = 5000;
 
-export const sessionsQuery = (host: string, instance: string) => ({
-  queryKey: ["sessions", host, instance] as const,
-  queryFn: () => listSessions(host, instance),
-  staleTime: SESSIONS_STALE_MS,
-  refetchInterval: SESSIONS_POLL_MS,
-  refetchOnWindowFocus: true,
-  retry: false as const,
-});
-
+// No poll and no refocus read: the sessions stream keeps this query fresh, and a slow read must not overwrite newer stream data.
 export const allSessionsQuery = () => ({
   queryKey: ALL_SESSIONS_KEY,
   queryFn: listAllSessions,
   staleTime: SESSIONS_STALE_MS,
-  refetchInterval: SESSIONS_POLL_MS,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: false as const,
   retry: false as const,
 });
 

@@ -1,4 +1,4 @@
-import { ApiError, hostUrl, request } from "../../shared/http";
+import { hostUrl, request } from "../../shared/http";
 
 /** `live`: set only while the session runs. `status` is "busy" or "idle", or absent for a status the node does not know. `remoteControl`: attached to Remote Control. */
 export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean }; earlier?: string[] };
@@ -21,8 +21,6 @@ export type HostPart = { host: HostSessions; rows: GlobalSession[] };
 
 /** The sessions of every node and instance, from the hub (each node answers from its own cached list). */
 export const listAllSessions = () => request<AllSessions>("GET", "/api/sessions");
-
-export const listSessions = (host: string, instance: string) => request<Session[]>("GET", base(host, instance));
 
 export const getTouched = (host: string, instance: string, session: string) =>
   request<TouchedFile[]>("GET", `${sessionBase(host, instance, session)}/touched`);
@@ -51,6 +49,3 @@ export const getPreview = (host: string, instance: string, session: string, path
 /** A plain link: the browser sends its login cookie with it. */
 export const downloadUrl = (host: string, instance: string, session: string, path: string, o: FileOpts = {}) =>
   `${sessionBase(host, instance, session)}/download?${fileKey(o)}=${encodeURIComponent(path)}`;
-
-/** True when the node has no session files feature (404 or 501). */
-export const isUnsupported = (e: unknown): boolean => e instanceof ApiError && (e.status === 404 || e.status === 501);
