@@ -75,7 +75,7 @@ function sessionCatalogFor(cfg: Config): SessionCatalog {
   return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json"), nameFile: join(dir, "session-names.json") } : {}) });
 }
 
-/** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its timer. */
+/** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its change source. */
 function sessionIndexFor(instances: Instances, catalog: SessionCatalog): SessionIndex {
   const index = new SessionIndex({ instances, catalog });
   index.start();
@@ -92,7 +92,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   // A start, stop, pause, resume, restart or settings change moves sessions in or out of the list: scan again at once.
   r.use("/instances/*", async (c, next) => {
     await next();
-    if (c.req.method !== "GET" && c.res.status < 400) index.invalidate();
+    if (c.req.method !== "GET" && c.res.status < 400) index.trigger({ scope: "all" });
   });
   r.get("/sessions", async (c) => c.json(await index.get()));
 
