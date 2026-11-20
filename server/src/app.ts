@@ -30,7 +30,9 @@ import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
-import { SessionIndex } from "./sessionindex";
+import { SessionIndex, type SessionIndexOptions, type SessionsEvent } from "./sessionindex";
+import { WatchFlag } from "./sessionwatch";
+import type { ChangeSource, Timers } from "./changesource";
 import { allSessionsApi } from "./allsessions";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
@@ -76,8 +78,10 @@ function sessionCatalogFor(cfg: Config): SessionCatalog {
 }
 
 /** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its change source. */
-function sessionIndexFor(instances: Instances, catalog: SessionCatalog): SessionIndex {
-  const index = new SessionIndex({ instances, catalog });
+function sessionIndexFor(instances: Instances, catalog: SessionCatalog, onEvent?: (e: SessionsEvent) => void, extra: Partial<SessionIndexOptions> = {}): SessionIndex {
+  const index = new SessionIndex({ instances, catalog, ...extra });
+  // Subscribe before start(): the first event must not come before the subscription.
+  if (onEvent) index.subscribe(onEvent);
   index.start();
   return index;
 }
@@ -245,7 +249,7 @@ const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 const MAX_EVENT_CONNECTIONS = 8;
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined }): Hono {
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined; sessionSource?: ChangeSource; watchTimers?: Timers }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   trackStreams(app);
@@ -279,7 +283,7 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
         const done = new Promise<void>((resolve) => stream.onAbort(resolve));
         try {
           // Queue the snapshot and the kept lines, then listen, all without a gap. The stream keeps the order of the writes.
-          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }) })];
+          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate(), sessions: events.latestSessions() }) })];
           for (const l of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(l) }));
           unsubscribe = events.subscribe((e) => {
             const { type, ...data } = e;
@@ -296,7 +300,13 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
     });
   }
   const sessions = sessionCatalogFor(cfg);
-  const sessionIndex = sessionIndexFor(instances, sessions);
+  const sessionIndex = sessionIndexFor(instances, sessions, events ? (e) => events.emit(e) : undefined, deps.sessionSource ? { source: deps.sessionSource } : {});
+  // A hub that watches this node sends a heartbeat. Node only: the hub forwards /api/hosts/local/* to instanceApi as a whole.
+  const watch = new WatchFlag({ target: sessionIndex, ...(deps.watchTimers ? { timers: deps.watchTimers } : {}) });
+  api.post("/sessions/watch", (c) => {
+    watch.beat();
+    return c.body(null, 204);
+  });
   api.route("/", instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
