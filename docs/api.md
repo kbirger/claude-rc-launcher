@@ -57,7 +57,8 @@ Version routes (see [Version check and updates in the web UI](updates.md#version
 
 Event route of a node. The hub opens it for each node, with the same authentication as the other node routes.
 
-- `GET /api/events` is a server-sent event stream. The first event is `snapshot` with `{ version, update }`. The kept
+- `GET /api/events` is a server-sent event stream. The first event is `snapshot` with `{ version, update, sessions }`.
+  `sessions` is the last sessions payload of the node, or `null` before the first scan. The kept
   lines of the current update follow as `log` events, each `{ line, at }`. Then each step of an update sends a `step`
   event, and each line sends a `log` event. The node sends keepalive comments. A node accepts 8 open connections.
   The ninth gets 429.
@@ -81,6 +82,8 @@ The fields of a session are the fields of `GET /instances/:id/sessions`, plus `i
 - `unavailable`: the node has no session files, so it cannot list sessions.
 - `loading`: the hub has no list of this host yet. This is the case just after a hub start or after a host is added.
 
+A host with the status `ok` can also have `truncated: true`. Then the node sent only its newest rows, because the whole list was too large. The field is absent when the list is whole. Read [Known limits](session-files.md#known-limits).
+
 A host that has no rows still gives status 200 for the call. The `unsupported` status does not exist.
 
 `GET /api/hosts` gives each host a field `sessions` (`HostInfo.sessions`). It is `false` when the node has no session files, and `true` otherwise. The web app uses it to hide the Sessions button of an instance.
@@ -89,7 +92,7 @@ A host that has no rows still gives status 200 for the call. The `unsupported` s
 
 `GET /api/sessions/events` is a server-sent event stream for browsers. It is a GET, so the CSRF rule does not apply. It sends two events:
 
-- `snapshot` has the same body as `GET /api/sessions`. It is the first event. The hub sends a new `snapshot` after a host is added or removed.
+- `snapshot` has the same body as `GET /api/sessions`. It is the first event. The hub sends a new `snapshot` after a host is added, removed or renamed.
 - `host` has `{ host, rows }`. It replaces the status and the rows of one host and keeps the others. The hub sends it when the list of the host changes, and when the presence of the host changes.
 
 The hub sends keepalive comments. Each open stream counts as one viewer of the beat loop. Read [The list of all sessions](session-files.md#the-list-of-all-sessions).
@@ -98,4 +101,4 @@ The hub sends keepalive comments. Each open stream counts as one viewer of the b
 
 A node serves `GET /api/sessions` with the answer `{ scannedAt, sessions }`, with `instance` on each session. It answers from a copy in memory. The hub does not use this route now. It stays for debugging with `curl`.
 
-A node also serves `POST /api/sessions/watch`. The hub calls it with the body `{}` as a heartbeat. The answer is 204. Each call keeps the node in the active mode for 60 000 ms. The node sends its sessions to the hub in `GET /api/events`: the `snapshot` event has a field `sessions`, and the `sessions` event has `{ scannedAt, available, sessions }`.
+A node also serves `POST /api/sessions/watch`. The hub calls it with the body `{}` as a heartbeat. The answer is 204. Each call keeps the node in the active mode for 60 000 ms. The node sends its sessions to the hub in `GET /api/events`: the `snapshot` event has a field `sessions`, and the `sessions` event has `{ scannedAt, available, sessions }`. If the list is over 900 000 bytes of JSON, the node sends only the newest rows that fit and adds `truncated: true`. The node writes no audit line for this heartbeat.
