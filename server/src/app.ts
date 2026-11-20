@@ -35,6 +35,8 @@ import { WatchFlag } from "./sessionwatch";
 import type { ChangeSource, Timers } from "./changesource";
 import { allSessionsApi } from "./allsessions";
 import { SessionsStore } from "./sessionsstore";
+import { sessionsStream } from "./sessionsstream";
+import { createBeatLoop } from "./sessionbeat";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -47,7 +49,9 @@ export type Updater = { run(release?: string): Promise<UpdateReport> };
 
 export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number;
   /** The hub passes the catalog, the started index and the store it built, so that one name cache and one copy serve every route. The caller feeds this index into this store. */
-  sessions?: SessionCatalog; sessionIndex?: SessionIndex; sessionsStore?: SessionsStore };
+  sessions?: SessionCatalog; sessionIndex?: SessionIndex; sessionsStore?: SessionsStore;
+  /** The timers of the local watch flag and of the beat loop. Default: real timers. */
+  watchTimers?: Timers };
 
 const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
 
@@ -399,6 +403,12 @@ export function createApp(deps: Deps): Hono {
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
   const allSessions = allSessionsApi({ store });
+  // While a sessions stream is open, the beat loop tells every node, and the local index, that somebody watches.
+  const timerOpt = deps.watchTimers ? { timers: deps.watchTimers } : {};
+  const watch = new WatchFlag({ target: sessionIndex, ...timerOpt });
+  const beat = createBeatLoop({ registry, presence: deps.presence ?? NO_PRESENCE, local: watch, ...timerOpt });
+  // Browsers only: a CLI client must never count as a viewer. Before the /sessions mount, so that it wins.
+  api.get("/sessions/events", sessionsStream({ store, viewers: beat, ...(deps.keepaliveMs ? { keepaliveMs: deps.keepaliveMs } : {}) }));
   api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));

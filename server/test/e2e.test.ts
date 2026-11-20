@@ -96,6 +96,25 @@ describe("hub + node end to end", () => {
     expect(fs).toContain(JSON.stringify(s.nodeRoot).slice(1, -1));
   });
 
+  test("the list a node sends on its stream reaches the hub sessions stream", async () => {
+    const s = await setup();
+    // The node has no claudeHome, so its index sends `available: false`. Only the node stream, fed into the store, gives `unavailable`.
+    const ac = new AbortController();
+    const r = await fetch(s.hubUrl("/api/sessions/events"), { headers: s.h(), signal: ac.signal });
+    expect(r.status).toBe(200);
+    const nasStatus = (e: { event: string; data: string }): string | undefined => {
+      const d = JSON.parse(e.data);
+      return e.event === "snapshot" ? d.hosts.find((h: any) => h.id === "nas")?.status : d.host.id === "nas" ? d.host.status : undefined;
+    };
+    let status: string | undefined;
+    for await (const e of readSse(r.body!)) {
+      status = nasStatus(e);
+      if (status === "unavailable") break;
+    }
+    ac.abort();
+    expect(status).toBe("unavailable");
+  });
+
   test("a request straight to the node with the wrong secret or none is 401", async () => {
     const s = await setup();
     const url = `https://localhost:${s.node.port}/api/node`;
