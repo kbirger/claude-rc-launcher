@@ -282,7 +282,11 @@ export function createNodeWatchers(o: {
     presence.delete(id);
   };
 
-  const off = o.registry.onChange((e) => (e.type === "added" ? start(e.id) : stopOne(e.id)));
+  // A rename keeps the id and the client, so the stream stays open.
+  const off = o.registry.onChange((e) => {
+    if (e.type === "added") start(e.id);
+    else if (e.type === "removed") stopOne(e.id);
+  });
   for (const e of o.registry.list()) start(e.host.id);
 
   return {

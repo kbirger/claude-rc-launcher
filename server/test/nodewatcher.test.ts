@@ -98,11 +98,11 @@ class FakeNode {
 
 function fakeRegistry() {
   const entries = new Map<string, HostEntry>();
-  const subs = new Set<(e: { type: "added" | "removed"; id: string }) => void>();
+  const subs = new Set<(e: { type: "added" | "removed" | "renamed"; id: string }) => void>();
   return {
     list: () => [...entries.values()],
     get: (id: string) => entries.get(id),
-    onChange: (fn: (e: { type: "added" | "removed"; id: string }) => void) => {
+    onChange: (fn: (e: { type: "added" | "removed" | "renamed"; id: string }) => void) => {
       subs.add(fn);
       return () => void subs.delete(fn);
     },
@@ -114,6 +114,11 @@ function fakeRegistry() {
     remove(id: string) {
       entries.delete(id);
       for (const s of subs) s({ type: "removed", id });
+    },
+    rename(id: string, name: string) {
+      const e = entries.get(id)!;
+      entries.set(id, { ...e, host: { ...e.host, name } });
+      for (const s of subs) s({ type: "renamed", id });
     },
     subs,
   };
@@ -161,6 +166,19 @@ describe("createNodeWatchers presence", () => {
     await flush();
     expect(s.presence).toEqual([{ host: "nas", status: "online", version: "2.3.4", at: s.clock.now().toISOString() }]);
     expect(s.w.presence()).toEqual(s.presence);
+  });
+
+  test("a renamed host keeps its stream and its presence", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot("2.3.4");
+    await flush();
+    s.reg.rename("nas", "Big NAS");
+    await flush();
+    expect(s.nodes.nas!.last.aborted).toBe(false);
+    expect(s.nodes.nas!.conns.length).toBe(1);
+    expect(s.statuses()).toEqual(["online"]);
+    expect(s.w.presence().map((p) => p.status)).toEqual(["online"]);
   });
 
   test("a stream that ends gives offline", async () => {

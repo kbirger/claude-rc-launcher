@@ -12,7 +12,7 @@ const row = (id: string): SessionRow => ({
 });
 const list = (ids: string[], over: Partial<SessionsPayload> = {}): SessionsPayload => ({ scannedAt: "2026-01-02T00:00:00.000Z", available: true, sessions: ids.map(row), ...over });
 
-type RegEvent = { type: "added" | "removed"; id: string };
+type RegEvent = { type: "added" | "removed" | "renamed"; id: string };
 
 function fakeRegistry(ids: string[]) {
   const hosts = new Map(ids.map((id) => [id, { id, name: `name-${id}` }]));
@@ -32,6 +32,7 @@ function fakeRegistry(ids: string[]) {
     },
     rename(id: string, name: string) {
       hosts.set(id, { id, name });
+      for (const fn of subs) fn({ type: "renamed", id });
     },
     subs,
   };
@@ -190,6 +191,15 @@ describe("SessionsStore", () => {
     // added again: its old list is gone
     registry.add("nas");
     expect(hostOf(store, "nas")?.status).toBe("loading");
+  });
+
+  test("a renamed host emits reset and keeps its list", () => {
+    const { store, registry, changes } = build();
+    store.set("nas", list(["a"]));
+    changes.length = 0;
+    registry.rename("nas", "Big NAS");
+    expect(changes).toEqual([{ type: "reset" }]);
+    expect(rowsOf(store, "nas").map((r) => [r.id, r.host.name])).toEqual([["a", "Big NAS"]]);
   });
 
   test("a renamed host shows its new name", () => {
