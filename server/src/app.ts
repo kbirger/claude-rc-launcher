@@ -36,7 +36,7 @@ import type { ChangeSource, Timers } from "./changesource";
 import { allSessionsApi } from "./allsessions";
 import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
-import { createBeatLoop } from "./sessionbeat";
+import { createBeatLoop, type BeatLoop } from "./sessionbeat";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -51,7 +51,9 @@ export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrate
   /** The hub passes the catalog, the started index and the store it built, so that one name cache and one copy serve every route. The caller feeds this index into this store. */
   sessions?: SessionCatalog; sessionIndex?: SessionIndex; sessionsStore?: SessionsStore;
   /** The timers of the local watch flag and of the beat loop. Default: real timers. */
-  watchTimers?: Timers };
+  watchTimers?: Timers;
+  /** The hub passes the beat loop it built, so that its stop() can end it. */
+  beatLoop?: BeatLoop };
 
 const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
 
@@ -405,8 +407,7 @@ export function createApp(deps: Deps): Hono {
   const allSessions = allSessionsApi({ store });
   // While a sessions stream is open, the beat loop tells every node, and the local index, that somebody watches.
   const timerOpt = deps.watchTimers ? { timers: deps.watchTimers } : {};
-  const watch = new WatchFlag({ target: sessionIndex, ...timerOpt });
-  const beat = createBeatLoop({ registry, presence: deps.presence ?? NO_PRESENCE, local: watch, ...timerOpt });
+  const beat = deps.beatLoop ?? createBeatLoop({ registry, presence: deps.presence ?? NO_PRESENCE, local: new WatchFlag({ target: sessionIndex, ...timerOpt }), ...timerOpt });
   // Browsers only: a CLI client must never count as a viewer. Before the /sessions mount, so that it wins.
   api.get("/sessions/events", sessionsStream({ store, viewers: beat, ...(deps.keepaliveMs ? { keepaliveMs: deps.keepaliveMs } : {}) }));
   api.route("/sessions", allSessions);

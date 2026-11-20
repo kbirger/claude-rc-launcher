@@ -29,8 +29,13 @@ import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
 import { SessionIndex } from "./sessionindex";
 import { SessionsStore } from "./sessionsstore";
+import { createBeatLoop } from "./sessionbeat";
+import { WatchFlag } from "./sessionwatch";
+import type { Timers } from "./changesource";
 
-export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits; watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number } };
+export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits; watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number };
+  /** The timers of the local watch flag and of the beat loop. Default: real timers. */
+  watchTimers?: Timers };
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
@@ -173,11 +178,15 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
     ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
   });
+  // One beat loop for the hub, built here so that stop() can end it: a stream still open at stop keeps it running.
+  const timerOpt = deps.watchTimers ? { timers: deps.watchTimers } : {};
+  const watch = new WatchFlag({ target: sessionIndex, ...timerOpt });
+  const beatLoop = createBeatLoop({ registry: hosts, presence, local: watch, ...timerOpt });
   // The restarting state of a node ends at once when its update entry settles without a new version.
   const offRecord = record.onChange((e) => {
     if (e.host !== "local" && (e.status === "unknown" || e.status === "rolled back")) watchers.endRestarting(e.host);
   });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, releaseList, clientVersions, updates: record, history, updateLog, presence, sessions: sessionCatalog, sessionIndex, sessionsStore: store, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, releaseList, clientVersions, updates: record, history, updateLog, presence, sessions: sessionCatalog, sessionIndex, sessionsStore: store, beatLoop, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);
@@ -189,6 +198,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     stop: () => {
       offRecord();
       watchers.stop();
+      beatLoop.stop();
+      watch.stop();
       sessionIndex.stop();
       store.stop();
       stopServer(server, app);
