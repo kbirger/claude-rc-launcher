@@ -29,6 +29,7 @@ export class SessionsStore {
   /** Reads no presence here: the hub builds the store before the watcher that fills presence exists. */
   constructor(private readonly o: { localName: string; registry: Pick<HostRegistry, "list" | "get" | "onChange">; presence: PresenceSource }) {
     this.offs.push(
+      // Added, removed or renamed: a new snapshot carries the new list of hosts and their names.
       o.registry.onChange((e) => {
         if (e.type === "removed") this.lists.delete(e.id);
         this.emit({ type: "reset" });
