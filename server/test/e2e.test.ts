@@ -13,6 +13,7 @@ import type { UpdateReport } from "../src/serviceupdate";
 import { NodeEvents } from "../src/updateevents";
 import { readSse } from "../src/ssereader";
 import { VERSION } from "../src/version";
+import { fakeTimers } from "./faketimers";
 
 const tmp = () => realpathSync(mkdtempSync(path.join(os.tmpdir(), "rc-e2e-")));
 const stoppers: (() => void)[] = [];
@@ -275,6 +276,30 @@ describe("a slow update end to end", () => {
     );
     expect([remote, local, straight]).toEqual([200, 200, 200]);
   }, 30_000);
+});
+
+describe("hub stop and the beat loop", () => {
+  test("a hub stop with a sessions stream still open leaves no beat or watch timer", async () => {
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
+      hosts: [],
+    } as unknown as Config;
+    const timers = fakeTimers();
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watchTimers: timers }));
+    let stopped = false;
+    stoppers.push(() => void (stopped || hub.stop()));
+    const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
+    const ac = new AbortController();
+    const r = await fetch(`http://127.0.0.1:${hub.port}/api/sessions/events`, { headers: { cookie }, signal: ac.signal });
+    for await (const e of readSse(r.body!)) if (e.event === "snapshot") break;
+    // The open stream started the beat loop (20 s) and the local watch flag (60 s).
+    expect(timers.pending()).toBe(2);
+    hub.stop();
+    stopped = true;
+    expect(timers.pending()).toBe(0);
+    ac.abort();
+  });
 });
 
 describe("hub key log line", () => {
