@@ -34,6 +34,7 @@ import { SessionIndex, type SessionIndexOptions, type SessionsEvent } from "./se
 import { WatchFlag } from "./sessionwatch";
 import type { ChangeSource, Timers } from "./changesource";
 import { allSessionsApi } from "./allsessions";
+import { SessionsStore } from "./sessionsstore";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -44,7 +45,11 @@ export type CliDeps = { issuer: string; clientId: string; roleScope?: string; au
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number;
+  /** The hub passes the catalog, the started index and the store it built, so that one name cache and one copy serve every route. The caller feeds this index into this store. */
+  sessions?: SessionCatalog; sessionIndex?: SessionIndex; sessionsStore?: SessionsStore };
+
+const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -70,7 +75,7 @@ function csrf(cfg: Config): MiddlewareHandler {
 export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined; sessions?: SessionCatalog; sessionIndex?: SessionIndex };
 
 /** The session catalog of one app. Each app factory builds one, so that all its session routes share one name cache. */
-function sessionCatalogFor(cfg: Config): SessionCatalog {
+export function sessionCatalogFor(cfg: Config): SessionCatalog {
   // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
   const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
   const dir = cfg.node?.tls.stateDir ?? cfg.stateDir;
@@ -360,9 +365,21 @@ export function createApp(deps: Deps): Hono {
     ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion, ...(deps.presence ? { presence: deps.presence } : {}) }), probe: probeVersion }
     : undefined;
   // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
-  const sessions = sessionCatalogFor(cfg);
-  const sessionIndex = sessionIndexFor(instances, sessions);
-  // The node API of this machine: the host `local` for the forwarding routes and the first part of the all-sessions list.
+  const sessions = deps.sessions ?? sessionCatalogFor(cfg);
+  const store = deps.sessionsStore ?? new SessionsStore({ localName: cfg.name, registry, presence: deps.presence ?? NO_PRESENCE });
+  const feedLocal = (e: SessionsEvent) => store.set("local", e);
+  let sessionIndex: SessionIndex;
+  if (!deps.sessionIndex) sessionIndex = sessionIndexFor(instances, sessions, feedLocal);
+  else {
+    sessionIndex = deps.sessionIndex;
+    // A given index with a store built here: the caller could not feed it, so feed it now, with what it already sent.
+    if (!deps.sessionsStore) {
+      sessionIndex.subscribe(feedLocal);
+      const last = sessionIndex.latest();
+      if (last) feedLocal(last);
+    }
+  }
+  // The node API of this machine: the host `local` for the forwarding routes.
   const localApi = instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) });
   const forwarding = () =>
     hostsApi({
@@ -373,6 +390,7 @@ export function createApp(deps: Deps): Hono {
       requestTimeoutMs: deps.requestTimeoutMs,
       ...(deps.latest ? { latest: deps.latest } : {}),
       ...(updates ? { updates } : {}),
+      sessionsAvailable: (h) => store.available(h),
     });
   // The web page renames a host. It cannot add or remove one: that stays with the CLI.
   api.patch("/hosts/:id", async (c, next) => {
@@ -380,7 +398,7 @@ export function createApp(deps: Deps): Hono {
     const u = c.get("user" as never) as User | undefined;
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
-  const allSessions = allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.probeTimeoutMs, ...(deps.presence ? { presence: () => deps.presence!.list() } : {}) });
+  const allSessions = allSessionsApi({ store });
   api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));

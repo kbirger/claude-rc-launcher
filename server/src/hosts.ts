@@ -53,7 +53,7 @@ const definitionOf = (body: unknown): { installed: number; required: number } | 
 
 const noClientOf = (body: unknown): boolean => isObject(body) && Array.isArray(body.clients) && body.clients.length === 0;
 
-export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; noClient?: true; platform?: string; definition?: { installed: number; required: number }; stale: boolean; target?: string };
+export type HostInfo = { id: string; name: string; status: "ok" | "offline" | "error"; error?: string; source?: "config" | "managed"; version?: string; clientVersion?: string; noClient?: true; platform?: string; definition?: { installed: number; required: number }; stale: boolean; target?: string; sessions?: boolean };
 
 /** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
 const LATEST_MAX_AGE_MS = 300_000;
@@ -99,12 +99,15 @@ export function hostsApi(o: {
   version?: string;
   /** Records each update: the record, its tracker and the call that reads the version of a node. */
   updates?: { record: UpdateRecord; tracker: UpdateTracker; probe(host: string): Promise<string | undefined> };
+  /** Whether a host has session files, from the hub store. Without it a host entry has no `sessions` field. */
+  sessionsAvailable?: (host: string) => boolean;
 }): Hono {
   const { cfg, local } = o;
   const probeTimeoutMs = o.probeTimeoutMs ?? 3_000;
   const requestTimeoutMs = o.requestTimeoutMs ?? 10_000;
   const hubVersion = o.version ?? VERSION;
   const app = new Hono();
+  const sessionsOf = (id: string): { sessions?: boolean } => (o.sessionsAvailable ? { sessions: o.sessionsAvailable(id) } : {});
 
   app.get("/", async (c) => {
     // The host list never waits on GitHub: it reads what is cached and refreshes in the background.
@@ -112,7 +115,7 @@ export function hostsApi(o: {
     if (o.latest && (!cachedLatest || Date.now() - Date.parse(cachedLatest.checkedAt) > LATEST_MAX_AGE_MS)) void o.latest.get().catch(() => {});
     // A node can only install a release, so a local-build hub is the target through the release it is based on.
     const hubTarget = releaseOf(hubVersion);
-    const rest = await Promise.all(
+    const probed = await Promise.all(
       o.registry.list().map(async ({ host: h, client, source }): Promise<HostInfo> => {
         try {
           const r = await client.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
@@ -128,6 +131,7 @@ export function hostsApi(o: {
         }
       }),
     );
+    const rest = probed.map((h) => ({ ...h, ...sessionsOf(h.id) }));
     let localClient: string | undefined;
     let localNoClient = false;
     let localPlatform: string | undefined;
@@ -142,7 +146,7 @@ export function hostsApi(o: {
     }
     const latestVersion = cachedLatest ? normalizeVersion(cachedLatest.version) : undefined;
     const localTarget = releaseOf(latestVersion);
-    return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...(localNoClient ? { noClient: true as const } : {}), ...(localPlatform ? { platform: localPlatform } : {}), ...staleness(localTarget, hubVersion, localClient) } satisfies HostInfo, ...rest]);
+    return c.json([{ id: "local", name: cfg.name, status: "ok", version: hubVersion, ...(localClient !== undefined ? { clientVersion: localClient } : {}), ...(localNoClient ? { noClient: true as const } : {}), ...(localPlatform ? { platform: localPlatform } : {}), ...staleness(localTarget, hubVersion, localClient), ...sessionsOf("local") } satisfies HostInfo, ...rest]);
   });
 
   // Audit every state-changing request, local or remote.
