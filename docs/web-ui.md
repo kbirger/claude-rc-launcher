@@ -37,7 +37,7 @@ If a host does not answer, or runs an older release that has no session list, a 
 
 ## Instances
 
-The instance list shows the instances of the selected hosts. If more than one host shows, each host has a heading. If you have more than one host, the New dialog starts with a Node field. If exactly one host is ticked, the dialog starts on that host. Each card shows:
+The Instances view has the title "Instances". It lists the instances of the selected hosts. If more than one host shows, each host has a heading below the title. If you have more than one host, the New dialog starts with a Node field. If exactly one host is ticked, the dialog starts on that host. Each card shows:
 
 - The name of the instance. This is the `--name` that the Claude app shows.
 - The folder.
@@ -345,7 +345,7 @@ The Nodes page shows one card for each host:
 - A status dot. If the host is offline, the card also shows the reason.
 - Rename changes the display name. The id stays.
 - Update updates that node. Read [Updates](updates.md).
-- A tap on the card shows the instances of that host.
+- Show instances sets the node filter to that host and opens the Instances view. A host that is not running shows a disabled Unavailable button.
 
 ## Updates
 

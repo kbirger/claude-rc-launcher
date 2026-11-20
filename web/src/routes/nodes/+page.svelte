@@ -23,7 +23,7 @@
 
 <h2 class="font-heading mb-3 text-lg font-bold">Nodes</h2>
 <!-- A tap on a node shows the instances of that node. -->
-<NodeList hosts={shell.hosts} selected={shell.nodes.selected.length === 1 ? shell.nodes.selected[0]! : ""} onselect={(id) => { shell.nodes.only(id); void goto("/instances"); }} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
+<NodeList hosts={shell.hosts} onselect={(id) => { shell.nodes.only(id); void goto("/instances"); }} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
 {#each shell.hosts as h (h.id)}
   {#if showsFinishedPanel(lastEntry(shell.updates, h.id))}
     <div class="mt-3"><UpdateOutput host={h.id} open={false} /></div>

@@ -14,11 +14,12 @@
   }
 </script>
 
+<h2 class="font-heading mb-3 text-lg font-bold">Instances</h2>
 <div class="mb-4 flex gap-2">
   {#if shell.hosts.length > 1}<div class="min-w-0 max-w-[50%] shrink-0"><NodeFilter hosts={shell.hosts} selected={shell.nodes.selected} ontoggle={shell.nodes.toggle} onclear={shell.nodes.clear} /></div>{/if}
   {#if shell.can("write")}<Button size="touch" class="min-w-0 flex-1" onclick={openNew}>+ New</Button>{/if}
 </div>
 {#each shown as h (h.id)}
-  {#if shown.length > 1}<h2 class="font-heading mt-4 mb-2 text-lg font-bold">{h.name}</h2>{/if}
+  {#if shown.length > 1}<h3 class="font-heading mt-4 mb-2 text-base font-bold [overflow-wrap:anywhere]">{h.name}</h3>{/if}
   <InstanceList host={h.id} startError={h.id === shell.flow.selected ? shell.flow.startError : ""} canWrite={shell.can("write")} />
 {/each}
