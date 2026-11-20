@@ -73,3 +73,19 @@ test("SessionView says the session is not found when its host is ok", () => {
   expect(t.textContent).toContain("Session not found.");
   expect(t.textContent!.toLowerCase()).not.toContain("update");
 });
+
+test("SessionView keeps the session when a refresh fails", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const t = show({ sessions: [row("s1", "h", "i", "the one")], hosts: [{ id: "h", name: "box", status: "ok" }] }, client);
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "hub: store gone" }), { status: 500, headers: { "content-type": "application/json" } })) as any;
+  try {
+    await client.invalidateQueries({ queryKey: ["all-sessions"] });
+    flushSync();
+    expect(client.getQueryState(["all-sessions"])!.error).not.toBeNull();
+    expect(t.querySelector("h2")!.textContent).toBe("the one");
+    expect(t.textContent).not.toContain("Could not load the session");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
