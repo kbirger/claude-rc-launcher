@@ -81,11 +81,19 @@ test("a click on All nodes calls onclear once", async () => {
   await vi.waitFor(() => expect(onclear).toHaveBeenCalledTimes(1));
 });
 
-test("an offline node shows its status in the menu and can still be ticked", async () => {
+test("each node shows a status dot, and an offline node can still be ticked", async () => {
   const ontoggle = vi.fn();
-  show({ hosts: [host("a"), host("b", { status: "offline" })], ontoggle });
+  show({ hosts: [host("a"), host("b", { status: "offline" }), host("c", { status: "restarting" })], ontoggle });
   await openMenu();
-  expect(item("name-b").textContent).toContain("offline");
+  const dot = (text: string) => item(text).querySelector('[role="img"]');
+  expect(dot("name-a")!.getAttribute("aria-label")).toBe("Status: ok");
+  expect(dot("name-a")!.className).toContain("bg-success");
+  expect(dot("name-b")!.getAttribute("aria-label")).toBe("Status: offline");
+  expect(dot("name-b")!.className).toContain("bg-destructive");
+  expect(dot("name-c")!.className).toContain("bg-warning");
+  // The status is the dot, not text.
+  expect(item("name-b").textContent!.trim()).toBe("name-b");
+  expect(item("All nodes").querySelector('[role="img"]')).toBeNull();
   pick(item("name-b"));
   await vi.waitFor(() => expect(ontoggle).toHaveBeenCalledWith("b"));
 });

@@ -9,7 +9,7 @@ Browser -> reverse proxy [+ Authentik outpost] -> HUB -- HTTPS, pinned cert, Hub
 ```
 
 The hub serves the UI and proxies the instance API of each node. If more than one host is configured, a Nodes button appears above the
-Sessions and Instances lists. Its menu has a checkbox for each host. An offline host stays in the menu and shows its status.
+Sessions and Instances lists. Its menu has a checkbox for each host. Each host has a status dot, and an offline host stays in the menu.
 The Sessions view needs the node to run the same release as the hub: an older node has no session list, and the view says so. The hub's own host is the
 implicit host `local`.
 
