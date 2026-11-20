@@ -1,4 +1,4 @@
-export type { AllSessions, Entry, GlobalSession, HostSessions, Listing, Preview, Session, TouchedFile } from "./api";
+export type { AllSessions, Entry, GlobalSession, HostPart, HostSessions, Listing, Preview, Session, TouchedFile } from "./api";
 export { downloadUrl, getPreview, getTouched, isUnsupported, listAllSessions, listFiles, listSessions } from "./api";
 export { allSessionsQuery, filesQuery, previewQuery, sessionsQuery, touchedQuery } from "./queries";
 export { sessionKey, sortSessions } from "./sessionorder";

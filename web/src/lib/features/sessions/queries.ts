@@ -1,5 +1,8 @@
 import { getChanged, getPreview, getTouched, listAllSessions, listFiles, listSessions } from "./api";
 
+/** The query of the hub session list. The sessions stream writes into it. */
+export const ALL_SESSIONS_KEY = ["all-sessions"] as const;
+
 export const SESSIONS_POLL_MS = 15000;
 export const SESSIONS_STALE_MS = 5000;
 
@@ -13,7 +16,7 @@ export const sessionsQuery = (host: string, instance: string) => ({
 });
 
 export const allSessionsQuery = () => ({
-  queryKey: ["all-sessions"] as const,
+  queryKey: ALL_SESSIONS_KEY,
   queryFn: listAllSessions,
   staleTime: SESSIONS_STALE_MS,
   refetchInterval: SESSIONS_POLL_MS,
