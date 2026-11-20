@@ -3,6 +3,7 @@ import type { HostInfo } from "../features/hosts";
 import { HOSTS_KEY } from "../features/hosts";
 import type { LogLine, UpdateEntry } from "../features/updates";
 import { HISTORY_KEY, LATEST_KEY, LOGS_KEY, UPDATES_KEY } from "../features/updates";
+import { keepStream, type Visibility } from "./stream";
 
 export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
 
@@ -12,8 +13,8 @@ const HOST_STATUS = { online: "ok", offline: "offline", restarting: "restarting"
 type Timer = ReturnType<typeof setTimeout>;
 
 /**
- * Keeps one event stream open. When the browser gives up on it (readyState CLOSED), the stream is reopened after each
- * of `delays` in turn, and then on the next window focus. Any received message resets the retries.
+ * Keeps the shared event stream open (see `keepStream` for the retries and the hidden tab) and writes its events into
+ * the query cache. After a reconnect it invalidates the keys that it owns.
  */
 export function connectEvents(o: {
   client: QueryClient;
@@ -21,20 +22,12 @@ export function connectEvents(o: {
   delays?: number[];
   setTimeout?: (f: () => void, ms: number) => Timer;
   clearTimeout?: (t: Timer) => void;
+  visibility?: Visibility;
+  hiddenMs?: number;
   /** Where the `[claude-rc]` lines go. Never gets output lines or error text of a node. */
   log?: { info(...a: unknown[]): void; warn(...a: unknown[]): void };
 }): () => void {
   const log = o.log ?? console;
-  const open = o.open ?? ((u: string) => new EventSource(u));
-  const delays = o.delays ?? [5000, 15000, 45000];
-  const setT = o.setTimeout ?? ((f, ms) => setTimeout(f, ms));
-  const clearT = o.clearTimeout ?? ((t) => clearTimeout(t));
-  let es: EventSource | undefined;
-  let stopped = false;
-  let waiting = false;
-  let retries = 0;
-  let timer: Timer | undefined;
-  let opens = 0;
 
   // Patches status, version and error of the cached host. Returns true when the host list is stale: the version changed,
   // or the host is not in a loaded list (a new node). A cold cache is left alone.
@@ -80,98 +73,60 @@ export function connectEvents(o: {
     seen = next;
   });
 
-  const clearTimer = () => {
-    if (timer !== undefined) clearT(timer);
-    timer = undefined;
-  };
+  const stopStream = keepStream({
+    url: "/api/events",
+    name: "event stream",
+    open: o.open,
+    delays: o.delays,
+    setTimeout: o.setTimeout,
+    clearTimeout: o.clearTimeout,
+    visibility: o.visibility,
+    hiddenMs: o.hiddenMs,
+    log,
+    // After a reconnect the page may have missed events: read the state again. The first open needs no read, the snapshot carries it.
+    onOpen(opens) {
+      if (opens <= 1) return;
+      void o.client.invalidateQueries({ queryKey: UPDATES_KEY });
+      void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
+      void o.client.invalidateQueries({ queryKey: HISTORY_KEY });
+      void o.client.invalidateQueries({ queryKey: LATEST_KEY });
+    },
+    listeners: {
+      snapshot(data) {
+        try {
+          const snap = JSON.parse(data);
+          if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
+          log.info(`[claude-rc] snapshot: ${snap.updates.length} updates, ${snap.presence.length} hosts`);
+          o.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, snap.updates);
+          if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs)) o.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, snap.logs);
+          if ((snap.presence as Presence[]).map((p) => patchHost(p)).some(Boolean)) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
+        } catch {}
+      },
+      update(data) {
+        try {
+          const entry = JSON.parse(data) as UpdateEntry;
+          o.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, (cur = []) => {
+            const i = cur.findIndex((x) => x.host === entry.host);
+            return i < 0 ? [...cur, entry] : cur.map((x, j) => (j === i ? entry : x));
+          });
+        } catch {}
+      },
+      log(data) {
+        try {
+          const l = JSON.parse(data) as { host: string; line: string; at: string };
+          o.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, (cur = {}) => ({ ...cur, [l.host]: [...(cur[l.host] ?? []), { line: l.line, at: l.at }].slice(-MAX_LINES) }));
+        } catch {}
+      },
+      presence(data) {
+        try {
+          if (patchHost(JSON.parse(data) as Presence)) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
+        } catch {}
+      },
+    },
+  });
 
-  const onFocus = () => {
-    globalThis.removeEventListener("focus", onFocus);
-    waiting = false;
-    retries = 0;
-    if (!stopped) connect();
-  };
-
-  const connect = () => {
-    clearTimer();
-    es?.close();
-    const s = open("/api/events");
-    es = s;
-    s.addEventListener("open", () => {
-      retries = 0;
-      opens++;
-      log.info(`[claude-rc] event stream open (open ${opens})`);
-      // After a reconnect the page may have missed events: read the state again. The first open needs no read, the snapshot carries it.
-      if (opens > 1) {
-        void o.client.invalidateQueries({ queryKey: UPDATES_KEY });
-        void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-        void o.client.invalidateQueries({ queryKey: HISTORY_KEY });
-        void o.client.invalidateQueries({ queryKey: LATEST_KEY });
-      }
-    });
-    s.addEventListener("snapshot", (e) => {
-      retries = 0;
-      try {
-        const snap = JSON.parse(String((e as MessageEvent).data));
-        if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
-        log.info(`[claude-rc] snapshot: ${snap.updates.length} updates, ${snap.presence.length} hosts`);
-        o.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, snap.updates);
-        if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs)) o.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, snap.logs);
-        if ((snap.presence as Presence[]).map((p) => patchHost(p)).some(Boolean)) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-      } catch {}
-    });
-    s.addEventListener("update", (e) => {
-      retries = 0;
-      try {
-        const entry = JSON.parse(String((e as MessageEvent).data)) as UpdateEntry;
-        o.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, (cur = []) => {
-          const i = cur.findIndex((x) => x.host === entry.host);
-          return i < 0 ? [...cur, entry] : cur.map((x, j) => (j === i ? entry : x));
-        });
-      } catch {}
-    });
-    s.addEventListener("log", (e) => {
-      retries = 0;
-      try {
-        const l = JSON.parse(String((e as MessageEvent).data)) as { host: string; line: string; at: string };
-        o.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, (cur = {}) => ({ ...cur, [l.host]: [...(cur[l.host] ?? []), { line: l.line, at: l.at }].slice(-MAX_LINES) }));
-      } catch {}
-    });
-    s.addEventListener("presence", (e) => {
-      retries = 0;
-      try {
-        if (patchHost(JSON.parse(String((e as MessageEvent).data)) as Presence)) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-      } catch {}
-    });
-    s.addEventListener("error", () => {
-      // CLOSED (2): the browser gave up (a 502 from a proxy while the hub restarts, a 401, a 501). CONNECTING (0): the browser retries itself.
-      if (s.readyState !== 2) {
-        log.info(`[claude-rc] event stream error (ready state ${s.readyState}), the browser retries`);
-        return;
-      }
-      if (stopped || waiting || timer !== undefined) return;
-      log.warn("[claude-rc] event stream closed");
-      if (retries < delays.length) {
-        log.info(`[claude-rc] reconnect in ${delays[retries]! / 1000}s`);
-        timer = setT(() => {
-          timer = undefined;
-          if (!stopped) connect();
-        }, delays[retries++]!);
-      } else {
-        // The retries are used up (for example a real 401). Try once more on the next focus.
-        waiting = true;
-        log.warn("[claude-rc] retries used up, will reconnect on the next focus");
-        globalThis.addEventListener("focus", onFocus);
-      }
-    });
-  };
-
-  connect();
   return () => {
-    stopped = true;
     offCache();
-    clearTimer();
-    globalThis.removeEventListener("focus", onFocus);
-    es?.close();
+    stopStream();
   };
 }
