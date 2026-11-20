@@ -41,7 +41,7 @@
   const notices = $derived(
     (filtered ? [] : (all.data?.hosts ?? []))
       .filter((h) => h.status !== "ok" && inFilter(nodes, h.id))
-      .map((h) => ({ id: h.id, text: `${h.name}: ${h.status === "unsupported" ? "update this node to list its sessions" : h.status === "offline" ? "not answering" : (h.error ?? "error")}` })),
+      .map((h) => ({ id: h.id, text: `${h.name}: ${h.status === "unavailable" ? "no session files on this node" : h.status === "loading" ? "loading" : h.status === "offline" ? "not answering" : (h.error ?? "error")}` })),
   );
 </script>
 

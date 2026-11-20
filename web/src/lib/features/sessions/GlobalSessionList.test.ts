@@ -99,15 +99,15 @@ test("two sessions with the same id on two nodes both show", () => {
   expect(titles(t)).toEqual(["title-same", "title-same"]);
 });
 
-test("an offline node and an unsupported node appear in a notice and the other rows still show", () => {
+test("an offline node and an unavailable node appear in a notice and the other rows still show", () => {
   const three: HostInfo[] = [...hosts, { id: "old", name: "Old box", status: "ok" }];
   const t = show(
-    { sessions: [row("a", "local")], hosts: [status("local", "ok"), { id: "nas", name: "Basement NAS", status: "offline", error: "unreachable" }, { id: "old", name: "Old box", status: "unsupported" }] },
+    { sessions: [row("a", "local")], hosts: [status("local", "ok"), { id: "nas", name: "Basement NAS", status: "offline", error: "unreachable" }, { id: "old", name: "Old box", status: "unavailable" }] },
     { hosts: three },
   );
   expect(titles(t)).toEqual(["title-a"]);
   expect(t.textContent).toContain("Basement NAS: not answering");
-  expect(t.textContent).toContain("Old box: update this node to list its sessions");
+  expect(t.textContent).toContain("Old box: no session files on this node");
 });
 
 test("a node that is not in the selection gives no notice", () => {

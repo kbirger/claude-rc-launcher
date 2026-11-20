@@ -13,9 +13,11 @@ const sessionBase = (host: string, instance: string, session: string) => `${base
 
 /** A session of the hub list: the node and the instance it belongs to come with it. */
 export type GlobalSession = Session & { instance: { id: string; name: string; path: string; state: string }; host: { id: string; name: string } };
-/** What the hub knows about one node's part of the list. `unsupported`: the node is too old to have the list. */
-export type HostSessions = { id: string; name: string; status: "ok" | "offline" | "error" | "unsupported"; error?: string; scannedAt?: string };
+/** What the hub knows about one node's part of the list. `unavailable`: the node cannot list sessions. `loading`: no list yet. */
+export type HostSessions = { id: string; name: string; status: "ok" | "offline" | "error" | "unavailable" | "loading"; error?: string; scannedAt?: string };
 export type AllSessions = { sessions: GlobalSession[]; hosts: HostSessions[] };
+/** One host's part of the list: the `host` event of the sessions stream. */
+export type HostPart = { host: HostSessions; rows: GlobalSession[] };
 
 /** The sessions of every node and instance, from the hub (each node answers from its own cached list). */
 export const listAllSessions = () => request<AllSessions>("GET", "/api/sessions");
