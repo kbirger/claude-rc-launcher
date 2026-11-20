@@ -226,6 +226,13 @@ A node is active only while a hub watches. The hub sends a heartbeat, `POST /api
 
 The hub merges the lists of all nodes in `sessionsstore.ts`. Each node sends its list in the snapshot of its event stream, and again in each `sessions` event. The hub does not call a node to answer `GET /api/sessions`. A node that is not online shows its status from the watcher at once, and a node that returns keeps its old list. Before the first list of a node arrives, the host has the status `loading`.
 
+A rename of a host makes the hub send a new `snapshot` on each open sessions stream, so the rows show the new name.
+
+### Known limits
+
+- **A large list is cut.** The hub reads at most 1 MiB in one event of the node stream. A node with some thousand sessions can go over that. So the index keeps the payload of each `sessions` event below 900 000 bytes of JSON (`MAX_SESSIONS_BYTES` in `sessionindex.ts`). The snapshot of the node stream holds the same payload, so it also stays below the cap. If the list is larger, the index keeps only the newest rows (by `lastActiveAt`) that fit, and it adds `truncated: true`. The older sessions do not show in the Sessions view. The hub keeps the flag on the status of the host, but the web app does not show it. The list of `local` on the hub comes from the same index, so the same cap applies to it.
+- A node whose first scan always fails stays `loading`, because the index emits no event until a scan succeeds.
+
 ## Cost and threading
 
 These numbers were measured on the development machine:
