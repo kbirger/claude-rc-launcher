@@ -338,6 +338,15 @@ describe("node sessions stream and heartbeat", () => {
     expect(calls).toContain("active:true");
   });
 
+  test("POST /api/sessions/watch writes no audit line, and another write still does", async () => {
+    const a = createNodeApp({ cfg, instances, auth, sessionSource: fakeSource().source });
+    logged.length = 0;
+    expect((await a.request("/api/sessions/watch", { method: "POST", headers: json, body: "{}" })).status).toBe(204);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual([]);
+    await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) });
+    expect(logged.filter((l) => l.startsWith("audit")).map((l) => l.replace(/ \d+$/, ""))).toEqual(["audit caller=secret POST /api/instances"]);
+  });
+
   test("POST /api/sessions/watch without JSON content type answers 415", async () => {
     const { source, calls } = fakeSource();
     const a = createNodeApp({ cfg, instances, auth, sessionSource: source });

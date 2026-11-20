@@ -276,7 +276,8 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
   });
   api.use("*", async (c, next) => {
     await next();
-    if (isWrite(c.req.method)) {
+    // The hub heartbeat comes every 20 seconds from each hub and changes nothing that an audit needs.
+    if (isWrite(c.req.method) && !(c.req.method === "POST" && new URL(c.req.url).pathname === "/api/sessions/watch")) {
       const act = c.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
       const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")}${actPart} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
