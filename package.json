@@ -7,6 +7,7 @@
     "test": "bun test server ./cli && bun run --cwd web test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && bun run --cwd web lint",
+    "lint:source": "eslint . --ignore-pattern \"**/test/**\" --ignore-pattern \"**/*.test.ts\" && bun run --cwd web lint",
     "start": "bun server/src/index.ts",
     "dev:local": "bun --watch server/src/index.ts --config .local-data/config.toml --local",
     "start:local": "bun server/src/index.ts --config .local-data/config.toml --local",

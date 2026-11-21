@@ -20,6 +20,8 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: web
       - run: bun run typecheck
+      # The backend test files still have lint errors, so they are left out until they are typed.
+      - run: bun run lint:source
       - run: bun run --cwd web check
       - run: bun run test
       - run: bun run build
