@@ -7,10 +7,13 @@ export interface Io {
   tty: boolean;
 }
 
-export function realIo(): { io: Io; close(): void } {
+/** Whether both streams are terminals. The flag is `undefined` when a stream is not one, although the type says boolean. */
+const both = (first: boolean | undefined, second: boolean | undefined): boolean => first === true && second === true;
+
+export function realIo(): { io: Io; close: () => void } {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return {
-    io: { ask: (item) => rl.question(item), tty: !!(process.stdin.isTTY && process.stdout.isTTY) },
+    io: { ask: (item) => rl.question(item), tty: both(process.stdin.isTTY, process.stdout.isTTY) },
     close: () => {
       rl.close();
     },

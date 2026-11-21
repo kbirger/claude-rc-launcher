@@ -55,7 +55,9 @@ export function createOidcClient(cfg: Config): OidcClient {
         oidcOf(cfg).oidc.clientId,
         oidcOf(cfg).oidc.clientSecret,
         undefined,
-        issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined, // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
+        // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- openid-client has no other way to allow a loopback http issuer
+        issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined,
       )
       .catch((error: unknown) => {
         pending = undefined;

@@ -120,7 +120,9 @@ export function applySetting(settings: Settings, key: string, value: string): Se
         ...group,
         name: `${value}-${suffix[group.role] ?? group.role}`,
       }));
-      return { ...settings, groups, adminGroup: groups.find((group) => group.role === "admin")!.name };
+      const admin = groups.find((group) => group.role === "admin");
+      if (!admin) throw new Error("the groups have no admin role");
+      return { ...settings, groups, adminGroup: admin.name };
     }
 
     case "CLAIM":
@@ -136,6 +138,9 @@ export function applySetting(settings: Settings, key: string, value: string): Se
   }
 }
 
+/** A value with its `undefined` case in the type. Reading past the end of an array gives `undefined`. */
+const widen = (value: string | undefined): string | undefined => value;
+
 export function parseSettings(argv: string[], env: Record<string, string | undefined>): Parsed {
   const flags = new Map<string, string>();
   const bools = new Set<string>();
@@ -143,14 +148,18 @@ export function parseSettings(argv: string[], env: Record<string, string | undef
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg in VALUE_FLAGS) {
-      const value = argv[++index];
+      const value = widen(argv[++index]);
       if (value === undefined) throw new Error(`${arg} needs a value`);
       flags.set(VALUE_FLAGS[arg], value);
     } else if (arg in BOOL_FLAGS) bools.add(BOOL_FLAGS[arg]);
     else throw new Error(`unknown flag: ${arg}`);
   }
 
-  const get = (key: string): string | undefined => flags.get(key) ?? (env[`CLAUDERC_${key}`] || undefined);
+  const get = (key: string): string | undefined => {
+    const fromEnv = env[`CLAUDERC_${key}`];
+    return flags.get(key) ?? (fromEnv === "" ? undefined : fromEnv);
+  };
+
   const interactive = bools.has("interactive");
   const url = env.AUTHENTIK_URL;
   const token = env.AUTHENTIK_TOKEN;

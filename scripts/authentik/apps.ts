@@ -1,4 +1,4 @@
-import { ApiError } from "./api";
+import { ApiError, textOf } from "./api";
 import type { Ctx, Json } from "./api";
 import type { Settings } from "./settings";
 
@@ -20,20 +20,23 @@ interface Redirect {
 export const CLI_REDIRECT = String.raw`^http://127\.0\.0\.1:\d+/callback$`;
 
 /** Newer authentik versions take a list of redirects. Older versions take one string. */
-const same = (have: unknown, want: Redirect[]): boolean =>
-  Array.isArray(have)
-    ? have.length === want.length &&
-      want.every(
-        (redirect, index) => have[index]?.matching_mode === redirect.matching_mode && have[index]?.url === redirect.url,
-      )
-    : have === want.map((redirect) => redirect.url).join("\n");
+const same = (have: unknown, want: Redirect[]): boolean => {
+  if (!Array.isArray(have)) return have === want.map((redirect) => redirect.url).join("\n");
+  const list = have as (Partial<Redirect> | undefined)[];
+  return (
+    list.length === want.length &&
+    want.every(
+      (redirect, index) => list[index]?.matching_mode === redirect.matching_mode && list[index]?.url === redirect.url,
+    )
+  );
+};
 
 async function scopeMappingPk(ctx: Ctx, name: string): Promise<string | undefined> {
   const managed = `goauthentik.io/providers/oauth2/scope-${name}`;
 
   for (const path of ["/api/v3/propertymappings/provider/scope/", "/api/v3/propertymappings/scope/"]) {
     try {
-      return (await ctx.find(path, "managed", managed))?.pk;
+      return textOf((await ctx.find(path, "managed", managed))?.pk);
     } catch (error) {
       if (!(error instanceof ApiError && error.status === 404)) throw error;
     }
@@ -121,16 +124,17 @@ async function ensureProvider(
 
 async function ensureApplication(ctx: Ctx, slug: string, name: string, provider: Json | undefined): Promise<void> {
   const app = await ctx.find("/api/v3/core/applications/?superuser_full_list=true", "slug", slug);
-  if (app && (!provider?.pk || app.provider === provider.pk)) ctx.log(`ok: the application "${slug}" exists`);
+  const providerPk = provider?.pk;
+  if (app && (!providerPk || app.provider === providerPk)) ctx.log(`ok: the application "${slug}" exists`);
   else if (app)
     await ctx.write(`link the application "${slug}" to its provider`, "PATCH", `/api/v3/core/applications/${slug}/`, {
-      provider: provider!.pk,
+      provider: providerPk,
     });
   else
     await ctx.write(`create the application "${slug}"`, "POST", "/api/v3/core/applications/", {
       name,
       slug,
-      ...(provider?.pk ? { provider: provider.pk } : {}),
+      ...(providerPk ? { provider: providerPk } : {}),
     });
 }
 
@@ -142,9 +146,13 @@ export async function ensureApplications(
   roleMappingPk?: string,
 ): Promise<AppsResult> {
   const refs: Refs = {
-    authz: (await ctx.find("/api/v3/flows/instances/", "slug", "default-provider-authorization-implicit-consent"))?.pk,
-    invalid: (await ctx.find("/api/v3/flows/instances/", "slug", "default-provider-invalidation-flow"))?.pk,
-    key: (await ctx.call("GET", "/api/v3/crypto/certificatekeypairs/?has_key=true&ordering=name"))?.results?.[0]?.pk,
+    authz: textOf(
+      (await ctx.find("/api/v3/flows/instances/", "slug", "default-provider-authorization-implicit-consent"))?.pk,
+    ),
+    invalid: textOf((await ctx.find("/api/v3/flows/instances/", "slug", "default-provider-invalidation-flow"))?.pk),
+    key: textOf(
+      (await ctx.call("GET", "/api/v3/crypto/certificatekeypairs/?has_key=true&ordering=name"))?.results?.[0]?.pk,
+    ),
   };
   if (!refs.authz) ctx.problems.push("flow not found: default-provider-authorization-implicit-consent");
   if (!refs.invalid) ctx.problems.push("flow not found: default-provider-invalidation-flow");

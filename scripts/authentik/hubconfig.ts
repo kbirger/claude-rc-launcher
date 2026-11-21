@@ -58,6 +58,16 @@ export function writeSecret(path: string, secret: string, force: boolean): "writ
   return "written";
 }
 
+/** A value with its `undefined` case in the type. A regular expression group is `undefined` when it did not match. */
+const widen = (value: string | undefined): string | undefined => value;
+
+/** Reads a nested value by its keys, and gives `undefined` when a step is missing. */
+const dig = (root: unknown, keys: string[]): unknown =>
+  keys.reduce<unknown>(
+    (total, key) => (typeof total === "object" && total !== null ? (total as Record<string, unknown>)[key] : undefined),
+    root,
+  );
+
 const isPlaceholder = (value: string) => /example\.com|replace-with/.test(value);
 
 /** Sets one key in one table by line, so comments and other tables stay as they are. */
@@ -72,7 +82,8 @@ function setKey(lines: string[], entry: Entry, force: boolean): "set" | "same" |
   for (let position = header + 1; position < end; position++) {
     const match = live.exec(lines[position]);
     if (!match) continue;
-    const have = match[1] !== undefined ? match[1].replace(/\\(.)/g, "$1") : match[2];
+    const double = widen(match[1]);
+    const have = double === undefined ? match[2] : double.replace(/\\(.)/g, "$1");
     if (have === entry.value) return "same";
     if (!isPlaceholder(have) && !force) return "kept";
     lines[position] = `${text}${match[3] ? `  ${match[3].trim()}` : ""}`;
@@ -148,7 +159,7 @@ function verify(
   force: boolean,
   kept: string[],
 ): string | undefined {
-  let doc: any;
+  let doc: unknown;
 
   try {
     doc = Bun.TOML.parse(text);
@@ -158,7 +169,7 @@ function verify(
 
   for (const entry of entries(appsResult, settings)) {
     if (kept.includes(`${entry.table}.${entry.key}`) && !force) continue;
-    const got = entry.table.split(".").reduce((total: any, key) => total?.[key], doc)?.[entry.key];
+    const got = dig(doc, [...entry.table.split("."), entry.key]);
     if (got !== entry.value) return `${entry.table}.${entry.key} would not have the wanted value`;
   }
 

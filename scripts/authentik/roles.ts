@@ -1,4 +1,4 @@
-import { ApiError } from "./api";
+import { ApiError, textOf } from "./api";
 import type { Ctx, Json } from "./api";
 import type { Settings } from "./settings";
 
@@ -24,7 +24,7 @@ export async function ensureRoles(
     mapping = await ctx.find(mappingsPath, "name", settings.mappingName);
   }
 
-  let mappingPk: string | undefined = mapping?.pk;
+  let mappingPk = textOf(mapping?.pk);
   if (!mapping) {
     const made = await ctx.write(
       `create the scope mapping "${settings.mappingName}" (scope ${settings.scope})`,
@@ -32,7 +32,7 @@ export async function ensureRoles(
       mappingsPath,
       { name: settings.mappingName, scope_name: settings.scope, expression },
     );
-    mappingPk = made?.pk;
+    mappingPk = textOf(made?.pk);
   } else if (mapping.expression !== expression || mapping.scope_name !== settings.scope) {
     await ctx.write(`update the scope mapping "${settings.mappingName}"`, "PATCH", `${mappingsPath}${mapping.pk}/`, {
       scope_name: settings.scope,
@@ -78,7 +78,8 @@ export async function ensureRoles(
     if (!user) ctx.problems.push(`user not found: ${settings.adminUser}`);
     else {
       const group = groups.get(settings.adminGroup);
-      if (group?.users?.includes(user.pk)) ctx.log(`ok: ${settings.adminUser} is in "${settings.adminGroup}"`);
+      if (user.pk !== undefined && group?.users?.includes(user.pk))
+        ctx.log(`ok: ${settings.adminUser} is in "${settings.adminGroup}"`);
       else if (!group && !ctx.apply)
         await ctx.write(`add ${settings.adminUser} to "${settings.adminGroup}"`, "POST", "(new group)/add_user/", {});
       else if (group)

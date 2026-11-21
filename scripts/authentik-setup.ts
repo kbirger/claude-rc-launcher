@@ -6,7 +6,7 @@
  */
 import { join } from "node:path";
 import { makeCtx } from "./authentik/api";
-import type { Json } from "./authentik/api";
+import type { Json, Pk } from "./authentik/api";
 import { ensureApplications } from "./authentik/apps";
 import type { AppsResult } from "./authentik/apps";
 import { snippet, writeHubConfig, writeSecret } from "./authentik/hubconfig";
@@ -85,10 +85,11 @@ export async function run(options: Options): Promise<{ changes: number; apps?: A
     const bound: Json[] =
       (await ctx.call("GET", `/api/v3/policies/bindings/?target=${app.pk}&page_size=200`))?.results ?? [];
     // Access comes from the role groups only. Any other binding, such as one for a single user, is reported and left in place.
-    const roleGroupPks = new Set([...groups.values()].map((json) => json?.pk).filter(Boolean));
+    const roleGroupPks = new Set<Pk>();
+    for (const json of groups.values()) if (json?.pk !== undefined) roleGroupPks.add(json.pk);
 
     for (const json of bound) {
-      if (json.group && roleGroupPks.has(json.group)) continue;
+      if (json.group !== undefined && roleGroupPks.has(json.group)) continue;
       const what = json.user_obj?.username
         ? `the user ${json.user_obj.username}`
         : json.group_obj?.name
