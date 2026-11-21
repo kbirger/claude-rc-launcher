@@ -6,7 +6,7 @@
     variants: {
       variant: {
         default: "bg-transparent",
-        outline: "border-input hover:bg-muted border bg-transparent",
+        outline: "border-input hover:bg-muted border bg-card",
       },
       size: {
         default: "h-8 min-w-8 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",

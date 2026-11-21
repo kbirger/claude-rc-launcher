@@ -1,7 +1,7 @@
 /* Default palette (Claude): light and dark follow the mode. Every shadcn token is set in each palette block, so nothing is derived from the
    defaults in routes/layout.css. --ok and --warn are the app's own status colors. */
 :root {
-  --background: oklch(1 0 0);
+  --background: oklch(0.955 0.007 80);
   --foreground: oklch(0.147 0.004 49.3);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.147 0.004 49.3);
@@ -9,15 +9,15 @@
   --popover-foreground: oklch(0.147 0.004 49.3);
   --primary: oklch(0.553 0.195 38.402);
   --primary-foreground: oklch(0.98 0.016 73.684);
-  --secondary: oklch(0.967 0.001 286.375);
+  --secondary: oklch(0.925 0.009 78);
   --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.96 0.002 17.2);
+  --muted: oklch(0.925 0.009 78);
   --muted-foreground: oklch(0.547 0.021 43.1);
-  --accent: oklch(0.96 0.002 17.2);
+  --accent: oklch(0.915 0.01 78);
   --accent-foreground: oklch(0.214 0.009 43.1);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.005 34.3);
-  --input: oklch(0.922 0.005 34.3);
+  --destructive: oklch(0.5 0.2 27.3);
+  --border: oklch(0.875 0.01 78);
+  --input: oklch(0.875 0.01 78);
   --ring: oklch(0.714 0.014 41.2);
   --chart-1: oklch(0.837 0.128 66.29);
   --chart-2: oklch(0.705 0.213 47.604);
@@ -29,11 +29,11 @@
   --sidebar-foreground: oklch(0.147 0.004 49.3);
   --sidebar-primary: oklch(0.646 0.222 41.116);
   --sidebar-primary-foreground: oklch(0.98 0.016 73.684);
-  --sidebar-accent: oklch(0.96 0.002 17.2);
+  --sidebar-accent: oklch(0.915 0.01 78);
   --sidebar-accent-foreground: oklch(0.214 0.009 43.1);
-  --sidebar-border: oklch(0.922 0.005 34.3);
+  --sidebar-border: oklch(0.875 0.01 78);
   --sidebar-ring: oklch(0.714 0.014 41.2);
-  --ok: #1b7f3b; --warn: #b26a00;
+  --ok: #176b33; --warn: #8f5400;
   color-scheme: light;
 }
 :root.dark {
@@ -68,7 +68,7 @@
 }
 /* Grape palette: open the page with ?theme=grape (remembered). */
 :root[data-theme="grape"] {
-  --background: #f6f6f8;
+  --background: #eeeef3;
   --foreground: #1b1b1f;
   --card: #fff;
   --card-foreground: #1b1b1f;
@@ -76,30 +76,30 @@
   --popover-foreground: #1b1b1f;
   --primary: #5b4bdb;
   --primary-foreground: #fff;
-  --secondary: #f1f1f2;
+  --secondary: #e6e6ee;
   --secondary-foreground: #1b1b1f;
-  --muted: #f1f1f2;
-  --muted-foreground: #6b6b76;
-  --accent: #e9e9ea;
+  --muted: #e6e6ee;
+  --muted-foreground: #5a5a66;
+  --accent: #dfdfe9;
   --accent-foreground: #1b1b1f;
-  --destructive: #c62828;
-  --border: #d9d9e0;
-  --input: #d9d9e0;
+  --destructive: #b82323;
+  --border: #d0d0dc;
+  --input: #d0d0dc;
   --ring: #5b4bdb;
   --chart-1: #5b4bdb;
   --chart-2: #1b7f3b;
   --chart-3: #b26a00;
   --chart-4: #c62828;
   --chart-5: #6b6b76;
-  --sidebar: #fbfbfc;
+  --sidebar: #f7f7fa;
   --sidebar-foreground: #1b1b1f;
   --sidebar-primary: #5b4bdb;
   --sidebar-primary-foreground: #fff;
-  --sidebar-accent: #e9e9ea;
+  --sidebar-accent: #dfdfe9;
   --sidebar-accent-foreground: #1b1b1f;
-  --sidebar-border: #d9d9e0;
+  --sidebar-border: #d0d0dc;
   --sidebar-ring: #5b4bdb;
-  --ok: #1b7f3b; --warn: #b26a00;
+  --ok: #176b33; --warn: #8f5400;
   --radius: 0.5rem;
   color-scheme: light;
 }
@@ -143,7 +143,7 @@
    yellow and red are darkened until they have 4.5:1 against the page, card and hover colors, because the app uses
    them as text. The bright Ayu orange, green and yellow are in the chart colors. */
 :root[data-theme="ayu"] {
-  --background: #f8f9fa;
+  --background: #f0f2f4;
   --foreground: #5c6166;
   --card: #fcfcfc;
   --card-foreground: #5c6166;
@@ -151,15 +151,15 @@
   --popover-foreground: #5c6166;
   --primary: #925808;
   --primary-foreground: #fff;
-  --secondary: #ebeef0;
+  --secondary: #e8ebee;
   --secondary-foreground: #5c6166;
-  --muted: #ebeef0;
+  --muted: #e8ebee;
   --muted-foreground: #586679;
-  --accent: #e4e8eb;
+  --accent: #e1e5e8;
   --accent-foreground: #5c6166;
   --destructive: #c81d1d;
-  --border: #d6dbe0;
-  --input: #d6dbe0;
+  --border: #ccd2d8;
+  --input: #ccd2d8;
   --ring: #925808;
   --chart-1: #fa8532;
   --chart-2: #eba400;
@@ -170,9 +170,9 @@
   --sidebar-foreground: #5c6166;
   --sidebar-primary: #925808;
   --sidebar-primary-foreground: #fff;
-  --sidebar-accent: #e4e8eb;
+  --sidebar-accent: #e1e5e8;
   --sidebar-accent-foreground: #5c6166;
-  --sidebar-border: #d6dbe0;
+  --sidebar-border: #ccd2d8;
   --sidebar-ring: #925808;
   --ok: #526e00; --warn: #885f00;
   color-scheme: light;
