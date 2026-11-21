@@ -85,7 +85,7 @@ export function startFakeApi(opts: { port?: number } = {}) {
     const method = req.method;
     const item = url.pathname;
     const body =
-      method === "GET" || method === "DELETE" ? {} : ((await req.json().catch(() => ({}))) as Record<string, any>);
+      method === "GET" || method === "DELETE" ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
 
     if (item === "/healthz") return json({ ok: true });
     if (item === "/api/me") return json({ sub: "fake", name: "Fake Dev", username: USER });

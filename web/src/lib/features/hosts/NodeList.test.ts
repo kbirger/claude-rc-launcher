@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import NodeList from "./NodeList.svelte";
 import type { HostInfo } from "./api";
@@ -21,12 +21,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function show(props: Record<string, unknown>) {
+function show(props: Partial<ComponentProps<typeof NodeList>>) {
   const target = document.createElement("div");
   document.body.append(target);
   const mounted = mount(NodeList, {
     target,
-    props: { hosts: [host()], selected: "", onselect: () => {}, ...props } as any,
+    props: { hosts: [host()], selected: "", onselect: () => {}, ...props },
   });
   open.push(() => unmount(mounted));
   flushSync();

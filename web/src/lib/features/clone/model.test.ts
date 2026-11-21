@@ -15,12 +15,11 @@ type Api = {
   cloneStatus: (() => Response)[];
   loginStart: () => Response;
   loginStatus: (() => Response)[];
-  calls: { method: string; path: string; body?: any }[];
+  calls: { method: string; path: string; body?: unknown }[];
 };
 let api: Api;
 const next = (list: (() => Response)[]) => (list.length > 1 ? list.shift()! : list[0])();
 
-const realFetch = globalThis.fetch;
 beforeEach(() => {
   // Only the timers are fake: Svelte's effect flush and the fetch promises need real microtasks.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
@@ -32,7 +31,7 @@ beforeEach(() => {
     loginStatus: [() => res({ state: "pending" }), () => res({ state: "done" })],
     calls: [],
   };
-  globalThis.fetch = (async (url: string, init: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     const method = init.method ?? "GET";
     const path = url.split("?")[0].replace("/api/hosts/h", "");
     api.calls.push({ method, path, body: init.body ? JSON.parse(String(init.body)) : undefined });
@@ -42,7 +41,7 @@ beforeEach(() => {
     if (path === "/github/login" && method === "POST") return api.loginStart();
     if (path.startsWith("/github/login/")) return next(api.loginStatus);
     return res({ error: `no route ${method} ${path}` }, 500);
-  }) as any;
+  });
 });
 
 let disposers: (() => void)[] = [];
@@ -50,7 +49,7 @@ afterEach(() => {
   for (const disposer of disposers) disposer();
   disposers = [];
   vi.useRealTimers();
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
 });
 
 // Moves the fake clock (TanStack also batches its notifications on a timer), then runs the Svelte effects.

@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import { flushSync, mount, unmount } from "svelte";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "#lib/shared/query";
 import PermissionsPageHarness from "./PermissionsPageHarness.svelte";
 
-const realFetch = globalThis.fetch;
-let sent: { url: string; method: string; body: any }[] = [];
+let sent: { url: string; method: string; body: unknown }[] = [];
 const user = {
   scope: "user",
   path: "/h/.claude/settings.json",
@@ -18,15 +17,15 @@ const user = {
 const open: Array<() => void> = [];
 beforeEach(() => {
   sent = [];
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     sent.push({ url: String(url), method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     const out = method === "GET" ? { layers: [user] } : user;
     return new Response(JSON.stringify(out), { status: 200, headers: { "content-type": "application/json" } });
-  }) as any;
+  });
 });
 afterEach(() => {
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
   for (const helper of open.splice(0)) helper();
   document.body.innerHTML = "";
 });

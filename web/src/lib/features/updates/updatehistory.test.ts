@@ -1,20 +1,20 @@
 import { expect, test } from "vitest";
+import type { HistoryItem, UpdateEntry } from "./api";
 import { historyEntries, historyTitle, linesSummary } from "./updatehistory";
 import { pollWhileRunning, historyQuery } from "./queries";
 
-const item = (entry: object = {}) =>
-  ({
-    entry: {
-      host: "win",
-      startedAt: "not a time",
-      startedBy: "kir",
-      from: "0.10.0",
-      to: "0.10.1",
-      status: "updated",
-      ...entry,
-    },
-    lines: [],
-  }) as any;
+const item = (entry: Partial<UpdateEntry> = {}): HistoryItem => ({
+  entry: {
+    host: "win",
+    startedAt: "not a time",
+    startedBy: "kir",
+    from: "0.10.0",
+    to: "0.10.1",
+    status: "updated",
+    ...entry,
+  },
+  lines: [],
+});
 
 test("the title shows versions, status and error as text", () => {
   expect(historyTitle(item())).toBe("not a time: 0.10.0 to 0.10.1, updated");

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { QueryClient } from "@tanstack/svelte-query";
 import { STALE_MS } from "../../shared/query";
 import { browseQuery, mkdirMutation, nodeQuery, usersQuery } from "./queries";
@@ -26,7 +26,7 @@ test("browse is keyed by host, path and user, fresh for 5 seconds, and keeps no 
 test("mkdir invalidates the listings of its host", async () => {
   const client = new QueryClient();
   const seen: unknown[] = [];
-  client.invalidateQueries = (async (item: any) => void seen.push(item?.queryKey)) as any;
+  vi.spyOn(client, "invalidateQueries").mockImplementation(async (item) => void seen.push(item?.queryKey));
   await mkdirMutation("h", client).onSettled();
   expect(seen).toEqual([["browse", "h"]]);
 });

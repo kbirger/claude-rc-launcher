@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, expect, test } from "vitest";
 import StatusDot from "./StatusDot.svelte";
 
@@ -9,10 +9,10 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function show(props: Record<string, unknown>) {
+function show(props: ComponentProps<typeof StatusDot>) {
   const target = document.createElement("div");
   document.body.append(target);
-  const mounted = mount(StatusDot, { target, props: props as any });
+  const mounted = mount(StatusDot, { target, props });
   open.push(() => unmount(mounted));
   flushSync();
   return target.querySelector('[role="img"]') as HTMLElement;

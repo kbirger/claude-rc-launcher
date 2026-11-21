@@ -258,7 +258,12 @@ test("two failed items with the same host name have different keys when the ids 
 });
 
 test("a node whose service definition is older than required gets a reinstall item, an offline or equal one does not", () => {
-  const helper = (id: string, item: object = {}) => ({ id, name: id.toUpperCase(), status: "ok", ...item }) as any;
+  const helper = (id: string, item: Partial<HostInfo> = {}): HostInfo => ({
+    id,
+    name: id.toUpperCase(),
+    status: "ok",
+    ...item,
+  });
   const items = model([
     helper("local"),
     helper("a", { definition: { installed: 1, required: 2 } }),

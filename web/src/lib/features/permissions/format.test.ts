@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { Layer, Rule } from "./api";
+import type { BlockedCall, Layer, Rule } from "./api";
 import {
   confirmWords,
   deniedBy,
@@ -113,7 +113,7 @@ test("the confirm line names the rule, the list and the path", () => {
 });
 
 // probablyFixed and deniedBy
-const bash = (command: string): any => ({
+const bash = (command: string): BlockedCall => ({
   id: "t",
   at: "2026-11-14T10:00:00Z",
   tool: "Bash",

@@ -41,18 +41,17 @@ async function settle() {
 }
 
 type Api = {
-  list: any[];
+  list: ReturnType<typeof inst>[];
   listFails: boolean;
   stopFails: string | null;
   stops: string[];
   help: () => Response | Promise<Response>;
-  patch: (body: any) => Response | Promise<Response>;
-  patches: { url: string; body: any }[];
+  patch: (body: unknown) => Response | Promise<Response>;
+  patches: { url: string; body: unknown }[];
   restarts: string[];
   restart: () => Response | Promise<Response>;
 };
 let api: Api;
-const realFetch = globalThis.fetch;
 beforeEach(() => {
   // Only the timers are fake: Svelte's effect flush and the fetch promises need real microtasks.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
@@ -68,7 +67,7 @@ beforeEach(() => {
     restarts: [],
     restart: () => new Response(null, { status: 204 }),
   };
-  globalThis.fetch = (async (url: string, init: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     if (url.endsWith("/instance-settings")) return api.help();
 
     if (init.method === "PATCH") {
@@ -92,11 +91,11 @@ beforeEach(() => {
     return api.listFails
       ? new Response(JSON.stringify({ error: "list down" }), { status: 500 })
       : new Response(JSON.stringify(api.list), { status: 200 });
-  }) as any;
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
 });
 
 function mount(startError = "") {

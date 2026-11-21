@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Stop from "@tabler/icons-svelte/icons/player-stop";
 import { stripLabel } from "./EntityCard.svelte";
@@ -11,10 +11,10 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function show(props: Record<string, unknown> = {}) {
+function show(props: Partial<ComponentProps<typeof EntityCardHarness>> = {}) {
   const target = document.createElement("div");
   document.body.append(target);
-  const mounted = mount(EntityCardHarness, { target, props: props as any });
+  const mounted = mount(EntityCardHarness, { target, props });
   open.push(() => unmount(mounted));
   flushSync();
   return target;

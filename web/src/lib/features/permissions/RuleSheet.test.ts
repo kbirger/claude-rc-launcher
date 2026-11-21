@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "#lib/shared/query";
 import type { BlockedCall, Layer } from "./api";
 import RuleSheetHarness from "./RuleSheetHarness.svelte";
 
-const realFetch = globalThis.fetch;
-let sent: { url: string; method?: string; body: any }[] = [];
+let sent: { url: string; method?: string; body: unknown }[] = [];
 let status = 200;
 let answer: Record<string, unknown> = { scope: "user" };
 const open: Array<() => void> = [];
@@ -14,16 +13,16 @@ beforeEach(() => {
   sent = [];
   status = 200;
   answer = { scope: "user" };
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     sent.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     return new Response(JSON.stringify(status === 200 ? answer : { error: "changed" }), {
       status,
       headers: { "content-type": "application/json" },
     });
-  }) as any;
+  });
 });
 afterEach(() => {
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
   for (const helper of open.splice(0)) helper();
   document.body.innerHTML = "";
 });
@@ -48,7 +47,7 @@ const call = (item: Partial<BlockedCall> = {}): BlockedCall => ({
   ...item,
 });
 
-function show(props: Record<string, unknown>, client = createQueryClient()) {
+function show(props: Partial<ComponentProps<typeof RuleSheetHarness>>, client = createQueryClient()) {
   const target = document.createElement("div");
   document.body.append(target);
   const mounted = mount(RuleSheetHarness, {
@@ -61,7 +60,7 @@ function show(props: Record<string, unknown>, client = createQueryClient()) {
       mode: "add",
       client,
       ...props,
-    } as any,
+    },
   });
   open.push(() => unmount(mounted));
   flushSync();
@@ -298,7 +297,7 @@ test("after success the sheet closes and the queries are invalidated", async () 
   show({ initial: { raw: "Read", list: "allow" } }, client);
   button("Save")!.click();
   await vi.waitFor(() => expect(closed()).toBe(true));
-  expect(spy.mock.calls.map((item) => (item[0] as any).queryKey[0])).toEqual([
+  expect(spy.mock.calls.map((item) => item[0]?.queryKey?.[0])).toEqual([
     "permissions",
     "session-permissions",
     "session-blocked",

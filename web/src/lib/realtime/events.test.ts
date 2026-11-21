@@ -1,24 +1,25 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient } from "@tanstack/svelte-query";
 import { connectEvents } from "./events";
+import type { HostInfo } from "../features/hosts";
 import type { UpdateEntry } from "../features/updates";
 
 class FakeES {
   static all: FakeES[] = [];
   readyState = 1;
   closed = false;
-  listeners: Record<string, ((value: any) => void)[]> = {};
+  listeners: Record<string, ((value: object) => void)[]> = {};
   constructor(public url: string) {
     FakeES.all.push(this);
   }
-  addEventListener(item: string, value: (value: any) => void) {
+  addEventListener(item: string, value: (value: object) => void) {
     (this.listeners[item] ??= []).push(value);
   }
   close() {
     this.closed = true;
     this.readyState = 2;
   }
-  emit(item: string, value: any = {}) {
+  emit(item: string, value: object = {}) {
     for (const helper of this.listeners[item] ?? []) helper(value);
   }
 }
@@ -32,40 +33,43 @@ const entry = (host: string, status: UpdateEntry["status"] = "running"): UpdateE
 });
 const open = (path: string) => new FakeES(path) as unknown as EventSource;
 
-const realAdd = globalThis.addEventListener;
-const realRemove = globalThis.removeEventListener;
+type Timer = ReturnType<typeof setTimeout>;
+type FakeTimer = { callback: () => void; ms: number; cleared: boolean };
+// The code under test only passes a timer back to clearTimeout, so a fake one stands in for the real handle.
+const asTimer = (value: unknown) => value as Timer;
 let focusHandlers: (() => void)[] = [];
 let client: QueryClient;
-let invalidated: unknown[][];
+let invalidated: (readonly unknown[] | undefined)[];
 
 beforeEach(() => {
   FakeES.all = [];
   focusHandlers = [];
   invalidated = [];
 
-  (globalThis as any).addEventListener = (item: string, value: () => void) => {
+  vi.stubGlobal("addEventListener", (item: string, value: () => void) => {
     if (item === "focus") focusHandlers.push(value);
-  };
+  });
 
-  (globalThis as any).removeEventListener = (item: string, value: () => void) => {
+  vi.stubGlobal("removeEventListener", (item: string, value: () => void) => {
     if (item === "focus") focusHandlers = focusHandlers.filter((focusHandler) => focusHandler !== value);
-  };
+  });
 
   client = new QueryClient();
   const orig = client.invalidateQueries.bind(client);
-  client.invalidateQueries = ((item: any) => {
-    invalidated.push(item.queryKey);
-    return orig(item);
-  }) as any;
+  vi.spyOn(client, "invalidateQueries").mockImplementation((filters) => {
+    invalidated.push(filters?.queryKey);
+    return orig(filters);
+  });
 });
 afterEach(() => {
-  globalThis.addEventListener = realAdd;
-  globalThis.removeEventListener = realRemove;
+  vi.unstubAllGlobals();
 });
 
-const snap = (item: any = {}) => ({ data: JSON.stringify({ updates: [], logs: {}, presence: [], ...item }) });
-const host = (id: string, item: any = {}) => ({ id, name: id, status: "ok", version: "1.0.0", ...item });
-const hostsOf = () => client.getQueryData(["hosts"]) as any[];
+const snap = (item: Record<string, unknown> = {}) => ({
+  data: JSON.stringify({ updates: [], logs: {}, presence: [], ...item }),
+});
+const host = (id: string, item: Partial<HostInfo> = {}) => ({ id, name: id, status: "ok", version: "1.0.0", ...item });
+const hostsOf = () => client.getQueryData(["hosts"]) as HostInfo[];
 
 test("snapshot fills updates, logs and hosts", () => {
   connectEvents({ client, open });
@@ -243,16 +247,18 @@ test("stop closes a reopened stream", () => {
 });
 
 describe("retries", () => {
-  let timers: { callback: () => void; ms: number; cleared: boolean }[];
+  let timers: FakeTimer[];
   const helper = () => ({
     client,
     open,
-    setTimeout: ((item: () => void, ms: number) => {
+    setTimeout: (item: () => void, ms: number) => {
       const value = { callback: item, ms, cleared: false };
       timers.push(value);
-      return value as any;
-    }) as any,
-    clearTimeout: ((item: any) => void (item.cleared = true)) as any,
+      return asTimer(value);
+    },
+    clearTimeout: (item: Timer) => {
+      (item as unknown as FakeTimer).cleared = true;
+    },
   });
   const live = () => timers.filter((timer) => !timer.cleared);
 
@@ -336,7 +342,7 @@ describe("console lines and re-sync", () => {
 
   test("logs open, snapshot, error and the reconnect, all with the prefix", () => {
     const { lines, log } = mkLog();
-    connectEvents({ client, open, log, delays: [5000], setTimeout: () => 1 as any });
+    connectEvents({ client, open, log, delays: [5000], setTimeout: () => asTimer(1) });
     const es = FakeES.all[0]!;
     es.emit("open");
     es.emit("snapshot", snap({ updates: [entry("a")], presence: [{ host: "a", status: "online", at: "t" }] }));
@@ -364,7 +370,7 @@ describe("console lines and re-sync", () => {
 
   test("the first open reads nothing again, a later open reads updates, hosts and history again", () => {
     const { log } = mkLog();
-    connectEvents({ client, open, log, delays: [0], setTimeout: (callback) => (callback(), 1 as any) });
+    connectEvents({ client, open, log, delays: [0], setTimeout: (callback) => (callback(), asTimer(1)) });
     const first = FakeES.all[0]!;
     first.emit("open");
     expect(invalidated).toEqual([]);

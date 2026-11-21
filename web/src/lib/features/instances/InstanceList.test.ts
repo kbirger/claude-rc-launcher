@@ -15,15 +15,14 @@ const inst = (record: Record<string, unknown> = {}) => ({
 });
 
 const open: Array<() => void> = [];
-const realFetch = globalThis.fetch;
-let list: any[];
+let list: ReturnType<typeof inst>[];
 let stops: string[];
 let pauses: string[];
 let restarts: string[];
 let stopHangs: boolean;
 // The settings help answer. Null is an old node: the hub answers 404.
 let help: unknown;
-let patches: { url: string; body: any }[];
+let patches: { url: string; body: unknown }[];
 let patchAnswer: () => Response | Promise<Response>;
 beforeEach(() => {
   help = null;
@@ -34,7 +33,7 @@ beforeEach(() => {
   pauses = [];
   restarts = [];
   stopHangs = false;
-  globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
     const text = String(url);
     if (text.endsWith("/instance-settings") && help) return new Response(JSON.stringify(help), { status: 200 });
 
@@ -63,12 +62,12 @@ beforeEach(() => {
     if (text.includes("/logs")) return new Response(JSON.stringify({ log: "LOG LINE" }), { status: 200 });
     if (/\/instances(\?|$)/.test(text)) return new Response(JSON.stringify(list), { status: 200 });
     return new Response(JSON.stringify({ error: "no" }), { status: 404 });
-  }) as any;
+  });
 });
 afterEach(() => {
   for (const helper of open.splice(0)) helper();
   document.body.innerHTML = "";
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { ApiError } from "../../shared/http";
 import {
   CLONE_POLL_MS,
@@ -14,9 +14,8 @@ import {
   reposQuery,
 } from "./queries";
 
-const realFetch = globalThis.fetch;
 afterEach(() => {
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
 });
 
 test("the poll intervals and the give-up count stay as before", () => {
@@ -92,10 +91,10 @@ test("repos are keyed by host and user, fresh for 30 seconds, and not retried", 
 
 test("the start mutations are keyed by host and send the same request as the api functions", async () => {
   const calls: { url: string; body: unknown }[] = [];
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
     return new Response(JSON.stringify({ id: "j", path: "/p/r", code: "C", url: "u" }), { status: 202 });
-  }) as any;
+  });
   const mutation = cloneStartMutation("h");
   expect(mutation.mutationKey).toEqual(["clone-start", "h"]);
   await mutation.mutationFn({ repo: "o/r", parent: "/p", user: "bob" });

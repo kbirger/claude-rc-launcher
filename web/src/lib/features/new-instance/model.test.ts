@@ -24,19 +24,18 @@ function gate() {
   return { promise: promise, open };
 }
 
-type Call = { method: string; path: string; query: URLSearchParams; body?: any };
+type Call = { method: string; path: string; query: URLSearchParams; body?: unknown };
 type Api = {
   users: () => Response | Promise<Response>;
   // The browse answer for a folder and user. The default lists the folder as asked, or the roots.
   fs: (path: string, user: string) => Response | Promise<Response>;
-  mkdir: (body: any) => Response | Promise<Response>;
+  mkdir: (body: { parent: string; name: string }) => Response | Promise<Response>;
   // The settings help. The default is an old node: the route is not there.
   help: () => Response | Promise<Response>;
   calls: Call[];
 };
 let api: Api;
 
-const realFetch = globalThis.fetch;
 beforeEach(() => {
   // Only the timers are fake: Svelte's effect flush and the fetch promises need real microtasks.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
@@ -47,7 +46,7 @@ beforeEach(() => {
     help: () => res({ error: "not found" }, 404),
     calls: [],
   };
-  globalThis.fetch = (async (url: string, init: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     const method = init.method ?? "GET";
     const [item, entry = ""] = url.split("?");
     const path = item!.replace("/api/hosts/h", "");
@@ -60,7 +59,7 @@ beforeEach(() => {
     if (path === "/fs/mkdir" && method === "POST") return api.mkdir(body);
     if (path === "/fs") return api.fs(query.get("path") ?? "", query.get("user") ?? "");
     return res({ error: `no route ${method} ${path}` }, 500);
-  }) as any;
+  });
 });
 
 let disposers: (() => void)[] = [];
@@ -68,7 +67,7 @@ afterEach(() => {
   for (const disposer of disposers) disposer();
   disposers = [];
   vi.useRealTimers();
-  globalThis.fetch = realFetch;
+  vi.unstubAllGlobals();
 });
 
 // Moves the fake clock (TanStack also batches its notifications on a timer), then runs the Svelte effects. A few
@@ -259,7 +258,7 @@ describe("new dialog model", () => {
     mounted.model.folderName = " new ";
     const harness = gate();
     const answer = api.mkdir;
-    api.mkdir = (body) => harness.promise.then(() => answer(body)) as any;
+    api.mkdir = (body) => harness.promise.then(() => answer(body));
     mounted.model.createFolder();
     await tick();
     expect(mounted.model.mkdirPending).toBe(true);
