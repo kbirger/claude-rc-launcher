@@ -18,6 +18,8 @@ export interface Flags {
   names?: string;
   roots?: string;
   output?: string;
+  config?: string;
+  "no-restart"?: boolean;
   "service-user"?: string;
   id?: string;
   release?: string;
@@ -54,6 +56,8 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         names: { type: "string" },
         roots: { type: "string" },
         output: { type: "string" },
+        config: { type: "string" },
+        "no-restart": { type: "boolean" },
         "service-user": { type: "string" },
         id: { type: "string" },
         release: { type: "string" },

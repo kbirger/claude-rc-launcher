@@ -127,11 +127,14 @@ export function globalMatches(text: GlobalSession, query: string): boolean {
   return words.every((word) => own.includes(word));
 }
 
-/** Detail parts of a session row: short id, last active time (relative, then the date), and the branch unless it is unset or a detached "HEAD". */
+/** Detail parts of a session row: short id, and last active time (relative, then the date). */
 export function sessionDetail(session: Session, now: number): string[] {
-  const out = [session.id.slice(0, 8), `${ago(session.lastActiveAt, now)} · ${shortDate(session.lastActiveAt, now)}`];
-  if (session.branch && session.branch !== "HEAD") out.push(session.branch);
-  return out;
+  return [session.id.slice(0, 8), `${ago(session.lastActiveAt, now)} · ${shortDate(session.lastActiveAt, now)}`];
+}
+
+/** The branch of a session row, or `undefined` when it is unset or a detached "HEAD". */
+export function sessionBranch(session: Session): string | undefined {
+  return session.branch && session.branch !== "HEAD" ? session.branch : undefined;
 }
 
 /**

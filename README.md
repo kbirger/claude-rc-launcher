@@ -102,7 +102,7 @@ Between the hub and the nodes:
 - The hub signs a new proof for each request to a node. The proof is valid for 30 seconds, for one node, one method, one path and one body, and for the fingerprint of the node certificate. The node rejects a proof that it saw before. A proof that one node receives is useless at any other node.
 - The proof carries the user and the role that the hub acts for. The node writes both to its audit log.
 - The hub pins the certificate of each node. TLS between the hub and a node is mandatory.
-- A node enforces its own allowed folders (`instance.roots`), whatever the hub asks.
+- A node enforces its own allowed folders (`instance.roots`), whatever the hub asks. On the node, `claude-rc node roots list|add|remove` changes them. Read [Change the roots of a node](docs/cli.md#change-the-roots-of-a-node).
 - To cut the hub off from a node, remove the hub key from that node.
 
 A shared secret is a weaker second method for a node that you set up by hand. [Multiple hosts](docs/multi-host.md) explains pairing, shared secrets and key rotation.

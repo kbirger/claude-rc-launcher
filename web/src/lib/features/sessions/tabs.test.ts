@@ -15,6 +15,7 @@ vi.mock("./api", async (orig) => ({
       {
         id: "s1",
         root: "/proj",
+        branch: "feat/x",
         startedAt: "2026-11-12T10:00:00Z",
         lastActiveAt: "2026-11-12T10:00:00Z",
         instance: { id: "i", name: "i", path: "/proj", state: "active" },
@@ -91,6 +92,15 @@ async function show(view: "touched" | "changed" | "folder" | "permissions" | "bl
 
 const trigger = (item: HTMLElement, name: string) =>
   [...item.querySelectorAll<HTMLElement>('[role="tab"]')].find((event) => event.textContent?.trim().startsWith(name))!;
+
+test("the header shows a branch icon before the branch name", async () => {
+  const target = await show("touched");
+  const mark = target.querySelector("[data-session-branch]");
+  expect(mark).not.toBeNull();
+  expect(mark!.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+  expect(mark!.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+  expect(mark!.textContent.trim()).toBe("feat/x");
+});
 
 test("the tabs render Touched, Changed and Folder in a named tab list", async () => {
   const item = await show("touched");

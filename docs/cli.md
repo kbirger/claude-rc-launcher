@@ -118,6 +118,9 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 | `host remove <id>` | Remove a node that `host add` added. |
 | `node setup --listen <ip> [--hub <url>] [--name <n>] [--roots /a,/b] [--service-user <u>] [--binary <file>] [--release <tag>] [--force]` | Run on a new node: install, start and register this machine as a node. |
 | `node config --listen <addr> [--names <a,b>] [--port <n>] [--name <n>] [--roots /a,/b] [--output <file>\|-] [--force]` | Run on a node: write its `config.toml` with the values of the hub. |
+| `node roots list [--config <file>] [--json]` | Run on a node: list its root folders. |
+| `node roots add <dir> [--config <file>] [--no-restart]` | Run on a node: add a root folder and restart the service. |
+| `node roots remove <dir> [--config <file>] [--no-restart]` | Run on a node: remove a root folder and restart the service. |
 | `node update [--binary <file>] [--release <tag>]` | Run on a node: update its server binary and restart it. |
 
 ### Updates
@@ -303,6 +306,34 @@ with `sudo`, because then it looks for your login in root's home directory.
 The hub supplies the `[[node_auth.hub_key]]` rows. Each row holds the `public_key` of the hub. The hub needs no
 identity provider setup for this. The route is `GET /cli/api/node-enrollment`. It returns
 `{ "hub_keys": [{ "public_key": "..." }] }`. A node that uses a shared secret does not need this command.
+
+## Change the roots of a node
+
+The roots are the folders where a node lets you start instances. They are the `instance.roots` list in the node's
+`config.toml`. Run these commands on the node machine. They need no login and they do not call the hub:
+
+```sh
+claude-rc node roots list
+claude-rc node roots add /srv/projects
+claude-rc node roots remove /srv/projects
+```
+
+`list` prints one root per line. If the file has no `roots` key, the node uses the home folder of its service user, and
+`list` marks that folder with `(default)`. `--json` prints the roots as a JSON array.
+
+`add` and `remove` change the file and then restart the service. If you are not root, they use `sudo`, so sudo asks for
+your password. The command keeps the old file as `<file>.bak`. It reads the whole file and writes it again, so
+comments in the file are lost. After the restart, the command waits until the service is active, and it prints the
+log lines if the service is not. Instances run as separate services, so a restart of the node should not stop them.
+This was not tested on a real systemd host, so check your instances after the first restart.
+
+If the file has no `roots` key, the first `add` keeps the default home folder as the first root and prints a line
+about it. Without that, the node would lose its home folder as a root. `remove` can drop that folder later. `remove`
+refuses to remove the last root, because the node needs at least one. `add` warns when the folder does not exist on
+this machine, and still adds it. A folder must be an absolute path without `..`.
+
+The default file is `/etc/claude-rc-launcher/config.toml`. `--config <file>` uses another file. `--no-restart` changes
+the file and does not restart the service. Then you must run `sudo systemctl restart claude-rc-launcher` yourself.
 
 ## Update a node's binary
 

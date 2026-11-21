@@ -1,13 +1,15 @@
 <script lang="ts">
   import Desktop from "@tabler/icons-svelte/icons/device-desktop";
+  import GitBranch from "@tabler/icons-svelte/icons/git-branch";
   import * as Card from "#lib/components/ui/card/index.js";
   import type { GlobalSession } from "./api";
-  import { sessionDetail, sessionState, sessionsHref, sessionTitle, worktreeName } from "./format";
+  import { sessionBranch, sessionDetail, sessionState, sessionsHref, sessionTitle, worktreeName } from "./format";
 
   // One row of the session list: the name, the state, the node and the instance, and the details.
   // `where` shows the node and the instance. The list of one instance turns it off: its heading already says it.
   let { session, now, where = true }: { session: GlobalSession; now: number; where?: boolean } = $props();
   const wt = $derived(worktreeName(session.root));
+  const branch = $derived(sessionBranch(session));
 </script>
 
 <a
@@ -62,6 +64,11 @@
         {#each sessionDetail(session, now) as part, i (i)}
           <span class={i === 0 ? "font-mono" : "min-w-0 [overflow-wrap:anywhere]"}>{part}</span>
         {/each}
+        {#if branch}<span data-session-branch class="inline-flex min-w-0 items-center gap-1">
+            <GitBranch size={14} class="flex-none" aria-hidden="true" /><span class="min-w-0 [overflow-wrap:anywhere]">
+              {branch}
+            </span>
+          </span>{/if}
         {#if wt}<span class="min-w-0 [overflow-wrap:anywhere]">work tree: {wt}</span>{/if}
       </div>
     </Card.Content>
