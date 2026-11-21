@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./hostregistry";
+import { isObject } from "./requests";
 import { cutLine } from "./updatelog";
 import type { LogLine } from "./updatelog";
 import type { UpdateEntry } from "./updaterecord";
@@ -17,39 +18,42 @@ const MAX_FIELD = 500;
 
 const isStr = (value: unknown): value is string => typeof value === "string";
 
-function cleanEntry(response: any): UpdateEntry | undefined {
+function cleanEntry(value: unknown): UpdateEntry | undefined {
   if (
-    !response ||
-    typeof response !== "object" ||
-    !isStr(response.host) ||
-    !isStr(response.startedAt) ||
-    !isStr(response.startedBy) ||
-    !isStr(response.from) ||
-    !isStr(response.status) ||
-    response.status === "running"
+    !isObject(value) ||
+    !isStr(value.host) ||
+    !isStr(value.startedAt) ||
+    !isStr(value.startedBy) ||
+    !isStr(value.from) ||
+    !isStr(value.status) ||
+    value.status === "running"
   )
     return undefined;
-  const cut = (value: unknown) => (isStr(value) ? value.slice(0, MAX_FIELD) : undefined);
+  const cut = (field: unknown) => (isStr(field) ? field.slice(0, MAX_FIELD) : undefined);
   const out: UpdateEntry = {
-    host: response.host.slice(0, MAX_FIELD),
-    startedAt: response.startedAt.slice(0, 64),
-    startedBy: response.startedBy.slice(0, MAX_FIELD),
-    from: response.from.slice(0, 64),
-    status: response.status,
+    host: value.host.slice(0, MAX_FIELD),
+    startedAt: value.startedAt.slice(0, 64),
+    startedBy: value.startedBy.slice(0, MAX_FIELD),
+    from: value.from.slice(0, 64),
+    status: value.status as UpdateEntry["status"],
   };
-  if (isStr(response.finishedAt)) out.finishedAt = response.finishedAt.slice(0, 64);
-  if (isStr(response.to)) out.to = response.to.slice(0, 64);
-  const err = cut(response.error);
+  if (isStr(value.finishedAt)) out.finishedAt = value.finishedAt.slice(0, 64);
+  if (isStr(value.to)) out.to = value.to.slice(0, 64);
+  const err = cut(value.error);
   if (err !== undefined) out.error = err;
   return out;
 }
 
 function cleanLines(value: unknown): LogLine[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .filter((item) => item && isStr(item.line) && isStr(item.at))
-    .slice(-MAX_LINES)
-    .map((item) => ({ line: cutLine(item.line), at: item.at.slice(0, 40) }));
+  const candidates: unknown[] = value;
+  const lines: LogLine[] = [];
+
+  for (const candidate of candidates)
+    if (isObject(candidate) && isStr(candidate.line) && isStr(candidate.at))
+      lines.push({ line: cutLine(candidate.line), at: candidate.at.slice(0, 40) });
+
+  return lines.slice(-MAX_LINES);
 }
 
 /**
@@ -68,12 +72,13 @@ export class UpdateHistory {
     let items: HistoryItem[] = [];
 
     try {
-      const parsed = JSON.parse(await readFile(file, "utf8"));
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 
-      if (Array.isArray(parsed?.items)) {
-        items = parsed.items.flatMap((raw: any) => {
-          const updateEntry = cleanEntry(raw?.entry);
-          return updateEntry ? [{ entry: updateEntry, lines: cleanLines(raw.lines) }] : [];
+      if (isObject(parsed) && Array.isArray(parsed.items)) {
+        const rawItems: unknown[] = parsed.items;
+        items = rawItems.flatMap((raw) => {
+          const updateEntry = isObject(raw) ? cleanEntry(raw.entry) : undefined;
+          return isObject(raw) && updateEntry ? [{ entry: updateEntry, lines: cleanLines(raw.lines) }] : [];
         });
       }
     } catch (error) {

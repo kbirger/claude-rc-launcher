@@ -5,6 +5,7 @@ import type { Config } from "../config";
 import { realUpdateEnv } from "../realupdate";
 import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256 } from "../release";
 import type { ReleaseIo } from "../release";
+import { isObject } from "../requests";
 import { clientsOf, UpdateRefused } from "../serviceupdate";
 import type { ClientResult, UpdateReport } from "../serviceupdate";
 import type { UpdateHooks } from "../updateevents";
@@ -59,7 +60,7 @@ export interface WinUpdateEnv extends Pick<ReleaseIo, "fetch"> {
   versionOf(exe: string, prefix?: string): string | undefined;
   now(): Date;
   /** Ends this process shortly (so that the answer to the request can be sent), with UPDATE_EXIT_CODE. */
-  scheduleExit(): void;
+  scheduleExit: () => void;
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -347,7 +348,8 @@ export function confirmPendingUpdate(options: {
   let to: unknown;
 
   try {
-    to = JSON.parse(new TextDecoder().decode(options.readFile(file))).to;
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(options.readFile(file)));
+    to = isObject(parsed) ? parsed.to : undefined;
   } catch {
     return; // the launcher removes a file it cannot read
   }
@@ -367,7 +369,7 @@ export function confirmPendingUpdate(options: {
 export function realWinUpdateEnv(options: {
   dataDir: string;
   cfg: Pick<Config, "serviceHome" | "scope">;
-  scheduleExit(): void;
+  scheduleExit: () => void;
 }): WinUpdateEnv {
   // The one client lookup: the same one that fills `clients` of `GET /node` (nodemain.ts).
   const lookup = realUpdateEnv(options.cfg);
@@ -396,7 +398,9 @@ export function realWinUpdateEnv(options: {
         encoding: "utf8",
         windowsHide: true,
       });
-      const line = (spawnSyncReturns.stdout ?? "").trim().split("\n")[0]?.trim() ?? "";
+      // Node leaves the output null when the command did not start, although the types say string.
+      const output: { stdout: string | null } = spawnSyncReturns;
+      const line = (output.stdout ?? "").trim().split("\n")[0]?.trim() ?? "";
       return spawnSyncReturns.status === 0 && line.startsWith(`${prefix} `)
         ? line.slice(prefix.length + 1).trim()
         : undefined;

@@ -132,12 +132,13 @@ export function matchByTime(found: readonly Found[]): [string, string][] {
   const wanted = new Map<string, string[]>();
 
   for (const session of found) {
-    if (session.clearedAt === undefined) continue;
+    const { clearedAt } = session;
+    if (clearedAt === undefined) continue;
     const founds = found.filter(
       (item) =>
         item.id !== session.id &&
-        item.mtimeMs >= session.clearedAt! - CLEAR_BEFORE_MS &&
-        item.mtimeMs <= session.clearedAt! + CLEAR_AFTER_MS,
+        item.mtimeMs >= clearedAt - CLEAR_BEFORE_MS &&
+        item.mtimeMs <= clearedAt + CLEAR_AFTER_MS,
     );
     if (founds.length === 1) wanted.set(founds[0].id, [...(wanted.get(founds[0].id) ?? []), session.id]);
   }

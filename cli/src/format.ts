@@ -17,6 +17,7 @@ const MAX_LINE = 500;
 const UNSAFE = /[^\P{Cc}\t]|[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu;
 
 /** Makes text from another machine safe to print: control, bidi and zero-width characters except tab become `?`, and the length is capped. */
-export function sanitizeLine(text: string): string {
-  return text.slice(0, MAX_LINE).replace(UNSAFE, "?");
+export function sanitizeLine(text: unknown): string {
+  // The text can come from a node or the hub, so it is not trusted to be a string.
+  return (typeof text === "string" ? text : String(text)).slice(0, MAX_LINE).replace(UNSAFE, "?");
 }

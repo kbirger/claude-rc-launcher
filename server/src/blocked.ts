@@ -8,7 +8,7 @@
  * update, and `bun scripts/sample-denials.ts` shows the texts in the transcripts of this machine. A denial with a text
  * that is not in the table is not listed (a lower bound, like the touched list).
  */
-import { parse } from "./transcript";
+import { dig, isRecord, parse } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 
 /**
@@ -51,13 +51,8 @@ const DEFAULT_MAX = 200;
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content
-    .map((item) =>
-      item && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
-        ? (item as { text: string }).text
-        : "",
-    )
-    .join("");
+  const parts: unknown[] = content;
+  return parts.map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : "")).join("");
 }
 
 function putNewest<Key, Value>(map: Map<Key, Value>, key: Key, value: Value, max: number): void {
@@ -90,13 +85,14 @@ export async function blockedIn(options: { fs: TranscriptFs; file: string; max?:
     for await (const line of options.fs.lines(options.file)) {
       if (!line.includes('"tool_use"') && !line.includes('"tool_result"')) continue;
       const record = parse(line);
-      const content = record?.message?.content;
+      const content: unknown = dig(record, "message", "content");
       if (!Array.isArray(content)) continue;
+      const blocks: unknown[] = content;
 
       if (record?.type === "user") {
-        for (const block of content) {
-          if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-          const id: string = block.tool_use_id;
+        for (const block of blocks) {
+          if (!isRecord(block) || block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+          const id = block.tool_use_id;
           if (!pending.has(id)) continue;
           const response = pending.get(id);
           pending.delete(id);
@@ -114,14 +110,17 @@ export async function blockedIn(options: { fs: TranscriptFs; file: string; max?:
 
       if (record?.type !== "assistant") continue;
 
-      for (const block of content) {
-        if (block?.type !== "tool_use" || typeof block.id !== "string" || typeof block.name !== "string") continue;
-        const id: string = block.id;
+      for (const block of blocks) {
+        if (
+          !isRecord(block) ||
+          block.type !== "tool_use" ||
+          typeof block.id !== "string" ||
+          typeof block.name !== "string"
+        )
+          continue;
+        const id = block.id;
         if (answered.has(id)) continue;
-        const input =
-          block.input && typeof block.input === "object" && !Array.isArray(block.input)
-            ? (block.input as Record<string, unknown>)
-            : {};
+        const input = isRecord(block.input) ? block.input : {};
         const use: Use = { at: typeof record.timestamp === "string" ? record.timestamp : "", tool: block.name, input };
 
         if (pending.has(id)) {

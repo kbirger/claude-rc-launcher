@@ -30,8 +30,8 @@ function comparePre(left: string, right: string): number {
   const pb = right.split(".");
 
   for (let index = 0; index < Math.max(pa.length, pb.length); index++) {
-    if (pa[index] === undefined) return -1;
-    if (pb[index] === undefined) return 1;
+    if (index >= pa.length) return -1;
+    if (index >= pb.length) return 1;
     const na = /^\d+$/.test(pa[index]);
     const nb = /^\d+$/.test(pb[index]);
 
@@ -59,10 +59,12 @@ export function compareVersions(left: string, right: string): number {
     if (diff !== 0) return diff;
   }
 
-  if (ma[4] === undefined && mb[4] === undefined) return 0;
-  if (ma[4] === undefined) return 1;
-  if (mb[4] === undefined) return -1;
-  return comparePre(ma[4], mb[4]);
+  const preA = ma.at(4);
+  const preB = mb.at(4);
+  if (preA === undefined && preB === undefined) return 0;
+  if (preA === undefined) return 1;
+  if (preB === undefined) return -1;
+  return comparePre(preA, preB);
 }
 
 /** True only when both versions have a release (see `releaseOf`) and the release of `current` is lower. */
@@ -81,7 +83,8 @@ export function stalestVersion(versions: (string | undefined)[]): string | undef
   for (const version of versions) {
     const release = releaseOf(version);
     if (version === undefined || release === undefined) continue;
-    if (lowest === undefined || compareVersions(release, releaseOf(lowest)!) < 0) lowest = version;
+    const lowestRelease = releaseOf(lowest);
+    if (lowestRelease === undefined || compareVersions(release, lowestRelease) < 0) lowest = version;
   }
 
   return lowest;

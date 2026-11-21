@@ -1,6 +1,6 @@
-import { constants } from "node:fs";
 import { open, opendir, readdir, readFile, readlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
+import { OPEN_READ_NO_FOLLOW } from "./openflags";
 import { within } from "./paths";
 
 // The running-session files. Each running Claude Code session keeps `<home>/.claude/sessions/<pid>.json` with its
@@ -33,7 +33,7 @@ export interface LiveFs {
 /** Reads from /proc that tell a running process from a reused pid. Each gives undefined when it cannot be read. */
 export interface ProcReads {
   /** Field 22 of /proc/<pid>/stat (start time in clock ticks). "gone" when /proc is readable and has no such pid. */
-  startTime(pid: number): Promise<string | "gone" | undefined>;
+  startTime(pid: number): Promise<string | undefined>;
   /** The content of /etc/machine-id. */
   machineId(): Promise<string | undefined>;
   /** The pid namespace inode of this process, from `readlink /proc/self/ns/pid` ("pid:[4026532689]" gives "4026532689"). */
@@ -63,7 +63,7 @@ const PID_DOMAIN = /^linux:([0-9a-f]+):pid:\[(\d+)\]$/;
 
 /** Opens without following a final link and without blocking (a FIFO named `x.json` must not hang the node). */
 async function readHead(path: string, max: number): Promise<Uint8Array> {
-  const fh = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  const fh = await open(path, OPEN_READ_NO_FOLLOW);
 
   try {
     if (!(await fh.stat()).isFile()) throw new Error("not a file");

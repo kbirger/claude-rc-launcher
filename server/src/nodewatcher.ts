@@ -1,5 +1,6 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
+import { isObject } from "./requests";
 import type { StepName } from "./updateevents";
 import { cutLine, MAX_AT } from "./updatelog";
 import type { UpdateLog } from "./updatelog";
@@ -46,11 +47,13 @@ const defaultSleep = (ms: number) =>
   });
 
 const isStr = (value: unknown): value is string => typeof value === "string";
+const isStep = (value: unknown): value is StepName =>
+  isStr(value) && Object.prototype.hasOwnProperty.call(STEPS, value);
 
 function parse(data: string): Record<string, unknown> | undefined {
   try {
-    const parsed = JSON.parse(data);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
+    const parsed: unknown = JSON.parse(data);
+    return isObject(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -112,7 +115,7 @@ export function createNodeWatchers(options: {
   ) => {
     if (signal.aborted) return;
     const old = presence.get(id);
-    if (old && old.status === status && old.version === extra.version && old.reason === extra.reason) return;
+    if (old?.status === status && old.version === extra.version && old.reason === extra.reason) return;
     const entry: Presence = {
       host: id,
       status,
@@ -173,6 +176,9 @@ export function createNodeWatchers(options: {
 
     enders.set(id, endWindow);
 
+    // Functions, so that TypeScript does not narrow `signal.aborted` and `failure`: both change during an await.
+    const aborted = () => signal.aborted;
+
     while (!signal.aborted) {
       const response = options.registry.get(id);
       if (!response) return;
@@ -185,6 +191,7 @@ export function createNodeWatchers(options: {
       signal.addEventListener("abort", stopAll, { once: true });
       let last = now().getTime();
       let silent = false;
+      const wasSilent = () => silent;
       let done = false;
 
       const watchdog = async () => {
@@ -212,6 +219,7 @@ export function createNodeWatchers(options: {
       }
 
       let failure: string | undefined;
+      const failureOf = () => failure;
       let snapshotAt: number | undefined;
 
       try {
@@ -222,7 +230,7 @@ export function createNodeWatchers(options: {
         let pending = new Map<string, number>();
 
         for await (const ev of events) {
-          if (signal.aborted) break;
+          if (aborted()) break;
 
           if (ev.event === "snapshot") {
             const snap = parse(ev.data);
@@ -242,7 +250,7 @@ export function createNodeWatchers(options: {
 
             snapshotAt = now().getTime();
             restartDeadline = undefined;
-            lastStep = upd && isStr(upd.step) && Object.hasOwn(STEPS, upd.step) ? (upd.step as StepName) : undefined;
+            lastStep = upd && isStep(upd.step) ? upd.step : undefined;
             pending = new Map();
             for (const item of seen) pending.set(item, (pending.get(item) ?? 0) + 1);
             publish("online", isStr(snap.version) ? { version: snap.version.slice(0, MAX_VERSION) } : {});
@@ -262,9 +270,9 @@ export function createNodeWatchers(options: {
             }
           } else if (ev.event === "step") {
             const record = parse(ev.data);
-            if (!record || !isStr(record.step) || !Object.hasOwn(STEPS, record.step)) continue;
+            if (!record || !isStep(record.step)) continue;
             const step: StepEvent = {
-              step: record.step as StepName,
+              step: record.step,
               ...(isStr(record.to) ? { to: record.to } : {}),
               ...(isStr(record.client) ? { client: record.client } : {}),
               ...(isStr(record.detail) ? { detail: record.detail } : {}),
@@ -291,9 +299,9 @@ export function createNodeWatchers(options: {
         ac.abort();
       }
 
-      if (signal.aborted) return;
+      if (aborted()) return;
       if (snapshotAt !== undefined && now().getTime() - snapshotAt >= STABLE_MS) attempt = 0;
-      dropped(failure ?? (silent ? "timeout" : undefined));
+      dropped(failureOf() ?? (wasSilent() ? "timeout" : undefined));
 
       // Wait before the next try. A node in the restart window turns `offline` when the window ends.
       const base = WAITS_MS[Math.min(attempt++, WAITS_MS.length - 1)];
@@ -304,7 +312,7 @@ export function createNodeWatchers(options: {
 
         if (rest < ms) {
           await wait(rest, signal);
-          if (signal.aborted) return;
+          if (aborted()) return;
           endWindow();
           ms -= rest;
         }

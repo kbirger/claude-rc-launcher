@@ -55,6 +55,8 @@ export const bunRunner: Runner = async (cmd, args, opts = {}) => {
       detached: opts.timeoutMs !== undefined,
     });
     let timedOut = false;
+    // A function, so that TypeScript does not narrow `timedOut` to false: the timer sets it while `proc` runs.
+    const wasTimedOut = () => timedOut;
 
     if (opts.timeoutMs !== undefined) {
       timer = setTimeout(() => {
@@ -72,7 +74,7 @@ export const bunRunner: Runner = async (cmd, args, opts = {}) => {
     const err = collect(proc.stderr);
     const code = await proc.exited;
 
-    if (timedOut) {
+    if (wasTimedOut()) {
       // Give the pipes a short moment to drain, then stop waiting.
       let grace: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([

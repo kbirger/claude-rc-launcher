@@ -118,6 +118,9 @@ function parseDoc(text: string): Record<string, unknown> {
 }
 
 /** The permissions object and the list in it. Creates them when `create` is true. Throws when one has the wrong type. */
+function listOf(doc: Record<string, unknown>, list: RuleList, create: true): unknown[];
+function listOf(doc: Record<string, unknown>, list: RuleList, create: false): unknown[] | undefined;
+
 function listOf(doc: Record<string, unknown>, list: RuleList, create: boolean): unknown[] | undefined {
   let perms = doc.permissions;
 
@@ -137,7 +140,8 @@ function listOf(doc: Record<string, unknown>, list: RuleList, create: boolean): 
   }
 
   if (!Array.isArray(arr)) throw new Error(`permissions.${list} is not an array`);
-  return arr;
+  const items: unknown[] = arr;
+  return items;
 }
 
 /** Adds `raw` to a list. Keeps unknown keys, key order and the indent. A rule that is already there gives `changed: false`. */
@@ -146,7 +150,7 @@ export function withRule(text: string | null, list: RuleList, raw: string): { te
   const doc = parseDoc(text);
   const arr = listOf(doc, list, false);
   if (arr?.includes(raw)) return { text, changed: false };
-  listOf(doc, list, true)!.push(raw);
+  listOf(doc, list, true).push(raw);
   return { text: JSON.stringify(doc, null, detectIndent(text)) + "\n", changed: true };
 }
 

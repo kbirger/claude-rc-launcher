@@ -8,7 +8,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "web/**", "server/src/embedded.ts", ".local-data/**"] },
+  { ignores: ["dist/**", "web/**", "server/src/embedded.ts", "server/src/embedded.d.ts", ".local-data/**"] },
   ...honoConfig,
   {
     files: ["**/*.ts"],

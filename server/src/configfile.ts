@@ -14,7 +14,8 @@ export function resolveConfigPath(
   if (position >= 0 && argv[position + 1]) return argv[position + 1];
   const eq = argv.find((item) => item.startsWith("--config="));
   if (eq) return eq.slice("--config=".length);
-  return env.CLAUDE_RC_CONFIG || defaultPath;
+  const fromEnv = env.CLAUDE_RC_CONFIG;
+  return fromEnv === undefined || fromEnv === "" ? defaultPath : fromEnv;
 }
 
 /** `--local`: for running from a checkout. The hub's public URL becomes http://localhost:<port>, whatever `public_url` says. */

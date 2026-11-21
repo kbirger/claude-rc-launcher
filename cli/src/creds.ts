@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isObject } from "./json";
 
 export interface Credentials {
   hub: string;
@@ -40,7 +41,9 @@ export function credsPath(
 ): string {
   if (platform === "win32")
     return path.win32.join(env.APPDATA ?? path.win32.join(home, "AppData", "Roaming"), "claude-rc", "credentials.json");
-  return path.posix.join(env.XDG_CONFIG_HOME || path.posix.join(home, ".config"), "claude-rc", "credentials.json");
+  const configHome = env.XDG_CONFIG_HOME;
+  const base = configHome === undefined || configHome === "" ? path.posix.join(home, ".config") : configHome;
+  return path.posix.join(base, "claude-rc", "credentials.json");
 }
 
 export function loadCreds(file: string): Credentials | undefined {
@@ -51,11 +54,12 @@ export function loadCreds(file: string): Credentials | undefined {
   }
 
   try {
-    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!isObject(parsed)) throw new Error("not an object");
     for (const key of ["hub", "issuer", "clientId", "tokenEndpoint", "idToken"])
       if (typeof parsed[key] !== "string" || !parsed[key]) throw new Error(key);
     if (typeof parsed.expiresAt !== "number") throw new Error("expiresAt");
-    return parsed as Credentials;
+    return parsed as unknown as Credentials;
   } catch {
     throw new ExitError(`${file} is not valid. Delete it and run "claude-rc login"`, 1);
   }

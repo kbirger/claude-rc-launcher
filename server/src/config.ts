@@ -134,7 +134,7 @@ export class Tbl {
     if (raw === undefined) return undefined;
 
     if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > 65535) {
-      this.problems.push(`${this.path(key)} is invalid: ${String(raw)}`);
+      this.problems.push(`${this.path(key)} is invalid: ${typeof raw === "string" ? raw : JSON.stringify(raw)}`);
       return undefined;
     }
 

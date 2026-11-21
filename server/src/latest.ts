@@ -66,7 +66,7 @@ export function createLatestRelease(options: {
 
   function stale(): LatestRelease {
     if (cached) return cached.value;
-    throw failure!.error;
+    throw failure?.error ?? new LatestError("no release information");
   }
 
   async function refresh(): Promise<LatestRelease> {
@@ -96,7 +96,7 @@ export function createLatestRelease(options: {
         try {
           return Promise.resolve(stale());
         } catch (error) {
-          return Promise.reject(error);
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
         }
       }
 

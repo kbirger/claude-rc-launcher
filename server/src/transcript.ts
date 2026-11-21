@@ -64,13 +64,30 @@ export function encodeProjectDir(path: string): string {
   return encoded.length <= MAX_ENCODED ? encoded : `${encoded.slice(0, MAX_ENCODED)}-${pathHash(trimmed)}`;
 }
 
-export function parse(line: string): Record<string, any> | undefined {
+/** True for a JSON object (not an array and not null). */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Reads one transcript line. It returns the object, or undefined for a line that is not an object. */
+export function parse(line: string): Record<string, unknown> | undefined {
   if (line.length === 0 || !line.startsWith("{")) return undefined;
 
   try {
-    const parsed = JSON.parse(line);
-    return parsed && typeof parsed === "object" ? parsed : undefined;
+    const parsed: unknown = JSON.parse(line);
+    return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined; // not JSON, or a half-written last line
   }
+}
+
+/** Follows a path of object keys, such as `dig(record, "message", "content")`. It returns undefined when a step is missing. */
+export function dig(value: unknown, ...keys: string[]): unknown {
+  let current: unknown = value;
+
+  for (const key of keys) {
+    if (!isRecord(current)) return undefined;
+    current = current[key];
+  }
+
+  return current;
 }

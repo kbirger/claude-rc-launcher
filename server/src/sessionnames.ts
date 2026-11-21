@@ -4,7 +4,7 @@
  * records. Its result is cached by file size and modification time.
  */
 import type { Found } from "./sessionscan";
-import { parse } from "./transcript";
+import { dig, isRecord, parse } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 
 /**
@@ -37,7 +37,11 @@ export function newNameCache(max = 2000): NameCache {
     set(key, cacheValue) {
       map.delete(key);
       map.set(key, cacheValue);
-      while (map.size > max) map.delete(map.keys().next().value!);
+
+      for (const oldest of map.keys()) {
+        if (map.size <= max) break;
+        map.delete(oldest);
+      }
     },
   };
 }
@@ -57,22 +61,29 @@ const NOT_PROMPT = [
 ];
 
 /** The summary that /compact puts at the start of a transcript. */
-function isCompactSummary(record: Record<string, any>): boolean {
+function isCompactSummary(record: Record<string, unknown>): boolean {
   return record.isCompactSummary === true;
 }
 
 /** A "user" record that Claude Code wrote, not the user: a meta record or a compact summary. */
-function writtenByClaudeCode(record: Record<string, any>): boolean {
+function writtenByClaudeCode(record: Record<string, unknown>): boolean {
   return record.isMeta === true || isCompactSummary(record);
 }
 
 /** The text of a real user prompt, or undefined for records Claude Code wrote, command echoes and system messages. */
-function promptText(record: Record<string, any>): string | undefined {
+function promptText(record: Record<string, unknown>): string | undefined {
   if (record.type !== "user" || writtenByClaudeCode(record)) return undefined;
-  const content = record.message?.content;
+  const content: unknown = dig(record, "message", "content");
   let text: unknown = content;
-  if (Array.isArray(content))
-    text = content.find((block) => block && block.type === "text" && typeof block.text === "string")?.text;
+
+  if (Array.isArray(content)) {
+    const blocks: unknown[] = content;
+    const block = blocks.find(
+      (candidate) => isRecord(candidate) && candidate.type === "text" && typeof candidate.text === "string",
+    );
+    text = dig(block, "text");
+  }
+
   if (typeof text !== "string") return undefined;
   const trimmed = text.trim();
   if (trimmed.length === 0 || NOT_PROMPT.some((item) => trimmed.startsWith(item))) return undefined;
@@ -104,7 +115,7 @@ interface Titles {
 const TITLE_KINDS = ['"custom-title"', '"ai-title"', '"agent-name"'];
 
 /** A title that is empty once whitespace is collapsed is ignored on purpose, so the next kind of name is used. */
-function takeTitle(titles: Titles, record: Record<string, any>): void {
+function takeTitle(titles: Titles, record: Record<string, unknown>): void {
   if (record.type === "custom-title" && typeof record.customTitle === "string" && tidy(record.customTitle))
     titles.custom = record.customTitle;
   else if (record.type === "ai-title" && typeof record.aiTitle === "string" && tidy(record.aiTitle))

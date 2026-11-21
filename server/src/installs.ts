@@ -121,7 +121,7 @@ function readWindows(io: RegistryIo, say: (line: string) => void): string[] {
 }
 
 function untrusted(item: string, st: { uid: number; mode: number }, type: number, what: string): string | undefined {
-  if (!st || !Number.isInteger(st.uid) || !Number.isInteger(st.mode)) return `${item} has no usable owner or mode`;
+  if (!Number.isInteger(st.uid) || !Number.isInteger(st.mode)) return `${item} has no usable owner or mode`;
   if ((st.mode & S_IFMT) !== type) return `${item} is not ${what}`;
   if (st.uid !== 0) return `${item} is not owned by root`;
   if ((st.mode & 0o022) !== 0) return `${item} is writable by group or others`;

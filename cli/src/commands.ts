@@ -127,7 +127,7 @@ export async function runCommand(
   };
 
   const describe = (settings: Settings) =>
-    `create-session ${settings.createSession ? "on" : "off"}, spawn ${sanitizeLine(String(settings.spawnMode))}`;
+    `create-session ${settings.createSession ? "on" : "off"}, spawn ${sanitizeLine(settings.spawnMode)}`;
 
   const cannotClone = () => new ExitError("this host cannot clone. Update the node.", 1);
 
@@ -236,7 +236,7 @@ export async function runCommand(
       const withUser = list.some((instance) => instance.user);
       const settingsCell = (instance: Instance) =>
         instance.settings
-          ? `session:${instance.settings.createSession ? "on" : "off"} spawn:${sanitizeLine(String(instance.settings.spawnMode))}`
+          ? `session:${instance.settings.createSession ? "on" : "off"} spawn:${sanitizeLine(instance.settings.spawnMode)}`
           : "-";
       show(list, () =>
         table([
@@ -289,12 +289,13 @@ export async function runCommand(
         }
 
         out(`create-session: ${old.createSession ? "on" : "off"}`);
-        out(`spawn: ${sanitizeLine(String(old.spawnMode))}`);
+        out(`spawn: ${sanitizeLine(old.spawnMode)}`);
         interface Help {
           settings: {
             key: string;
             label: string;
-            values: { value: unknown; label: string; explanation: string }[];
+            /** An older node leaves it out. */
+            values?: { value: unknown; label: string; explanation: string }[];
             limits?: string;
           }[];
         }
@@ -313,10 +314,10 @@ export async function runCommand(
 
         for (const st of help.settings) {
           out("");
-          out(`${sanitizeLine(String(st.label))} (${sanitizeLine(String(st.key))})`);
+          out(`${sanitizeLine(st.label)} (${sanitizeLine(st.key)})`);
           for (const value of st.values ?? [])
-            out(`  ${sanitizeLine(String(value.label))}: ${sanitizeLine(String(value.explanation))}`);
-          if (st.limits) out(`  ${sanitizeLine(String(st.limits))}`);
+            out(`  ${sanitizeLine(value.label)}: ${sanitizeLine(value.explanation)}`);
+          if (st.limits) out(`  ${sanitizeLine(st.limits)}`);
         }
 
         return;
@@ -333,7 +334,7 @@ export async function runCommand(
             ? [`create-session: ${old.createSession ? "on" : "off"} to ${next.createSession ? "on" : "off"}`]
             : []),
           ...(next.spawnMode !== old.spawnMode
-            ? [`spawn: ${sanitizeLine(String(old.spawnMode))} to ${sanitizeLine(String(next.spawnMode))}`]
+            ? [`spawn: ${sanitizeLine(old.spawnMode)} to ${sanitizeLine(next.spawnMode)}`]
             : []),
         ];
         out(changes.length > 0 ? changes.join("\n") : "nothing changes");
@@ -352,7 +353,7 @@ export async function runCommand(
       } catch (error) {
         if (error instanceof HubError && error.status === 409) {
           const body = (error.body ?? {}) as { error?: string; code?: string; settings?: Settings };
-          const reason = sanitizeLine(String(body.error ?? error.message));
+          const reason = sanitizeLine(body.error ?? error.message);
           if (body.code === "settings_refused" || body.code === "settings_failed")
             throw new ExitError(`${reason}. Settings stay: ${describe(body.settings ?? old)}`, 1);
           // Another change runs for this folder. Nothing was applied or undone by this call.
@@ -397,7 +398,7 @@ export async function runCommand(
 
     case "ls": {
       const query = [
-        args[0] !== undefined ? `path=${encodeURIComponent(args[0])}` : "",
+        args.length > 0 ? `path=${encodeURIComponent(args[0])}` : "",
         flags.user !== undefined ? `user=${encodeURIComponent(flags.user)}` : "",
       ]
         .filter(Boolean)

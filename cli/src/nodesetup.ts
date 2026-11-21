@@ -37,22 +37,22 @@ export interface Sys {
   arch: string;
   /** The path of the running executable. */
   execPath?: string;
-  isRoot(): boolean;
-  hasCommand(name: string): boolean;
-  localAddresses(): string[];
-  exists(path: string): boolean;
+  isRoot: () => boolean;
+  hasCommand: (name: string) => boolean;
+  localAddresses: () => string[];
+  exists: (path: string) => boolean;
   /** Whether the current user can create and replace files in this directory. */
-  writable?(dir: string): boolean;
+  writable?: (dir: string) => boolean;
   /** Runs a command without sudo. A command that runs longer than `timeoutMs` is killed and counts as a failure. */
-  run(args: string[], opts?: { timeoutMs?: number }): { code: number; stdout: string; stderr?: string };
+  run: (args: string[], opts?: { timeoutMs?: number }) => { code: number; stdout: string; stderr?: string };
   /** Runs a command with sudo (without it, for root). Input goes to stdin. */
-  sudo(args: string[], input?: string | Uint8Array): Result;
-  readFile(path: string): Uint8Array;
-  writeTemp(name: string, data: Uint8Array): string;
-  removeTemp(path: string): void;
+  sudo: (args: string[], input?: string | Uint8Array) => Result;
+  readFile: (path: string) => Uint8Array;
+  writeTemp: (name: string, data: Uint8Array) => string;
+  removeTemp: (path: string) => void;
   fetch: typeof fetch;
-  sleep(ms: number): Promise<void>;
-  now(): number;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
 }
 
 export const realSys: Sys = {
@@ -79,10 +79,12 @@ export const realSys: Sys = {
       encoding: "utf8",
       ...(opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const } : {}),
     });
+    // Node leaves the output null when the command did not start, although the types say string.
+    const output: { stdout: string | null; stderr: string | null } = spawnSyncReturns;
     return {
       code: spawnSyncReturns.status ?? 1,
-      stdout: spawnSyncReturns.stdout ?? "",
-      stderr: spawnSyncReturns.error ? spawnSyncReturns.error.message : (spawnSyncReturns.stderr ?? ""),
+      stdout: output.stdout ?? "",
+      stderr: spawnSyncReturns.error ? spawnSyncReturns.error.message : (output.stderr ?? ""),
     };
   },
   sudo(args, input) {
@@ -93,7 +95,8 @@ export const realSys: Sys = {
       stdio: [input !== undefined ? "pipe" : "inherit", "pipe", "inherit"],
     });
     if (spawnSyncReturns.error) return { code: 127, stdout: "", stderr: spawnSyncReturns.error.message };
-    return { code: spawnSyncReturns.status ?? 1, stdout: spawnSyncReturns.stdout ?? "", stderr: "" };
+    const output: { stdout: string | null } = spawnSyncReturns;
+    return { code: spawnSyncReturns.status ?? 1, stdout: output.stdout ?? "", stderr: "" };
   },
   readFile: (file) => readFileSync(file),
   writeTemp(name, data) {

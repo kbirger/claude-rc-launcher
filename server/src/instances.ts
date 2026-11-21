@@ -274,6 +274,14 @@ export class InstanceService implements Instances {
     return { state: kv.ActiveState || "unknown", startedAt: parseUnixTimestamp(kv.ActiveEnterTimestamp) };
   }
 
+  /** The description of an instance whose unit file is known to be managed. */
+  private async describeManaged(id: string, content: string): Promise<Instance> {
+    const instance = await this.describe(id, content);
+    if (!instance) throw new HttpError(404, "instance not found");
+
+    return instance;
+  }
+
   private async describe(id: string, content: string): Promise<Instance | null> {
     const managed = parseManaged(content);
     if (!managed) return null;
@@ -603,7 +611,8 @@ export class InstanceService implements Instances {
       const previous = parseUnitSettings(old);
       const next: InstanceSettings = { ...previous, ...definedFields(patch) };
       // Nothing changes, so there is nothing to apply later: the answer is applied true.
-      if (sameSettings(previous, next)) return { instance: (await this.describe(id, old))!, previous, applied: true };
+      if (sameSettings(previous, next))
+        return { instance: await this.describeManaged(id, old), previous, applied: true };
       await this.checkWorktree(patch, managed.path);
       const target = await this.target(parseUnitUser(old) ?? undefined);
       let content: string;
@@ -644,7 +653,7 @@ export class InstanceService implements Instances {
           };
       }
 
-      if (!failure) return { instance: (await this.describe(id, content))!, previous, applied: !paused };
+      if (!failure) return { instance: await this.describeManaged(id, content), previous, applied: !paused };
 
       // Undo: the old bytes go back, and the unit restarts with them.
       const undoFailed = (why: string) =>
@@ -697,7 +706,7 @@ export class InstanceService implements Instances {
     if (runResult.code !== 0)
       throw new HttpError(
         500,
-        `failed to read logs: ${runResult.stderr.trim() || "journalctl exited " + runResult.code}`,
+        `failed to read logs: ${runResult.stderr.trim() || `journalctl exited ${runResult.code}`}`,
       );
     return runResult.stdout;
   }

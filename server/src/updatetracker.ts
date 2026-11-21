@@ -58,6 +58,8 @@ export function createUpdateTracker(options: {
     let early!: () => void;
     const early$ = new Promise<void>((resolve) => (early = resolve));
     let done = false;
+    // A function, so that TypeScript does not narrow `done` to false: the presence callback sets it during an await.
+    const finished = () => done;
     const off = options.presence?.onChange((presence) => {
       if (
         done ||
@@ -69,7 +71,7 @@ export function createUpdateTracker(options: {
         return;
       done = true;
       early();
-      void settle(host, { status: "updated", to: report.to }, token).catch((error) => {
+      void settle(host, { status: "updated", to: report.to }, token).catch((error: unknown) => {
         console.error(
           `update of ${host} could not be written: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -80,18 +82,29 @@ export function createUpdateTracker(options: {
       const started = now().getTime();
       let last: string | undefined;
 
-      while (true) {
+      for (;;) {
         await Promise.race([sleep(intervalMs), early$]);
-        if (done || tokens.get(host) !== token) return;
+        if (finished() || tokens.get(host) !== token) return;
         last = await options.probe(host).catch(() => undefined);
-        if (done || tokens.get(host) !== token) return;
-        if (same(last, report.to)) return settle(host, { status: "updated", to: report.to }, token);
+        if (finished() || tokens.get(host) !== token) return;
+
+        if (same(last, report.to)) {
+          await settle(host, { status: "updated", to: report.to }, token);
+          return;
+        }
+
         if (now().getTime() - started >= waitMs) break;
       }
 
       const old = current(host)?.from;
-      if (same(last, old) || same(last, report.from)) return settle(host, { status: "rolled back" }, token);
-      return settle(host, { status: "unknown", error: UNKNOWN_REASON }, token);
+
+      if (same(last, old) || same(last, report.from)) {
+        await settle(host, { status: "rolled back" }, token);
+        return;
+      }
+
+      await settle(host, { status: "unknown", error: UNKNOWN_REASON }, token);
+      return;
     } finally {
       done = true;
       off?.();
@@ -115,7 +128,7 @@ export function createUpdateTracker(options: {
       if (report.status === "clients-only")
         return settle(host, { status: "updated", ...(report.to !== undefined ? { to: report.to } : {}) });
       if (host === "local") return;
-      void waitForNode(host, report, tokens.get(host) ?? 0).catch((error) => {
+      void waitForNode(host, report, tokens.get(host) ?? 0).catch((error: unknown) => {
         console.error(`update wait for ${host} failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     },

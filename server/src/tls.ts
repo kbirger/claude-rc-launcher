@@ -25,10 +25,11 @@ function covers(certPem: string, names: string[]): string[] {
 }
 
 function toPem(label: string, der: ArrayBuffer): string {
-  const b64 = Buffer.from(der)
-    .toString("base64")
-    .match(/.{1,64}/g)!
-    .join("\n");
+  const b64 =
+    Buffer.from(der)
+      .toString("base64")
+      .match(/.{1,64}/g)
+      ?.join("\n") ?? "";
   return `-----BEGIN ${label}-----\n${b64}\n-----END ${label}-----\n`;
 }
 

@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { hasOwn } from "./requests";
 import type { User } from "./userauth";
 
 /**
@@ -58,7 +59,7 @@ export function resolveRole(claims: Record<string, unknown>, roleSettings: RoleS
 
   for (const value of values) {
     if (typeof value !== "string") continue;
-    const mapped = Object.hasOwn(roleSettings.map, value) ? roleSettings.map[value] : value;
+    const mapped = hasOwn(roleSettings.map, value) ? roleSettings.map[value] : value;
     if (mapped === "none") none = true;
     else if (isRole(mapped) && (best === undefined || RANK[mapped] > RANK[best])) best = mapped;
   }

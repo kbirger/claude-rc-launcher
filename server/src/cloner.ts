@@ -164,7 +164,8 @@ export function createCloner(deps: {
     }
 
     // The user cannot remove the folder itself from a parent that root owns. This removes it only if it is empty.
-    await rmdir(target).catch((errnoException: NodeJS.ErrnoException) => {
+    await rmdir(target).catch((caught: unknown) => {
+      const errnoException = caught as NodeJS.ErrnoException;
       if (errnoException.code === "ENOENT") return;
 
       if (errnoException.code === "ENOTEMPTY" || errnoException.code === "EEXIST") {
@@ -201,14 +202,15 @@ export function createCloner(deps: {
         throw new HttpError(500, msg);
       };
 
-      const hasUid = id.uid !== undefined && id.gid !== undefined;
+      const { uid, gid } = id;
+      const hasUid = uid !== undefined && gid !== undefined;
       // The instance user can write to the parent, so it can swap the folder before the owner change.
       // adoptDir checks the folder through an open handle and changes the owner through that same handle.
       let adopted: AdoptedDir | undefined;
 
       if (hasUid) {
         try {
-          adopted = await adoptDir(target, { uid: id.uid!, gid: id.gid! });
+          adopted = await adoptDir(target, { uid, gid });
         } catch (error) {
           if (error instanceof DirChanged) await refuse("clone folder changed", error);
           await refuse("cannot set directory owner", error);
@@ -258,8 +260,7 @@ export function createCloner(deps: {
             .split("\n")
             .map((part) => part.trim())
             .filter(Boolean);
-          const first =
-            lines.find((line) => /^(fatal|error):/i.test(line)) ?? lines[lines.length - 1] ?? `exit ${runResult.code}`;
+          const first = lines.find((line) => /^(fatal|error):/i.test(line)) ?? lines.at(-1) ?? `exit ${runResult.code}`;
           throw new HttpError(400, `clone failed: ${first}`);
         }
 
@@ -305,14 +306,14 @@ export function createCloner(deps: {
             job.path = real;
             job.state = "done";
           },
-          async (entry) => {
+          async (entry: unknown) => {
             await removeTarget(id, target);
             job.error = entry instanceof HttpError ? entry.message : "clone failed";
             if (!(entry instanceof HttpError)) console.error("clone failed:", entry);
             job.state = "failed";
           },
         )
-        .catch((error) => {
+        .catch((error: unknown) => {
           console.error("clone job error:", error);
           job.state = "failed";
           job.error ??= "clone failed";
@@ -338,6 +339,8 @@ export function createCloner(deps: {
       const id = await deps.identityFor(user);
       const deadline = now() + REPO_LIST_DEADLINE_MS;
       let expired = false;
+      // A function, so that TypeScript does not narrow `expired` to false: `gh` sets it while the lists load.
+      const isExpired = () => expired;
 
       const gh = async (args: string[]) => {
         const left = deadline - now();
@@ -401,7 +404,7 @@ export function createCloner(deps: {
         }
       });
       // A skipped org is fine, but a list cut short by the deadline is not: fail instead of a partial answer.
-      if (expired) throw new HttpError(504, "gh timed out");
+      if (isExpired()) throw new HttpError(504, "gh timed out");
       const groups: RepoGroup[] = [{ owner: login, repos: own }];
       for (const orgGroup of orgGroups) if (orgGroup) groups.push(orgGroup);
       return { groups };

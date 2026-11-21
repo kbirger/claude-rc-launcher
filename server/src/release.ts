@@ -65,7 +65,7 @@ export async function downloadAsset(
     .map((part) => part.trim().split(/\s+/))
     .find((item) => item[1] === asset);
 
-  if (!line || line[0] !== sha256(bin)) {
+  if (line?.[0] !== sha256(bin)) {
     throw new ReleaseError(`the checksum of ${asset} does not match SHA256SUMS. Nothing was installed`);
   }
 

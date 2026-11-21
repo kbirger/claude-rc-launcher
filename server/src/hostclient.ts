@@ -79,7 +79,8 @@ const TLS_CODES = new Set([
 ]);
 
 function classify(error: unknown): "timeout" | "certificate mismatch" | "unreachable" {
-  const err = error as { name?: string; code?: string; message?: string };
+  // Any value can be thrown, so it can also be null or undefined.
+  const err = error as { name?: string; code?: string; message?: string } | null | undefined;
   if (err?.name === "TimeoutError" || err?.name === "AbortError") return "timeout";
   const text = `${err?.code ?? ""} ${err?.message ?? ""}`;
 
@@ -246,7 +247,9 @@ export function createHostClient(
       const url = new URL(path, host.url);
       const headers: Record<string, string> = { accept: "text/event-stream" };
 
-      const quiet = async function* (): AsyncGenerator<SseEvent> {};
+      const quiet = async function* (): AsyncGenerator<SseEvent> {
+        /* yields nothing */
+      };
 
       if (opts.signal?.aborted) return quiet();
 

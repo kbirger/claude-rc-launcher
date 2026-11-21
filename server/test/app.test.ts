@@ -46,6 +46,7 @@ beforeAll(async () => {
     publicUrl: "https://rc.example.com",
     roots: [root],
     hosts: [],
+    claudeRcArgs: [],
     userAuth: {
       mode: "oidc",
       sessionSecret: "s3cret-s3cret-s3cret",

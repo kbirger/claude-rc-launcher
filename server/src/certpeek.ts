@@ -1,6 +1,7 @@
 import { X509Certificate, createHash } from "node:crypto";
 import { isIP } from "node:net";
 import tls from "node:tls";
+import type { PeerCertificate } from "node:tls";
 
 export interface PeekedCert {
   pem: string;
@@ -18,10 +19,12 @@ export class PeekError extends Error {
 }
 
 const toPem = (der: Buffer) =>
-  `-----BEGIN CERTIFICATE-----\n${der
-    .toString("base64")
-    .match(/.{1,64}/g)!
-    .join("\n")}\n-----END CERTIFICATE-----\n`;
+  `-----BEGIN CERTIFICATE-----\n${
+    der
+      .toString("base64")
+      .match(/.{1,64}/g)
+      ?.join("\n") ?? ""
+  }\n-----END CERTIFICATE-----\n`;
 
 /**
  * Reads the certificate that a node presents, so that a user can pin it after comparing the fingerprint.
@@ -61,7 +64,8 @@ export function peekCertificate(options: {
       });
     }, options.timeoutMs ?? 5_000);
     socket.once("secureConnect", () => {
-      const peer = socket.getPeerCertificate(true);
+      // A socket without a certificate gives an empty object, or nothing.
+      const peer = socket.getPeerCertificate(true) as Partial<PeerCertificate> | null;
 
       if (!peer?.raw) {
         finish(() => {

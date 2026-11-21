@@ -51,18 +51,18 @@ export interface Spawned {
 
 export interface WinDeps {
   /** Starts a child with output appended to `logFile`. Throws if the program cannot be started. */
-  spawn(cmd: string, args: string[], options: { cwd: string; logFile: string }): Spawned;
+  spawn: (cmd: string, args: string[], options: { cwd: string; logFile: string }) => Spawned;
   /** Ends a process and its children. Resolves if the process is already gone. */
-  killTree(pid: number): Promise<void>;
+  killTree: (pid: number) => Promise<void>;
   /** Like `spawn`, but with a restricted copy of the service token. Required when `serviceIsAdmin` is true. */
   spawnRestricted?: WinDeps["spawn"];
-  sleep(ms: number): Promise<void>;
-  now(): Date;
-  resolvePath(path: string, roots: string[]): Promise<string>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => Date;
+  resolvePath: (path: string, roots: string[]) => Promise<string>;
   trust: TrustStore;
   restartDelayMs: number;
   /** Tells if a folder is a git repository. `undefined` means it is not one. */
-  repoKind(dir: string): Promise<RepoKind | undefined>;
+  repoKind: (dir: string) => Promise<RepoKind | undefined>;
 }
 
 const ID_RE = /^[0-9a-f]{12}$/;
@@ -129,7 +129,8 @@ export function taskkillTree(run: Runner): WinDeps["killTree"] {
 const sleepUnref = (ms: number) =>
   new Promise<void>((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
+    // A fake timer in a test can lack unref.
+    (timeout as { unref?: () => void }).unref?.();
   });
 
 export class WinInstances implements Instances {
@@ -180,7 +181,7 @@ export class WinInstances implements Instances {
     try {
       this.checkUser(user);
     } catch (error) {
-      return Promise.reject(error);
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
 
     return Promise.resolve(undefined);
@@ -244,7 +245,9 @@ export class WinInstances implements Instances {
   }
 
   private spawnFor(entryBase: EntryBase): Spawned {
-    const spawn = this.o.serviceIsAdmin && !entryBase.admin ? this.deps.spawnRestricted! : this.deps.spawn;
+    const { spawn: spawnPlain, spawnRestricted } = this.deps;
+    const spawn = this.o.serviceIsAdmin && !entryBase.admin ? spawnRestricted : spawnPlain;
+    if (!spawn) throw new Error("this node cannot start a restricted process");
     const args = ["remote-control", "--name", entryBase.name, ...argsWith(this.o.claudeRcArgs, entryBase.settings)];
     return spawn(this.o.claudeBin, args, { cwd: entryBase.path, logFile: this.logFile(entryBase.id) });
   }
@@ -281,6 +284,8 @@ export class WinInstances implements Instances {
 
   private async superviseLoop(entry: Entry, first?: Spawned): Promise<void> {
     let proc = first;
+    // A function, so that TypeScript does not narrow `entry.stopping`: a stop call sets it during an await.
+    const isStopping = () => entry.stopping;
 
     while (!entry.stopping) {
       if (!proc) {
@@ -319,7 +324,7 @@ export class WinInstances implements Instances {
       entry.lastExit = { code };
       entry.proc = undefined;
       proc = undefined;
-      if (entry.stopping) break;
+      if (isStopping()) break;
       entry.state = "activating";
       entry.startedAt = null;
       await this.wait(entry);
@@ -435,7 +440,7 @@ export class WinInstances implements Instances {
     try {
       return Promise.resolve({ path: this.requireEntry(id).path, home: this.o.serviceHome });
     } catch (error) {
-      return Promise.reject(error);
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -644,7 +649,7 @@ export class WinInstances implements Instances {
 
       if (saveError !== undefined)
         throw undoFailed(
-          `failed to save the instance list: ${saveError instanceof Error ? saveError.message : String(saveError)}`,
+          `failed to save the instance list: ${saveError instanceof Error ? saveError.message : JSON.stringify(saveError)}`,
         );
       throw new HttpError(409, failure.reason, { code: failure.code, settings: previous });
     } finally {
@@ -763,9 +768,7 @@ export class WinInstances implements Instances {
       entry.wake?.();
     }
 
-    await Promise.all(
-      all.map((entry) => (entry.proc ? this.deps.killTree(entry.proc.pid).catch(() => {}) : undefined)),
-    );
+    await Promise.all(all.flatMap((entry) => (entry.proc ? [this.deps.killTree(entry.proc.pid).catch(() => {})] : [])));
     await Promise.all(all.map((entry) => entry.done));
   }
 }

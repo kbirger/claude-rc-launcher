@@ -45,6 +45,9 @@ try {
 
 console.log(`claude-rc-launcher ${VERSION} (Windows node), running as ${userInfo().username}`);
 
+const { node: nodeConfig } = cfg;
+if (!nodeConfig) throw new Error("the configuration has no node section");
+
 const plan = planSessions(serviceAdminState());
 console.log(plan.log);
 
@@ -56,13 +59,13 @@ const instances = new WinInstances(
     claudeBin: cfg.claudeBin,
     claudeRcArgs: cfg.claudeRcArgs,
     namePrefix: cfg.namePrefix,
-    instanceDir: join(cfg.node!.tls.stateDir, "instances"),
+    instanceDir: join(nodeConfig.tls.stateDir, "instances"),
     serviceIsAdmin: plan.serviceIsAdmin,
   },
   { killTree: taskkillTree(bunRunner), ...(plan.spawnRestricted ? { spawnRestricted: plan.spawnRestricted } : {}) },
 );
 
-let running: { stop(): void };
+let running: { stop(): void } | undefined;
 let closing = false;
 
 const shutdown = async (code = 0) => {
@@ -74,7 +77,7 @@ const shutdown = async (code = 0) => {
 };
 
 // After an update the agent ends itself with a non-zero code, so that WinSW starts the new binary (see win/update.ts).
-const dataDir = cfg.node!.tls.stateDir;
+const dataDir = nodeConfig.tls.stateDir;
 const events = new NodeEvents();
 const update = createWindowsUpdater(
   realWinUpdateEnv({

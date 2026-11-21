@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./hostregistry";
+import { isObject } from "./requests";
 
 export type UpdateStatus = "running" | "updated" | "up-to-date" | "failed" | "rolled back" | "unknown";
 export interface UpdateEntry {
@@ -48,8 +49,12 @@ export class UpdateRecord {
 
     if (text !== undefined) {
       try {
-        const parsed = JSON.parse(text);
-        if (Array.isArray(parsed?.updates)) entries = parsed.updates.filter(valid).map(clean);
+        const parsed: unknown = JSON.parse(text);
+
+        if (isObject(parsed) && Array.isArray(parsed.updates)) {
+          const candidates: unknown[] = parsed.updates;
+          entries = candidates.filter(valid).map(clean);
+        }
       } catch {
         // corrupt: start empty, the next set replaces the file
       }
@@ -99,7 +104,7 @@ export class UpdateRecord {
   reconcileHub(currentVersion: string): Promise<void> {
     return this.locked(async () => {
       const updateEntry = this.entries.find((updateEntry) => updateEntry.host === "local");
-      if (!updateEntry || updateEntry.status !== "running") return;
+      if (updateEntry?.status !== "running") return;
       const finishedAt = this.now().toISOString();
       await this.apply(
         currentVersion !== updateEntry.from
@@ -133,22 +138,22 @@ export class UpdateRecord {
   }
 }
 
-function valid(response: any): response is UpdateEntry {
-  const str = (value: unknown) => typeof value === "string";
-  const opt = (value: unknown) => value === undefined || str(value);
+function valid(value: unknown): value is UpdateEntry {
+  const str = (field: unknown) => typeof field === "string";
+  const opt = (field: unknown) => field === undefined || str(field);
   return (
-    response !== null &&
-    typeof response === "object" &&
-    str(response.host) &&
-    str(response.startedAt) &&
-    str(response.startedBy) &&
-    str(response.from) &&
-    STATUSES.includes(response.status) &&
-    opt(response.finishedAt) &&
-    opt(response.to) &&
-    opt(response.error) &&
-    opt(response.step) &&
-    opt(response.stepDetail)
+    isObject(value) &&
+    str(value.host) &&
+    str(value.startedAt) &&
+    str(value.startedBy) &&
+    str(value.from) &&
+    typeof value.status === "string" &&
+    STATUSES.includes(value.status) &&
+    opt(value.finishedAt) &&
+    opt(value.to) &&
+    opt(value.error) &&
+    opt(value.step) &&
+    opt(value.stepDetail)
   );
 }
 

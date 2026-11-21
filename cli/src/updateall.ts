@@ -64,7 +64,7 @@ async function waitForNewVersion(
     await sys.sleep(POLL_EVERY_MS);
 
     try {
-      const node = await hub.request<{ version?: string }>("GET", `${hostPath(id)}/node`, undefined, {
+      const node = await hub.request<{ version?: string } | undefined>("GET", `${hostPath(id)}/node`, undefined, {
         timeoutMs: POLL_TIMEOUT_MS,
       });
       last = typeof node?.version === "string" ? node.version : undefined;
@@ -79,6 +79,9 @@ async function waitForNewVersion(
   return last === from ? { status: "rolled back", version: from } : { status: "no answer" };
 }
 
+/** What a node of any age answers to an update. An older node can leave out `from` and `clients`. */
+type HubReport = Omit<UpdateReport, "from" | "clients"> & { from?: string; clients?: ClientResult[] };
+
 async function updateHost(
   hub: HubClient,
   sys: Sys,
@@ -90,10 +93,10 @@ async function updateHost(
   if (hostInfo.status !== "ok")
     return { ...row, status: `skipped (${hostInfo.status}${hostInfo.error ? `: ${hostInfo.error}` : ""})` };
   out(`updating ${hostInfo.id} ...`);
-  let report: UpdateReport;
+  let report: HubReport;
 
   try {
-    report = await hub.request<UpdateReport>(
+    report = await hub.request<HubReport>(
       "POST",
       `${hostPath(hostInfo.id)}/update`,
       release !== undefined ? { release } : {},
@@ -123,9 +126,9 @@ async function updateHost(
       return { ...row, status: clientFailure ?? "updated" };
 
     case "restarting": {
-      const forNewVersion = await waitForNewVersion(hub, sys, hostInfo.id, report.from);
+      const forNewVersion = await waitForNewVersion(hub, sys, hostInfo.id, report.from ?? row.before);
       if (forNewVersion.status === "updated")
-        return { ...row, after: forNewVersion.version!, status: clientFailure ?? "updated" };
+        return { ...row, after: forNewVersion.version ?? "?", status: clientFailure ?? "updated" };
       return { ...row, after: forNewVersion.version ?? "?", status: forNewVersion.status };
     }
 
@@ -178,12 +181,14 @@ export async function watchLogs(
 ): Promise<void> {
   let downSince: number | undefined;
   let everOpened = false;
+  // TypeScript narrows `signal.aborted` to false inside the loop, but an abort can come during any await.
+  const aborted = (): boolean => signal.aborted;
 
   try {
     while (!signal.aborted) {
       try {
         for await (const ev of hub.stream("/cli/api/events", { signal })) {
-          if (signal.aborted) return;
+          if (aborted()) return;
           everOpened = true;
           downSince = undefined;
           ready();
@@ -202,12 +207,16 @@ export async function watchLogs(
       }
 
       ready();
-      if (signal.aborted || !everOpened) return;
+      if (aborted() || !everOpened) return;
       downSince ??= sys.now();
       if (sys.now() - downSince > POLL_FOR_MS) return;
       // The run may end during this wait: stop at once, so a sleeping watcher cannot keep the process open.
       await new Promise<void>((resolve) => {
-        const done = () => (signal.removeEventListener("abort", done), resolve());
+        const done = () => {
+          signal.removeEventListener("abort", done);
+          resolve();
+        };
+
         signal.addEventListener("abort", done, { once: true });
         void sys.sleep(STREAM_WAIT_MS).then(done, done);
       });

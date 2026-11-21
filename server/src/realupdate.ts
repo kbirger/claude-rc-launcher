@@ -24,7 +24,7 @@ function run(args: string[], opts?: { timeoutMs?: number }): RunResult {
       ...(opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const } : {}),
     });
     return {
-      code: syncSubprocess.exitCode ?? 1,
+      code: exitCodeOf(syncSubprocess.exitCode),
       stdout: syncSubprocess.stdout.toString(),
       stderr: syncSubprocess.stderr.toString(),
     };
@@ -81,7 +81,7 @@ export function parseRegQuery(
 
   for (const line of stdout.split(/\r?\n/)) {
     const match = /^\s+(\S+)\s+REG_SZ\s+(.*)$/.exec(line);
-    if (match && match[1].toLowerCase() === value.toLowerCase()) return { status: "ok", data: match[2].trim() };
+    if (match?.[1].toLowerCase() === value.toLowerCase()) return { status: "ok", data: match[2].trim() };
   }
 
   return { status: "error", message: `no ${value} string value in the reg.exe output` };
@@ -92,12 +92,20 @@ type Spawn = (
   opts: { timeout: number },
 ) => { exitCode: number | null; stdout: { toString(): string }; stderr: { toString(): string } };
 
+/** The exit code is null when a signal ended the process, although the types say number. */
+const exitCodeOf = (code: number | null): number => code ?? 1;
+
 /** A `regQuery` that runs `%SystemRoot%\System32\reg.exe` (no shell) and reads the 64-bit registry view. */
 export function makeRegQuery(
   env: Record<string, string | undefined>,
   spawn?: Spawn,
 ): (key: string, value: string) => RegQueryResult {
-  const exe = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "reg.exe");
+  const systemRoot = env.SystemRoot;
+  const exe = path.win32.join(
+    systemRoot === undefined || systemRoot === "" ? "C:\\Windows" : systemRoot,
+    "System32",
+    "reg.exe",
+  );
   const go: Spawn =
     spawn ??
     ((args, opts) =>

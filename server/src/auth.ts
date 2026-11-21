@@ -4,6 +4,7 @@ import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
 import { timingSafeEqual } from "node:crypto";
 import type { Config, OidcUserAuth } from "./config";
+import { isObject } from "./requests";
 import { isRole, rolesFrom } from "./roles";
 import type { RoleSettings } from "./roles";
 import { isAllowed, userFromClaims } from "./userauth";
@@ -56,7 +57,7 @@ export function createOidcClient(cfg: Config): OidcClient {
         undefined,
         issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined, // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
       )
-      .catch((error) => {
+      .catch((error: unknown) => {
         pending = undefined;
         throw error;
       });
@@ -83,7 +84,10 @@ export function createOidcClient(cfg: Config): OidcClient {
       });
       const claims = tokens.claims();
       if (!claims || typeof claims.sub !== "string" || !claims.sub) throw new Error("ID token missing sub");
-      return userFromClaims(claims, rolesFrom(oidcOf(cfg)))!;
+      const user = userFromClaims(claims, rolesFrom(oidcOf(cfg)));
+      if (!user) throw new Error("ID token missing sub");
+
+      return user;
     },
     async endSessionUrl({ postLogoutRedirectUri }) {
       const config = await getConfig();
@@ -140,7 +144,8 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
     let saved: { state?: unknown; codeVerifier?: unknown } = {};
 
     try {
-      if (raw) saved = JSON.parse(raw);
+      const parsed: unknown = raw ? JSON.parse(raw) : undefined;
+      if (isObject(parsed)) saved = parsed;
     } catch {
       /* treated as missing */
     }
@@ -239,10 +244,10 @@ async function readSession(
   if (!raw) return null;
 
   try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed?.exp !== "number" || parsed.exp <= now()) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isObject(parsed) || typeof parsed.exp !== "number" || parsed.exp <= now()) return null;
     const user = parsed.user;
-    if (typeof user?.sub !== "string" || typeof user?.name !== "string") return null;
+    if (!isObject(user) || typeof user.sub !== "string" || typeof user.name !== "string") return null;
     const out: User = { sub: user.sub, name: user.name };
     if (typeof user.email === "string") out.email = user.email;
     if (typeof user.username === "string") out.username = user.username;

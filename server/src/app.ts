@@ -89,6 +89,12 @@ export interface Deps {
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 
+/** The caller that an earlier middleware stored for the audit line. */
+const callerOf = (context: { get: (key: never) => unknown }): string => {
+  const caller: unknown = context.get("caller" as never);
+  return typeof caller === "string" ? caller : "unknown";
+};
+
 function csrf(cfg: Config): MiddlewareHandler {
   let allowed: string;
 
@@ -231,7 +237,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   });
   // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
   hono.get("/instance-settings", (context) =>
-    context.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs ?? []) }),
+    context.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs) }),
   );
   hono.patch("/instances/:id", async (context) => {
     const id = context.req.param("id");
@@ -355,7 +361,7 @@ export function createNodeApp(deps: {
       const act = context.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
       const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
       console.log(
-        `audit caller=${String(context.get("caller" as never) ?? "unknown")}${actPart} ${context.req.method} ${new URL(context.req.url).pathname} ${context.res.status}`,
+        `audit caller=${callerOf(context)}${actPart} ${context.req.method} ${new URL(context.req.url).pathname} ${context.res.status}`,
       );
     }
   });
@@ -456,7 +462,7 @@ export function createApp(deps: Deps): Hono {
     return context.json(await deps.releaseList.between(from, to));
   });
 
-  const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
+  const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map<string, HostClient>());
 
   const probeVersion = async (host: string): Promise<string | undefined> => {
     try {

@@ -10,6 +10,9 @@ import { normalizeVersion } from "./versions";
  * the same input and a new field is added in one place.
  */
 
+/** Own property test. It works as `Object.hasOwn`, which the lint rules for supported Node versions do not accept. */
+export const hasOwn = (target: object, key: string): boolean => Object.prototype.hasOwnProperty.call(target, key);
+
 export const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 

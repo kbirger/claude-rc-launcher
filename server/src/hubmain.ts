@@ -48,7 +48,7 @@ export interface HubDeps {
   watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number };
 }
 
-async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
+function buildUserAuth(cfg: Config, deps: HubDeps): UserAuthStrategy {
   const ua = cfg.userAuth;
   if (!ua) throw new Error("hub configuration has no user_auth");
   if (ua.mode === "oidc") return oidcUserAuth(cfg, deps.oidc ?? createOidcClient(cfg));
@@ -136,7 +136,7 @@ export function stepWriter(record: UpdateRecord): (host: string, value: StepEven
         { ...rest, step: event.step, ...(detail !== undefined ? { stepDetail: detail } : {}) },
         (cur) => cur?.status === "running" && cur.startedAt === base.startedAt,
       )
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error(`cannot record the update step of ${host}: ${err instanceof Error ? err.message : String(err)}`);
       });
   };
@@ -158,7 +158,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
 
   const dirOwner = await resolveDirOwner(cfg);
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
-  const userAuth = await buildUserAuth(cfg, deps);
+  const userAuth = buildUserAuth(cfg, deps);
   // Forwarded headers are not consulted: the secure-cookie decision comes from public_url (https: => Secure).
   const makeClient = (hostConfig: HostConfig): HostClient =>
     createHostClient(hostConfig, authorizerFor(hostConfig, hubKey));
@@ -212,7 +212,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   );
   record.onChange((updateEntry) => {
     if (updateEntry.status === "running") return;
-    history.add(updateEntry, updateLog.get(updateEntry.host)).catch((err) => {
+    history.add(updateEntry, updateLog.get(updateEntry.host)).catch((err: unknown) => {
       console.error(`cannot write the update history: ${err instanceof Error ? err.message : String(err)}`);
     });
   });
@@ -281,8 +281,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   if (listed.length)
     console.log(`hosts: ${listed.map((hostEntry) => `${hostEntry.host.id} (${hostEntry.host.url})`).join(", ")}`);
   if (cli) console.log("cli login: enabled");
+  const { port } = server;
+  if (port === undefined) throw new Error("the hub server did not get a port");
   return {
-    port: server.port!,
+    port,
     stop: () => {
       offRecord();
       watchers.stop();

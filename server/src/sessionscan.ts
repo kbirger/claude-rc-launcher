@@ -6,6 +6,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { within } from "./paths";
 import {
   encodeProjectDir,
+  dig,
   encodeUnits,
   MAX_ENCODED,
   parse,
@@ -19,15 +20,11 @@ import type { TranscriptFs } from "./transcriptfs";
 const CLEAR_LOOKAHEAD = 30;
 
 /** The time (epoch ms) of a record that holds the `/clear` command that started this transcript. */
-function clearTime(record: Record<string, any>): number | undefined {
+function clearTime(record: Record<string, unknown>): number | undefined {
   if (record.type !== "user" || typeof record.timestamp !== "string") return undefined;
-  const content = record.message?.content;
-  const text =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content) && typeof content[0]?.text === "string"
-        ? content[0].text
-        : "";
+  const content: unknown = dig(record, "message", "content");
+  const firstText: unknown = Array.isArray(content) ? dig(content[0], "text") : undefined;
+  const text = typeof content === "string" ? content : typeof firstText === "string" ? firstText : "";
   if (!text.trimStart().startsWith("<command-name>/clear</command-name>")) return undefined;
   const time = Date.parse(record.timestamp);
   return Number.isFinite(time) ? time : undefined;
@@ -107,7 +104,7 @@ export async function scan(options: { home: string; path: string; fs: Transcript
         continue;
       }
 
-      let first: Record<string, any> | undefined;
+      let first: Record<string, unknown> | undefined;
       let clearedAt: number | undefined;
 
       try {
@@ -126,8 +123,9 @@ export async function scan(options: { home: string; path: string; fs: Transcript
       }
 
       // A relative cwd would resolve against the node's own working folder.
-      if (!first || !isAbsolute(first.cwd)) continue;
-      const root = resolve(first.cwd);
+      const cwd = first?.cwd;
+      if (!first || typeof cwd !== "string" || !isAbsolute(cwd)) continue;
+      const root = resolve(cwd);
       // The folder name rule is lossy, so check the real cwd.
       if (!within(root, resolve(allowed))) continue;
       out.push({

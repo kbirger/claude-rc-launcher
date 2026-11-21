@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { HttpError } from "../instances";
+import { hasOwn } from "../requests";
 import type { TrustOwner, TrustStore } from "../trust";
 
 /**
@@ -26,7 +27,7 @@ export function isTrustedWin(doc: unknown, absPath: string): boolean {
   let key = trustKey(absPath);
 
   for (;;) {
-    if (Object.hasOwn(projects, key)) {
+    if (hasOwn(projects, key)) {
       const project = projects[key];
       if (isObject(project) && project.hasTrustDialogAccepted === true) return true;
     }
@@ -57,7 +58,7 @@ async function readDoc(file: string): Promise<ReadResult> {
   }
 
   try {
-    const doc = JSON.parse(text);
+    const doc: unknown = JSON.parse(text);
     return isObject(doc) ? { kind: "ok", doc } : { kind: "invalid", reason: "it is not a JSON object" };
   } catch {
     return { kind: "invalid", reason: "it is not valid JSON" };

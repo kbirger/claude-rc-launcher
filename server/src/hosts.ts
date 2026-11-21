@@ -161,6 +161,8 @@ export function hostsApi(options: {
             const version =
               isObject(reply.body) && typeof reply.body.version === "string" ? reply.body.version : undefined;
             const clientVersion = clientVersionOf(reply.body);
+            const platform = platformOf(reply.body);
+            const definition = definitionOf(reply.body);
             return {
               id: hostConfig.id,
               name: hostConfig.name,
@@ -169,8 +171,8 @@ export function hostsApi(options: {
               ...(version !== undefined ? { version } : {}),
               ...(clientVersion !== undefined ? { clientVersion } : {}),
               ...(noClientOf(reply.body) ? { noClient: true as const } : {}),
-              ...(platformOf(reply.body) ? { platform: platformOf(reply.body)! } : {}),
-              ...(definitionOf(reply.body) ? { definition: definitionOf(reply.body)! } : {}),
+              ...(platform ? { platform } : {}),
+              ...(definition ? { definition } : {}),
               ...staleness(hubTarget, version, clientVersion),
             };
           }
@@ -209,7 +211,7 @@ export function hostsApi(options: {
     let localPlatform: string | undefined;
 
     try {
-      const localBody = await (await local.request("/node")).json();
+      const localBody: unknown = await (await local.request("/node")).json();
       localClient = clientVersionOf(localBody);
       localNoClient = noClientOf(localBody);
       localPlatform = platformOf(localBody);
@@ -272,7 +274,7 @@ export function hostsApi(options: {
 
   if (tracking) {
     app.post("/:host/update", async (context, next) => {
-      const host = context.req.param("host") ?? "";
+      const host = context.req.param("host");
       if (host !== "local" && !(HOST_ID_RE.test(host) && options.registry.get(host))) return next();
       const response = context.get("user" as never) as User | undefined;
       const startedBy = response?.username ?? response?.sub ?? "unknown";
@@ -320,7 +322,7 @@ export function hostsApi(options: {
   // The local instance API is the node API. It names its caller in the audit line of a rule edit: here that is the hub user.
   app.use("/local/*", async (context, next) => {
     const response = context.get("user" as never) as User | undefined;
-    context.set("caller" as never, String(response?.username ?? response?.sub ?? "unknown") as never);
+    context.set("caller" as never, response?.username ?? response?.sub ?? "unknown");
     await next();
   });
   app.route("/local", local);
@@ -411,7 +413,7 @@ export function hostsApi(options: {
       // A bad body is 400 here and never reaches the node. Then only the generic audit line is written.
       const json = parseSettingsPatch(await readJson(context));
       const response = context.get("user" as never) as User | undefined;
-      const rawUser = String(response?.username ?? response?.sub ?? "unknown");
+      const rawUser = response?.username ?? response?.sub ?? "unknown";
       const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
       const head = `audit user=${who} role=${response?.role ?? "read"} host=${clientOf(context).id} action=settings instance=${instanceId(context)} want=${settingsText(json)}`;
 
@@ -508,7 +510,10 @@ export function hostsApi(options: {
   };
 
   /** A `path` query: at most 4096 characters, no NUL. Undefined when absent. */
-  const pathQuery = (context: Context, required = false) => {
+  function pathQuery(context: Context, required: true): string;
+  function pathQuery(context: Context, required?: false): string | undefined;
+
+  function pathQuery(context: Context, required = false): string | undefined {
     const path = context.req.query("path");
 
     if (path === undefined) {
@@ -518,12 +523,12 @@ export function hostsApi(options: {
 
     if (path.length > MAX_PATH_QUERY || path.includes("\0")) throw new HttpError(400, "invalid path");
     return path;
-  };
+  }
 
   /** The file a file or download request names: exactly one of `path` and `abs`, each checked like `path`. */
   const fileQuery = (context: Context): { path: string } | { abs: string } => {
     const abs = context.req.query("abs");
-    if (abs === undefined) return { path: pathQuery(context, true)! };
+    if (abs === undefined) return { path: pathQuery(context, true) };
     if (context.req.query("path") !== undefined) throw new HttpError(400, "give path or abs, not both");
     // Only the node knows its own path rules (it may be Windows), so absoluteness is checked there.
     if (abs.length > MAX_PATH_QUERY || abs.includes("\0")) throw new HttpError(400, "invalid path");
@@ -568,7 +573,7 @@ export function hostsApi(options: {
     forwardJson(async (context, hostClient) => {
       const edit = parseRuleEdit(await readJson(context), scopes, { allowNudge, remove: method === "DELETE" });
       const response = context.get("user" as never) as User | undefined;
-      const rawUser = String(response?.username ?? response?.sub ?? "unknown");
+      const rawUser = response?.username ?? response?.sub ?? "unknown";
       const who = /^[\w.@:-]+$/.test(rawUser) ? rawUser : JSON.stringify(rawUser);
       const iid = instanceId(context);
       const line = (status: number) =>

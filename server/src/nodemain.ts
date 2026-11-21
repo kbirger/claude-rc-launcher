@@ -69,8 +69,10 @@ export async function startNode(
     ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}),
   });
   console.log(`node "${cfg.name}" listening on https://${cfg.host}:${server.port}`);
+  const { port } = server;
+  if (port === undefined) throw new Error("the node server did not get a port");
   return {
-    port: server.port!,
+    port,
     fingerprint: cert.fingerprintSha256,
     stop: () => {
       stopServer(server, app);

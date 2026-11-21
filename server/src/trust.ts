@@ -1,6 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
+import { hasOwn } from "./requests";
 import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 import type { SystemUser } from "./users";
 
@@ -25,7 +26,7 @@ export function isTrustedIn(doc: unknown, absPath: string): boolean {
   let current = absPath;
 
   for (;;) {
-    if (Object.hasOwn(projects, current)) {
+    if (hasOwn(projects, current)) {
       const project = projects[current];
       if (isObject(project) && project.hasTrustDialogAccepted === true) return true;
     }
@@ -47,7 +48,7 @@ async function readDoc(file: string): Promise<ReadResult> {
   if (fileRead.kind !== "ok") return fileRead;
 
   try {
-    const doc = JSON.parse(fileRead.bytes.toString("utf8"));
+    const doc: unknown = JSON.parse(fileRead.bytes.toString("utf8"));
     return isObject(doc)
       ? { kind: "ok", doc, mode: fileRead.mode }
       : { kind: "invalid", reason: "it is not a JSON object" };

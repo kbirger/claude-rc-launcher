@@ -3,6 +3,7 @@ import path from "node:path";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
+import { isObject } from "./requests";
 
 export interface HostEntry {
   host: HostConfig;
@@ -61,7 +62,7 @@ export class HostRegistry {
     }
 
     if (text !== undefined) {
-      let parsed: any;
+      let parsed: unknown;
 
       try {
         parsed = JSON.parse(text);
@@ -71,11 +72,13 @@ export class HostRegistry {
         );
       }
 
-      if (!Array.isArray(parsed?.hosts)) throw new Error(`${file} has no "hosts" array`);
+      if (!isObject(parsed) || !Array.isArray(parsed.hosts)) throw new Error(`${file} has no "hosts" array`);
+      const storedHosts: unknown[] = parsed.hosts;
 
-      for (const stored of parsed.hosts as Stored[]) {
+      for (const stored of storedHosts) {
         if (
-          typeof stored?.id !== "string" ||
+          !isObject(stored) ||
+          typeof stored.id !== "string" ||
           !HOST_ID_RE.test(stored.id) ||
           stored.id === "local" ||
           typeof stored.url !== "string" ||
@@ -100,7 +103,7 @@ export class HostRegistry {
           name: stored.name,
           url: stored.url,
           ca,
-          ...(stored.server_name ? { serverName: stored.server_name } : {}),
+          ...(typeof stored.server_name === "string" && stored.server_name ? { serverName: stored.server_name } : {}),
           auth: { type: "hub_key" },
         };
         let client: HostClient;
@@ -208,12 +211,10 @@ export class HostRegistry {
         url: hostEntry.host.url,
         ...(hostEntry.host.serverName ? { server_name: hostEntry.host.serverName } : {}),
       }));
-    await ensureDirs(this.store!.dir);
-    await writeAtomic(
-      path.join(this.store!.dir, FILE),
-      JSON.stringify({ _comment: COMMENT, hosts }, null, 2) + "\n",
-      0o600,
-    );
+    const { store } = this;
+    if (!store) throw new HttpError(501, "this registry cannot store hosts");
+    await ensureDirs(store.dir);
+    await writeAtomic(path.join(store.dir, FILE), JSON.stringify({ _comment: COMMENT, hosts }, null, 2) + "\n", 0o600);
   }
 
   private locked<Value>(fn: () => Promise<Value>): Promise<Value> {

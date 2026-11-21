@@ -82,6 +82,7 @@ export async function sendAsUser(
   let code: number | undefined;
   let proc: Bun.Subprocess<"pipe", "ignore", "ignore"> | undefined;
   let exited = false;
+  const hasExited = () => exited;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
@@ -94,7 +95,7 @@ export async function sendAsUser(
     timer = setTimeout(() => {
       child.kill("SIGKILL");
     }, options.timeoutMs ?? 3000);
-    child.stdin.write(socket + "\n" + line + "\n");
+    void child.stdin.write(socket + "\n" + line + "\n");
     await child.stdin.end();
     code = await child.exited;
     if (code !== 0) throw new Error("send failed");
@@ -103,7 +104,7 @@ export async function sendAsUser(
     throw error;
   } finally {
     clearTimeout(timer);
-    if (proc && !exited) proc.kill("SIGKILL");
+    if (proc && !hasExited()) proc.kill("SIGKILL");
   }
 }
 
@@ -123,11 +124,11 @@ export async function nudge(options: {
 }): Promise<NudgeResult> {
   if ((options.platform ?? process.platform) !== "linux") return { sent: false, reason: "unsupported" };
   // On a root node a missing uid must never fall back to connecting as root in this process.
-  if ((options.isRoot ?? (() => process.getuid!() === 0))() && options.identity?.uid === undefined)
+  if ((options.isRoot ?? (() => process.getuid?.() === 0))() && options.identity?.uid === undefined)
     return { sent: false, reason: "send_failed" };
   const socket = await (options.find ?? findSessionSocket)({ home: options.home, sessionId: options.sessionId });
   if (!socket) return { sent: false, reason: "not_live" };
-  const self = process.getuid!();
+  const self = process.getuid?.() ?? -1;
   // A uid without a gid must never fall back to connecting as the server user.
   if (options.identity?.uid !== undefined && options.identity.uid !== self && options.identity.gid === undefined)
     return { sent: false, reason: "send_failed" };
@@ -135,11 +136,11 @@ export async function nudge(options: {
   if ((await checkSocket(socket, owner)) !== "ok") return { sent: false, reason: "socket_refused" };
   const line = JSON.stringify({ type: "user", message: { role: "user", content: options.message } });
   const asOther = options.identity?.uid !== undefined && options.identity.uid !== self;
+  const identity = asOther ? options.identity : undefined;
   const send =
     options.send ??
-    (asOther
-      ? (entry: string, value: string) =>
-          sendAsUser(entry, value, options.identity!, options.log ? { log: options.log } : {})
+    (identity
+      ? (entry: string, value: string) => sendAsUser(entry, value, identity, options.log ? { log: options.log } : {})
       : (entry: string, value: string) => sendLine(entry, value));
 
   try {

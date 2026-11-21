@@ -59,7 +59,7 @@ export function createReleaseList(options: {
     if (!Array.isArray(data)) throw new Error("GitHub sent no release list");
     const list: ReleaseNote[] = [];
 
-    for (const record of data as Record<string, unknown>[]) {
+    for (const record of data as (Record<string, unknown> | null)[]) {
       if (
         !record ||
         typeof record !== "object" ||
@@ -139,8 +139,8 @@ export function createReleaseList(options: {
             compareVersions(releaseNote.version, fromRelease) > 0 &&
             compareVersions(releaseNote.version, toRelease) <= 0,
         );
-        const newest = all[0];
-        const oldest = all[all.length - 1];
+        const newest = all.at(0);
+        const oldest = all.at(-1);
         const complete =
           newest !== undefined &&
           oldest !== undefined &&

@@ -9,6 +9,7 @@ import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { OPEN_READ_NO_FOLLOW } from "./openflags";
 import { PathError, within } from "./paths";
 
 // Files inside a session root, for preview and download. The node runs as its service account and serves any
@@ -64,7 +65,7 @@ const win = process.platform === "win32";
 // A control character: the C0 controls and DEL (the C1 range is left out of \p{Cc}).
 const CONTROL = /[^\P{Cc}\u0080-\u009f]/u;
 // O_NOFOLLOW and O_NONBLOCK do not exist on Windows; there the real path and dev/ino checks carry the load.
-const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const OPEN_FLAGS = OPEN_READ_NO_FOLLOW;
 
 /** Splits a relative path into its names. Refuses absolute paths, `..`, and bad characters. */
 function segments(rel: string): string[] {

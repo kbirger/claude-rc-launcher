@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isObject } from "./requests";
 import { NAME_RANK, tidy } from "./sessionnames";
 import type { NameInfo, NameSource } from "./sessionnames";
 import { SESSION_ID } from "./transcript";
@@ -29,7 +30,7 @@ interface Entry {
   seen: number;
   file?: string;
 }
-type Data = Record<string, Entry>;
+type Data = Map<string, Entry>;
 
 function missing(error: unknown): boolean {
   const errorLike = error as { code?: unknown; message?: unknown } | null;
@@ -39,7 +40,7 @@ function missing(error: unknown): boolean {
 }
 
 export class NameMemory {
-  private data: Data = {};
+  private data: Data = new Map();
   private loaded?: Promise<void>;
   private sweeping?: Promise<void>;
   private lastSweep = 0;
@@ -59,10 +60,10 @@ export class NameMemory {
         const text = await readFile(this.file, "utf8");
         if (text.length > MAX_BYTES) return;
         const parsed: unknown = JSON.parse(text);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+        if (!isObject(parsed)) return;
 
-        for (const [id, entry] of Object.entries(parsed as Record<string, any>)) {
-          if (!SESSION_ID.test(id) || !entry || typeof entry !== "object") continue;
+        for (const [id, entry] of Object.entries(parsed)) {
+          if (!SESSION_ID.test(id) || !isObject(entry)) continue;
           const name = typeof entry.name === "string" ? tidy(entry.name)?.slice(0, MAX_NAME_LEN) : undefined;
           const source = entry.source as NameSource;
           if (
@@ -74,7 +75,7 @@ export class NameMemory {
           )
             continue;
           const file = typeof entry.file === "string" && entry.file.length <= MAX_FILE_LEN ? entry.file : undefined;
-          this.data[id] = { name, source, seen: entry.seen, ...(file ? { file } : {}) };
+          this.data.set(id, { name, source, seen: entry.seen, ...(file ? { file } : {}) });
         }
       } catch {
         // missing or not valid: start empty
@@ -102,13 +103,14 @@ export class NameMemory {
     let best: Entry | undefined;
 
     for (const chainId of options.chain) {
-      const entry = this.data[chainId];
+      const entry = this.data.get(chainId);
       if (entry && (!best || NAME_RANK[entry.source] > NAME_RANK[best.source])) best = entry;
     }
 
+    const candidateName = options.candidate ? tidy(options.candidate.name) : undefined;
     const cand =
-      options.candidate && tidy(options.candidate.name)
-        ? { name: tidy(options.candidate.name)!.slice(0, MAX_NAME_LEN), source: options.candidate.source }
+      options.candidate && candidateName
+        ? { name: candidateName.slice(0, MAX_NAME_LEN), source: options.candidate.source }
         : undefined;
     let chosen: NameInfo | undefined = best;
 
@@ -123,7 +125,7 @@ export class NameMemory {
     let dirty = false;
 
     for (const id of ids) {
-      const entry = this.data[id];
+      const entry = this.data.get(id);
 
       if (entry && now - entry.seen >= SEEN_GRANULARITY_MS) {
         entry.seen = now;
@@ -134,13 +136,13 @@ export class NameMemory {
     }
 
     if (chosen && NAME_RANK[chosen.source] > 0 && SESSION_ID.test(options.id)) {
-      const old = this.data[options.id];
+      const old = this.data.get(options.id);
       const file = options.file && options.file.length <= MAX_FILE_LEN ? options.file : old?.file;
 
-      if (!old || old.name !== chosen.name || old.source !== chosen.source || old.file !== file) {
+      if (old?.name !== chosen.name || old.source !== chosen.source || old.file !== file) {
         // Delete first, so that the entry becomes the newest in the object order.
-        delete this.data[options.id];
-        this.data[options.id] = { name: chosen.name, source: chosen.source, seen: now, ...(file ? { file } : {}) };
+        this.data.delete(options.id);
+        this.data.set(options.id, { name: chosen.name, source: chosen.source, seen: now, ...(file ? { file } : {}) });
         dirty = true;
       }
     }
@@ -176,7 +178,7 @@ export class NameMemory {
   }
 
   private async sweep(exists: (file: string) => Promise<boolean>): Promise<void> {
-    const todo = Object.entries(this.data).filter(
+    const todo = [...this.data.entries()].filter(
       (pair): pair is [string, Entry & { file: string }] => pair[1].file !== undefined,
     );
     const gone: string[] = [];
@@ -191,22 +193,22 @@ export class NameMemory {
 
     await Promise.all(Array.from({ length: Math.min(SWEEP_PARALLEL, todo.length) }, worker));
     if (gone.length === 0) return;
-    for (const id of gone) delete this.data[id];
+    for (const id of gone) this.data.delete(id);
     await this.save();
   }
 
   private save(): Promise<void> {
-    const ids = Object.keys(this.data);
+    const ids = [...this.data.keys()];
 
     if (ids.length > MAX_NAMES) {
       // The oldest `seen` go first.
-      ids.sort((left, right) => this.data[left].seen - this.data[right].seen);
-      for (const id of ids.slice(0, ids.length - MAX_NAMES)) delete this.data[id];
+      ids.sort((left, right) => (this.data.get(left)?.seen ?? 0) - (this.data.get(right)?.seen ?? 0));
+      for (const id of ids.slice(0, ids.length - MAX_NAMES)) this.data.delete(id);
     }
 
     const file = this.file;
     if (!file) return Promise.resolve();
-    const text = JSON.stringify(this.data);
+    const text = JSON.stringify(Object.fromEntries(this.data));
     this.writing = this.writing.then(async () => {
       try {
         await mkdir(dirname(file), { recursive: true });

@@ -95,7 +95,9 @@ export async function loadOrCreateHubKey(dir: string): Promise<HubKey> {
 
   chmodSync(file, 0o600);
   const jwk = await exportJWK(privateKey);
-  return describeKey(privateKey, jwk.x!);
+  if (!jwk.x) throw new Error("the exported hub key has no public part");
+
+  return describeKey(privateKey, jwk.x);
 }
 
 /** `sha256:<hex>` of the DER form of a PEM certificate. */
@@ -141,13 +143,14 @@ export function createProofVerifier(options: {
   for (const key of options.keys) {
     const kid = sha256Hex(Buffer.from(key, "base64url")).slice(0, 16);
     // eslint-disable-next-line id-length -- "x" is the public key member name that the JWK standard (RFC 8037) defines
-    byKid.set(kid, importJWK({ kty: "OKP", crv: "Ed25519", x: key }, "EdDSA") as Promise<CryptoKey>);
+    byKid.set(kid, importJWK({ kty: "OKP", crv: "Ed25519", x: key }, "EdDSA"));
   }
 
   const seen = new Map<string, number>(); // jti -> exp (seconds)
 
   return async (jwt, req) => {
-    const fail = (reason: string, cause?: unknown): never => {
+    // The explicit type lets TypeScript see that a call never returns, so the checks below narrow the claims.
+    const fail: (reason: string, cause?: unknown) => never = (reason, cause) => {
       throw new ProofError(`invalid hub proof: ${reason}`, { cause });
     };
 
@@ -178,16 +181,18 @@ export function createProofVerifier(options: {
     const nowSeconds = Math.floor(now() / 1000);
     if (entry.iss !== ISSUER) fail("wrong issuer");
     if (entry.aud !== options.selfFingerprint) fail("wrong audience");
-    if (entry.exp! - entry.iat! > MAX_LIFETIME_S) fail("lifetime too long");
-    if (entry.iat! > nowSeconds + CLOCK_TOLERANCE_S) fail("issued in the future");
+    const { exp, iat, jti } = entry;
+    if (exp === undefined || iat === undefined) fail("missing time claims");
+    if (exp - iat > MAX_LIFETIME_S) fail("lifetime too long");
+    if (iat > nowSeconds + CLOCK_TOLERANCE_S) fail("issued in the future");
     if (entry.htm !== req.method) fail("method mismatch");
     if (entry.htu !== req.pathAndQuery) fail("path mismatch");
     if (entry.bh !== sha256Hex(req.body)) fail("body mismatch");
-    if (typeof entry.jti !== "string" || !entry.jti) fail("missing jti");
+    if (typeof jti !== "string" || !jti) fail("missing jti");
 
     for (const [jti, exp] of seen) if (exp + CLOCK_TOLERANCE_S < nowSeconds) seen.delete(jti);
-    if (seen.has(entry.jti!)) fail("replayed");
-    seen.set(entry.jti!, entry.exp!);
+    if (seen.has(jti)) fail("replayed");
+    seen.set(jti, exp);
     const str = (value: unknown) => (typeof value === "string" && value ? value.slice(0, ACT_MAX) : undefined);
     const actSub = str(entry.act_sub);
     const actRole = str(entry.act_role);

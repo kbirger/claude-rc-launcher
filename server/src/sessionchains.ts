@@ -13,10 +13,10 @@ const MAX_IDS = 100;
 const MAX_BYTES = 1024 * 1024;
 const MAX_BRIDGE_LEN = 256;
 
-type Data = Record<string, string[]>;
+type Data = Map<string, string[]>;
 
 export class SessionChains {
-  private data: Data = {};
+  private data: Data = new Map();
   private loaded?: Promise<void>;
   private writing: Promise<void> = Promise.resolve();
 
@@ -36,7 +36,7 @@ export class SessionChains {
         for (const [bridge, ids] of Object.entries(parsed as Record<string, unknown>)) {
           if (bridge.length > MAX_BRIDGE_LEN || !Array.isArray(ids)) continue;
           const good = ids.filter((id): id is string => typeof id === "string" && SESSION_ID.test(id)).slice(-MAX_IDS);
-          if (good.length) this.data[bridge] = good;
+          if (good.length) this.data.set(bridge, good);
         }
       } catch {
         // missing or not valid: start empty
@@ -52,10 +52,10 @@ export class SessionChains {
 
     for (const [bridge, id] of pairs) {
       if (bridge.length === 0 || bridge.length > MAX_BRIDGE_LEN || !SESSION_ID.test(id)) continue;
-      const ids = this.data[bridge];
+      const ids = this.data.get(bridge);
 
       if (!ids) {
-        this.data[bridge] = [id];
+        this.data.set(bridge, [id]);
         changed = true;
       } else if (!ids.includes(id)) {
         ids.push(id);
@@ -65,9 +65,9 @@ export class SessionChains {
     }
 
     if (!changed) return;
-    const keys = Object.keys(this.data);
+    const keys = [...this.data.keys()];
     // Object keys keep insertion order, so the first keys are the oldest bridges.
-    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_BRIDGES))) delete this.data[key];
+    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_BRIDGES))) this.data.delete(key);
     await this.save();
   }
 
@@ -91,21 +91,21 @@ export class SessionChains {
     for (let grew = true; grew;) {
       grew = false;
 
-      for (const ids of Object.values(this.data)) {
+      for (const ids of this.data.values()) {
         if (!ids.some((item) => chain.has(item))) continue;
         for (const item of ids) if (!chain.has(item)) (chain.add(item), (grew = true));
       }
     }
 
     // In the order of the store, so that a chain from one bridge id keeps its order. `id` alone stays alone.
-    const ordered = [...new Set(Object.values(this.data).flat())].filter((item) => chain.has(item));
+    const ordered = [...new Set([...this.data.values()].flat())].filter((item) => chain.has(item));
     return ordered.length ? ordered : [id];
   }
 
   private save(): Promise<void> {
     const file = this.file;
     if (!file) return Promise.resolve();
-    const text = JSON.stringify(this.data);
+    const text = JSON.stringify(Object.fromEntries(this.data));
     this.writing = this.writing.then(async () => {
       try {
         await mkdir(dirname(file), { recursive: true });

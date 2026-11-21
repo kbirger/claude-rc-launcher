@@ -6,7 +6,7 @@
  */
 import { posix, win32 } from "node:path";
 import { absRefused, within } from "./paths";
-import { parse } from "./transcript";
+import { dig, isRecord, parse } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
@@ -94,13 +94,14 @@ export async function touchedIn(options: {
       // which can only leave a path out or unconfirmed (fail closed). "tool_use_id" does not contain `"tool_use"`.
       if (!line.includes('"tool_use"') && !line.includes('"tool_result"')) continue;
       const record = parse(line);
-      const content = record?.message?.content;
+      const content: unknown = dig(record, "message", "content");
       if (!Array.isArray(content)) continue;
+      const blocks: unknown[] = content;
 
       if (record?.type === "user") {
-        for (const block of content) {
-          if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-          const id: string = block.tool_use_id;
+        for (const block of blocks) {
+          if (!isRecord(block) || block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+          const id = block.tool_use_id;
           if (!pending.has(id)) continue;
           const use = pending.get(id)?.use;
           pending.delete(id);
@@ -115,9 +116,10 @@ export async function touchedIn(options: {
 
       if (record?.type !== "assistant") continue;
 
-      for (const block of content) {
-        if (block?.type !== "tool_use" || !block.input || typeof block.input !== "object") continue;
-        const name: string = block.name;
+      for (const block of blocks) {
+        if (!isRecord(block) || block.type !== "tool_use" || !isRecord(block.input) || typeof block.name !== "string")
+          continue;
+        const { name } = block;
         const raw =
           name === "NotebookEdit"
             ? block.input.notebook_path
@@ -137,7 +139,7 @@ export async function touchedIn(options: {
         const id = block.id;
         // The same call again (same id, tool and resolved path): keep the first, ignore the repeat.
         const prior = typeof id === "string" ? pending.get(id) : undefined;
-        if (prior && prior.name === name && prior.use.path === resolved) continue;
+        if (prior?.name === name && prior.use.path === resolved) continue;
         if (!confirmed.has(resolved)) putNewest(tried, resolved, use, TOUCHED_MAX);
         if (typeof id !== "string" || answered.has(id)) continue;
         if (pending.has(id)) pending.set(id, null);

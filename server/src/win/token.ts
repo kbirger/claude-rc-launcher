@@ -275,7 +275,9 @@ export function restrictedSpawn(): WinDeps["spawn"] {
           throw new RestrictedTokenError(`CreateEnvironmentBlock failed (error ${k32.GetLastError()})`);
         }
 
-        env = pe[0]!;
+        const block = pe.at(0);
+        if (block === undefined) throw new RestrictedTokenError("CreateEnvironmentBlock returned no block");
+        env = block;
 
         // Inheritable handles: NUL for stdin, the log file for stdout and stderr.
         const sa = Buffer.alloc(24); // SECURITY_ATTRIBUTES: nLength, lpSecurityDescriptor, bInheritHandle

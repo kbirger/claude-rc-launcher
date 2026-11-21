@@ -2,6 +2,7 @@ import { readSse } from "../../server/src/ssereader";
 import type { SseEvent } from "../../server/src/ssereader";
 import { ExitError, LOGIN_MESSAGE } from "./creds";
 import type { Credentials } from "./creds";
+import { isObject } from "./json";
 
 /** A non-2xx answer from the hub, keeping the status and parsed body so callers can react to it. */
 export class HubError extends ExitError {
@@ -42,7 +43,7 @@ export function hubClient(options: {
       // unexpected error) is not an expired login, so it keeps its own message and does not tell the user to log in.
       throw error instanceof ExitError
         ? error
-        : new ExitError(`could not renew the login: ${(error as Error)?.message ?? String(error)}`, 1);
+        : new ExitError(`could not renew the login: ${error instanceof Error ? error.message : String(error)}`, 1);
     }
 
     options.save(creds);
@@ -125,7 +126,7 @@ export function hubClient(options: {
       }
 
       if (res.status === 204) return undefined as Value;
-      let parsed: any = undefined;
+      let parsed: unknown;
 
       try {
         parsed = await res.json();
@@ -133,8 +134,11 @@ export function hubClient(options: {
         /* handled below */
       }
 
-      if (!res.ok)
-        throw new HubError(typeof parsed?.error === "string" ? parsed.error : `HTTP ${res.status}`, res.status, parsed);
+      if (!res.ok) {
+        const reason = isObject(parsed) ? parsed.error : undefined;
+        throw new HubError(typeof reason === "string" ? reason : `HTTP ${res.status}`, res.status, parsed);
+      }
+
       return parsed as Value;
     },
   };

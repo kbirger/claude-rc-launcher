@@ -65,7 +65,7 @@ export function cidrContains(list: string[], addr: string): boolean {
   const max = ip.version === 4 ? 32n : 128n;
   return list.some((item) => {
     const net = parseNet(item);
-    if (!net || net.version !== ip.version) return false;
+    if (net?.version !== ip.version) return false;
     const shift = max - BigInt(net.bits);
     return net.value >> shift === ip.value >> shift;
   });
