@@ -6,6 +6,7 @@ import {
   joinPath,
   lastSegments,
   relativeTo,
+  sessionBranch,
   sessionDetail,
   sessionMatches,
   sessionState,
@@ -132,14 +133,15 @@ test("sessionTitle gives the name or a placeholder", () => {
   expect(sessionTitle(sess)).toBeUndefined();
 });
 
-test("sessionDetail lists id, age and a real branch only", () => {
-  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual([
-    "abcdef12",
-    expect.stringMatching(/^2h ago · /),
-    "main",
-  ]);
-  expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
+test("sessionDetail lists the id and the age, and the branch has its own function", () => {
+  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
   expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
+});
+
+test("sessionBranch returns a real branch only", () => {
+  expect(sessionBranch({ ...sess, branch: "main" })).toBe("main");
+  expect(sessionBranch({ ...sess, branch: "HEAD" })).toBeUndefined();
+  expect(sessionBranch(sess)).toBeUndefined();
 });
 
 test("sessionsHref encodes an abs value so it comes back unchanged", () => {
