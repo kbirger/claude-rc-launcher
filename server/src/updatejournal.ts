@@ -5,8 +5,8 @@ type Level = "log" | "warn" | "error";
 const MAX_TEXT = 200;
 
 /** Cuts untrusted text for the journal: control characters become spaces and the length is capped. */
-export function journalText(s: string): string {
-  const flat = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim();
+export function journalText(text: string): string {
+  const flat = text.replace(/[\p{Cc}\u2028\u2029]+/gu, " ").trim();
   return flat.length > MAX_TEXT ? flat.slice(0, MAX_TEXT - 3) + "..." : flat;
 }
 
@@ -14,23 +14,41 @@ export function journalText(s: string): string {
  * Returns a listener for `UpdateRecord.onChange` that writes the story of each update: the start, each new step
  * and the result. A repeat of a step or of a result writes nothing.
  */
-export function updateJournal(log: (line: string, level: Level) => void): (e: UpdateEntry) => void {
+export function updateJournal(log: (line: string, level: Level) => void): (updateEntry: UpdateEntry) => void {
   const seen = new Map<string, string>(); // host -> key of the last state that was logged
-  return (e) => {
-    const prev = seen.get(e.host);
-    if (e.status === "running") {
-      const run = `${e.startedAt}\u0000`;
-      if (prev === undefined || !prev.startsWith(run)) log(`[update] ${e.host} started by ${journalText(e.startedBy)} from ${journalText(e.from)}`, "log");
-      const key = `${run}${e.step ?? ""}\u0000${e.stepDetail ?? ""}`;
-      if (e.step !== undefined && prev !== key) log(`[update] ${e.host} step ${e.step}${e.stepDetail ? `: ${journalText(e.stepDetail)}` : ""}`, "log");
-      seen.set(e.host, key);
+
+  return (updateEntry) => {
+    const prev = seen.get(updateEntry.host);
+
+    if (updateEntry.status === "running") {
+      const run = `${updateEntry.startedAt}\u0000`;
+      if (!prev?.startsWith(run))
+        log(
+          `[update] ${updateEntry.host} started by ${journalText(updateEntry.startedBy)} from ${journalText(updateEntry.from)}`,
+          "log",
+        );
+      const key = `${run}${updateEntry.step ?? ""}\u0000${updateEntry.stepDetail ?? ""}`;
+      if (updateEntry.step !== undefined && prev !== key)
+        log(
+          `[update] ${updateEntry.host} step ${updateEntry.step}${updateEntry.stepDetail ? `: ${journalText(updateEntry.stepDetail)}` : ""}`,
+          "log",
+        );
+      seen.set(updateEntry.host, key);
       return;
     }
-    const key = `${e.startedAt}\u0000final\u0000${e.status}`;
+
+    const key = `${updateEntry.startedAt}\u0000final\u0000${updateEntry.status}`;
     if (prev === key) return;
-    seen.set(e.host, key);
-    const to = e.to ? ` (${journalText(e.to)})` : "";
-    const err = e.error ? `: ${journalText(e.error)}` : "";
-    log(`[update] ${e.host} ${e.status}${to}${err}`, e.status === "failed" || e.status === "unknown" ? "error" : e.status === "rolled back" ? "warn" : "log");
+    seen.set(updateEntry.host, key);
+    const to = updateEntry.to ? ` (${journalText(updateEntry.to)})` : "";
+    const err = updateEntry.error ? `: ${journalText(updateEntry.error)}` : "";
+    log(
+      `[update] ${updateEntry.host} ${updateEntry.status}${to}${err}`,
+      updateEntry.status === "failed" || updateEntry.status === "unknown"
+        ? "error"
+        : updateEntry.status === "rolled back"
+          ? "warn"
+          : "log",
+    );
   };
 }

@@ -1,32 +1,57 @@
 import { describe, expect, test } from "bun:test";
 import { parseConfig } from "../src/config";
-import { defaultName, instanceId, isValidName, parseManaged, execWords, parseUnitSettings, parseUnitUser, renderUnit, runAsFor, unitName } from "../src/unit";
+import {
+  defaultName,
+  instanceId,
+  isValidName,
+  parseManaged,
+  execWords,
+  parseUnitSettings,
+  parseUnitUser,
+  renderUnit,
+  runAsFor,
+  unitName,
+} from "../src/unit";
+import { defined } from "./support";
 
 const KEYS: Record<string, string> = {
-  CLAUDE_BIN: "claude_bin", NAME_PREFIX: "name_prefix", SERVICE_HOME: "service_home", SERVICE_PATH: "service_path",
-  SERVICE_USER: "service_user", SSH_AUTH_SOCK: "ssh_auth_sock", SYSTEMD_SCOPE: "scope",
+  CLAUDE_BIN: "claude_bin",
+  NAME_PREFIX: "name_prefix",
+  SERVICE_HOME: "service_home",
+  SERVICE_PATH: "service_path",
+  SERVICE_USER: "service_user",
+  SSH_AUTH_SOCK: "ssh_auth_sock",
+  SYSTEMD_SCOPE: "scope",
 };
+
 const cfg = (extra: Record<string, string> = {}) => {
   const instance: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(extra)) instance[KEYS[k] ?? (k === "CLAUDE_RC_ARGS" ? "claude_rc_args" : k)] = k === "CLAUDE_RC_ARGS" ? v.split(/\s+/).filter(Boolean) : v;
+  for (const [key, value] of Object.entries(extra))
+    instance[KEYS[key] ?? (key === "CLAUDE_RC_ARGS" ? "claude_rc_args" : key)] =
+      key === "CLAUDE_RC_ARGS" ? value.split(/\s+/).filter(Boolean) : value;
   return parseConfig(
     {
       public_url: "https://x",
       instance,
-      user_auth: { mode: "oidc", session_secret_file: "s", oidc: { issuer: "https://i", client_id: "c", client_secret_file: "c" } },
+      user_auth: {
+        mode: "oidc",
+        session_secret_file: "s",
+        oidc: { issuer: "https://i", client_id: "c", client_secret_file: "c" },
+      },
     },
     { readFile: () => "x".repeat(32) },
   );
 };
+
 const withSock = () => cfg({ SSH_AUTH_SOCK: "/run/ssh-agent.sock" });
-const P = "/srv/claude/projects/monitoring";
+const item = "/srv/claude/projects/monitoring";
 const BS = String.fromCharCode(92);
 
 describe("renderUnit", () => {
   test("matches proven template", () => {
-    const out = renderUnit(withSock(), P, "myhost-monitoring");
+    const out = renderUnit(withSock(), item, "myhost-monitoring");
     const expected = [
-      `# managed-by: claude-rc-launcher path=${P}`,
+      `# managed-by: claude-rc-launcher path=${item}`,
       "[Unit]",
       "Description=Claude Code Remote Control Server",
       "After=network-online.target",
@@ -35,7 +60,7 @@ describe("renderUnit", () => {
       "[Service]",
       "Type=simple",
       "User=root",
-      `WorkingDirectory=${P}`,
+      `WorkingDirectory=${item}`,
       `Environment="HOME=/root"`,
       `Environment="PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`,
       `Environment="SSH_AUTH_SOCK=/run/ssh-agent.sock"`,
@@ -53,27 +78,27 @@ describe("renderUnit", () => {
   });
 
   test("no SSH_AUTH_SOCK without config", () => {
-    expect(renderUnit(cfg(), P, "n")).not.toContain("SSH_AUTH_SOCK");
+    expect(renderUnit(cfg(), item, "n")).not.toContain("SSH_AUTH_SOCK");
   });
 
   test("User comes from config", () => {
-    expect(renderUnit(cfg({ SERVICE_USER: "bob" }), P, "n")).toContain("\nUser=bob\n");
+    expect(renderUnit(cfg({ SERVICE_USER: "bob" }), item, "n")).toContain("\nUser=bob\n");
   });
 
   test("marker round-trips; non-marker is null", () => {
-    expect(parseManaged(renderUnit(cfg(), P, "n"))).toEqual({ path: P });
+    expect(parseManaged(renderUnit(cfg(), item, "n"))).toEqual({ path: item });
     expect(parseManaged("[Unit]\nDescription=x\n")).toBeNull();
     expect(parseManaged("")).toBeNull();
   });
 
   test("hostile path is escaped", () => {
-    const p = '/srv/my "proj" 100%$x é';
-    const out = renderUnit(cfg(), p, "n");
+    const entry = '/srv/my "proj" 100%$x é';
+    const out = renderUnit(cfg(), entry, "n");
     expect(out).toContain('WorkingDirectory=/srv/my "proj" 100%%$x é\n');
-    expect(out.split("\n").filter((l) => l.startsWith("ExecStart="))).toEqual([
+    expect(out.split("\n").filter((part) => part.startsWith("ExecStart="))).toEqual([
       "ExecStart=/root/.local/bin/claude remote-control --name n --spawn same-dir",
     ]);
-    expect(parseManaged(out)).toEqual({ path: p });
+    expect(parseManaged(out)).toEqual({ path: entry });
   });
 
   test("control chars throw", () => {
@@ -91,10 +116,10 @@ describe("renderUnit", () => {
   });
 
   test("control chars in claudeRcArgs and sshAuthSock throw", () => {
-    expect(() => renderUnit(cfg({ CLAUDE_RC_ARGS: "--a --b\u0001c" }), P, "n")).toThrow();
-    expect(() => renderUnit(cfg({ CLAUDE_BIN: "cl\naude" }), P, "n")).toThrow();
-    expect(() => renderUnit(cfg({ SSH_AUTH_SOCK: "/run/a\nExecStartPre=x" }), P, "n")).toThrow();
-    expect(() => renderUnit(cfg({ SERVICE_USER: "bob" + BS }), P, "n")).toThrow();
+    expect(() => renderUnit(cfg({ CLAUDE_RC_ARGS: "--a --b\u0001c" }), item, "n")).toThrow();
+    expect(() => renderUnit(cfg({ CLAUDE_BIN: "cl\naude" }), item, "n")).toThrow();
+    expect(() => renderUnit(cfg({ SSH_AUTH_SOCK: "/run/a\nExecStartPre=x" }), item, "n")).toThrow();
+    expect(() => renderUnit(cfg({ SERVICE_USER: "bob" + BS }), item, "n")).toThrow();
   });
 
   test("relative path throws", () => {
@@ -102,25 +127,25 @@ describe("renderUnit", () => {
   });
 
   test("invalid name throws", () => {
-    expect(() => renderUnit(cfg(), P, "a b")).toThrow();
-    expect(() => renderUnit(cfg(), P, "")).toThrow();
+    expect(() => renderUnit(cfg(), item, "a b")).toThrow();
+    expect(() => renderUnit(cfg(), item, "")).toThrow();
   });
 
   test("claudeBin with space is double-quoted; specials escaped", () => {
-    const out = renderUnit(cfg({ CLAUDE_BIN: "/opt/my claude/bin/claude" }), P, "n");
+    const out = renderUnit(cfg({ CLAUDE_BIN: "/opt/my claude/bin/claude" }), item, "n");
     expect(out).toContain('ExecStart="/opt/my claude/bin/claude" remote-control --name n');
-    const out2 = renderUnit(cfg({ CLAUDE_BIN: String.raw`/o/a"b$c%d\e` }), P, "n");
+    const out2 = renderUnit(cfg({ CLAUDE_BIN: String.raw`/o/a"b$c%d\e` }), item, "n");
     expect(out2).toContain(String.raw`ExecStart="/o/a\"b$$c%%d\\e" remote-control`);
   });
 
   test("Environment values escape quotes, backslashes and %", () => {
-    const out = renderUnit(cfg({ SERVICE_HOME: String.raw`/h/a"b%c\d` }), P, "n");
+    const out = renderUnit(cfg({ SERVICE_HOME: String.raw`/h/a"b%c\d` }), item, "n");
     expect(out).toContain(String.raw`Environment="HOME=/h/a\"b%%c\\d"`);
   });
 
   test("control chars in config values throw", () => {
-    expect(() => renderUnit(cfg({ SERVICE_PATH: "/a\nExecStartPre=x" }), P, "n")).toThrow();
-    expect(() => renderUnit(cfg({ SERVICE_USER: "root\nUser=x" }), P, "n")).toThrow();
+    expect(() => renderUnit(cfg({ SERVICE_PATH: "/a\nExecStartPre=x" }), item, "n")).toThrow();
+    expect(() => renderUnit(cfg({ SERVICE_USER: "root\nUser=x" }), item, "n")).toThrow();
   });
 });
 
@@ -138,14 +163,14 @@ describe("names and ids", () => {
   });
 
   test("instanceId stable 12 hex", () => {
-    expect(instanceId(P)).toMatch(/^[0-9a-f]{12}$/);
-    expect(instanceId(P)).toBe(instanceId(P));
-    expect(instanceId(P)).not.toBe(instanceId(P + "2"));
+    expect(instanceId(item)).toMatch(/^[0-9a-f]{12}$/);
+    expect(instanceId(item)).toBe(instanceId(item));
+    expect(instanceId(item)).not.toBe(instanceId(item + "2"));
     expect(unitName("abc")).toBe("claude-rc-abc.service");
   });
 
   test("defaultName", () => {
-    expect(defaultName(cfg({ NAME_PREFIX: "myhost-" }), P)).toBe("myhost-monitoring");
+    expect(defaultName(cfg({ NAME_PREFIX: "myhost-" }), item)).toBe("myhost-monitoring");
     expect(defaultName(cfg(), "/x/my proj é")).toBe("my-proj--");
     expect(defaultName(cfg(), "/")).toBe("claude");
     expect(defaultName(cfg(), "/x/" + "a".repeat(100))).toHaveLength(64);
@@ -165,42 +190,44 @@ describe("names and ids", () => {
 
 describe("flag injection and scope", () => {
   test("renderUnit rejects a name starting with '-'", () => {
-    expect(() => renderUnit(cfg(), P, "--dangerously-skip-permissions")).toThrow();
-    expect(() => renderUnit(cfg(), P, "-x")).toThrow();
+    expect(() => renderUnit(cfg(), item, "--dangerously-skip-permissions")).toThrow();
+    expect(() => renderUnit(cfg(), item, "-x")).toThrow();
   });
 
   test("system scope has User= and multi-user.target", () => {
-    const out = renderUnit(cfg(), P, "n");
+    const out = renderUnit(cfg(), item, "n");
     expect(out).toContain("\nUser=root\n");
     expect(out).toContain("WantedBy=multi-user.target");
   });
 
   test("user scope: WantedBy=default.target and no User=", () => {
-    const out = renderUnit(cfg({ SYSTEMD_SCOPE: "user", SERVICE_USER: "bob" }), P, "n");
+    const out = renderUnit(cfg({ SYSTEMD_SCOPE: "user", SERVICE_USER: "bob" }), item, "n");
     expect(out).toContain("WantedBy=default.target");
     expect(out).not.toContain("multi-user.target");
-    expect(out.split("\n").some((l) => l.startsWith("User="))).toBe(false);
+    expect(out.split("\n").some((part) => part.startsWith("User="))).toBe(false);
   });
 });
 
 describe("renderUnit run-as user", () => {
   const alice = { name: "alice", uid: 1000, gid: 1000, home: "/home/alice" };
   test("uses the user, HOME, PATH and claude binary of runAs", () => {
-    const out = renderUnit(cfg(), P, "n", runAsFor(cfg(), alice));
+    const out = renderUnit(cfg(), item, "n", runAsFor(cfg(), alice));
     expect(out).toContain("\nUser=alice\n");
     expect(out).toContain('Environment="HOME=/home/alice"');
-    expect(out).toContain('Environment="PATH=/home/alice/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"');
+    expect(out).toContain(
+      'Environment="PATH=/home/alice/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+    );
     expect(out).toContain("\nExecStart=/home/alice/.local/bin/claude remote-control");
   });
   test("rejects a user name with a space, newline or equals sign", () => {
     for (const bad of ["a b", "a\nb", "a=b"]) {
       const ra = { user: bad, home: "/home/x", path: "/bin", claudeBin: "/home/x/.local/bin/claude" };
-      expect(() => renderUnit(cfg(), P, "n", ra)).toThrow();
+      expect(() => renderUnit(cfg(), item, "n", ra)).toThrow();
       expect(() => runAsFor(cfg(), { ...alice, name: bad })).toThrow();
     }
   });
   test("omits User= in user scope for any runAs", () => {
-    const out = renderUnit(cfg({ SYSTEMD_SCOPE: "user" }), P, "n", runAsFor(cfg(), alice));
+    const out = renderUnit(cfg({ SYSTEMD_SCOPE: "user" }), item, "n", runAsFor(cfg(), alice));
     expect(out).not.toContain("User=");
   });
 });
@@ -214,44 +241,49 @@ describe("parseUnitUser", () => {
 
 describe("unit settings", () => {
   test("round trip keeps settings with spaces and a percent sign in the binary path", () => {
-    const c = cfg({ CLAUDE_RC_ARGS: "--verbose" });
-    c.claudeBin = "/opt/my bin/100%/claude";
-    const out = renderUnit(c, P, "my-proj", undefined, { createSession: false, spawnMode: "worktree" });
-    expect(out).toContain('"/opt/my bin/100%%/claude" remote-control --name my-proj --verbose --spawn worktree --no-create-session-in-dir');
+    const config = cfg({ CLAUDE_RC_ARGS: "--verbose" });
+    config.claudeBin = "/opt/my bin/100%/claude";
+    const out = renderUnit(config, item, "my-proj", undefined, { createSession: false, spawnMode: "worktree" });
+    expect(out).toContain(
+      '"/opt/my bin/100%%/claude" remote-control --name my-proj --verbose --spawn worktree --no-create-session-in-dir',
+    );
     expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree" });
   });
   test("operator args with quotes and backslashes survive", () => {
-    const c = cfg();
-    c.claudeRcArgs = ["--note", 'a "b" c\\d $x', "--spawn", "worktree"];
-    const out = renderUnit(c, P, "n", undefined, { createSession: false, spawnMode: "worktree" });
+    const config = cfg();
+    config.claudeRcArgs = ["--note", 'a "b" c\\d $x', "--spawn", "worktree"];
+    const out = renderUnit(config, item, "n", undefined, { createSession: false, spawnMode: "worktree" });
     expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree" });
     expect(out).toContain('--note "a \\"b\\" c\\\\d $$x" --spawn worktree');
   });
   test("execWords undoes the execWord quoting", () => {
-    const c = cfg();
-    c.claudeBin = "/opt/my bin/100%/claude";
-    c.claudeRcArgs = ["", "--note", 'a "b" c\\d $x %h', "$$", "%%", "plain", "--spawn", "worktree"];
-    const out = renderUnit(c, P, "n");
-    const value = /^ExecStart=(.*)$/m.exec(out)![1]!;
-    expect(execWords(value)).toEqual([c.claudeBin, "remote-control", "--name", "n", ...c.claudeRcArgs]);
+    const config = cfg();
+    config.claudeBin = "/opt/my bin/100%/claude";
+    config.claudeRcArgs = ["", "--note", 'a "b" c\\d $x %h', "$$", "%%", "plain", "--spawn", "worktree"];
+    const out = renderUnit(config, item, "n");
+    const value = defined(/^ExecStart=(.*)$/m.exec(out))[1];
+    expect(execWords(value)).toEqual([config.claudeBin, "remote-control", "--name", "n", ...config.claudeRcArgs]);
   });
   test("old unit with flags reads back", () => {
-    const u = "ExecStart=/bin/claude remote-control --name x --spawn same-dir --no-create-session-in-dir\n";
-    expect(parseUnitSettings(u)).toEqual({ createSession: false, spawnMode: "same-dir" });
+    const entry = "ExecStart=/bin/claude remote-control --name x --spawn same-dir --no-create-session-in-dir\n";
+    expect(parseUnitSettings(entry)).toEqual({ createSession: false, spawnMode: "same-dir" });
   });
   test("a unit with no flags reads as the defaults", () => {
-    expect(parseUnitSettings("ExecStart=/bin/claude remote-control --name x\n")).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(parseUnitSettings("ExecStart=/bin/claude remote-control --name x\n")).toEqual({
+      createSession: true,
+      spawnMode: "same-dir",
+    });
     expect(parseUnitSettings("")).toEqual({ createSession: true, spawnMode: "same-dir" });
   });
   test("settings keep other operator flags", () => {
-    const c = cfg();
-    c.claudeRcArgs = ["--spawn", "worktree", "--permission-mode", "plan"];
-    const out = renderUnit(c, P, "n", undefined, { createSession: true, spawnMode: "same-dir" });
+    const config = cfg();
+    config.claudeRcArgs = ["--spawn", "worktree", "--permission-mode", "plan"];
+    const out = renderUnit(config, item, "n", undefined, { createSession: true, spawnMode: "same-dir" });
     expect(out).toContain("--name n --permission-mode plan --spawn same-dir\n");
   });
   test("without settings the args are untouched", () => {
-    const c = cfg();
-    c.claudeRcArgs = ["--no-create-session-in-dir", "--x"];
-    expect(renderUnit(c, P, "n")).toContain("--name n --no-create-session-in-dir --x\n");
+    const config = cfg();
+    config.claudeRcArgs = ["--no-create-session-in-dir", "--x"];
+    expect(renderUnit(config, item, "n")).toContain("--name n --no-create-session-in-dir --x\n");
   });
 });

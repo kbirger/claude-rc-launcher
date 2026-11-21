@@ -7,9 +7,9 @@ import {
   RELEASE_REPO,
   RELEASE_TAG_RE,
   sha256,
-  type ReleaseIo,
-  type RunResult,
 } from "../src/release";
+import type { ReleaseIo, RunResult } from "../src/release";
+import { rejection } from "./support";
 
 const BASE = "https://github.com/kbirger/claude-rc-launcher/releases";
 const ASSET = "claude-rc-linux-x64";
@@ -17,11 +17,11 @@ const BIN = new TextEncoder().encode("binary-bytes");
 
 function fakeFetch(routes: Record<string, () => Response>) {
   const requested: string[] = [];
-  const fakeFn = (async (url: string | URL | Request) => {
-    const u = String(url);
-    requested.push(u);
-    const route = routes[u];
-    return route ? route() : new Response("missing", { status: 404 });
+  const fakeFn = ((url: string | URL | Request) => {
+    const text = String(url);
+    requested.push(text);
+    const route = routes[text];
+    return Promise.resolve(route ? route() : new Response("missing", { status: 404 }));
   }) as unknown as typeof fetch;
   return { fetch: fakeFn, requested };
 }
@@ -32,26 +32,29 @@ function sums(lines: Record<string, Uint8Array>) {
     .join("\n");
 }
 
-type Call = { args: string[]; timeoutMs?: number };
+interface Call {
+  args: string[];
+  timeoutMs?: number;
+}
 
 function fakeIo(opts: { results?: Record<string, RunResult>; fetch?: typeof fetch } = {}) {
   const calls: Call[] = [];
   const removed: string[] = [];
   const written: { name: string; data: Uint8Array; path: string }[] = [];
   const io: ReleaseIo = {
-    fetch: opts.fetch ?? (globalThis.fetch as typeof fetch),
+    fetch: opts.fetch ?? globalThis.fetch,
     run(args, runOpts) {
       calls.push({ args, timeoutMs: runOpts?.timeoutMs });
       const key = args.join(" ");
       return opts.results?.[key] ?? opts.results?.[args[0]] ?? { code: 0, stdout: "", stderr: "" };
     },
     writeTemp(name, data) {
-      const p = `/tmp/fake/${name}`;
-      written.push({ name, data, path: p });
-      return p;
+      const item = `/tmp/fake/${name}`;
+      written.push({ name, data, path: item });
+      return item;
     },
-    removeTemp(p) {
-      removed.push(p);
+    removeTemp(path) {
+      removed.push(path);
     },
   };
   return { io, calls, removed, written };
@@ -96,7 +99,7 @@ describe("downloadAsset", () => {
       [`${BASE}/latest/download/${ASSET}`]: () => new Response(BIN),
       [`${BASE}/latest/download/SHA256SUMS`]: () => new Response(`${"0".repeat(64)}  ${ASSET}\n`),
     });
-    const err = await downloadAsset({ fetch }, ASSET).catch((e) => e);
+    const err = await downloadAsset({ fetch }, ASSET).catch((error) => error);
     expect(err).toBeInstanceOf(ReleaseError);
     expect(err.message).toBe(`the checksum of ${ASSET} does not match SHA256SUMS. Nothing was installed`);
   });
@@ -107,18 +110,18 @@ describe("downloadAsset", () => {
       [url]: () => new Response("nope", { status: 404 }),
       [`${BASE}/download/v9.9.9/SHA256SUMS`]: () => new Response(sums({ [ASSET]: BIN })),
     });
-    const err = await downloadAsset({ fetch }, ASSET, "v9.9.9").catch((e) => e);
+    const err = await downloadAsset({ fetch }, ASSET, "v9.9.9").catch((error) => error);
     expect(err).toBeInstanceOf(ReleaseError);
     expect(err.message).toBe(`cannot download ${url}: HTTP 404`);
   });
 
   test("rejects a release that does not match RELEASE_TAG_RE before any request", async () => {
     const requested: string[] = [];
-    const fakeFn = (async (url: string | URL | Request) => {
+    const fakeFn = ((url: string | URL | Request) => {
       requested.push(String(url));
-      return new Response("");
+      return Promise.resolve(new Response(""));
     }) as unknown as typeof fetch;
-    await expect(downloadAsset({ fetch: fakeFn }, ASSET, "../../evil")).rejects.toBeInstanceOf(ReleaseError);
+    expect(await rejection(downloadAsset({ fetch: fakeFn }, ASSET, "../../evil"))).toBeInstanceOf(ReleaseError);
     expect(requested).toEqual([]);
   });
 });
@@ -129,7 +132,7 @@ describe("installWithBackup", () => {
   test("runs install, cp -p, mv in that order and returns normally", () => {
     const { io, calls, removed, written } = fakeIo();
     installWithBackup(io, TARGET, BIN);
-    expect(calls.map((c) => c.args)).toEqual([
+    expect(calls.map((call) => call.args)).toEqual([
       ["install", "-m", "755", "/tmp/fake/claude-rc-launcher", `${TARGET}.new`],
       ["cp", "-p", TARGET, `${TARGET}.prev`],
       ["mv", "-f", `${TARGET}.new`, TARGET],
@@ -144,15 +147,17 @@ describe("installWithBackup", () => {
       results: { install: { code: 1, stdout: "", stderr: "permission denied" } },
     });
     let err: unknown;
+
     try {
       installWithBackup(io, TARGET, BIN);
-    } catch (e) {
-      err = e;
+    } catch (error) {
+      err = error;
     }
+
     expect(err).toBeInstanceOf(ReleaseError);
     expect((err as Error).message).toBe("installing the binary failed (install exit 1): permission denied");
-    expect(calls.map((c) => c.args)).toContainEqual(["rm", "-f", `${TARGET}.new`]);
-    expect(calls.some((c) => c.args[0] === "cp" || c.args[0] === "mv")).toBe(false);
+    expect(calls.map((call) => call.args)).toContainEqual(["rm", "-f", `${TARGET}.new`]);
+    expect(calls.some((call) => call.args[0] === "cp" || call.args[0] === "mv")).toBe(false);
     expect(removed).toEqual(["/tmp/fake/claude-rc-launcher"]);
   });
 
@@ -160,9 +165,11 @@ describe("installWithBackup", () => {
     const { io, calls } = fakeIo({
       results: { install: { code: 1, stdout: "", stderr: "" } },
     });
-    expect(() => installWithBackup(io, TARGET, BIN)).toThrow(ReleaseError);
-    expect(calls.map((c) => c.args)).not.toContainEqual(["cp", "-p", TARGET, `${TARGET}.prev`]);
-    expect(calls.map((c) => c.args)).not.toContainEqual(["mv", "-f", `${TARGET}.prev`, TARGET]);
+    expect(() => {
+      installWithBackup(io, TARGET, BIN);
+    }).toThrow(ReleaseError);
+    expect(calls.map((call) => call.args)).not.toContainEqual(["cp", "-p", TARGET, `${TARGET}.prev`]);
+    expect(calls.map((call) => call.args)).not.toContainEqual(["mv", "-f", `${TARGET}.prev`, TARGET]);
   });
 });
 
@@ -172,7 +179,7 @@ describe("restorePrevious", () => {
   test("moves .prev back over the target and returns true", () => {
     const { io, calls } = fakeIo();
     expect(restorePrevious(io, TARGET)).toBe(true);
-    expect(calls.map((c) => c.args)).toEqual([["mv", "-f", `${TARGET}.prev`, TARGET]]);
+    expect(calls.map((call) => call.args)).toEqual([["mv", "-f", `${TARGET}.prev`, TARGET]]);
   });
 
   test("returns false when mv fails", () => {

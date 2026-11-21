@@ -25,5 +25,5 @@ export type Shell = {
 };
 
 const KEY = Symbol("shell");
-export const setShell = (s: Shell) => setContext(KEY, s);
+export const setShell = (shell: Shell) => setContext(KEY, shell);
 export const getShell = () => getContext<Shell>(KEY);

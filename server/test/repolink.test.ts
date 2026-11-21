@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { HttpError } from "../src/instances";
 import { parseRepoLink } from "../src/repolink";
 
-const ok = { owner: "kbirger", repo: "claude-rc-launcher", url: "https://github.com/kbirger/claude-rc-launcher.git", dirName: "claude-rc-launcher" };
+const ok = {
+  owner: "kbirger",
+  repo: "claude-rc-launcher",
+  url: "https://github.com/kbirger/claude-rc-launcher.git",
+  dirName: "claude-rc-launcher",
+};
 
 describe("parseRepoLink", () => {
   for (const input of [
@@ -40,9 +45,9 @@ describe("parseRepoLink", () => {
       try {
         parseRepoLink(input);
         throw new Error("did not throw");
-      } catch (e) {
-        expect(e).toBeInstanceOf(HttpError);
-        expect((e as HttpError).status).toBe(400);
+      } catch (error) {
+        expect(error).toBeInstanceOf(HttpError);
+        expect((error as HttpError).status).toBe(400);
       }
     });
   }
@@ -54,11 +59,12 @@ describe("parseRepoLink", () => {
   const msg = (input: string): string => {
     try {
       parseRepoLink(input);
-    } catch (e) {
-      expect(e).toBeInstanceOf(HttpError);
-      expect((e as HttpError).status).toBe(400);
-      return (e as HttpError).message;
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as HttpError).status).toBe(400);
+      return (error as HttpError).message;
     }
+
     throw new Error("did not throw");
   };
 

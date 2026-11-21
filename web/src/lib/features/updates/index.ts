@@ -1,6 +1,15 @@
 export type { LogLine, ReleaseNote, ReleaseNotes, UpdateEntry } from "./api";
 export { updateHostMutation } from "./mutations";
-export { HISTORY_KEY, LATEST_KEY, LOGS_KEY, RELEASE_NOTES_KEY, UPDATES_KEY, latestQuery, releaseNotesQuery, updatesQuery } from "./queries";
+export {
+  HISTORY_KEY,
+  LATEST_KEY,
+  LOGS_KEY,
+  RELEASE_NOTES_KEY,
+  UPDATES_KEY,
+  latestQuery,
+  releaseNotesQuery,
+  updatesQuery,
+} from "./queries";
 export { notesRange, releasePageUrl } from "./releasenotes";
 export { isRunning, lastEntry } from "./updatebanner";
 export { hostOptionLabel, showsFinishedPanel, stepIsError, stepText } from "./updateoutput";

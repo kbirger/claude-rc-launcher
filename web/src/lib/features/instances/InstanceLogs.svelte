@@ -9,9 +9,14 @@
 </script>
 
 {#if logsQ.isError}
-  <Alert.Root variant="destructive"><Alert.Description>{logsQ.error instanceof ApiError ? logsQ.error.message : "Failed to load logs"}</Alert.Description></Alert.Root>
+  <Alert.Root variant="destructive">
+    <Alert.Description>
+      {logsQ.error instanceof ApiError ? logsQ.error.message : "Failed to load logs"}
+    </Alert.Description>
+  </Alert.Root>
 {:else if logsQ.data !== undefined}
-  <pre class="max-h-[40vh] overflow-auto rounded-lg bg-background p-2 text-xs [overflow-wrap:anywhere] whitespace-pre-wrap">{logsQ.data}</pre>
+  <pre
+    class="max-h-[40vh] overflow-auto rounded-lg bg-background p-2 text-xs [overflow-wrap:anywhere] whitespace-pre-wrap">{logsQ.data}</pre>
 {:else}
   <p class="text-muted-foreground">Loading logs...</p>
 {/if}

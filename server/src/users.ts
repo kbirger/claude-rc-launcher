@@ -1,6 +1,11 @@
 import { readFile, stat } from "node:fs/promises";
 
-export type SystemUser = { name: string; uid: number; gid: number; home: string };
+export interface SystemUser {
+  name: string;
+  uid: number;
+  gid: number;
+  home: string;
+}
 
 export interface UserDirectory {
   list(): Promise<SystemUser[]>;
@@ -13,34 +18,43 @@ export const USER_NAME_RE = /^[a-z_][a-z0-9._-]{0,31}\$?$/i;
 
 const NO_LOGIN = /(^|\/)(nologin|false)$/;
 
-async function dirExists(p: string): Promise<boolean> {
-  try { return (await stat(p)).isDirectory(); } catch { return false; }
+async function dirExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
-export function passwdDirectory(o: {
-  readPasswd?: () => Promise<string>;
-  homeExists?: (home: string) => Promise<boolean>;
-} = {}): UserDirectory {
-  const readPasswd = o.readPasswd ?? (() => readFile("/etc/passwd", "utf8"));
-  const homeExists = o.homeExists ?? dirExists;
+export function passwdDirectory(
+  options: {
+    readPasswd?: () => Promise<string>;
+    homeExists?: (home: string) => Promise<boolean>;
+  } = {},
+): UserDirectory {
+  const readPasswd = options.readPasswd ?? (() => readFile("/etc/passwd", "utf8"));
+  const homeExists = options.homeExists ?? dirExists;
 
   /** Every well-formed passwd entry with a valid name, plus its shell. */
   async function entries(): Promise<(SystemUser & { shell: string })[]> {
     const out: (SystemUser & { shell: string })[] = [];
+
     for (const line of (await readPasswd()).split("\n")) {
       if (!line || line.startsWith("#")) continue;
-      const f = line.split(":");
-      if (f.length < 7) continue;
-      const [name, , uidS, gidS, , home, shell] = f;
+      const parts = line.split(":");
+      if (parts.length < 7) continue;
+      const [name, , uidS, gidS, , home, shell] = parts;
       if (!USER_NAME_RE.test(name)) continue;
       if (!/^\d+$/.test(uidS) || !/^\d+$/.test(gidS)) continue;
       out.push({ name, uid: Number(uidS), gid: Number(gidS), home, shell });
     }
+
     return out;
   }
 
   async function list(): Promise<SystemUser[]> {
     const out: SystemUser[] = [];
+
     for (const { name, uid, gid, home, shell } of await entries()) {
       // root is always in the list. The rules below apply to every other account.
       if (name !== "root") {
@@ -48,21 +62,23 @@ export function passwdDirectory(o: {
         if (NO_LOGIN.test(shell)) continue;
         if (!home || !(await homeExists(home))) continue;
       }
+
       out.push({ name, uid, gid, home });
     }
-    return out.sort((a, b) => a.uid - b.uid);
+
+    return out.sort((systemUser, right) => systemUser.uid - right.uid);
   }
 
   return {
     list,
     async get(name) {
       if (!USER_NAME_RE.test(name)) return undefined;
-      return (await list()).find((u) => u.name === name);
+      return (await list()).find((systemUser) => systemUser.name === name);
     },
     async lookup(name) {
       if (!USER_NAME_RE.test(name)) return undefined;
-      const e = (await entries()).find((u) => u.name === name);
-      return e && { name: e.name, uid: e.uid, gid: e.gid, home: e.home };
+      const user = (await entries()).find((candidate) => candidate.name === name);
+      return user && { name: user.name, uid: user.uid, gid: user.gid, home: user.home };
     },
   };
 }

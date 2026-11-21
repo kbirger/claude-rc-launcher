@@ -5,8 +5,8 @@
 import { Hono } from "hono";
 import type { SessionsStore } from "./sessionsstore";
 
-export function allSessionsApi(o: { store: Pick<SessionsStore, "answer"> }): Hono {
+export function allSessionsApi(options: { store: Pick<SessionsStore, "answer"> }): Hono {
   const app = new Hono();
-  app.get("/", (c) => c.json(o.store.answer()));
+  app.get("/", (context) => context.json(options.store.answer()));
   return app;
 }

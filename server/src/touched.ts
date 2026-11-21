@@ -6,23 +6,34 @@
  */
 import { posix, win32 } from "node:path";
 import { absRefused, within } from "./paths";
-import { parse } from "./transcript";
+import { dig, isRecord, parse } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 
 /** `confirmed`: the tool call has a result without an error, so the file was really written. */
-export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed: boolean };
+export interface TouchedFile {
+  path: string;
+  inside: boolean;
+  tool: "write" | "edit";
+  at: string;
+  confirmed: boolean;
+}
 
 const PENDING_MAX = 1000;
 const TOUCHED_MAX = 10000;
 
 /** Sets `k` last in `m` (newest), and drops the oldest entries over `max`. */
-function putNewest<K, V>(m: Map<K, V>, k: K, v: V, max: number): void {
-  m.delete(k);
-  m.set(k, v);
-  while (m.size > max) m.delete(m.keys().next().value as K);
+function putNewest<Key, Value>(map: Map<Key, Value>, key: Key, value: Value, max: number): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > max) map.delete(map.keys().next().value as Key);
 }
 
-type Use = { path: string; inside: boolean; tool: "write" | "edit"; at: string };
+interface Use {
+  path: string;
+  inside: boolean;
+  tool: "write" | "edit";
+  at: string;
+}
 
 /**
  * Files Claude wrote or edited with Write, Edit, MultiEdit and NotebookEdit.
@@ -51,7 +62,7 @@ type Use = { path: string; inside: boolean; tool: "write" | "edit"; at: string }
  * The answer lists the confirmed paths first, newest first, then the unconfirmed ones (each path once), newest first,
  * so that the Touched list can still show what Claude tried. Each list keeps at most 10000 paths.
  */
-export async function touchedIn(o: {
+export async function touchedIn(options: {
   fs: TranscriptFs;
   file: string;
   root: string;
@@ -63,11 +74,11 @@ export async function touchedIn(o: {
    */
   dirs?: readonly string[];
 }): Promise<TouchedFile[]> {
-  const fs = o.fs;
-  const file = o.file;
-  const platform = o.platform ?? process.platform;
-  const P = platform === "win32" ? win32 : posix;
-  const root = P.resolve(o.root);
+  const fs = options.fs;
+  const file = options.file;
+  const platform = options.platform ?? process.platform;
+  const path = platform === "win32" ? win32 : posix;
+  const root = path.resolve(options.root);
   // tool_use id -> the call and its tool name, or null when the id was seen with two different calls (no result may
   // confirm it then).
   const pending = new Map<string, { use: Use; name: string } | null>();
@@ -75,52 +86,71 @@ export async function touchedIn(o: {
   const answered = new Map<string, true>();
   const confirmed = new Map<string, Use>();
   const tried = new Map<string, Use>();
+
   try {
     for await (const line of fs.lines(file)) {
       // Most lines are prompts, answers and progress records: skip them before the costly parse. Only a line with a
       // tool_use or tool_result block can change the lists. A line that hides the word (a JSON escape) is skipped,
       // which can only leave a path out or unconfirmed (fail closed). "tool_use_id" does not contain `"tool_use"`.
       if (!line.includes('"tool_use"') && !line.includes('"tool_result"')) continue;
-      const r = parse(line);
-      const content = r?.message?.content;
+      const record = parse(line);
+      const content: unknown = dig(record, "message", "content");
       if (!Array.isArray(content)) continue;
-      if (r?.type === "user") {
-        for (const block of content) {
-          if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-          const id: string = block.tool_use_id;
+      const blocks: unknown[] = content;
+
+      if (record?.type === "user") {
+        for (const block of blocks) {
+          if (!isRecord(block) || block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+          const id = block.tool_use_id;
           if (!pending.has(id)) continue;
-          const u = pending.get(id)?.use;
+          const use = pending.get(id)?.use;
           pending.delete(id);
           putNewest(answered, id, true, TOUCHED_MAX);
-          if (!u || (block.is_error !== undefined && block.is_error !== false)) continue;
-          putNewest(confirmed, u.path, u, TOUCHED_MAX);
-          tried.delete(u.path);
+          if (!use || (block.is_error !== undefined && block.is_error !== false)) continue;
+          putNewest(confirmed, use.path, use, TOUCHED_MAX);
+          tried.delete(use.path);
         }
+
         continue;
       }
-      if (r?.type !== "assistant") continue;
-      for (const block of content) {
-        if (block?.type !== "tool_use" || !block.input || typeof block.input !== "object") continue;
-        const name: string = block.name;
-        const raw = name === "NotebookEdit" ? block.input.notebook_path : name === "Write" || name === "Edit" || name === "MultiEdit" ? block.input.file_path : undefined;
+
+      if (record?.type !== "assistant") continue;
+
+      for (const block of blocks) {
+        if (!isRecord(block) || block.type !== "tool_use" || !isRecord(block.input) || typeof block.name !== "string")
+          continue;
+        const { name } = block;
+        const raw =
+          name === "NotebookEdit"
+            ? block.input.notebook_path
+            : name === "Write" || name === "Edit" || name === "MultiEdit"
+              ? block.input.file_path
+              : undefined;
         if (typeof raw !== "string" || raw.length === 0) continue;
-        const p = P.resolve(root, raw);
-        if (absRefused(p, { platform, dirs: o.dirs })) continue;
-        const at = typeof r.timestamp === "string" ? r.timestamp : "";
-        const u: Use = { path: p, inside: within(p, root), tool: name === "Write" ? "write" : "edit", at };
+        const resolved = path.resolve(root, raw);
+        if (absRefused(resolved, { platform, dirs: options.dirs })) continue;
+        const at = typeof record.timestamp === "string" ? record.timestamp : "";
+        const use: Use = {
+          path: resolved,
+          inside: within(resolved, root),
+          tool: name === "Write" ? "write" : "edit",
+          at,
+        };
         const id = block.id;
         // The same call again (same id, tool and resolved path): keep the first, ignore the repeat.
         const prior = typeof id === "string" ? pending.get(id) : undefined;
-        if (prior && prior.name === name && prior.use.path === p) continue;
-        if (!confirmed.has(p)) putNewest(tried, p, u, TOUCHED_MAX);
+        if (prior?.name === name && prior.use.path === resolved) continue;
+        if (!confirmed.has(resolved)) putNewest(tried, resolved, use, TOUCHED_MAX);
         if (typeof id !== "string" || answered.has(id)) continue;
         if (pending.has(id)) pending.set(id, null);
-        else putNewest(pending, id, { use: u, name }, PENDING_MAX);
+        else putNewest(pending, id, { use: use, name }, PENDING_MAX);
       }
     }
   } catch {
     // The transcript vanished or could not be read further: keep what was found.
   }
-  const list = (m: Map<string, Use>, c: boolean) => [...m.values()].reverse().map((u): TouchedFile => ({ ...u, confirmed: c }));
+
+  const list = (map: Map<string, Use>, entry: boolean) =>
+    [...map.values()].reverse().map((use): TouchedFile => ({ ...use, confirmed: entry }));
   return [...list(confirmed, true), ...list(tried, false)];
 }

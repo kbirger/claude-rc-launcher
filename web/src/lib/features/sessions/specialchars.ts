@@ -4,18 +4,18 @@
 // tricks need, so a text below the limit keeps full marking.
 
 /** The characters that the viewer marks: control characters, soft hyphen, zero-width characters, bidirectional controls, BOM and the specials block. Tab and line feed are not marked. */
-const SPECIAL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff\ufff9-\ufffc]/g;
+const SPECIAL = /[^\P{Cc}\t\n]|[\u00ad\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff\ufff9-\ufffc]/gu;
 
 /** Most hidden or control characters in a text for which the viewer still marks them. 1,500 of them took about 0.5 s at 4x in the real app. */
 export const MAX_SPECIAL_CHARS = 1500;
 
 /** The number of marked characters, up to one past the limit. */
 export function countSpecialChars(text: string): number {
-  let n = 0;
+  let count = 0;
   SPECIAL.lastIndex = 0;
-  while (SPECIAL.exec(text) !== null) if (++n > MAX_SPECIAL_CHARS) break;
+  while (SPECIAL.exec(text) !== null) if (++count > MAX_SPECIAL_CHARS) break;
   SPECIAL.lastIndex = 0;
-  return n;
+  return count;
 }
 
 /** True when the viewer must not mark the characters of this text. */

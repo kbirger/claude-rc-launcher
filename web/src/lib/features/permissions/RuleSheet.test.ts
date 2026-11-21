@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "#lib/shared/query";
 import type { BlockedCall, Layer } from "./api";
 import RuleSheetHarness from "./RuleSheetHarness.svelte";
 
-const realFetch = globalThis.fetch;
-let sent: { url: string; method?: string; body: any }[] = [];
+let sent: { url: string; method?: string; body: unknown }[] = [];
 let status = 200;
 let answer: Record<string, unknown> = { scope: "user" };
 const open: Array<() => void> = [];
@@ -14,40 +13,101 @@ beforeEach(() => {
   sent = [];
   status = 200;
   answer = { scope: "user" };
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     sent.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    return new Response(JSON.stringify(status === 200 ? answer : { error: "changed" }), { status, headers: { "content-type": "application/json" } });
-  }) as any;
+    return new Response(JSON.stringify(status === 200 ? answer : { error: "changed" }), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  });
 });
 afterEach(() => {
-  globalThis.fetch = realFetch;
-  for (const u of open.splice(0)) u();
+  vi.unstubAllGlobals();
+  for (const helper of open.splice(0)) helper();
   document.body.innerHTML = "";
 });
 
-const layer = (scope: Layer["scope"], o: Partial<Layer> = {}): Layer => ({ scope, path: `/p/${scope}.json`, writable: true, state: "ok", hash: `hash-${scope}`, rules: [], warnings: [], ...o });
-const call = (o: Partial<BlockedCall> = {}): BlockedCall => ({ id: "t", at: "2026-11-14T10:00:00Z", tool: "Bash", input: { command: "git push origin main" }, reason: "needs_approval", text: "secret denial text", ...o });
+const layer = (scope: Layer["scope"], item: Partial<Layer> = {}): Layer => ({
+  scope,
+  path: `/p/${scope}.json`,
+  writable: true,
+  state: "ok",
+  hash: `hash-${scope}`,
+  rules: [],
+  warnings: [],
+  ...item,
+});
+const call = (item: Partial<BlockedCall> = {}): BlockedCall => ({
+  id: "t",
+  at: "2026-11-14T10:00:00Z",
+  tool: "Bash",
+  input: { command: "git push origin main" },
+  reason: "needs_approval",
+  text: "secret denial text",
+  ...item,
+});
 
-function show(props: Record<string, unknown>, client = createQueryClient()) {
+function show(props: Partial<ComponentProps<typeof RuleSheetHarness>>, client = createQueryClient()) {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(RuleSheetHarness, { target, props: { host: "h", instance: "i", session: "s1", layers: [layer("user"), layer("project"), layer("local")], mode: "add", client, ...props } as any });
-  open.push(() => unmount(c));
+  const mounted = mount(RuleSheetHarness, {
+    target,
+    props: {
+      host: "h",
+      instance: "i",
+      session: "s1",
+      layers: [layer("user"), layer("project"), layer("local")],
+      mode: "add",
+      client,
+      ...props,
+    },
+  });
+  open.push(() => unmount(mounted));
   flushSync();
   return client;
 }
+
 const text = () => document.body.textContent ?? "";
-const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes(label)) as HTMLButtonElement | undefined;
+const button = (label: string) =>
+  [...document.querySelectorAll("button")].find((htmlButtonElement) =>
+    htmlButtonElement.textContent?.includes(label),
+  ) as HTMLButtonElement | undefined;
 const field = () => document.querySelector<HTMLInputElement>("#rule-input")!;
-const type = (v: string) => { const f = field(); f.value = v; f.dispatchEvent(new Event("input", { bubbles: true })); flushSync(); };
-const group = (name: string) => [...document.querySelectorAll("[aria-labelledby]")].find((e) => document.getElementById(e.getAttribute("aria-labelledby")!)?.textContent === name) ?? null;
+
+const type = (value: string) => {
+  const input = field();
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  flushSync();
+};
+
+const group = (name: string) =>
+  [...document.querySelectorAll("[aria-labelledby]")].find(
+    (element) => document.getElementById(element.getAttribute("aria-labelledby")!)?.textContent === name,
+  ) ?? null;
 const items = (name: string) => [...(group(name)?.querySelectorAll<HTMLElement>("[role=tab]") ?? [])];
-const labels = (name: string) => items(name).map((i) => i.textContent?.trim());
-const pickFile = (label: string) => { items("File").find((i) => i.textContent?.trim() === label)!.click(); flushSync(); };
+const labels = (name: string) => items(name).map((htmlElement) => htmlElement.textContent?.trim());
+
+const pickFile = (label: string) => {
+  items("File")
+    .find((htmlElement) => htmlElement.textContent?.trim() === label)!
+    .click();
+  flushSync();
+};
+
 const closed = () => document.querySelector("[data-testid=open]")?.textContent === "closed";
 
 test("only writable files in state ok or missing are offered, and a link shows its real path", () => {
-  show({ layers: [layer("user"), layer("project", { writable: false }), layer("local", { state: "missing", hash: undefined }), layer("legacy-local", { state: "invalid", reason: "bad json" }), layer("managed", { state: "unknown-path", path: null, reason: "Claude Code keeps this file somewhere else" })], initial: { raw: "Bash(ls)", list: "allow" } });
+  show({
+    layers: [
+      layer("user"),
+      layer("project", { writable: false }),
+      layer("local", { state: "missing", hash: undefined }),
+      layer("legacy-local", { state: "invalid", reason: "bad json" }),
+      layer("managed", { state: "unknown-path", path: null, reason: "Claude Code keeps this file somewhere else" }),
+    ],
+    initial: { raw: "Bash(ls)", list: "allow" },
+  });
   expect(labels("File")).toEqual(["User", "Local"]);
   expect(text()).toContain("in /p/user.json");
   expect(text()).toContain("Claude Code keeps this file somewhere else");
@@ -57,7 +117,9 @@ test("a link file shows one Link to line right under the confirm line", () => {
   show({ layers: [layer("user", { resolvedPath: "/real/user.json" })], initial: { raw: "Bash(ls)", list: "allow" } });
   expect(text()).toContain("Link to /real/user.json");
   expect(text().match(/Link to/g)).toHaveLength(1);
-  expect(document.querySelector("[data-testid=confirm]")!.nextElementSibling!.textContent).toBe("Link to /real/user.json");
+  expect(document.querySelector("[data-testid=confirm]")!.nextElementSibling!.textContent).toBe(
+    "Link to /real/user.json",
+  );
 });
 
 test("no Link to line when the real path is the path", () => {
@@ -67,11 +129,11 @@ test("no Link to line when the real path is the path", () => {
 
 test("the file selector holds only short labels, no paths and no Link to", () => {
   show({ layers: [layer("user", { resolvedPath: "/real/user.json" }), layer("project")] });
-  const g = group("File")!;
-  expect(g).not.toBeNull();
-  expect(g.textContent).not.toContain("/p/");
-  expect(g.textContent).not.toContain("/real/");
-  expect(g.textContent).not.toContain("Link to");
+  const element = group("File")!;
+  expect(element).not.toBeNull();
+  expect(element.textContent).not.toContain("/p/");
+  expect(element.textContent).not.toContain("/real/");
+  expect(element.textContent).not.toContain("Link to");
 });
 
 test("one offered file shows no selector", () => {
@@ -101,8 +163,8 @@ test("the chosen file is exposed on the selector", async () => {
 
 test("each selector has a visible label, and one file hides the file label too", () => {
   show({ initial: { raw: "Bash(ls)", list: "ask" } });
-  const file = [...document.querySelectorAll("span")].find((e) => e.textContent === "File")!;
-  const list = [...document.querySelectorAll("span")].find((e) => e.textContent === "List")!;
+  const file = [...document.querySelectorAll("span")].find((span) => span.textContent === "File")!;
+  const list = [...document.querySelectorAll("span")].find((span) => span.textContent === "List")!;
   expect(file.className).toContain("font-medium");
   expect(group("File")!.getAttribute("aria-labelledby")).toBe(file.id);
   expect(group("List")!.getAttribute("aria-labelledby")).toBe(list.id);
@@ -110,19 +172,24 @@ test("each selector has a visible label, and one file hides the file label too",
   expect(items("List")[1]!.getAttribute("aria-selected")).toBe("true");
   document.body.innerHTML = "";
   show({ layers: [layer("user")], initial: { raw: "Bash(ls)", list: "allow" } });
-  expect([...document.querySelectorAll("span")].some((e) => e.textContent === "File")).toBe(false);
-  expect([...document.querySelectorAll("span")].some((e) => e.textContent === "List")).toBe(true);
+  expect([...document.querySelectorAll("span")].some((span) => span.textContent === "File")).toBe(false);
+  expect([...document.querySelectorAll("span")].some((span) => span.textContent === "List")).toBe(true);
 });
 
 test("the list selector is disabled in remove mode", () => {
   show({ mode: "remove", initial: { raw: "Read", list: "deny" } });
   expect(items("List")).toHaveLength(3);
-  expect(items("List").every((i) => (i as HTMLButtonElement).disabled)).toBe(true);
+  expect(items("List").every((htmlElement) => (htmlElement as HTMLButtonElement).disabled)).toBe(true);
 });
 
 test("a file that cannot be changed is a plain note without a border box", () => {
-  show({ layers: [layer("user"), layer("managed", { state: "unknown-path", path: null, reason: "Somewhere else" })], session: "s1" });
-  const note = [...document.querySelectorAll("p")].find((p) => p.textContent?.includes("Somewhere else"))!;
+  show({
+    layers: [layer("user"), layer("managed", { state: "unknown-path", path: null, reason: "Somewhere else" })],
+    session: "s1",
+  });
+  const note = [...document.querySelectorAll("p")].find((paragraph) =>
+    paragraph.textContent?.includes("Somewhere else"),
+  )!;
   expect(note.className).not.toContain("border");
 });
 
@@ -170,7 +237,9 @@ test("the call text shows only after the Blocked line opens", () => {
 
 test("the classifier warning shows for a classifier call", () => {
   show({ call: call({ reason: "classifier" }) });
-  expect(text()).toContain("Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.");
+  expect(text()).toContain(
+    "Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.",
+  );
 });
 
 test("the edited text is what the sheet sends, with the file hash", async () => {
@@ -178,7 +247,11 @@ test("the edited text is what the sheet sends, with the file hash", async () => 
   type("Bash(git push origin dev)");
   button("Save")!.click();
   await vi.waitFor(() => expect(closed()).toBe(true));
-  expect(sent[0]).toEqual({ url: "/api/hosts/h/instances/i/sessions/s1/permissions/rules", method: "POST", body: { scope: "user", list: "allow", rule: "Bash(git push origin dev)", expectedHash: "hash-user" } });
+  expect(sent[0]).toEqual({
+    url: "/api/hosts/h/instances/i/sessions/s1/permissions/rules",
+    method: "POST",
+    body: { scope: "user", list: "allow", rule: "Bash(git push origin dev)", expectedHash: "hash-user" },
+  });
 });
 
 test("a missing file sends a null hash", async () => {
@@ -224,7 +297,11 @@ test("after success the sheet closes and the queries are invalidated", async () 
   show({ initial: { raw: "Read", list: "allow" } }, client);
   button("Save")!.click();
   await vi.waitFor(() => expect(closed()).toBe(true));
-  expect(spy.mock.calls.map((c) => (c[0] as any).queryKey[0])).toEqual(["permissions", "session-permissions", "session-blocked"]);
+  expect(spy.mock.calls.map((item) => item[0]?.queryKey?.[0])).toEqual([
+    "permissions",
+    "session-permissions",
+    "session-blocked",
+  ]);
 });
 
 test("remove mode sends DELETE and shows the Remove line", async () => {
@@ -238,7 +315,7 @@ test("remove mode sends DELETE and shows the Remove line", async () => {
 
 test("the confirm line shows the rule and the path in code elements, with no backticks", () => {
   show({ initial: { raw: "Bash(ls)", list: "allow" } });
-  const codes = [...document.querySelectorAll("[data-testid=confirm] code")].map((c) => c.textContent);
+  const codes = [...document.querySelectorAll("[data-testid=confirm] code")].map((element) => element.textContent);
   expect(codes).toEqual(["Bash(ls)", "/p/user.json"]);
   expect(document.querySelector("[data-testid=confirm]")!.textContent).not.toContain("`");
 });
@@ -308,7 +385,9 @@ test("shows the sent text and keeps the sheet open", async () => {
   answer = { scope: "user", nudge: { sent: true } };
   show({ call: call(), live: true });
   button("Save")!.click();
-  await vi.waitFor(() => expect(text()).toContain("Sent to the session. It may still wait for you to approve the message."));
+  await vi.waitFor(() =>
+    expect(text()).toContain("Sent to the session. It may still wait for you to approve the message."),
+  );
   expect(closed()).toBe(false);
   expect(document.querySelector("[role=status]")).not.toBeNull();
   button("Close")!.click();
@@ -325,13 +404,19 @@ test("shows the failure text when the answer says not_live", async () => {
 });
 
 test("the result text never says received", async () => {
-  for (const nudge of [{ sent: true }, { sent: false, reason: "not_live" }, { sent: false, reason: "socket_refused" }, { sent: false, reason: "send_failed" }, { sent: false, reason: "unsupported" }]) {
+  for (const nudge of [
+    { sent: true },
+    { sent: false, reason: "not_live" },
+    { sent: false, reason: "socket_refused" },
+    { sent: false, reason: "send_failed" },
+    { sent: false, reason: "unsupported" },
+  ]) {
     answer = { scope: "user", nudge };
     show({ call: call(), live: true });
     button("Save")!.click();
     await vi.waitFor(() => expect(document.querySelector("[role=status]")).not.toBeNull());
     expect(document.body.textContent).not.toMatch(/receiv/i);
-    for (const u of open.splice(0)) u();
+    for (const helper of open.splice(0)) helper();
     document.body.innerHTML = "";
   }
 });
@@ -343,7 +428,7 @@ test("the status says the rule was saved, for sent and for a failure", async () 
     button("Save")!.click();
     await vi.waitFor(() => expect(document.querySelector("[role=status]")).not.toBeNull());
     expect(document.querySelector("[role=status]")!.textContent).toMatch(/^Rule saved\. /);
-    for (const u of open.splice(0)) u();
+    for (const helper of open.splice(0)) helper();
     document.body.innerHTML = "";
   }
 });
@@ -352,11 +437,18 @@ test("an answer without a nudge key to a nudge request shows unsupported and kee
   show({ call: call(), live: true });
   button("Save")!.click();
   await vi.waitFor(() => expect(document.querySelector("[role=status]")).not.toBeNull());
-  expect(document.querySelector("[role=status]")!.textContent).toBe("Rule saved. This node cannot tell a session to try again.");
+  expect(document.querySelector("[role=status]")!.textContent).toBe(
+    "Rule saved. This node cannot tell a session to try again.",
+  );
   expect(closed()).toBe(false);
 });
 
-const pickList = (l: string) => { items("List").find((i) => i.textContent?.trim().toLowerCase() === l)!.click(); flushSync(); };
+const pickList = (item: string) => {
+  items("List")
+    .find((htmlElement) => htmlElement.textContent?.trim().toLowerCase() === item)!
+    .click();
+  flushSync();
+};
 
 test("the box is hidden and no nudge is sent when the list is not allow", async () => {
   show({ call: call(), live: true });
@@ -392,6 +484,14 @@ test("the box is not shown when the sheet starts on a list other than allow", ()
 
 test("only the chosen item of each selector is selected", () => {
   show({ initial: { raw: "Bash(ls)", list: "ask" } });
-  expect(items("File").map((i) => i.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
-  expect(items("List").map((i) => i.getAttribute("aria-selected"))).toEqual(["false", "true", "false"]);
+  expect(items("File").map((htmlElement) => htmlElement.getAttribute("aria-selected"))).toEqual([
+    "true",
+    "false",
+    "false",
+  ]);
+  expect(items("List").map((htmlElement) => htmlElement.getAttribute("aria-selected"))).toEqual([
+    "false",
+    "true",
+    "false",
+  ]);
 });

@@ -1,15 +1,16 @@
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { windowsDataDir, type Config } from "./config";
+import { windowsDataDir } from "./config";
+import type { Config } from "./config";
 import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner } from "./instances";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
-import { definitionStatus } from "./win/definition";
 import { NodeEvents } from "./updateevents";
 import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
+import { definitionStatus } from "./win/definition";
 import { taskkillTree, WinInstances } from "./win/instances";
 import { planSessions, serviceAdminState } from "./win/token";
 import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
@@ -18,6 +19,7 @@ import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EX
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(0);
 }
 
@@ -27,19 +29,27 @@ if (process.argv[2] === "gen-secret") {
   console.log(`sha256: ${sha256}`);
   console.log("# Hub: put the secret in a file and reference it as hosts[].auth.secret_file.");
   console.log("# Node: add the sha256 as a [[node_auth.secret]] entry. Never put the secret on the node.");
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(0);
 }
 
 let cfg: Config;
+
 try {
-  cfg = loadConfigFile(resolveConfigPath(process.argv, process.env, join(windowsDataDir(), "config.toml")), { windows: true });
+  cfg = loadConfigFile(resolveConfigPath(process.argv, process.env, join(windowsDataDir(), "config.toml")), {
+    windows: true,
+  });
   checkServiceAccount(cfg.serviceUser, userInfo().username);
-} catch (e) {
-  console.error(e instanceof Error ? e.message : String(e));
+} catch (caught) {
+  console.error(caught instanceof Error ? caught.message : String(caught));
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(1);
 }
 
 console.log(`claude-rc-launcher ${VERSION} (Windows node), running as ${userInfo().username}`);
+
+const { node: nodeConfig } = cfg;
+if (!nodeConfig) throw new Error("the configuration has no node section");
 
 const plan = planSessions(serviceAdminState());
 console.log(plan.log);
@@ -52,24 +62,26 @@ const instances = new WinInstances(
     claudeBin: cfg.claudeBin,
     claudeRcArgs: cfg.claudeRcArgs,
     namePrefix: cfg.namePrefix,
-    instanceDir: join(cfg.node!.tls.stateDir, "instances"),
+    instanceDir: join(nodeConfig.tls.stateDir, "instances"),
     serviceIsAdmin: plan.serviceIsAdmin,
   },
   { killTree: taskkillTree(bunRunner), ...(plan.spawnRestricted ? { spawnRestricted: plan.spawnRestricted } : {}) },
 );
 
-let running: { stop(): void };
+let running: { stop(): void } | undefined;
 let closing = false;
+
 const shutdown = async (code = 0) => {
   if (closing) return;
   closing = true;
   running?.stop();
   await instances.close();
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(code);
 };
 
 // After an update the agent ends itself with a non-zero code, so that WinSW starts the new binary (see win/update.ts).
-const dataDir = cfg.node!.tls.stateDir;
+const dataDir = nodeConfig.tls.stateDir;
 const events = new NodeEvents();
 const update = createWindowsUpdater(
   realWinUpdateEnv({
@@ -82,20 +94,30 @@ const update = createWindowsUpdater(
 );
 
 try {
-  running = await startNode(cfg, { instances, update, events, definition: () => definitionStatus({ exePath: process.execPath, readFile: (p) => readFileSync(p, "utf8") }) });
-  const n = await instances.restore();
-  if (n > 0) console.log(`started ${n} instance${n === 1 ? "" : "s"} from the saved list`);
+  running = await startNode(cfg, {
+    instances,
+    update,
+    events,
+    definition: () => definitionStatus({ exePath: process.execPath, readFile: (path) => readFileSync(path, "utf8") }),
+  });
+  const restored = await instances.restore();
+  if (restored > 0) console.log(`started ${restored} instance${restored === 1 ? "" : "s"} from the saved list`);
   confirmPendingUpdate({
     dataDir,
     version: VERSION,
     exists: existsSync,
-    readFile: (p) => readFileSync(p),
-    remove: (p) => rmSync(p, { force: true }),
+    readFile: (path) => readFileSync(path),
+    remove: (path) => {
+      rmSync(path, { force: true });
+    },
     after: (ms, fn) => void setTimeout(fn, ms),
-    log: (line) => console.log(line),
+    log: (line) => {
+      console.log(line);
+    },
   });
-} catch (e) {
-  console.error(`startup failed: ${(e as Error).message}`);
+} catch (caught) {
+  console.error(`startup failed: ${(caught as Error).message}`);
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(1);
 }
 

@@ -10,9 +10,11 @@
   let { host, instance }: { host: string; instance: string } = $props();
 
   // One probe per instance, no polling. A node without permissions answers 404 or 501: then there is no link.
-  const q = createQuery(() => ({ ...userPermissionsQuery(host, instance), staleTime: 600000 }));
+  const query = createQuery(() => ({ ...userPermissionsQuery(host, instance), staleTime: 600000 }));
 </script>
 
-{#if !isUnsupported(q.error)}
-  <Button variant="ghost" size="sm" class="h-8 px-2" href={permissionsHref(host, instance)} title="Permissions"><ShieldLock aria-hidden="true" /><span class={stripLabel}>Permissions</span></Button>
+{#if !isUnsupported(query.error)}
+  <Button variant="ghost" size="sm" class="h-8 px-2" href={permissionsHref(host, instance)} title="Permissions">
+    <ShieldLock aria-hidden="true" /><span class={stripLabel}>Permissions</span>
+  </Button>
 {/if}

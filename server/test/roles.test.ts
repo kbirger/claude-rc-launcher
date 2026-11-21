@@ -1,49 +1,53 @@
 import { describe, expect, test } from "bun:test";
-import { atLeast, DEFAULT_ROLES, namesUser, requiredRole, resolveRole, type RoleSettings } from "../src/roles";
+import { atLeast, DEFAULT_ROLES, namesUser, requiredRole, resolveRole } from "../src/roles";
+import type { RoleSettings } from "../src/roles";
 
-const s = (over: Partial<RoleSettings> = {}): RoleSettings => ({ ...DEFAULT_ROLES, ...over });
+const helper = (over: Partial<RoleSettings> = {}): RoleSettings => ({ ...DEFAULT_ROLES, ...over });
 
 describe("resolveRole", () => {
   test("uses a role name from the claim", () => {
-    expect(resolveRole({ clauderc_role: "admin" }, s())).toBe("admin");
-    expect(resolveRole({ clauderc_role: "write" }, s())).toBe("write");
+    expect(resolveRole({ clauderc_role: "admin" }, helper())).toBe("admin");
+    expect(resolveRole({ clauderc_role: "write" }, helper())).toBe("write");
   });
   test("none refuses", () => {
-    expect(resolveRole({ clauderc_role: "none" }, s())).toBe("none");
+    expect(resolveRole({ clauderc_role: "none" }, helper())).toBe("none");
   });
   test("a missing or empty claim gives the default role", () => {
-    expect(resolveRole({}, s())).toBe("read");
-    expect(resolveRole({ clauderc_role: "" }, s())).toBe("read");
-    expect(resolveRole({}, s({ defaultRole: "admin" }))).toBe("admin");
+    expect(resolveRole({}, helper())).toBe("read");
+    expect(resolveRole({ clauderc_role: "" }, helper())).toBe("read");
+    expect(resolveRole({}, helper({ defaultRole: "admin" }))).toBe("admin");
   });
   test("an unknown value or a number gives read, not the default", () => {
-    expect(resolveRole({ clauderc_role: "root" }, s({ defaultRole: "admin" }))).toBe("read");
-    expect(resolveRole({ clauderc_role: 7 }, s({ defaultRole: "admin" }))).toBe("read");
+    expect(resolveRole({ clauderc_role: "root" }, helper({ defaultRole: "admin" }))).toBe("read");
+    expect(resolveRole({ clauderc_role: 7 }, helper({ defaultRole: "admin" }))).toBe("read");
   });
   test("a list gives the highest role in it", () => {
-    expect(resolveRole({ clauderc_role: ["read", "admin"] }, s())).toBe("admin");
-    expect(resolveRole({ clauderc_role: ["read", "write"] }, s())).toBe("write");
-    expect(resolveRole({ clauderc_role: ["bogus"] }, s())).toBe("read");
+    expect(resolveRole({ clauderc_role: ["read", "admin"] }, helper())).toBe("admin");
+    expect(resolveRole({ clauderc_role: ["read", "write"] }, helper())).toBe("write");
+    expect(resolveRole({ clauderc_role: ["bogus"] }, helper())).toBe("read");
   });
   test("an empty list, or a list of empty values, means no role: the default role", () => {
-    expect(resolveRole({ clauderc_role: [] }, s())).toBe("read");
-    expect(resolveRole({ clauderc_role: [] }, s({ defaultRole: "write" }))).toBe("write");
-    expect(resolveRole({ clauderc_role: ["", ""] }, s({ defaultRole: "write" }))).toBe("write");
-    expect(resolveRole({ clauderc_role: ["", "admin"] }, s({ defaultRole: "write" }))).toBe("admin");
+    expect(resolveRole({ clauderc_role: [] }, helper())).toBe("read");
+    expect(resolveRole({ clauderc_role: [] }, helper({ defaultRole: "write" }))).toBe("write");
+    expect(resolveRole({ clauderc_role: ["", ""] }, helper({ defaultRole: "write" }))).toBe("write");
+    expect(resolveRole({ clauderc_role: ["", "admin"] }, helper({ defaultRole: "write" }))).toBe("admin");
   });
   test("none in a list refuses only when it is the only role", () => {
-    expect(resolveRole({ clauderc_role: ["none"] }, s())).toBe("none");
-    expect(resolveRole({ clauderc_role: ["none", "write"] }, s())).toBe("write");
+    expect(resolveRole({ clauderc_role: ["none"] }, helper())).toBe("none");
+    expect(resolveRole({ clauderc_role: ["none", "write"] }, helper())).toBe("write");
   });
   test("role_map turns claim values into roles", () => {
-    const m = s({ claim: "groups", map: { "clauderc-admins": "admin", "clauderc-writers": "write", blocked: "none" } });
-    expect(resolveRole({ groups: ["x", "clauderc-writers"] }, m)).toBe("write");
-    expect(resolveRole({ groups: "clauderc-admins" }, m)).toBe("admin");
-    expect(resolveRole({ groups: ["blocked"] }, m)).toBe("none");
-    expect(resolveRole({ groups: ["x"] }, m)).toBe("read");
+    const roleSettings = helper({
+      claim: "groups",
+      map: { "clauderc-admins": "admin", "clauderc-writers": "write", blocked: "none" },
+    });
+    expect(resolveRole({ groups: ["x", "clauderc-writers"] }, roleSettings)).toBe("write");
+    expect(resolveRole({ groups: "clauderc-admins" }, roleSettings)).toBe("admin");
+    expect(resolveRole({ groups: ["blocked"] }, roleSettings)).toBe("none");
+    expect(resolveRole({ groups: ["x"] }, roleSettings)).toBe("read");
   });
   test("a custom claim name is used", () => {
-    expect(resolveRole({ role: "write" }, s({ claim: "role" }))).toBe("write");
+    expect(resolveRole({ role: "write" }, helper({ claim: "role" }))).toBe("write");
   });
 });
 
@@ -58,8 +62,23 @@ describe("atLeast", () => {
 
 describe("requiredRole", () => {
   test("reads", () => {
-    for (const p of ["/me", "/latest", "/updates", "/events", "/hosts", "/hosts/h1/node", "/hosts/local/instances", "/hosts/h1/instances/abc/logs", "/hosts/h1/fs", "/hosts/h1/users", "/hosts/h1/instances/abc/sessions/s1/file", "/hosts/h1/instances/abc/permissions", "/hosts/h1/clone/abc", "/hosts/h1/instance-settings"]) {
-      expect(requiredRole("GET", p)).toBe("read");
+    for (const path of [
+      "/me",
+      "/latest",
+      "/updates",
+      "/events",
+      "/hosts",
+      "/hosts/h1/node",
+      "/hosts/local/instances",
+      "/hosts/h1/instances/abc/logs",
+      "/hosts/h1/fs",
+      "/hosts/h1/users",
+      "/hosts/h1/instances/abc/sessions/s1/file",
+      "/hosts/h1/instances/abc/permissions",
+      "/hosts/h1/clone/abc",
+      "/hosts/h1/instance-settings",
+    ]) {
+      expect(requiredRole("GET", path)).toBe("read");
     }
   });
   test("writes", () => {

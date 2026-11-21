@@ -1,35 +1,59 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./hostregistry";
-import { cutLine, type LogLine } from "./updatelog";
+import { isObject } from "./requests";
+import { cutLine } from "./updatelog";
+import type { LogLine } from "./updatelog";
 import type { UpdateEntry } from "./updaterecord";
 
-export type HistoryItem = { entry: UpdateEntry; lines: LogLine[] };
+export interface HistoryItem {
+  entry: UpdateEntry;
+  lines: LogLine[];
+}
 
 const FILE = "update-history.json";
 export const MAX_ITEMS = 20;
 export const MAX_LINES = 200;
 const MAX_FIELD = 500;
 
-const isStr = (v: unknown): v is string => typeof v === "string";
+const isStr = (value: unknown): value is string => typeof value === "string";
 
-function cleanEntry(v: any): UpdateEntry | undefined {
-  if (!v || typeof v !== "object" || !isStr(v.host) || !isStr(v.startedAt) || !isStr(v.startedBy) || !isStr(v.from) || !isStr(v.status) || v.status === "running") return undefined;
-  const cut = (s: unknown) => (isStr(s) ? s.slice(0, MAX_FIELD) : undefined);
-  const out: UpdateEntry = { host: v.host.slice(0, MAX_FIELD), startedAt: v.startedAt.slice(0, 64), startedBy: v.startedBy.slice(0, MAX_FIELD), from: v.from.slice(0, 64), status: v.status };
-  if (isStr(v.finishedAt)) out.finishedAt = v.finishedAt.slice(0, 64);
-  if (isStr(v.to)) out.to = v.to.slice(0, 64);
-  const err = cut(v.error);
+function cleanEntry(value: unknown): UpdateEntry | undefined {
+  if (
+    !isObject(value) ||
+    !isStr(value.host) ||
+    !isStr(value.startedAt) ||
+    !isStr(value.startedBy) ||
+    !isStr(value.from) ||
+    !isStr(value.status) ||
+    value.status === "running"
+  )
+    return undefined;
+  const cut = (field: unknown) => (isStr(field) ? field.slice(0, MAX_FIELD) : undefined);
+  const out: UpdateEntry = {
+    host: value.host.slice(0, MAX_FIELD),
+    startedAt: value.startedAt.slice(0, 64),
+    startedBy: value.startedBy.slice(0, MAX_FIELD),
+    from: value.from.slice(0, 64),
+    status: value.status as UpdateEntry["status"],
+  };
+  if (isStr(value.finishedAt)) out.finishedAt = value.finishedAt.slice(0, 64);
+  if (isStr(value.to)) out.to = value.to.slice(0, 64);
+  const err = cut(value.error);
   if (err !== undefined) out.error = err;
   return out;
 }
 
-function cleanLines(v: unknown): LogLine[] {
-  if (!Array.isArray(v)) return [];
-  return v
-    .filter((l) => l && isStr(l.line) && isStr(l.at))
-    .slice(-MAX_LINES)
-    .map((l) => ({ line: cutLine(l.line), at: l.at.slice(0, 40) }));
+function cleanLines(value: unknown): LogLine[] {
+  if (!Array.isArray(value)) return [];
+  const candidates: unknown[] = value;
+  const lines: LogLine[] = [];
+
+  for (const candidate of candidates)
+    if (isObject(candidate) && isStr(candidate.line) && isStr(candidate.at))
+      lines.push({ line: cutLine(candidate.line), at: candidate.at.slice(0, 40) });
+
+  return lines.slice(-MAX_LINES);
 }
 
 /**
@@ -43,27 +67,36 @@ export class UpdateHistory {
     private dir: string,
   ) {}
 
-  static async load(o: { stateDir: string }): Promise<UpdateHistory> {
-    const file = path.join(o.stateDir, FILE);
+  static async load(options: { stateDir: string }): Promise<UpdateHistory> {
+    const file = path.join(options.stateDir, FILE);
     let items: HistoryItem[] = [];
+
     try {
-      const parsed = JSON.parse(await readFile(file, "utf8"));
-      if (Array.isArray(parsed?.items)) {
-        items = parsed.items.flatMap((i: any) => {
-          const entry = cleanEntry(i?.entry);
-          return entry ? [{ entry, lines: cleanLines(i.lines) }] : [];
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
+      if (isObject(parsed) && Array.isArray(parsed.items)) {
+        const rawItems: unknown[] = parsed.items;
+        items = rawItems.flatMap((raw) => {
+          const updateEntry = isObject(raw) ? cleanEntry(raw.entry) : undefined;
+          return isObject(raw) && updateEntry ? [{ entry: updateEntry, lines: cleanLines(raw.lines) }] : [];
         });
       }
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT" && !(e instanceof SyntaxError)) throw new Error(`cannot read ${file}: ${(e as Error).message}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError))
+        throw new Error(`cannot read ${file}: ${(error as Error).message}`);
     }
-    return new UpdateHistory(items, o.stateDir);
+
+    return new UpdateHistory(items, options.stateDir);
   }
 
   /** Newest first, for each host. */
   list(): Record<string, HistoryItem[]> {
     const out: Record<string, HistoryItem[]> = {};
-    for (const i of [...this.items].reverse()) (out[i.entry.host] ??= []).push({ entry: { ...i.entry }, lines: i.lines.map((l) => ({ ...l })) });
+    for (const item of [...this.items].reverse())
+      (out[item.entry.host] ??= []).push({
+        entry: { ...item.entry },
+        lines: item.lines.map((logLine) => ({ ...logLine })),
+      });
     return out;
   }
 
@@ -79,16 +112,19 @@ export class UpdateHistory {
 
   private async apply(item: HistoryItem): Promise<void> {
     const host = item.entry.host;
-    const same = (i: HistoryItem) => i.entry.host === host && i.entry.startedAt === item.entry.startedAt;
+    const same = (historyItem: HistoryItem) =>
+      historyItem.entry.host === host && historyItem.entry.startedAt === item.entry.startedAt;
     const old = this.items.find(same);
     // A later settle of the same update (for example a hub restart) keeps the lines that an earlier write held.
     if (old && item.lines.length === 0) item.lines = old.lines;
-    let next = [...this.items.filter((i) => !same(i)), item];
-    const mine = next.filter((i) => i.entry.host === host);
+    let next = [...this.items.filter((historyItem) => !same(historyItem)), item];
+    const mine = next.filter((historyItem) => historyItem.entry.host === host);
+
     if (mine.length > MAX_ITEMS) {
       const drop = new Set(mine.slice(0, mine.length - MAX_ITEMS));
-      next = next.filter((i) => !drop.has(i));
+      next = next.filter((historyItem) => !drop.has(historyItem));
     }
+
     const created = await mkdir(this.dir, { recursive: true, mode: 0o700 });
     if (created && process.platform !== "win32") await chmod(this.dir, 0o700);
     await writeAtomic(path.join(this.dir, FILE), JSON.stringify({ items: next }) + "\n", 0o600);

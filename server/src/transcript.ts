@@ -36,8 +36,8 @@ export const WORKTREE_MARK = "--claude-worktrees-";
 
 /** Step 1: drop trailing "/" and "\\", unless that leaves nothing or a bare drive such as "S:". */
 export function trimSeparators(path: string): string {
-  const t = path.replace(/[\\/]+$/, "");
-  return t === "" || t.endsWith(":") ? path : t;
+  const replaced = path.replace(/[\\/]+$/, "");
+  return replaced === "" || replaced.endsWith(":") ? path : replaced;
 }
 
 /** Step 2: each UTF-16 unit that is not an ASCII letter or digit becomes "-" (a surrogate pair gives two dashes). */
@@ -47,9 +47,9 @@ export function encodeUnits(path: string): string {
 
 /** Claude Code's 32-bit string hash over the UTF-16 units, as base 36 text of its absolute value. */
 function pathHash(path: string): string {
-  let h = 0;
-  for (let i = 0; i < path.length; i++) h = ((h << 5) - h + path.charCodeAt(i)) | 0;
-  return Math.abs(h).toString(36);
+  let hash = 0;
+  for (let index = 0; index < path.length; index++) hash = ((hash << 5) - hash + path.charCodeAt(index)) | 0;
+  return Math.abs(hash).toString(36);
 }
 
 /**
@@ -59,17 +59,35 @@ function pathHash(path: string): string {
  * name over 200 characters is cut to 200, then "-" and the hash of the path.
  */
 export function encodeProjectDir(path: string): string {
-  const p = trimSeparators(path);
-  const e = encodeUnits(p);
-  return e.length <= MAX_ENCODED ? e : `${e.slice(0, MAX_ENCODED)}-${pathHash(p)}`;
+  const trimmed = trimSeparators(path);
+  const encoded = encodeUnits(trimmed);
+  return encoded.length <= MAX_ENCODED ? encoded : `${encoded.slice(0, MAX_ENCODED)}-${pathHash(trimmed)}`;
 }
 
-export function parse(line: string): Record<string, any> | undefined {
-  if (line.length === 0 || line[0] !== "{") return undefined;
+/** True for a JSON object (not an array and not null). */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Reads one transcript line. It returns the object, or undefined for a line that is not an object. */
+export function parse(line: string): Record<string, unknown> | undefined {
+  if (line.length === 0 || !line.startsWith("{")) return undefined;
+
   try {
-    const v = JSON.parse(line);
-    return v && typeof v === "object" ? v : undefined;
+    const parsed: unknown = JSON.parse(line);
+    return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined; // not JSON, or a half-written last line
   }
+}
+
+/** Follows a path of object keys, such as `dig(record, "message", "content")`. It returns undefined when a step is missing. */
+export function dig(value: unknown, ...keys: string[]): unknown {
+  let current: unknown = value;
+
+  for (const key of keys) {
+    if (!isRecord(current)) return undefined;
+    current = current[key];
+  }
+
+  return current;
 }

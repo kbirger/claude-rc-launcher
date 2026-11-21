@@ -3,9 +3,9 @@
  * readName reads from the start up to the first real prompt (at most 256 KB, or 2 MB past a /compact summary), and the last 256 KB for title
  * records. Its result is cached by file size and modification time.
  */
-import { parse } from "./transcript";
-import type { TranscriptFs } from "./transcriptfs";
 import type { Found } from "./sessionscan";
+import { dig, isRecord, parse } from "./transcript";
+import type { TranscriptFs } from "./transcriptfs";
 
 /**
  * Where a name came from. The order of trust is `live` and `custom` (someone set it, it is what the app shows), then
@@ -13,23 +13,35 @@ import type { Found } from "./sessionscan";
  */
 export type NameSource = "live" | "custom" | "ai" | "agent" | "prompt" | "default";
 export const NAME_RANK: Record<NameSource, number> = { live: 4, custom: 4, ai: 3, agent: 2, prompt: 1, default: 0 };
-export type NameInfo = { name: string; source: NameSource };
+export interface NameInfo {
+  name: string;
+  source: NameSource;
+}
 
-type CacheValue = { size: number | undefined; mtimeMs: number; name: string | undefined; source?: NameSource };
-export type NameCache = {
+interface CacheValue {
+  size: number | undefined;
+  mtimeMs: number;
+  name: string | undefined;
+  source?: NameSource;
+}
+export interface NameCache {
   get(file: string): CacheValue | undefined;
-  set(file: string, v: CacheValue): void;
-};
+  set(file: string, cacheValue: CacheValue): void;
+}
 
 /** A bounded map: when full, the oldest entry goes. */
 export function newNameCache(max = 2000): NameCache {
-  const m = new Map<string, CacheValue>();
+  const map = new Map<string, CacheValue>();
   return {
-    get: (f) => m.get(f),
-    set(f, v) {
-      m.delete(f);
-      m.set(f, v);
-      while (m.size > max) m.delete(m.keys().next().value as string);
+    get: (file) => map.get(file),
+    set(key, cacheValue) {
+      map.delete(key);
+      map.set(key, cacheValue);
+
+      for (const oldest of map.keys()) {
+        if (map.size <= max) break;
+        map.delete(oldest);
+      }
     },
   };
 }
@@ -39,28 +51,43 @@ const NAME_WINDOW = 256 * 1024;
 const COMPACT_WINDOW = 2 * 1024 * 1024;
 const NAME_MAX = 80;
 
-const NOT_PROMPT = ["<command-name>", "<local-command", "<system-reminder", "<command-message", "Caveat:", "[Request interrupted"];
+const NOT_PROMPT = [
+  "<command-name>",
+  "<local-command",
+  "<system-reminder",
+  "<command-message",
+  "Caveat:",
+  "[Request interrupted",
+];
 
 /** The summary that /compact puts at the start of a transcript. */
-function isCompactSummary(r: Record<string, any>): boolean {
-  return r.isCompactSummary === true;
+function isCompactSummary(record: Record<string, unknown>): boolean {
+  return record.isCompactSummary === true;
 }
 
 /** A "user" record that Claude Code wrote, not the user: a meta record or a compact summary. */
-function writtenByClaudeCode(r: Record<string, any>): boolean {
-  return r.isMeta === true || isCompactSummary(r);
+function writtenByClaudeCode(record: Record<string, unknown>): boolean {
+  return record.isMeta === true || isCompactSummary(record);
 }
 
 /** The text of a real user prompt, or undefined for records Claude Code wrote, command echoes and system messages. */
-function promptText(r: Record<string, any>): string | undefined {
-  if (r.type !== "user" || writtenByClaudeCode(r)) return undefined;
-  const c = r.message?.content;
-  let text: unknown = c;
-  if (Array.isArray(c)) text = c.find((b) => b && b.type === "text" && typeof b.text === "string")?.text;
+function promptText(record: Record<string, unknown>): string | undefined {
+  if (record.type !== "user" || writtenByClaudeCode(record)) return undefined;
+  const content: unknown = dig(record, "message", "content");
+  let text: unknown = content;
+
+  if (Array.isArray(content)) {
+    const blocks: unknown[] = content;
+    const block = blocks.find(
+      (candidate) => isRecord(candidate) && candidate.type === "text" && typeof candidate.text === "string",
+    );
+    text = dig(block, "text");
+  }
+
   if (typeof text !== "string") return undefined;
-  const t = text.trim();
-  if (t.length === 0 || NOT_PROMPT.some((p) => t.startsWith(p))) return undefined;
-  return t;
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || NOT_PROMPT.some((item) => trimmed.startsWith(item))) return undefined;
+  return trimmed;
 }
 
 export function tidy(raw: string | undefined): string | undefined {
@@ -68,21 +95,33 @@ export function tidy(raw: string | undefined): string | undefined {
   // name cannot look like another one. A joined emoji (it uses U+200D) is shown as its parts.
   // Format characters go first, because \s also matches U+FEFF. Control characters go after the collapse, so that a
   // tab or a line feed still becomes a space.
-  const t = (raw ?? "").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").replace(/\p{Cc}/gu, "").replace(/ {2,}/g, " ").trim();
-  if (t.length === 0) return undefined;
+  const trimmed = (raw ?? "")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/\p{Cc}/gu, "")
+    .replace(/ {2,}/g, " ")
+    .trim();
+  if (trimmed.length === 0) return undefined;
   // Cut on code points, not UTF-16 units, so that an emoji is never split in half.
-  const points = Array.from(t);
-  return points.length > NAME_MAX ? points.slice(0, NAME_MAX).join("").trimEnd() + "..." : t;
+  const points = Array.from(trimmed);
+  return points.length > NAME_MAX ? points.slice(0, NAME_MAX).join("").trimEnd() + "..." : trimmed;
 }
 
-type Titles = { custom?: string; ai?: string; agent?: string };
+interface Titles {
+  custom?: string;
+  ai?: string;
+  agent?: string;
+}
 const TITLE_KINDS = ['"custom-title"', '"ai-title"', '"agent-name"'];
 
 /** A title that is empty once whitespace is collapsed is ignored on purpose, so the next kind of name is used. */
-function takeTitle(t: Titles, r: Record<string, any>): void {
-  if (r.type === "custom-title" && typeof r.customTitle === "string" && tidy(r.customTitle)) t.custom = r.customTitle;
-  else if (r.type === "ai-title" && typeof r.aiTitle === "string" && tidy(r.aiTitle)) t.ai = r.aiTitle;
-  else if (r.type === "agent-name" && typeof r.agentName === "string" && tidy(r.agentName)) t.agent = r.agentName;
+function takeTitle(titles: Titles, record: Record<string, unknown>): void {
+  if (record.type === "custom-title" && typeof record.customTitle === "string" && tidy(record.customTitle))
+    titles.custom = record.customTitle;
+  else if (record.type === "ai-title" && typeof record.aiTitle === "string" && tidy(record.aiTitle))
+    titles.ai = record.aiTitle;
+  else if (record.type === "agent-name" && typeof record.agentName === "string" && tidy(record.agentName))
+    titles.agent = record.agentName;
 }
 
 /** Read the head (to the first real prompt, at most 256 KB) and the tail (last 256 KB). Tail titles beat head titles of the same kind. */
@@ -90,52 +129,63 @@ async function readName(fs: TranscriptFs, file: string): Promise<NameInfo | unde
   const head: Titles = {};
   const tail: Titles = {};
   let first: string | undefined;
+
   try {
     let bytes = 0;
     let limit = NAME_WINDOW;
+
     for await (const line of fs.lines(file)) {
       bytes += line.length + 1;
-      const r = parse(line);
-      if (r) {
-        takeTitle(head, r);
-        if (isCompactSummary(r)) limit = Math.max(limit, bytes + COMPACT_WINDOW);
-        first = promptText(r);
+      const record = parse(line);
+
+      if (record) {
+        takeTitle(head, record);
+        if (isCompactSummary(record)) limit = Math.max(limit, bytes + COMPACT_WINDOW);
+        first = promptText(record);
       }
+
       if (first !== undefined || bytes > limit) break;
     }
   } catch {
     // keep what was found
   }
+
   try {
     for (const line of (await fs.tail?.(file, NAME_WINDOW)) ?? []) {
       // Most tail lines are tool calls and results: skip them before the costly parse.
-      if (!TITLE_KINDS.some((k) => line.includes(k))) continue;
-      const r = parse(line);
-      if (r) takeTitle(tail, r);
+      if (!TITLE_KINDS.some((item) => line.includes(item))) continue;
+      const record = parse(line);
+      if (record) takeTitle(tail, record);
     }
   } catch {
     // keep what was found
   }
+
   const pick = (raw: string | undefined, source: NameSource): NameInfo | undefined => {
     const name = tidy(raw);
     return name ? { name, source } : undefined;
   };
+
   return (
-    pick(tail.custom ?? head.custom, "custom") ?? pick(tail.ai ?? head.ai, "ai") ?? pick(tail.agent ?? head.agent, "agent") ?? pick(first, "prompt")
+    pick(tail.custom ?? head.custom, "custom") ??
+    pick(tail.ai ?? head.ai, "ai") ??
+    pick(tail.agent ?? head.agent, "agent") ??
+    pick(first, "prompt")
   );
 }
 
 /** The name of the transcript and where it came from. Cached by file size and modification time. */
-export async function nameInfoOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<NameInfo | undefined> {
-  const hit = cache.get(f.file);
-  if (hit && hit.size === f.size && hit.mtimeMs === f.mtimeMs) return hit.name && hit.source ? { name: hit.name, source: hit.source } : undefined;
-  const info = await readName(fs, f.file);
-  cache.set(f.file, { size: f.size, mtimeMs: f.mtimeMs, name: info?.name, source: info?.source });
+export async function nameInfoOf(fs: TranscriptFs, found: Found, cache: NameCache): Promise<NameInfo | undefined> {
+  const hit = cache.get(found.file);
+  if (hit && hit.size === found.size && hit.mtimeMs === found.mtimeMs)
+    return hit.name && hit.source ? { name: hit.name, source: hit.source } : undefined;
+  const info = await readName(fs, found.file);
+  cache.set(found.file, { size: found.size, mtimeMs: found.mtimeMs, name: info?.name, source: info?.source });
   return info;
 }
 
 /** The names that one session can have, from the places that know them. Each one is already tidy. */
-export type NameParts = {
+export interface NameParts {
   /** The name in the running-session file. */
   live?: string;
   /** True when Claude Code made `live` up (see `nameIsDefault` in livesessions.ts). */
@@ -144,7 +194,7 @@ export type NameParts = {
   chain?: string;
   /** The name from this transcript: a title, or the first real prompt (see readName). */
   transcript?: string;
-};
+}
 
 /**
  * The name of a session. This is the only place that orders the sources:
@@ -153,11 +203,11 @@ export type NameParts = {
  * 3. The name of this transcript.
  * 4. A live name that Claude Code made up. It comes last: the titles in the transcript say more.
  */
-export function chooseName(p: NameParts): string | undefined {
-  const set = p.liveIsDefault ? undefined : p.live;
-  return set ?? p.chain ?? p.transcript ?? p.live;
+export function chooseName(nameParts: NameParts): string | undefined {
+  const set = nameParts.liveIsDefault ? undefined : nameParts.live;
+  return set ?? nameParts.chain ?? nameParts.transcript ?? nameParts.live;
 }
 
-export async function nameOf(fs: TranscriptFs, f: Found, cache: NameCache): Promise<string | undefined> {
-  return (await nameInfoOf(fs, f, cache))?.name;
+export async function nameOf(fs: TranscriptFs, found: Found, cache: NameCache): Promise<string | undefined> {
+  return (await nameInfoOf(fs, found, cache))?.name;
 }

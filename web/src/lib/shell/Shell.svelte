@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import type { Snippet } from "svelte";
+  import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import Logo from "../shared/ui/Logo.svelte";
   import * as Alert from "#lib/components/ui/alert/index.js";
@@ -10,7 +11,15 @@
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
-  import { hostsQuery, pruneNodes, readNodes, selectionAfter, toggleNode, writeNodes, type HostInfo } from "../features/hosts";
+  import {
+    hostsQuery,
+    pruneNodes,
+    readNodes,
+    selectionAfter,
+    toggleNode,
+    writeNodes,
+    type HostInfo,
+  } from "../features/hosts";
   import { UpdateBanner, busyReason, lastEntry, latestQuery, reloadDecision, updatesQuery } from "../features/updates";
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
@@ -35,7 +44,9 @@
   function remember(id: string) {
     try {
       sessionStorage.setItem(HOST_KEY, id);
-    } catch {}
+    } catch {
+      // The storage can be blocked. Then the host is not remembered.
+    }
   }
 
   let { children }: { children: Snippet } = $props();
@@ -57,37 +68,53 @@
       ...startInstanceMutation(host),
       // Awaited by the mutation, so the pending row stays until the list has the new instance.
       onSuccess: () => client.invalidateQueries({ queryKey: ["instances", host] }),
-      onError: (e: unknown, a: StartArgs) => flow.startFailed(host, startErrorAction(e, { path: a.path, user: a.user ?? "" }), a),
+      onError: (caught: unknown, args: StartArgs) =>
+        flow.startFailed(host, startErrorAction(caught, { path: args.path, user: args.user ?? "" }), args),
     };
   });
 
-  function startNew(a: StartArgs) {
+  function startNew(args: StartArgs) {
     flow.startNew();
-    startM.mutate(a);
+    startM.mutate(args);
   }
 
   // The page code only changes with a reload. When the hub runs another version than the one that served this page, reload
   // (or ask, while the New dialog is open).
   let loadedVersion: string | undefined;
   let reloadBar = $state(false);
-  const hubVersion = $derived(hostsQ.data?.find((h) => h.id === "local")?.version);
+  const hubVersion = $derived(hostsQ.data?.find((entry) => entry.id === "local")?.version);
   $effect(() => {
     const current = hubVersion;
     if (!current || reloadBar) return;
+
     if (loadedVersion === undefined) {
       loadedVersion = current;
       return;
     }
+
     const last = Number(sessionStorage.getItem("claude-rc:reload") ?? 0);
-    const d = reloadDecision({ loaded: loadedVersion, current, dialogOpen: flow.showNew, lastReloadAt: last, now: Date.now() });
-    if (d === "bar") reloadBar = true;
-    if (d === "reload") {
+    const decision = reloadDecision({
+      loaded: loadedVersion,
+      current,
+      dialogOpen: flow.showNew,
+      lastReloadAt: last,
+      now: Date.now(),
+    });
+    if (decision === "bar") reloadBar = true;
+
+    if (decision === "reload") {
       console.info(`[claude-rc] the hub runs ${current}, this page was loaded from ${loadedVersion}: reloading`);
       sessionStorage.setItem("claude-rc:reload", String(Date.now()));
       location.reload();
     }
   });
-  const selectedBusy = $derived(busyReason(hosts.find((h) => h.id === flow.selected), lastEntry(updatesQ.data ?? [], flow.selected), now));
+  const selectedBusy = $derived(
+    busyReason(
+      hosts.find((entry) => entry.id === flow.selected),
+      lastEntry(updatesQ.data ?? [], flow.selected),
+      now,
+    ),
+  );
 
   // A remembered or previously selected host that is gone falls back to local. One that is restarting or offline stays.
   $effect(() => {
@@ -115,29 +142,48 @@
 
   setShell({
     flow,
-    get hosts() { return hosts; },
-    get updates() { return updatesQ.data ?? []; },
-    get now() { return now; },
-    get user() { return meQ.data?.name ?? ""; },
-    get email() { return meQ.data?.email; },
-    get role() { return meQ.data ? (meQ.data.role ?? "read") : ""; },
-    get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
+    get hosts() {
+      return hosts;
+    },
+    get updates() {
+      return updatesQ.data ?? [];
+    },
+    get now() {
+      return now;
+    },
+    get user() {
+      return meQ.data?.name ?? "";
+    },
+    get email() {
+      return meQ.data?.email;
+    },
+    get role() {
+      return meQ.data ? (meQ.data.role ?? "read") : "";
+    },
+    get logoutUrl() {
+      return meQ.data?.logoutUrl ?? "/auth/logout";
+    },
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
     nodes: {
       // Only nodes that exist count. While the host list loads, or if it fails, a saved choice of another node must not empty the views.
-      get selected() { return pruneNodes(nodes, hosts); },
+      get selected() {
+        return pruneNodes(nodes, hosts);
+      },
       toggle: (id) => setNodes(toggleNode(pruneNodes(nodes, hosts), id)),
       clear: () => setNodes([]),
     },
-    get latestError() { return latestQ.isError; },
+    get latestError() {
+      return latestQ.isError;
+    },
   });
 
   onMount(() => {
-    const t = setInterval(() => (now = new Date()), 30_000);
+    const timer = setInterval(() => (now = new Date()), 30_000);
     const stop = connectEvents({ client });
+
     return () => {
-      clearInterval(t);
+      clearInterval(timer);
       stop();
     };
   });
@@ -146,15 +192,28 @@
 <!-- Up to 480px wide the header is hidden: the bottom bar has Sessions, and the menu sheet has the name and Log out. The refresh bar moves to the top of the screen. -->
 <div class="sticky top-0 z-40 h-0 min-[481px]:hidden"><div class="relative h-0.5"><RefreshBar /></div></div>
 <header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2 max-[480px]:hidden">
-  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/sessions" aria-label="Claude RC: home"><Logo /></a></h1>
+  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch">
+    <a
+      class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg"
+      href={resolve("/sessions")}
+      aria-label="Claude RC: home"
+    >
+      <Logo />
+    </a>
+  </h1>
   <DropdownMenu.Root>
-    <DropdownMenu.Trigger class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground" aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}>
+    <DropdownMenu.Trigger
+      class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground"
+      aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}
+    >
       <Avatar name={meQ.data?.name ?? ""} email={meQ.data?.email} size={28} />
       <span class="hidden truncate min-[481px]:inline">{meQ.data?.name ?? ""}</span>
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="end" class="w-auto min-w-40">
       {#if meQ.data?.name}
-        <DropdownMenu.Label class="font-normal">{meQ.data.name}{#if meQ.data.role}<span class="ml-1.5 text-muted-foreground">· {meQ.data.role}</span>{/if}</DropdownMenu.Label>
+        <DropdownMenu.Label class="font-normal">
+          {meQ.data.name}{#if meQ.data.role}<span class="ml-1.5 text-muted-foreground">· {meQ.data.role}</span>{/if}
+        </DropdownMenu.Label>
         <DropdownMenu.Separator />
       {/if}
       <DropdownMenu.Item class="min-h-11" onSelect={() => (location.href = meQ.data?.logoutUrl ?? "/auth/logout")}>
@@ -164,12 +223,16 @@
   </DropdownMenu.Root>
   <RefreshBar />
 </header>
-<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+<div
+  class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]"
+>
   {#if reloadBar}
     <Alert.Root role="status" class="border-l-[3px] border-l-warning">
       <Alert.Description class="text-foreground">The hub was updated. Reload to get the new page.</Alert.Description>
       <Alert.Action class="top-1/2 -translate-y-1/2">
-        <Button size="icon-touch" aria-label="Reload" title="Reload" onclick={() => location.reload()}><ActionIcon name="refresh" /></Button>
+        <Button size="icon-touch" aria-label="Reload" title="Reload" onclick={() => location.reload()}>
+          <ActionIcon name="refresh" />
+        </Button>
       </Alert.Action>
     </Alert.Root>
   {/if}

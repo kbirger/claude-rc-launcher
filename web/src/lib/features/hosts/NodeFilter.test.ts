@@ -1,34 +1,59 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import NodeFilter from "./NodeFilter.svelte";
 import type { HostInfo } from "./api";
 
-const host = (id: string, o: Partial<HostInfo> = {}): HostInfo => ({ id, name: `name-${id}`, status: "ok", ...o });
+const host = (id: string, options: Partial<HostInfo> = {}): HostInfo => ({
+  id,
+  name: `name-${id}`,
+  status: "ok",
+  ...options,
+});
 const open: Array<() => void> = [];
 afterEach(() => {
-  for (const u of open.splice(0)) u();
+  for (const url of open.splice(0)) url();
   document.body.innerHTML = "";
 });
 
-function show(props: Record<string, unknown>) {
+function show(props: Partial<ComponentProps<typeof NodeFilter>>) {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(NodeFilter, { target, props: { hosts: [host("a"), host("b"), host("c")], selected: [], ontoggle: () => {}, onclear: () => {}, ...props } as any });
-  open.push(() => unmount(c));
+  const item = mount(NodeFilter, {
+    target,
+    props: {
+      hosts: [host("a"), host("b"), host("c")],
+      selected: [],
+      ontoggle: () => {},
+      onclear: () => {},
+      ...props,
+    },
+  });
+  open.push(() => unmount(item));
   flushSync();
   return target;
 }
+
 const trigger = () => document.querySelector('button[aria-label="Filter by node"]') as HTMLButtonElement | null;
+
 // bits-ui opens a menu on pointer down and selects an item on pointer up, so the test sends the events of a mouse click.
-const mouse = (el: Element, ...types: string[]) => { for (const type of types) el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: "mouse", button: 0 })); };
+const value = (el: Element, ...types: string[]) => {
+  for (const type of types)
+    el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: "mouse", button: 0 }));
+};
+
 async function openMenu() {
-  mouse(trigger()!, "pointerdown");
+  value(trigger()!, "pointerdown");
   await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
 }
+
 const items = () => [...document.querySelectorAll('[role="menuitemcheckbox"]')] as HTMLElement[];
-const item = (text: string) => items().find((i) => i.textContent?.includes(text))!;
-const pick = (el: HTMLElement) => { mouse(el, "pointermove", "pointerdown", "pointerup"); el.click(); };
+const item = (text: string) => items().find((index) => index.textContent?.includes(text))!;
+
+const pick = (el: HTMLElement) => {
+  value(el, "pointermove", "pointerdown", "pointerup");
+  el.click();
+};
 
 test("renders nothing for one host", () => {
   show({ hosts: [host("a")] });
@@ -51,7 +76,7 @@ test("the button names one selected node and counts several", () => {
 test("the menu has All nodes checked when nothing is selected, and a checkbox for each node", async () => {
   show({});
   await openMenu();
-  expect(items().map((i) => i.textContent!.trim())).toEqual(["All nodes", "name-a", "name-b", "name-c"]);
+  expect(items().map((index) => index.textContent!.trim())).toEqual(["All nodes", "name-a", "name-b", "name-c"]);
   expect(item("All nodes").getAttribute("aria-checked")).toBe("true");
   expect(item("name-a").getAttribute("aria-checked")).toBe("false");
 });

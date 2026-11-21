@@ -14,13 +14,18 @@
   });
 
   function confirm() {
-    const a = ask;
+    const request = ask;
     ask = null;
-    a?.run();
+    request?.run();
   }
 </script>
 
-<AlertDialog.Root open={ask !== null} onOpenChange={(o) => { if (!o) ask = null; }}>
+<AlertDialog.Root
+  open={ask !== null}
+  onOpenChange={(open) => {
+    if (!open) ask = null;
+  }}
+>
   <AlertDialog.Content>
     <AlertDialog.Header>
       <AlertDialog.Title>{last?.title}</AlertDialog.Title>
@@ -28,7 +33,9 @@
     </AlertDialog.Header>
     <AlertDialog.Footer>
       <AlertDialog.Cancel size="touch">Cancel</AlertDialog.Cancel>
-      <AlertDialog.Action size="touch" variant={last?.destructive ? "destructive" : "default"} onclick={confirm}>{last?.label}</AlertDialog.Action>
+      <AlertDialog.Action size="touch" variant={last?.destructive ? "destructive" : "default"} onclick={confirm}>
+        {last?.label}
+      </AlertDialog.Action>
     </AlertDialog.Footer>
   </AlertDialog.Content>
 </AlertDialog.Root>

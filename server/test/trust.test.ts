@@ -2,12 +2,16 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { link, mkdtemp, readdir, readFile, readlink, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileTrust, isTrustedIn } from "../src/trust";
 import { HttpError } from "../src/instances";
+import { fileTrust, isTrustedIn } from "../src/trust";
 
 let home: string;
-beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "trust-")); });
-afterEach(async () => { await rm(home, { recursive: true, force: true }); });
+beforeEach(async () => {
+  home = await mkdtemp(join(tmpdir(), "trust-"));
+});
+afterEach(async () => {
+  await rm(home, { recursive: true, force: true });
+});
 
 const file = () => join(home, ".claude.json");
 
@@ -52,7 +56,13 @@ describe("checker", () => {
 describe("add", () => {
   test("creates the file with mode 0600 and calls chown", async () => {
     const calls: [number, number][] = [];
-    const store = fileTrust({ isRoot: () => true, chown: async (_fh, u, g) => { calls.push([u, g]); } });
+    const store = fileTrust({
+      isRoot: () => true,
+      chown: (_fh, item, entry) => {
+        calls.push([item, entry]);
+        return Promise.resolve();
+      },
+    });
     await store.add({ home, uid: 1234, gid: 5678 }, "/opt/app");
     const doc = JSON.parse(await readFile(file(), "utf8"));
     expect(doc.projects["/opt/app"].hasTrustDialogAccepted).toBe(true);
@@ -74,7 +84,9 @@ describe("add", () => {
 
   test("invalid JSON throws HttpError 500 and leaves the file unchanged", async () => {
     await writeFile(file(), "{nope");
-    const err = await fileTrust({ chown: async () => {} }).add({ home, uid: 1, gid: 1 }, "/x").catch((e) => e);
+    const err = await fileTrust({ chown: async () => {} })
+      .add({ home, uid: 1, gid: 1 }, "/x")
+      .catch((error) => error);
     expect(err).toBeInstanceOf(HttpError);
     expect((err as HttpError).status).toBe(500);
     expect(await readFile(file(), "utf8")).toBe("{nope");
@@ -89,31 +101,55 @@ describe("add", () => {
   test("an existing file is chowned to the given user, not to its current owner", async () => {
     await writeFile(file(), "{}");
     const calls: [number, number][] = [];
-    await fileTrust({ isRoot: () => true, chown: async (_fh, u, g) => { calls.push([u, g]); } })
-      .add({ home, uid: 4321, gid: 8765 }, "/x");
+    await fileTrust({
+      isRoot: () => true,
+      chown: (_fh, item, entry) => {
+        calls.push([item, entry]);
+        return Promise.resolve();
+      },
+    }).add({ home, uid: 4321, gid: 8765 }, "/x");
     expect(calls).toEqual([[4321, 8765]]);
   });
 
   test("as root with no ids given, the write is refused with a 500 and the file stays as it was", async () => {
     await writeFile(file(), "{}");
-    let n = 0;
-    const err = await fileTrust({ isRoot: () => true, chown: async () => { n++; } }).add({ home }, "/x").catch((e) => e);
+    let count = 0;
+    const err = await fileTrust({
+      isRoot: () => true,
+      chown: () => {
+        count++;
+        return Promise.resolve();
+      },
+    })
+      .add({ home }, "/x")
+      .catch((error) => error);
     expect(err).toBeInstanceOf(HttpError);
-    expect([(err as HttpError).status, (err as HttpError).message]).toEqual([500, "cannot write the user's .claude.json: the owner of the file is not known"]);
-    expect(n).toBe(0);
+    expect([(err as HttpError).status, (err as HttpError).message]).toEqual([
+      500,
+      "cannot write the user's .claude.json: the owner of the file is not known",
+    ]);
+    expect(count).toBe(0);
     expect(await readFile(file(), "utf8")).toBe("{}");
   });
 
   test("chown is skipped when not root", async () => {
-    let n = 0;
-    await fileTrust({ isRoot: () => false, chown: async () => { n++; } }).add({ home, uid: 1, gid: 1 }, "/x");
-    expect(n).toBe(0);
+    let count = 0;
+    await fileTrust({
+      isRoot: () => false,
+      chown: () => {
+        count++;
+        return Promise.resolve();
+      },
+    }).add({ home, uid: 1, gid: 1 }, "/x");
+    expect(count).toBe(0);
   });
 
   test("valid JSON that is not an object throws 500 and leaves the file unchanged", async () => {
     for (const text of ["[]", '"x"', "null"]) {
       await writeFile(file(), text);
-      const err = await fileTrust({ chown: async () => {} }).add({ home, uid: 1, gid: 1 }, "/x").catch((e) => e);
+      const err = await fileTrust({ chown: async () => {} })
+        .add({ home, uid: 1, gid: 1 }, "/x")
+        .catch((error) => error);
       expect((err as HttpError).status).toBe(500);
       expect(await readFile(file(), "utf8")).toBe(text);
     }
@@ -122,17 +158,22 @@ describe("add", () => {
   test("failed chown removes the temp file and surfaces the original error", async () => {
     await writeFile(file(), "{}");
     const boom = new Error("chown boom");
-    const err = await fileTrust({ isRoot: () => true, chown: async () => { throw boom; } })
-      .add({ home, uid: 1, gid: 1 }, "/x").catch((e) => e);
+    const err = await fileTrust({
+      isRoot: () => true,
+      chown: () => {
+        return Promise.reject(boom);
+      },
+    })
+      .add({ home, uid: 1, gid: 1 }, "/x")
+      .catch((error) => error);
     expect(err).toBe(boom);
     expect(await readdir(home)).toEqual([".claude.json"]);
     expect(await readFile(file(), "utf8")).toBe("{}");
   });
 
-
   test("parallel adds for one home both land", async () => {
     const store = fileTrust({ chown: async () => {} });
-    await Promise.all(["/a", "/b", "/c", "/d"].map((p) => store.add({ home, uid: 1, gid: 1 }, p)));
+    await Promise.all(["/a", "/b", "/c", "/d"].map((item) => store.add({ home, uid: 1, gid: 1 }, item)));
     const check = await store.checker(home);
     expect(["/a", "/b", "/c", "/d"].map(check)).toEqual([true, true, true, true]);
   });
@@ -140,12 +181,23 @@ describe("add", () => {
 
 describe("a .claude.json that is not a regular file", () => {
   let other: string;
-  beforeEach(async () => { other = await mkdtemp(join(tmpdir(), "trust-other-")); });
-  afterEach(async () => { await rm(other, { recursive: true, force: true }); });
+  beforeEach(async () => {
+    other = await mkdtemp(join(tmpdir(), "trust-other-"));
+  });
+  afterEach(async () => {
+    await rm(other, { recursive: true, force: true });
+  });
 
   /** add must fail with 500, write nothing, and leave the link and its target as they were. */
-  async function expectRefused(store = fileTrust({ isRoot: () => true, chown: async () => { throw new Error("chown must not run"); } })) {
-    const err = await store.add({ home, uid: 1, gid: 1 }, "/opt").catch((e) => e);
+  async function expectRefused(
+    store = fileTrust({
+      isRoot: () => true,
+      chown: () => {
+        return Promise.reject(new Error("chown must not run"));
+      },
+    }),
+  ) {
+    const err = await store.add({ home, uid: 1, gid: 1 }, "/opt").catch((error) => error);
     expect(err).toBeInstanceOf(HttpError);
     expect((err as HttpError).status).toBe(500);
     expect(await readdir(home)).toEqual([".claude.json"]);
@@ -168,7 +220,13 @@ describe("a .claude.json that is not a regular file", () => {
     const target = join(other, "root.json");
     const text = JSON.stringify({ secret: "s", projects: { "/opt": { hasTrustDialogAccepted: true } } });
     await writeFile(target, text);
-    try { await link(target, file()); } catch { return; } // the temp dirs are on different file systems
+
+    try {
+      await link(target, file());
+    } catch {
+      return;
+    } // the temp dirs are on different file systems
+
     expect((await fileTrust().checker(home))("/opt")).toBe(false);
     const err = await expectRefused();
     expect(err.message).toContain("more than one link");
@@ -201,7 +259,10 @@ describe("a .claude.json that is not a regular file", () => {
   });
 
   test("a file over 1 MiB is refused and left unchanged", async () => {
-    const text = JSON.stringify({ projects: { "/opt": { hasTrustDialogAccepted: true } }, pad: "x".repeat(1024 * 1024) });
+    const text = JSON.stringify({
+      projects: { "/opt": { hasTrustDialogAccepted: true } },
+      pad: "x".repeat(1024 * 1024),
+    });
     await writeFile(file(), text);
     expect((await fileTrust().checker(home))("/opt")).toBe(false);
     const err = await expectRefused();

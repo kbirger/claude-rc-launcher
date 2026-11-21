@@ -10,7 +10,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 // Prop types that the shadcn-svelte components expect from `#lib/utils`.
-export type WithoutChild<T> = T extends { child?: unknown } ? Omit<T, "child"> : T;
-export type WithoutChildren<T> = T extends { children?: unknown } ? Omit<T, "children"> : T;
-export type WithoutChildrenOrChild<T> = WithoutChildren<WithoutChild<T>>;
-export type WithElementRef<T, U extends HTMLElement = HTMLElement> = T & { ref?: U | null };
+export type WithoutChild<Value> = Value extends { child?: unknown } ? Omit<Value, "child"> : Value;
+export type WithoutChildren<Value> = Value extends { children?: unknown } ? Omit<Value, "children"> : Value;
+export type WithoutChildrenOrChild<Value> = WithoutChildren<WithoutChild<Value>>;
+export type WithElementRef<Value, Other extends HTMLElement = HTMLElement> = Value & { ref?: Other | null };

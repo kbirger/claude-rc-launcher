@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { main, USAGE, type Env } from "../src/index";
 import { VERSION } from "../../server/src/version";
+import { main, USAGE } from "../src/index";
+import type { Env } from "../src/index";
 
 function run(...argv: string[]) {
   const out: string[] = [];
@@ -11,24 +12,29 @@ function run(...argv: string[]) {
       touched.push("credsFile");
       return "/nonexistent/credentials.json";
     },
-    fetch: (async () => {
+    fetch: (() => {
       touched.push("fetch");
-      throw new Error("no network");
+      return Promise.reject(new Error("no network"));
     }) as unknown as typeof fetch,
-    open: async () => void touched.push("open"),
-    readLine: async () => (touched.push("readLine"), ""),
+    open: () => Promise.resolve(void touched.push("open")),
+    readLine: () => Promise.resolve((touched.push("readLine"), "")),
   };
-  return main(argv, { out: (s) => out.push(s), err: (s) => err.push(s) }, env).then((code) => ({ code, out, err, touched }));
+  return main(argv, { out: (line) => out.push(line), err: (line) => err.push(line) }, env).then((code) => ({
+    code,
+    out,
+    err,
+    touched,
+  }));
 }
 
 describe("claude-rc --version", () => {
   test("prints the version without touching credentials or the hub", async () => {
-    const r = await run("--version");
-    expect(r).toEqual({ code: 0, out: [`claude-rc ${VERSION}`], err: [], touched: [] });
+    const outcome = await run("--version");
+    expect(outcome).toEqual({ code: 0, out: [`claude-rc ${VERSION}`], err: [], touched: [] });
   });
   test("wins over a command and other flags", async () => {
-    const r = await run("start", "/srv/x", "--hub", "https://h", "--version");
-    expect(r).toEqual({ code: 0, out: [`claude-rc ${VERSION}`], err: [], touched: [] });
+    const outcome = await run("start", "/srv/x", "--hub", "https://h", "--version");
+    expect(outcome).toEqual({ code: 0, out: [`claude-rc ${VERSION}`], err: [], touched: [] });
   });
   test("help text lists --version", () => {
     expect(USAGE).toContain("--version");

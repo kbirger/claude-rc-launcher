@@ -1,4 +1,3 @@
-
 export type IconKind = "folder" | "git" | "github";
 
 /** A missing kind (an older node, or a regular folder) shows the plain folder icon. */

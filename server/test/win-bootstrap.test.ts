@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -15,8 +15,8 @@ const windows = process.platform === "win32";
 if (windows) setDefaultTimeout(60_000);
 const SIDE_FILES = ["claude-rc-launcher.xml", "claude-rc-launcher-run.ps1", "node.config.example.toml"];
 
-const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
-const q = (s: string) => s.replaceAll("'", "''"); // for a PowerShell single-quoted string
+const sha = (item: Uint8Array | string) => createHash("sha256").update(item).digest("hex");
+const helper = (item: string) => item.replaceAll("'", "''"); // for a PowerShell single-quoted string
 
 let root: string; // the whole test's folder
 let server: ReturnType<typeof Bun.serve>;
@@ -28,32 +28,53 @@ let regKey: string;
 let regPath: string;
 
 async function ps(command: string, env: Record<string, string> = {}, cwd?: string) {
-  const p = Bun.spawn(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
-    stdout: "pipe", stderr: "pipe", cwd: cwd ?? work, env: { ...process.env, ...env, CLAUDE_RC_RELEASE_BASE: `http://127.0.0.1:${server.port}` },
+  const subprocess = Bun.spawn(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwd ?? work,
+    env: { ...process.env, ...env, CLAUDE_RC_RELEASE_BASE: `http://127.0.0.1:${server.port}` },
   });
-  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  const [out, err, code] = await Promise.all([
+    new Response(subprocess.stdout).text(),
+    new Response(subprocess.stderr).text(),
+    subprocess.exited,
+  ]);
   return { out, err, code };
 }
+
 /** Runs the script text as a script block, the way `& ([scriptblock]::Create((irm <url>))) -Option` does. */
 const asScriptBlock = (args: string, env: Record<string, string> = {}) =>
-  ps(`& ([scriptblock]::Create([IO.File]::ReadAllText('${q(SCRIPT)}'))) ${args}`, env);
+  ps(`& ([scriptblock]::Create([IO.File]::ReadAllText('${helper(SCRIPT)}'))) ${args}`, env);
 
 function publish(zip: Uint8Array, sumsOverride?: string) {
   files.set("/claude-rc-launcher-win-installer.zip", zip);
-  files.set("/SHA256SUMS", new TextEncoder().encode(
-    sumsOverride ?? [...files.entries()].filter(([p]) => p !== "/SHA256SUMS").map(([p, b]) => `${sha(b)}  ${p.slice(1)}\n`).join("")));
+  files.set(
+    "/SHA256SUMS",
+    new TextEncoder().encode(
+      sumsOverride ??
+        [...files.entries()]
+          .filter(([item]) => item !== "/SHA256SUMS")
+          .map(([item, uint8Array]) => `${sha(uint8Array)}  ${item.slice(1)}\n`)
+          .join(""),
+    ),
+  );
 }
 
 beforeAll(async () => {
   if (!windows) return;
   root = await mkdtemp(join(tmpdir(), "winboot-"));
   const zipPath = join(root, "installer.zip");
-  const pack = await Bun.spawn(["powershell.exe", "-NoProfile", "-Command",
-    `Compress-Archive -LiteralPath ${["install.ps1", ...SIDE_FILES].map((f) => `'${q(join(DEPLOY, f))}'`).join(",")} -DestinationPath '${q(zipPath)}' -Force`]).exited;
+  const pack = await Bun.spawn([
+    "powershell.exe",
+    "-NoProfile",
+    "-Command",
+    `Compress-Archive -LiteralPath ${["install.ps1", ...SIDE_FILES].map((item) => `'${helper(join(DEPLOY, item))}'`).join(",")} -DestinationPath '${helper(zipPath)}' -Force`,
+  ]).exited;
   if (pack !== 0) throw new Error("cannot build the test zip");
   zipOk = new Uint8Array(await readFile(zipPath));
   server = Bun.serve({
-    port: 0, hostname: "127.0.0.1",
+    port: 0,
+    hostname: "127.0.0.1",
     fetch(req) {
       const path = new URL(req.url).pathname;
       requests.push(path);
@@ -88,7 +109,8 @@ afterEach(async () => {
   await Bun.spawn(["reg.exe", "delete", `${regPath}-client`, "/f"]).exited;
 });
 
-const nodeArgs = () => `-NoService -NoClient -Binary '${q(join(work, "node.exe"))}' -WinSW '${q(join(work, "winsw.exe"))}' -InstallDir '${q(join(work, "app"))}' -DataDir '${q(join(work, "data"))}'`;
+const nodeArgs = () =>
+  `-NoService -NoClient -Binary '${helper(join(work, "node.exe"))}' -WinSW '${helper(join(work, "winsw.exe"))}' -InstallDir '${helper(join(work, "app"))}' -DataDir '${helper(join(work, "data"))}'`;
 
 describe.skipIf(!windows)("install.ps1 started without the release files (irm | iex)", () => {
   beforeEach(async () => {
@@ -97,15 +119,17 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
   });
 
   test("as a script block: downloads the zip, checks it, and installs with the files from it", async () => {
-    const r = await asScriptBlock(nodeArgs());
-    expect(r.err).toBe("");
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Downloading claude-rc-launcher-win-installer.zip");
+    const scriptBlock = await asScriptBlock(nodeArgs());
+    expect(scriptBlock.err).toBe("");
+    expect(scriptBlock.code).toBe(0);
+    expect(scriptBlock.out).toContain("Downloading claude-rc-launcher-win-installer.zip");
     expect(requests).toEqual(["/claude-rc-launcher-win-installer.zip", "/SHA256SUMS"]);
     const xml = await readFile(join(work, "app", "service", "claude-rc-launcher-svc.xml"), "utf8");
     expect(xml).toContain("<id>claude-rc-launcher</id>"); // the XML came out of the zip
     expect(xml).toContain(join(work, "data", "config.toml"));
-    expect(await readFile(join(work, "app", "service", "claude-rc-launcher-run.ps1"), "utf8")).toContain("update-pending.json");
+    expect(await readFile(join(work, "app", "service", "claude-rc-launcher-run.ps1"), "utf8")).toContain(
+      "update-pending.json",
+    );
     expect(await readFile(join(work, "data", "config.toml"), "utf8")).toContain('mode = "node"');
     expect(await readFile(join(work, "app", "service", "claude-rc-launcher.exe"), "utf8")).toBe("MZ node");
   });
@@ -114,53 +138,59 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
     const lone = join(work, "lone");
     await Bun.spawn(["cmd.exe", "/c", "mkdir", lone]).exited;
     await copyFile(SCRIPT, join(lone, "install.ps1"));
-    const r = await ps(`& '${q(join(lone, "install.ps1"))}' ${nodeArgs()}`);
-    expect(r.code).toBe(0);
+    const result = await ps(`& '${helper(join(lone, "install.ps1"))}' ${nodeArgs()}`);
+    expect(result.code).toBe(0);
     expect(requests).toContain("/claude-rc-launcher-win-installer.zip");
     expect(existsSync(join(work, "app", "service", "claude-rc-launcher-svc.xml"))).toBe(true);
   });
 
   test("a zip that does not match SHA256SUMS installs nothing", async () => {
     publish(zipOk, `${"0".repeat(64)}  claude-rc-launcher-win-installer.zip\n`);
-    const r = await asScriptBlock(nodeArgs());
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("does not match SHA256SUMS");
+    const scriptBlock = await asScriptBlock(nodeArgs());
+    expect(scriptBlock.code).not.toBe(0);
+    expect(scriptBlock.err).toContain("does not match SHA256SUMS");
     expect(existsSync(join(work, "app"))).toBe(false);
     expect(existsSync(join(work, "data"))).toBe(false);
   });
 
   test("a zip with no line in SHA256SUMS is refused", async () => {
     publish(zipOk, "");
-    const r = await asScriptBlock(nodeArgs());
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("does not match SHA256SUMS");
+    const scriptBlock = await asScriptBlock(nodeArgs());
+    expect(scriptBlock.code).not.toBe(0);
+    expect(scriptBlock.err).toContain("does not match SHA256SUMS");
   });
 
   test("a missing release file is a clear error", async () => {
     files.delete("/claude-rc-launcher-win-installer.zip");
-    const r = await asScriptBlock(nodeArgs());
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("cannot download");
+    const scriptBlock = await asScriptBlock(nodeArgs());
+    expect(scriptBlock.code).not.toBe(0);
+    expect(scriptBlock.err).toContain("cannot download");
     expect(existsSync(join(work, "app"))).toBe(false);
   });
 
   test("a zip without the launcher script is refused, and does not loop", async () => {
     const bad = join(root, "bad.zip");
-    await Bun.spawn(["powershell.exe", "-NoProfile", "-Command",
-      `Compress-Archive -LiteralPath '${q(SCRIPT)}','${q(join(DEPLOY, "claude-rc-launcher.xml"))}' -DestinationPath '${q(bad)}' -Force`]).exited;
+    await Bun.spawn([
+      "powershell.exe",
+      "-NoProfile",
+      "-Command",
+      `Compress-Archive -LiteralPath '${helper(SCRIPT)}','${helper(join(DEPLOY, "claude-rc-launcher.xml"))}' -DestinationPath '${helper(bad)}' -Force`,
+    ]).exited;
     publish(new Uint8Array(await readFile(bad)));
-    const r = await asScriptBlock(nodeArgs());
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("does not contain");
-    expect(requests.filter((p) => p.endsWith(".zip"))).toHaveLength(1); // fetched once: no loop
+    const scriptBlock = await asScriptBlock(nodeArgs());
+    expect(scriptBlock.code).not.toBe(0);
+    expect(scriptBlock.err).toContain("does not contain");
+    expect(requests.filter((request) => request.endsWith(".zip"))).toHaveLength(1); // fetched once: no loop
   });
 
   test("-ClientOnly needs no zip: it fetches only the client and sets the PATH", async () => {
     const installDir = join(work, "claude rc");
     const clientDir = join(installDir, "bin");
-    const r = await asScriptBlock(`-ClientOnly -InstallDir '${q(installDir)}' -ClientRegistryKey '${q(regKey)}-client' -PathRegistryKey '${q(regKey)}'`);
-    expect(r.err).toBe("");
-    expect(r.code).toBe(0);
+    const scriptBlock = await asScriptBlock(
+      `-ClientOnly -InstallDir '${helper(installDir)}' -ClientRegistryKey '${helper(regKey)}-client' -PathRegistryKey '${helper(regKey)}'`,
+    );
+    expect(scriptBlock.err).toBe("");
+    expect(scriptBlock.code).toBe(0);
     expect(requests.sort()).toEqual(["/SHA256SUMS", "/claude-rc-windows-x64.exe"]);
     expect(await readFile(join(clientDir, "claude-rc.exe"), "utf8")).toBe("MZ fake client");
     const q2 = await Bun.spawn(["reg.exe", "query", regPath, "/v", "Path"], { stdout: "pipe" });
@@ -170,10 +200,12 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
   test("a client that does not match SHA256SUMS is refused and the PATH is left alone", async () => {
     files.set("/SHA256SUMS", new TextEncoder().encode(`${"0".repeat(64)}  claude-rc-windows-x64.exe\n`));
     const installDir = join(work, "claude rc");
-    const clientDir = join(installDir, "bin");
-    const r = await asScriptBlock(`-ClientOnly -InstallDir '${q(installDir)}' -ClientRegistryKey '${q(regKey)}-client' -PathRegistryKey '${q(regKey)}'`);
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("does not match SHA256SUMS");
+    const _clientDir = join(installDir, "bin");
+    const scriptBlock = await asScriptBlock(
+      `-ClientOnly -InstallDir '${helper(installDir)}' -ClientRegistryKey '${helper(regKey)}-client' -PathRegistryKey '${helper(regKey)}'`,
+    );
+    expect(scriptBlock.code).not.toBe(0);
+    expect(scriptBlock.err).toContain("does not match SHA256SUMS");
     expect(existsSync(installDir)).toBe(false);
     const q2 = await Bun.spawn(["reg.exe", "query", regPath, "/v", "Path"], { stdout: "pipe" });
     expect((await new Response(q2.stdout).text()).trim().endsWith("C:\\Windows")).toBe(true);
@@ -182,34 +214,41 @@ describe.skipIf(!windows)("install.ps1 started without the release files (irm | 
 
 describe.skipIf(!windows)("install.ps1 options as environment variables (| iex cannot pass parameters)", () => {
   // Plain `iex`, no parameters. Every case ends in an error before anything is changed.
-  const viaIex = (env: Record<string, string>) => ps(`iex ([IO.File]::ReadAllText('${q(SCRIPT)}'))`, env);
+  const viaIex = (env: Record<string, string>) => ps(`iex ([IO.File]::ReadAllText('${helper(SCRIPT)}'))`, env);
 
   test("CLAUDE_RC_RELEASE is read, and checked like -Release", async () => {
-    const r = await viaIex({ CLAUDE_RC_RELEASE: "latest" });
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("invalid release tag: latest");
+    const result = await viaIex({ CLAUDE_RC_RELEASE: "latest" });
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain("invalid release tag: latest");
     expect(requests).toEqual([]);
   });
 
   test("CLAUDE_RC_CLIENT_ONLY and CLAUDE_RC_NO_CLIENT are both read", async () => {
-    const r = await viaIex({ CLAUDE_RC_CLIENT_ONLY: "1", CLAUDE_RC_NO_CLIENT: "1" });
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("cannot be used together");
+    const result = await viaIex({ CLAUDE_RC_CLIENT_ONLY: "1", CLAUDE_RC_NO_CLIENT: "1" });
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain("cannot be used together");
     expect(requests).toEqual([]);
   });
 
   test("0, false and no switch an option off", async () => {
     for (const off of ["0", "false", "no"]) {
-      const r = await viaIex({ CLAUDE_RC_CLIENT_ONLY: off, CLAUDE_RC_NO_CLIENT: "1", CLAUDE_RC_RELEASE: "not-a-tag" });
-      expect(r.err).not.toContain("cannot be used together"); // ClientOnly is off, so no conflict: the tag is the error
-      expect(r.err).toContain("invalid release tag");
+      const result = await viaIex({
+        CLAUDE_RC_CLIENT_ONLY: off,
+        CLAUDE_RC_NO_CLIENT: "1",
+        CLAUDE_RC_RELEASE: "not-a-tag",
+      });
+      expect(result.err).not.toContain("cannot be used together"); // ClientOnly is off, so no conflict: the tag is the error
+      expect(result.err).toContain("invalid release tag");
     }
   });
 
   test("a parameter wins over the environment", async () => {
     // -Release v1.2.3 is valid even though the variable is not: the script goes on to fetch from the test server.
-    const r = await asScriptBlock(`-Release v1.2.3 -NoService -NoClient -Binary 'x' -InstallDir '${q(join(work, "b"))}' -DataDir '${q(join(work, "d"))}'`, { CLAUDE_RC_RELEASE: "not-a-tag" });
-    expect(r.err).not.toContain("invalid release tag");
+    const scriptBlock = await asScriptBlock(
+      `-Release v1.2.3 -NoService -NoClient -Binary 'x' -InstallDir '${helper(join(work, "b"))}' -DataDir '${helper(join(work, "d"))}'`,
+      { CLAUDE_RC_RELEASE: "not-a-tag" },
+    );
+    expect(scriptBlock.err).not.toContain("invalid release tag");
     expect(requests.length).toBeGreaterThan(0);
   });
 });

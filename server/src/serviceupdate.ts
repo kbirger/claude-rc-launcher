@@ -1,6 +1,7 @@
 import path from "node:path";
+import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256 } from "./release";
+import type { ReleaseIo, RunResult } from "./release";
 import type { UpdateHooks } from "./updateevents";
-import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256, type ReleaseIo, type RunResult } from "./release";
 
 /** The installed service. The updater works on this layout only. */
 export const SERVICE_BIN = "/usr/local/bin/claude-rc-launcher";
@@ -14,15 +15,21 @@ const VERSION_TIMEOUT_MS = 10_000;
 /** The host poll asks for client versions, so a hung client must not hold it for long. */
 const CLIENT_VERSION_TIMEOUT_MS = 2_000;
 
-export type ClientResult = { path: string; status: "updated" | "up-to-date" | "failed"; from?: string; to?: string; error?: string };
+export interface ClientResult {
+  path: string;
+  status: "updated" | "up-to-date" | "failed";
+  from?: string;
+  to?: string;
+  error?: string;
+}
 
-export type UpdateReport = {
+export interface UpdateReport {
   status: "restarting" | "up-to-date" | "clients-only" | "failed";
   from: string;
   to?: string;
   clients: ClientResult[];
   error?: string;
-};
+}
 
 /** What the updater needs from the machine. Commands in `run` already run as root, because the service does. */
 export interface UpdateEnv extends ReleaseIo, Omit<FindClientsInput, "registered"> {
@@ -31,7 +38,7 @@ export interface UpdateEnv extends ReleaseIo, Omit<FindClientsInput, "registered
   execPath: string;
   version: string;
   scope: "system" | "user";
-  readFile(p: string): Uint8Array;
+  readFile(path: string): Uint8Array;
   /** The client paths in the client registry (a file on Linux, a registry value on Windows) (`pathEnv` is the service's own PATH, `homes` the service user's and root's). */
   registeredClients?(): string[];
   /** Like `run`, without blocking the event loop. When it is missing, callers fall back to `run`. */
@@ -51,11 +58,11 @@ export class UpdateRefused extends Error {
   }
 }
 
-export type FindClientsInput = {
+export interface FindClientsInput {
   pathEnv: string;
   homes: string[];
-  exists(p: string): boolean;
-  realpath(p: string): string;
+  exists(path: string): boolean;
+  realpath(path: string): string;
   /** `process.platform`. Anything but `win32` is scanned as POSIX. */
   platform?: string;
   /** Windows only: the Program Files directory, where the installer puts `claude-rc\\claude-rc.exe`. */
@@ -64,7 +71,7 @@ export type FindClientsInput = {
   registered?: string[];
   /** Whether a registered client (by its real path) may be updated as root. A missing check allows it. Scanned entries are not checked. */
   trustedClient?(realPath: string): boolean;
-};
+}
 
 /**
  * The client copies on this machine: the registered ones first, then the first `claude-rc` on `pathEnv` (as `which`
@@ -72,58 +79,77 @@ export type FindClientsInput = {
  * (split on `;`) and in Program Files, and skips the homes. Each entry is a real path, and each real file is listed
  * once. A registered entry that `trustedClient` refuses is dropped, and the scan may still find the same file.
  */
-export function findClients(o: FindClientsInput): string[] {
-  const win = o.platform === "win32";
-  const candidates: { path: string; registered: boolean }[] = (o.registered ?? []).filter((p) => o.exists(p)).map((path) => ({ path, registered: true }));
+export function findClients(findClientsInput: FindClientsInput): string[] {
+  const win = findClientsInput.platform === "win32";
+  const candidates: { path: string; registered: boolean }[] = (findClientsInput.registered ?? [])
+    .filter((item) => findClientsInput.exists(item))
+    .map((path) => ({ path, registered: true }));
   const scanned: string[] = [];
+
   if (win) {
-    const onPath = o.pathEnv
+    const onPath = findClientsInput.pathEnv
       .split(";")
-      .map((d) => d.trim().replace(/^"(.*)"$/, "$1").trim())
-      .filter((d) => d !== "")
-      .map((d) => path.win32.join(d, `${CLIENT}.exe`))
-      .find((p) => o.exists(p));
+      .map((part) =>
+        part
+          .trim()
+          .replace(/^"(.*)"$/, "$1")
+          .trim(),
+      )
+      .filter((item) => item !== "")
+      .map((item) => path.win32.join(item, `${CLIENT}.exe`))
+      .find((item) => findClientsInput.exists(item));
     if (onPath) scanned.push(onPath);
-    if (o.programFiles) {
-      for (const p of [path.win32.join(o.programFiles, CLIENT, "bin", `${CLIENT}.exe`), path.win32.join(o.programFiles, CLIENT, `${CLIENT}.exe`)]) {
-        if (o.exists(p)) scanned.push(p);
+
+    if (findClientsInput.programFiles) {
+      for (const item of [
+        path.win32.join(findClientsInput.programFiles, CLIENT, "bin", `${CLIENT}.exe`),
+        path.win32.join(findClientsInput.programFiles, CLIENT, `${CLIENT}.exe`),
+      ]) {
+        if (findClientsInput.exists(item)) scanned.push(item);
       }
     }
   } else {
-    const onPath = o.pathEnv
+    const onPath = findClientsInput.pathEnv
       .split(":")
-      .filter((d) => d !== "")
-      .map((d) => `${d.replace(/\/+$/, "")}/${CLIENT}`)
-      .find((p) => o.exists(p));
+      .filter((part) => part !== "")
+      .map((part) => `${part.replace(/\/+$/, "")}/${CLIENT}`)
+      .find((item) => findClientsInput.exists(item));
     if (onPath) scanned.push(onPath);
-    for (const h of o.homes) {
-      const p = `${h.replace(/\/+$/, "")}/.local/bin/${CLIENT}`;
-      if (o.exists(p)) scanned.push(p);
+
+    for (const home of findClientsInput.homes) {
+      const userBin = `${home.replace(/\/+$/, "")}/.local/bin/${CLIENT}`;
+      if (findClientsInput.exists(userBin)) scanned.push(userBin);
     }
   }
-  for (const p of scanned) candidates.push({ path: p, registered: false });
+
+  for (const item of scanned) candidates.push({ path: item, registered: false });
   const found: string[] = [];
   const seen = new Set<string>();
-  for (const c of candidates) {
+
+  for (const candidate of candidates) {
     let real: string;
+
     try {
-      real = o.realpath(c.path);
+      real = findClientsInput.realpath(candidate.path);
     } catch {
       continue;
     }
-    if (c.registered && o.trustedClient && !o.trustedClient(real)) continue;
+
+    if (candidate.registered && findClientsInput.trustedClient && !findClientsInput.trustedClient(real)) continue;
     const key = win ? real.toLowerCase() : real;
     if (seen.has(key)) continue;
     seen.add(key);
     found.push(real);
   }
+
   return found;
 }
 
 /** The client copies of the machine `env` describes: the one place that passes the registry to `findClients`. */
-export const clientsOf = (env: UpdateEnv): string[] => findClients({ ...env, registered: env.registeredClients?.() ?? [] });
+export const clientsOf = (env: UpdateEnv): string[] =>
+  findClients({ ...env, registered: env.registeredClients?.() ?? [] });
 
-const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+const shQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
 /**
  * A POSIX shell script that restarts `unit` after a short delay and waits until it has been active for
@@ -131,10 +157,10 @@ const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
  * restarts the unit again. It must run outside the service (for example in a transient systemd unit), because the
  * service process ends with the first restart.
  */
-export function watchdogScript(o: { bin: string; unit: string; waitSeconds: number }): string {
-  const wait = Math.max(1, Math.floor(o.waitSeconds));
-  return `bin=${shQuote(o.bin)}
-unit=${shQuote(o.unit)}
+export function watchdogScript(options: { bin: string; unit: string; waitSeconds: number }): string {
+  const wait = Math.max(1, Math.floor(options.waitSeconds));
+  return `bin=${shQuote(options.bin)}
+unit=${shQuote(options.unit)}
 wait=${wait}
 limit=$((wait * 2))
 sleep 2
@@ -167,16 +193,19 @@ exit 1
 }
 
 /** The version a binary reports with `--version` (`<prefix> <version>`), or undefined when it does not answer. */
-function binaryVersion(env: Pick<UpdateEnv, "run">, p: string, prefix: string): string | undefined {
-  return parseVersion(env.run([p, "--version"], { timeoutMs: VERSION_TIMEOUT_MS }), prefix);
+function binaryVersion(env: Pick<UpdateEnv, "run">, binary: string, prefix: string): string | undefined {
+  return parseVersion(env.run([binary, "--version"], { timeoutMs: VERSION_TIMEOUT_MS }), prefix);
 }
 
-function parseVersion(r: RunResult, prefix: string): string | undefined {
-  const line = r.stdout.trim().split("\n")[0] ?? "";
-  return r.code === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
+function parseVersion(runResult: RunResult, prefix: string): string | undefined {
+  const line = runResult.stdout.trim().split("\n")[0] ?? "";
+  return runResult.code === 0 && line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1).trim() : undefined;
 }
 
-export type ClientVersion = { path: string; version?: string };
+export interface ClientVersion {
+  path: string;
+  version?: string;
+}
 /** A lookup of the client versions. `reset` drops the cached list and any lookup in flight, so the next call asks again. */
 export type ClientVersionsLookup = (() => Promise<ClientVersion[]>) & { reset?: () => void };
 
@@ -186,9 +215,12 @@ export type ClientVersionsLookup = (() => Promise<ClientVersion[]>) & { reset?: 
  * blocking the event loop, and concurrent callers share one lookup. The list is cached for `ttlMs`, so a host poll
  * does not start a process each time. A copy that does not answer has no `version`.
  */
-export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: () => number } = {}): ClientVersionsLookup & { reset: () => void } {
-  const ttlMs = o.ttlMs ?? 60_000;
-  const now = o.now ?? Date.now;
+export function createClientVersions(
+  env: UpdateEnv,
+  options: { ttlMs?: number; now?: () => number } = {},
+): ClientVersionsLookup & { reset: () => void } {
+  const ttlMs = options.ttlMs ?? 60_000;
+  const now = options.now ?? Date.now;
   let cached: { at: number; list: ClientVersion[] } | undefined;
   let inflight: Promise<ClientVersion[]> | undefined;
   // Counts the resets. A lookup that started before a reset does not store its answer.
@@ -197,8 +229,10 @@ export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: 
   const ask = async (path: string): Promise<ClientVersion> => {
     try {
       const opts = { timeoutMs: CLIENT_VERSION_TIMEOUT_MS };
-      const r = env.runAsync ? await env.runAsync([path, "--version"], opts) : env.run([path, "--version"], opts);
-      const version = parseVersion(r, CLIENT);
+      const runResult = env.runAsync
+        ? await env.runAsync([path, "--version"], opts)
+        : env.run([path, "--version"], opts);
+      const version = parseVersion(runResult, CLIENT);
       return version !== undefined ? { path, version } : { path };
     } catch {
       return { path };
@@ -207,101 +241,124 @@ export function createClientVersions(env: UpdateEnv, o: { ttlMs?: number; now?: 
 
   const get = () => {
     if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.list);
+
     if (!inflight) {
       // Run the body from a microtask, so that a synchronous throw is a rejection of `p` and `inflight` is set first.
       const gen = generation;
-      const p: Promise<ClientVersion[]> = Promise.resolve().then(async () => {
+      const promise: Promise<ClientVersion[]> = Promise.resolve().then(async () => {
         const list = await Promise.all(clientsOf(env).map(ask));
         if (gen === generation) cached = { at: now(), list };
         return list;
       });
-      inflight = p;
+      inflight = promise;
+
       const clear = () => {
-        if (inflight === p) inflight = undefined;
+        if (inflight === promise) inflight = undefined;
       };
-      p.then(clear, clear);
+
+      promise.then(clear, clear);
     }
+
     return inflight;
   };
+
   const reset = () => {
     generation++;
     cached = undefined;
     inflight = undefined;
   };
+
   return Object.assign(get, { reset });
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
  * Updates the machine it runs on from a GitHub release: the client copies first, then the service binary. A new
  * service binary is started by the watchdog, which restarts the service and rolls it back if it does not stay
  * active. Throws UpdateRefused for a request it does not take. Every other failure is a report with status `failed`.
  */
-export function createServiceUpdater(env: UpdateEnv, hooks: UpdateHooks = {}): { run(release?: string): Promise<UpdateReport> } {
+export function createServiceUpdater(
+  env: UpdateEnv,
+  hooks: UpdateHooks = {},
+): { run(release?: string): Promise<UpdateReport> } {
   let busy = false;
 
-  const step = (s: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => {
+  const step = (options: Parameters<NonNullable<UpdateHooks["onStep"]>>[0]) => {
     try {
-      hooks.onStep?.(s);
-    } catch {
-      // a hook must never change the outcome of an update
-    }
-  };
-  const log = (l: string) => {
-    try {
-      hooks.onLog?.(l.length > 500 ? `${l.slice(0, 497)}...` : l);
+      hooks.onStep?.(options);
     } catch {
       // a hook must never change the outcome of an update
     }
   };
 
-  const versionOf = (p: string, prefix: string) => binaryVersion(env, p, prefix);
+  const log = (line: string) => {
+    try {
+      hooks.onLog?.(line.length > 500 ? `${line.slice(0, 497)}...` : line);
+    } catch {
+      // a hook must never change the outcome of an update
+    }
+  };
+
+  const versionOf = (binary: string, prefix: string) => binaryVersion(env, binary, prefix);
 
   const refuseUnlessInstalled = () => {
-    if (env.platform !== "linux") throw new UpdateRefused(409, `the update works on Linux with systemd only (this is ${env.platform})`);
-    if (env.scope !== "system") throw new UpdateRefused(409, "the update works for a system-scope service only (this service has scope user)");
+    if (env.platform !== "linux")
+      throw new UpdateRefused(409, `the update works on Linux with systemd only (this is ${env.platform})`);
+    if (env.scope !== "system")
+      throw new UpdateRefused(409, "the update works for a system-scope service only (this service has scope user)");
+
     if (env.execPath !== SERVICE_BIN) {
-      throw new UpdateRefused(409, `this process is not the installed service: it runs from ${env.execPath}, not ${SERVICE_BIN}`);
+      throw new UpdateRefused(
+        409,
+        `this process is not the installed service: it runs from ${env.execPath}, not ${SERVICE_BIN}`,
+      );
     }
-    if (!env.exists(SERVICE_UNIT_PATH)) throw new UpdateRefused(409, `this process is not the installed service: ${SERVICE_UNIT_PATH} is missing`);
+
+    if (!env.exists(SERVICE_UNIT_PATH))
+      throw new UpdateRefused(409, `this process is not the installed service: ${SERVICE_UNIT_PATH} is missing`);
   };
 
-  const updateClient = (p: string, binary: Uint8Array): ClientResult => {
+  const updateClient = (item: string, binary: Uint8Array): ClientResult => {
     try {
-      if (sha256(env.readFile(p)) === sha256(binary)) {
-        log(`${p} is up to date`);
-        return { path: p, status: "up-to-date" };
+      if (sha256(env.readFile(item)) === sha256(binary)) {
+        log(`${item} is up to date`);
+        return { path: item, status: "up-to-date" };
       }
-      const from = versionOf(p, CLIENT);
-      installWithBackup(env, p, binary);
-      log(`renamed the old client ${p} to ${path.basename(p)}.prev`);
-      const to = versionOf(p, CLIENT);
+
+      const from = versionOf(item, CLIENT);
+      installWithBackup(env, item, binary);
+      log(`renamed the old client ${item} to ${path.basename(item)}.prev`);
+      const to = versionOf(item, CLIENT);
+
       if (to !== undefined) {
-        log(`new client ${p} answers ${to}`);
-        return { path: p, status: "updated", ...(from !== undefined ? { from } : {}), to };
+        log(`new client ${item} answers ${to}`);
+        return { path: item, status: "updated", ...(from !== undefined ? { from } : {}), to };
       }
-      const restored = restorePrevious(env, p);
+
+      const restored = restorePrevious(env, item);
       return {
-        path: p,
+        path: item,
         status: "failed",
         error: restored
           ? "the new file did not answer --version. The previous file was restored"
-          : `the new file did not answer --version and ${p}.prev could not be restored`,
+          : `the new file did not answer --version and ${item}.prev could not be restored`,
       };
-    } catch (e) {
-      return { path: p, status: "failed", error: message(e) };
+    } catch (error) {
+      return { path: item, status: "failed", error: message(error) };
     }
   };
 
   const update = async (release: string | undefined): Promise<UpdateReport> => {
     const from = env.version;
     const clients: ClientResult[] = [];
+
     const failed = (error: string): UpdateReport => {
       step({ step: "failed", detail: error });
       log(error);
       return { status: "failed", from, clients, error };
     };
+
     const cpu = env.arch === "x64" || env.arch === "arm64" ? env.arch : undefined;
     if (!cpu) throw new UpdateRefused(409, `unsupported CPU architecture: ${env.arch}`);
 
@@ -309,86 +366,112 @@ export function createServiceUpdater(env: UpdateEnv, hooks: UpdateHooks = {}): {
     step({ step: "downloading" });
     log(`downloading claude-rc-launcher-linux-${cpu}`);
     let service: Uint8Array;
+
     try {
       service = await downloadAsset(env, `claude-rc-launcher-linux-${cpu}`, release);
-    } catch (e) {
-      if (e instanceof ReleaseError) return failed(e.message);
-      throw e;
+    } catch (error) {
+      if (error instanceof ReleaseError) return failed(error.message);
+      throw error;
     }
+
     step({ step: "verifying" });
     log("sha256 matches SHA256SUMS");
 
     // The client copies, before the service
     const paths = clientsOf(env);
+
     if (paths.length > 0) {
       let client: Uint8Array | undefined;
       let error = "";
       log(`downloading ${CLIENT}-linux-${cpu}`);
+
       try {
         client = await downloadAsset(env, `${CLIENT}-linux-${cpu}`, release);
         log("sha256 matches SHA256SUMS");
-      } catch (e) {
-        if (!(e instanceof ReleaseError)) throw e;
-        error = e.message;
+      } catch (caught) {
+        if (!(caught instanceof ReleaseError)) throw caught;
+        error = caught.message;
         log(error);
       }
-      for (const p of paths) {
-        step({ step: "installing-client", client: p });
-        const r = client ? updateClient(p, client) : { path: p, status: "failed" as const, error };
-        if (client && r.status === "failed") log(`${p}: ${r.error}`);
-        clients.push(r);
+
+      for (const item of paths) {
+        step({ step: "installing-client", client: item });
+        const clientResult = client ? updateClient(item, client) : { path: item, status: "failed" as const, error };
+        if (client && clientResult.status === "failed") log(`${item}: ${clientResult.error}`);
+        clients.push(clientResult);
       }
     }
-    const clientErrors = clients.filter((c) => c.status === "failed").map((c) => `${c.path}: ${c.error}`);
+
+    const clientErrors = clients
+      .filter((clientResult) => clientResult.status === "failed")
+      .map((clientResult) => `${clientResult.path}: ${clientResult.error}`);
 
     // The service
     if (sha256(env.readFile(SERVICE_BIN)) === sha256(service)) {
       if (clientErrors.length > 0) return failed(`the client update failed: ${clientErrors.join("; ")}`);
       step({ step: "up-to-date" });
       log("the service binary is up to date");
-      return { status: clients.some((c) => c.status === "updated") ? "clients-only" : "up-to-date", from, clients };
+      return {
+        status: clients.some((clientResult) => clientResult.status === "updated") ? "clients-only" : "up-to-date",
+        from,
+        clients,
+      };
     }
+
     step({ step: "installing" });
+
     try {
       installWithBackup(env, SERVICE_BIN, service);
-    } catch (e) {
-      if (e instanceof ReleaseError) return failed(e.message);
-      throw e;
+    } catch (error) {
+      if (error instanceof ReleaseError) return failed(error.message);
+      throw error;
     }
+
     log(`renamed the old binary to ${path.basename(SERVICE_BIN)}.prev`);
     const to = versionOf(SERVICE_BIN, "claude-rc-launcher");
     const rollBack = (why: string) =>
-      failed(restorePrevious(env, SERVICE_BIN) ? `${why}. The previous service binary was restored` : `${why}, and ${SERVICE_BIN}.prev could not be restored`);
+      failed(
+        restorePrevious(env, SERVICE_BIN)
+          ? `${why}. The previous service binary was restored`
+          : `${why}, and ${SERVICE_BIN}.prev could not be restored`,
+      );
     if (to === undefined) return rollBack("the new service binary did not answer --version");
     log(`new binary answers ${to}`);
     step({ step: "restarting", to });
     log("starting the watchdog");
+
     try {
       env.startWatchdog(watchdogScript({ bin: SERVICE_BIN, unit: SERVICE_UNIT, waitSeconds: STAY_ACTIVE_SECONDS }));
-    } catch (e) {
-      return rollBack(`the watchdog did not start: ${message(e)}`);
+    } catch (error) {
+      return rollBack(`the watchdog did not start: ${message(error)}`);
     }
+
     return { status: "restarting", from, to, clients };
   };
 
   return {
     async run(release) {
-      if (release !== undefined && !RELEASE_TAG_RE.test(release)) throw new UpdateRefused(400, "release must be a version tag such as v1.2.3");
+      if (release !== undefined && !RELEASE_TAG_RE.test(release))
+        throw new UpdateRefused(400, "release must be a version tag such as v1.2.3");
       if (busy) throw new UpdateRefused(409, "another update is running on this machine");
       busy = true;
       let keepLock = false;
+
       try {
         refuseUnlessInstalled();
         let report: UpdateReport;
+
         try {
           report = await update(release);
-        } catch (e) {
-          if (!(e instanceof UpdateRefused)) {
-            step({ step: "failed", detail: message(e) });
-            log(message(e));
+        } catch (error) {
+          if (!(error instanceof UpdateRefused)) {
+            step({ step: "failed", detail: message(error) });
+            log(message(error));
           }
-          throw e;
+
+          throw error;
         }
+
         // The service restarts soon. A second run before that would overwrite the .prev backup with the new binary.
         keepLock = report.status === "restarting";
         return report;

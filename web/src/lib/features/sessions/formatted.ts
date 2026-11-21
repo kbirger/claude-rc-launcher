@@ -12,14 +12,17 @@ export const TOO_COMPLEX_NOTE = "This file is too complex to format. Showing pla
 /** `name` is the file name, `text` is the preview text. The result is never an error: a failure gives plain text with a note. */
 export async function formatText(name: string, text: string): Promise<Formatted> {
   const plan = viewKind(name, text.length);
-  if (plan.kind !== "markdown") return plan.kind === "plain" && plan.note ? { kind: "plain", note: plan.note } : { kind: "plain" };
+  if (plan.kind !== "markdown")
+    return plan.kind === "plain" && plan.note ? { kind: "plain", note: plan.note } : { kind: "plain" };
+
   try {
     const { renderMarkdownResult } = await import("./markdown");
-    const r = renderMarkdownResult(text);
-    if (r.ok) return { kind: "markdown", html: r.html };
-    return { kind: "plain", note: r.reason === "complex" ? TOO_COMPLEX_NOTE : FAILED_NOTE };
+    const markdownResult = renderMarkdownResult(text);
+    if (markdownResult.ok) return { kind: "markdown", html: markdownResult.html };
+    return { kind: "plain", note: markdownResult.reason === "complex" ? TOO_COMPLEX_NOTE : FAILED_NOTE };
   } catch {
     // The chunk did not load: fall through to plain text.
   }
+
   return { kind: "plain", note: FAILED_NOTE };
 }

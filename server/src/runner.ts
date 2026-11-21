@@ -1,11 +1,16 @@
-export type RunOptions = {
+export interface RunOptions {
   cwd?: string;
   /** Replaces the whole environment of the child (it is not merged with process.env). */
   env?: Record<string, string>;
   stdin?: string;
   timeoutMs?: number;
-};
-export type RunResult = { code: number; stdout: string; stderr: string; timedOut?: boolean };
+}
+export interface RunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  timedOut?: boolean;
+}
 export type Runner = (cmd: string, args: string[], opts?: RunOptions) => Promise<RunResult>;
 
 /** Reads a stream into a buffer that stays readable even if the read never ends. */
@@ -15,7 +20,11 @@ function collect(stream: ReadableStream<Uint8Array>) {
   const box = {
     text: "",
     done: Promise.resolve(),
-    cancel: () => { try { reader.cancel().catch(() => {}); } catch {} },
+    cancel: () => {
+      try {
+        reader.cancel().catch(() => {});
+      } catch {}
+    },
   };
   box.done = (async () => {
     try {
@@ -34,6 +43,7 @@ function collect(stream: ReadableStream<Uint8Array>) {
  * descendants may still hold open. */
 export const bunRunner: Runner = async (cmd, args, opts = {}) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const proc = Bun.spawn([cmd, ...args], {
       stdout: "pipe",
@@ -45,31 +55,44 @@ export const bunRunner: Runner = async (cmd, args, opts = {}) => {
       detached: opts.timeoutMs !== undefined,
     });
     let timedOut = false;
+    // A function, so that TypeScript does not narrow `timedOut` to false: the timer sets it while `proc` runs.
+    const wasTimedOut = () => timedOut;
+
     if (opts.timeoutMs !== undefined) {
       timer = setTimeout(() => {
         timedOut = true;
-        try { process.kill(-proc.pid, "SIGKILL"); } catch { proc.kill("SIGKILL"); }
+
+        try {
+          process.kill(-proc.pid, "SIGKILL");
+        } catch {
+          proc.kill("SIGKILL");
+        }
       }, opts.timeoutMs);
     }
+
     const out = collect(proc.stdout);
     const err = collect(proc.stderr);
     const code = await proc.exited;
-    if (timedOut) {
+
+    if (wasTimedOut()) {
       // Give the pipes a short moment to drain, then stop waiting.
       let grace: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         Promise.all([out.done, err.done]),
-        new Promise((r) => { grace = setTimeout(r, 300); }),
+        new Promise((resolve) => {
+          grace = setTimeout(resolve, 300);
+        }),
       ]);
       clearTimeout(grace);
       out.cancel();
       err.cancel();
       return { code: code || 124, stdout: out.text, stderr: err.text, timedOut: true };
     }
+
     await Promise.all([out.done, err.done]);
     return { code, stdout: out.text, stderr: err.text };
-  } catch (e) {
-    return { code: 127, stdout: "", stderr: e instanceof Error ? e.message : String(e) };
+  } catch (error) {
+    return { code: 127, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
   } finally {
     if (timer) clearTimeout(timer);
   }

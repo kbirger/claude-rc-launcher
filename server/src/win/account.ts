@@ -7,8 +7,8 @@
 
 /** `DOMAIN\user`, `.\user` and `user` name the same local account. Windows account names ignore case. */
 export function accountName(name: string): string {
-  const i = name.lastIndexOf("\\");
-  return (i >= 0 ? name.slice(i + 1) : name).toLowerCase();
+  const position = name.lastIndexOf("\\");
+  return (position >= 0 ? name.slice(position + 1) : name).toLowerCase();
 }
 
 export function checkServiceAccount(configured: string, running: string): void {

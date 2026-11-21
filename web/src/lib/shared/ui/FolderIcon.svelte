@@ -7,8 +7,14 @@
   let { kind }: { kind: IconKind } = $props();
 
   const icons = { folder: Folder, git: Git, github: Github };
-  const titles: Record<IconKind, string | undefined> = { folder: undefined, git: "Git repository", github: "GitHub repository" };
+  const titles: Record<IconKind, string | undefined> = {
+    folder: undefined,
+    git: "Git repository",
+    github: "GitHub repository",
+  };
   const Icon = $derived(icons[kind]);
 </script>
 
-<span class="inline-flex flex-none self-center leading-none" title={titles[kind]} aria-hidden="true"><Icon size="1em" /></span>
+<span class="inline-flex flex-none self-center leading-none" title={titles[kind]} aria-hidden="true">
+  <Icon size="1em" />
+</span>

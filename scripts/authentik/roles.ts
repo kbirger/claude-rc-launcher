@@ -1,53 +1,97 @@
-import { ApiError, type Ctx, type Json } from "./api";
+import { ApiError, textOf } from "./api";
+import type { Ctx, Json } from "./api";
 import type { Settings } from "./settings";
 
-export const mappingExpression = (claim: string): string => `roles = [g.attributes.get("${claim}") for g in request.user.ak_groups.all()]
+export const mappingExpression = (
+  claim: string,
+): string => `roles = [g.attributes.get("${claim}") for g in request.user.ak_groups.all()]
 return {"${claim}": [r for r in roles if r]}`;
 
 /** The scope mapping, the role groups, and the admin user. Older authentik versions keep the mapping under another path. */
-export async function ensureRoles(ctx: Ctx, s: Settings): Promise<{ mappingPk?: string; groups: Map<string, Json | undefined> }> {
-  const expression = mappingExpression(s.claim);
+export async function ensureRoles(
+  ctx: Ctx,
+  settings: Settings,
+): Promise<{ mappingPk?: string; groups: Map<string, Json | undefined> }> {
+  const expression = mappingExpression(settings.claim);
   let mappingsPath = "/api/v3/propertymappings/provider/scope/";
   let mapping: Json | undefined;
+
   try {
-    mapping = await ctx.find(mappingsPath, "name", s.mappingName);
-  } catch (e) {
-    if (!(e instanceof ApiError && e.status === 404)) throw e;
+    mapping = await ctx.find(mappingsPath, "name", settings.mappingName);
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 404)) throw error;
     mappingsPath = "/api/v3/propertymappings/scope/";
-    mapping = await ctx.find(mappingsPath, "name", s.mappingName);
+    mapping = await ctx.find(mappingsPath, "name", settings.mappingName);
   }
-  let mappingPk: string | undefined = mapping?.pk;
+
+  let mappingPk = textOf(mapping?.pk);
   if (!mapping) {
-    const made = await ctx.write(`create the scope mapping "${s.mappingName}" (scope ${s.scope})`, "POST", mappingsPath, { name: s.mappingName, scope_name: s.scope, expression });
-    mappingPk = made?.pk;
-  } else if (mapping.expression !== expression || mapping.scope_name !== s.scope) {
-    await ctx.write(`update the scope mapping "${s.mappingName}"`, "PATCH", `${mappingsPath}${mapping.pk}/`, { scope_name: s.scope, expression });
-  } else ctx.log(`ok: the scope mapping "${s.mappingName}" is up to date`);
+    const made = await ctx.write(
+      `create the scope mapping "${settings.mappingName}" (scope ${settings.scope})`,
+      "POST",
+      mappingsPath,
+      { name: settings.mappingName, scope_name: settings.scope, expression },
+    );
+    mappingPk = textOf(made?.pk);
+  } else if (mapping.expression !== expression || mapping.scope_name !== settings.scope) {
+    await ctx.write(`update the scope mapping "${settings.mappingName}"`, "PATCH", `${mappingsPath}${mapping.pk}/`, {
+      scope_name: settings.scope,
+      expression,
+    });
+  } else ctx.log(`ok: the scope mapping "${settings.mappingName}" is up to date`);
 
   const groups = new Map<string, Json | undefined>();
-  for (const g of s.groups) {
-    const found = await ctx.find("/api/v3/core/groups/?include_users=true", "name", g.name);
+
+  for (const group of settings.groups) {
+    const found = await ctx.find("/api/v3/core/groups/?include_users=true", "name", group.name);
+
     if (!found) {
-      groups.set(g.name, await ctx.write(`create the group "${g.name}" with ${s.claim}: ${g.role}`, "POST", "/api/v3/core/groups/", { name: g.name, attributes: { [s.claim]: g.role } }));
-    } else if (found.attributes?.[s.claim] !== g.role) {
-      groups.set(g.name, found);
-      await ctx.write(`set ${s.claim}: ${g.role} on the group "${g.name}"`, "PATCH", `/api/v3/core/groups/${found.pk}/`, { attributes: { ...(found.attributes ?? {}), [s.claim]: g.role } });
+      groups.set(
+        group.name,
+        await ctx.write(
+          `create the group "${group.name}" with ${settings.claim}: ${group.role}`,
+          "POST",
+          "/api/v3/core/groups/",
+          {
+            name: group.name,
+            attributes: { [settings.claim]: group.role },
+          },
+        ),
+      );
+    } else if (found.attributes?.[settings.claim] !== group.role) {
+      groups.set(group.name, found);
+      await ctx.write(
+        `set ${settings.claim}: ${group.role} on the group "${group.name}"`,
+        "PATCH",
+        `/api/v3/core/groups/${found.pk}/`,
+        { attributes: { ...(found.attributes ?? {}), [settings.claim]: group.role } },
+      );
     } else {
-      groups.set(g.name, found);
-      ctx.log(`ok: the group "${g.name}" has ${s.claim}: ${g.role}`);
+      groups.set(group.name, found);
+      ctx.log(`ok: the group "${group.name}" has ${settings.claim}: ${group.role}`);
     }
   }
 
-  if (s.adminUser) {
-    const user = await ctx.find("/api/v3/core/users/", "username", s.adminUser);
-    if (!user) ctx.problems.push(`user not found: ${s.adminUser}`);
+  if (settings.adminUser) {
+    const user = await ctx.find("/api/v3/core/users/", "username", settings.adminUser);
+
+    if (!user) ctx.problems.push(`user not found: ${settings.adminUser}`);
     else {
-      const group = groups.get(s.adminGroup);
-      if (group?.users?.includes(user.pk)) ctx.log(`ok: ${s.adminUser} is in "${s.adminGroup}"`);
-      else if (!group && !ctx.apply) await ctx.write(`add ${s.adminUser} to "${s.adminGroup}"`, "POST", "(new group)/add_user/", {});
-      else if (group) await ctx.write(`add ${s.adminUser} to "${s.adminGroup}"`, "POST", `/api/v3/core/groups/${group.pk}/add_user/`, { pk: user.pk });
-      else ctx.problems.push(`group not found: ${s.adminGroup}`);
+      const group = groups.get(settings.adminGroup);
+      if (user.pk !== undefined && group?.users?.includes(user.pk))
+        ctx.log(`ok: ${settings.adminUser} is in "${settings.adminGroup}"`);
+      else if (!group && !ctx.apply)
+        await ctx.write(`add ${settings.adminUser} to "${settings.adminGroup}"`, "POST", "(new group)/add_user/", {});
+      else if (group)
+        await ctx.write(
+          `add ${settings.adminUser} to "${settings.adminGroup}"`,
+          "POST",
+          `/api/v3/core/groups/${group.pk}/add_user/`,
+          { pk: user.pk },
+        );
+      else ctx.problems.push(`group not found: ${settings.adminGroup}`);
     }
   }
+
   return { mappingPk, groups };
 }

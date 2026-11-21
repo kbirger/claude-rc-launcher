@@ -38,6 +38,7 @@ const POLL_MS = 250;
 const INVALID_HANDLE = 0xffffffffffffffffn;
 
 let libs: ReturnType<typeof load> | undefined;
+
 function load() {
   const k32 = dlopen("kernel32.dll", {
     CloseHandle: { args: ["u64"], returns: "i32" },
@@ -59,7 +60,10 @@ function load() {
     ConvertStringSidToSidW: { args: ["ptr", "ptr"], returns: "i32" },
     GetLengthSid: { args: ["u64"], returns: "u32" },
     CheckTokenMembership: { args: ["u64", "u64", "ptr"], returns: "i32" },
-    CreateProcessAsUserW: { args: ["u64", "ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+    CreateProcessAsUserW: {
+      args: ["u64", "ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"],
+      returns: "i32",
+    },
   }).symbols;
   const user = dlopen("userenv.dll", {
     CreateEnvironmentBlock: { args: ["ptr", "u64", "i32"], returns: "i32" },
@@ -67,24 +71,28 @@ function load() {
   }).symbols;
   return { k32, adv, user };
 }
+
 const api = () => (libs ??= load());
 
-const wide = (s: string) => Buffer.from(s + "\0", "utf16le");
+const wide = (text: string) => Buffer.from(text + "\0", "utf16le");
 
 /** Quotes one argument by the rules of CommandLineToArgvW. */
-function quoteArg(a: string): string {
-  if (a !== "" && !/[\s"]/.test(a)) return a;
+function quoteArg(text: string): string {
+  if (text !== "" && !/[\s"]/.test(text)) return text;
   let out = '"';
   let slashes = 0;
-  for (const ch of a) {
+
+  for (const ch of text) {
     if (ch === "\\") {
       slashes++;
       continue;
     }
+
     if (ch === '"') out += "\\".repeat(slashes * 2 + 1) + '"';
     else out += "\\".repeat(slashes) + ch;
     slashes = 0;
   }
+
   return out + "\\".repeat(slashes * 2) + '"';
 }
 
@@ -94,24 +102,32 @@ export type AdminState = { state: "admin" } | { state: "standard" } | { state: "
 /** Asks whether the Administrators group is enabled in this process's token. Off Windows the answer is "standard". */
 export function serviceAdminState(): AdminState {
   if (process.platform !== "win32") return { state: "standard" };
+
   try {
     const { k32, adv } = api();
     const psid = new BigUint64Array(1);
     const sidStr = wide("S-1-5-32-544");
+
     if (!adv.ConvertStringSidToSidW(ptr(sidStr), ptr(psid))) {
       return { state: "unknown", reason: `ConvertStringSidToSidW failed (error ${k32.GetLastError()})` };
     }
+
     try {
       const member = new Uint32Array(1);
-      if (!adv.CheckTokenMembership(0n, psid[0]!, ptr(member))) {
+
+      if (!adv.CheckTokenMembership(0n, psid[0], ptr(member))) {
         return { state: "unknown", reason: `CheckTokenMembership failed (error ${k32.GetLastError()})` };
       }
+
       return { state: member[0] !== 0 ? "admin" : "standard" };
     } finally {
-      k32.LocalFree(psid[0]!);
+      k32.LocalFree(psid[0]);
     }
-  } catch (e) {
-    return { state: "unknown", reason: `token module cannot load: ${e instanceof Error ? e.message : String(e)}` };
+  } catch (error) {
+    return {
+      state: "unknown",
+      reason: `token module cannot load: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -125,16 +141,22 @@ export function serviceIsAdmin(): boolean {
  * default and the (admin) entry, and restricted starts fail with the reason. It never runs sessions with the full token silently.
  */
 export function planSessions(
-  s: AdminState,
+  adminState: AdminState,
   makeRestricted: () => WinDeps["spawn"] = restrictedSpawn,
 ): { serviceIsAdmin: boolean; spawnRestricted?: WinDeps["spawn"]; log: string } {
-  if (s.state === "admin") {
-    return { serviceIsAdmin: true, spawnRestricted: makeRestricted(), log: "sessions run restricted by default (service account is an administrator)" };
+  if (adminState.state === "admin") {
+    return {
+      serviceIsAdmin: true,
+      spawnRestricted: makeRestricted(),
+      log: "sessions run restricted by default (service account is an administrator)",
+    };
   }
-  if (s.state === "standard") {
+
+  if (adminState.state === "standard") {
     return { serviceIsAdmin: false, log: "sessions run as the service account (no administrator rights to drop)" };
   }
-  const reason = s.reason;
+
+  const reason = adminState.reason;
   return {
     serviceIsAdmin: true,
     spawnRestricted: () => {
@@ -150,51 +172,56 @@ function buildToken(): bigint {
   const frees: bigint[] = [];
   const closeOnFail: bigint[] = [];
   const keep: unknown[] = []; // buffers whose addresses are used later: they must stay reachable until the end
+
   const fail = (what: string): never => {
     throw new RestrictedTokenError(`${what} failed (error ${k32.GetLastError()})`);
   };
-  const sid = (s: string): bigint => {
-    const p = new BigUint64Array(1);
-    const sw = wide(s);
-    if (!adv.ConvertStringSidToSidW(ptr(sw), ptr(p))) fail(`ConvertStringSidToSidW ${s}`);
-    frees.push(p[0]!);
-    return p[0]!;
+
+  const sid = (text: string): bigint => {
+    const bigUint64Array = new BigUint64Array(1);
+    const sw = wide(text);
+    if (!adv.ConvertStringSidToSidW(ptr(sw), ptr(bigUint64Array))) fail(`ConvertStringSidToSidW ${text}`);
+    frees.push(bigUint64Array[0]);
+    return bigUint64Array[0];
   };
+
   try {
-    const h = new BigUint64Array(1);
-    if (!adv.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_ALL_ACCESS, ptr(h))) fail("OpenProcessToken");
-    const own = h[0]!;
+    const bigUint64Array = new BigUint64Array(1);
+    if (!adv.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_ALL_ACCESS, ptr(bigUint64Array))) fail("OpenProcessToken");
+    const own = bigUint64Array[0];
     closeOnFail.push(own);
 
     const need = new Uint32Array(1);
     adv.GetTokenInformation(own, 1 /* TokenUser */, null, 0, ptr(need));
-    const tu = Buffer.alloc(need[0]!);
-    if (!need[0] || !adv.GetTokenInformation(own, 1, ptr(tu), tu.length, ptr(need))) fail("GetTokenInformation(TokenUser)");
+    const tu = Buffer.alloc(need[0]);
+    if (!need[0] || !adv.GetTokenInformation(own, 1, ptr(tu), tu.length, ptr(need)))
+      fail("GetTokenInformation(TokenUser)");
     keep.push(tu);
     const userSid = tu.readBigUInt64LE(0); // points into tu
 
-    const o = new BigUint64Array(1);
-    if (!adv.CreateRestrictedToken(own, LUA_TOKEN | DISABLE_MAX_PRIVILEGE, 0, null, 0, null, 0, null, ptr(o))) fail("CreateRestrictedToken");
-    const tok = o[0]!;
+    const buffer = new BigUint64Array(1);
+    if (!adv.CreateRestrictedToken(own, LUA_TOKEN | DISABLE_MAX_PRIVILEGE, 0, null, 0, null, 0, null, ptr(buffer)))
+      fail("CreateRestrictedToken");
+    const tok = buffer[0];
     closeOnFail.push(tok);
     k32.CloseHandle(own);
     closeOnFail.splice(closeOnFail.indexOf(own), 1);
 
     // Default DACL and owner: the user and SYSTEM. Without this the child cannot open its own token.
     const sids = [userSid, sid("S-1-5-18")];
-    const sizes = sids.map((s) => adv.GetLengthSid(s));
-    const aclSize = 8 + sizes.reduce((a, n) => a + 8 + n, 0);
+    const sizes = sids.map((entry) => adv.GetLengthSid(entry));
+    const aclSize = 8 + sizes.reduce((size, length) => size + 8 + length, 0);
     const acl = Buffer.alloc(aclSize);
     acl.writeUInt8(2, 0); // ACL_REVISION
     acl.writeUInt16LE(aclSize, 2);
     acl.writeUInt16LE(sids.length, 4);
     let off = 8;
-    sids.forEach((s, i) => {
+    sids.forEach((entry, index) => {
       acl.writeUInt8(0, off); // ACCESS_ALLOWED_ACE_TYPE
-      acl.writeUInt16LE(8 + sizes[i]!, off + 2);
+      acl.writeUInt16LE(8 + sizes[index], off + 2);
       acl.writeUInt32LE(GENERIC_ALL, off + 4);
-      Buffer.from(toArrayBuffer(Number(s), 0, sizes[i]!)).copy(acl, off + 8);
-      off += 8 + sizes[i]!;
+      Buffer.from(toArrayBuffer(Number(entry), 0, sizes[index])).copy(acl, off + 8);
+      off += 8 + sizes[index];
     });
     keep.push(acl); // its address goes into dd
     const dd = Buffer.alloc(8);
@@ -212,13 +239,13 @@ function buildToken(): bigint {
 
     closeOnFail.length = 0;
     return tok;
-  } catch (e) {
+  } catch (error) {
     for (const hd of closeOnFail) k32.CloseHandle(hd);
-    if (e instanceof RestrictedTokenError) throw e;
-    throw new RestrictedTokenError(`token step failed: ${e instanceof Error ? e.message : String(e)}`);
+    if (error instanceof RestrictedTokenError) throw error;
+    throw new RestrictedTokenError(`token step failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    for (const p of frees) k32.LocalFree(p);
-    void keep;
+    for (const free of frees) k32.LocalFree(free);
+    keep;
   }
 }
 
@@ -229,21 +256,28 @@ export function restrictedSpawn(): WinDeps["spawn"] {
     const { k32, adv, user } = api();
     mkdirSync(dirname(logFile), { recursive: true });
     const opened: bigint[] = [];
+
     const closeAll = () => {
-      for (const h of opened) k32.CloseHandle(h);
+      for (const handle of opened) k32.CloseHandle(handle);
       opened.length = 0;
     };
+
     try {
       const token = buildToken();
       opened.push(token);
 
       let env = 0n;
+
       try {
         const pe = new BigUint64Array(1);
+
         if (!user.CreateEnvironmentBlock(ptr(pe), token, 0)) {
           throw new RestrictedTokenError(`CreateEnvironmentBlock failed (error ${k32.GetLastError()})`);
         }
-        env = pe[0]!;
+
+        const block = pe.at(0);
+        if (block === undefined) throw new RestrictedTokenError("CreateEnvironmentBlock returned no block");
+        env = block;
 
         // Inheritable handles: NUL for stdin, the log file for stdout and stderr.
         const sa = Buffer.alloc(24); // SECURITY_ATTRIBUTES: nLength, lpSecurityDescriptor, bInheritHandle
@@ -255,22 +289,37 @@ export function restrictedSpawn(): WinDeps["spawn"] {
         opened.push(hIn);
         const logW = wide(logFile);
         const hOut = k32.CreateFileW(ptr(logW), FILE_APPEND_DATA, FILE_SHARE_READ_WRITE, ptr(sa), OPEN_ALWAYS, 0, 0n);
-        if (hOut === INVALID_HANDLE || hOut === 0n) throw new Error(`cannot open log file ${logFile} (error ${k32.GetLastError()})`);
+        if (hOut === INVALID_HANDLE || hOut === 0n)
+          throw new Error(`cannot open log file ${logFile} (error ${k32.GetLastError()})`);
         opened.push(hOut);
 
         // Only hIn and hOut are inherited: an explicit handle list, not every inheritable handle of the service.
         const handles = new BigUint64Array([hIn, hOut]);
         const need = new BigUint64Array(1);
         k32.InitializeProcThreadAttributeList(null, 1, 0, ptr(need)); // fails by design and reports the size
-        const attrs = Buffer.alloc(Number(need[0]!));
+        const attrs = Buffer.alloc(Number(need[0]));
+
         if (!need[0] || !k32.InitializeProcThreadAttributeList(ptr(attrs), 1, 0, ptr(need))) {
           throw new Error(`InitializeProcThreadAttributeList failed (error ${k32.GetLastError()})`);
         }
+
         let pi: Buffer;
+
         try {
-          if (!k32.UpdateProcThreadAttribute(ptr(attrs), 0, BigInt(PROC_THREAD_ATTRIBUTE_HANDLE_LIST), ptr(handles), 16n, null, null)) {
+          if (
+            !k32.UpdateProcThreadAttribute(
+              ptr(attrs),
+              0,
+              BigInt(PROC_THREAD_ATTRIBUTE_HANDLE_LIST),
+              ptr(handles),
+              16n,
+              null,
+              null,
+            )
+          ) {
             throw new Error(`UpdateProcThreadAttribute failed (error ${k32.GetLastError()})`);
           }
+
           const si = Buffer.alloc(112); // STARTUPINFOEXW: STARTUPINFOW (104) + lpAttributeList
           si.writeUInt32LE(112, 0);
           si.writeUInt32LE(STARTF_USESTDHANDLES, 60);
@@ -282,28 +331,40 @@ export function restrictedSpawn(): WinDeps["spawn"] {
           const cmdline = wide([cmd, ...args].map(quoteArg).join(" "));
           const cwdW = wide(cwd);
           const ok = adv.CreateProcessAsUserW(
-            token, null, ptr(cmdline), null, null, 1,
-            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, env, ptr(cwdW), ptr(si), ptr(pi),
+            token,
+            null,
+            ptr(cmdline),
+            null,
+            null,
+            1,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+            env,
+            ptr(cwdW),
+            ptr(si),
+            ptr(pi),
           );
-          void [handles, cmdline, cwdW, si, sa, nulW, logW]; // keep alive until CreateProcessAsUserW returned
+          [handles, cmdline, cwdW, si, sa, nulW, logW]; // keep alive until CreateProcessAsUserW returned
           if (!ok) throw new Error(`CreateProcessAsUserW failed for ${cmd} (error ${k32.GetLastError()})`);
         } finally {
           k32.DeleteProcThreadAttributeList(ptr(attrs));
         }
+
         const hp = pi.readBigUInt64LE(0);
         k32.CloseHandle(pi.readBigUInt64LE(8));
         const pid = pi.readUInt32LE(16);
 
         const exited = new Promise<number>((resolve) => {
           const code = new Uint32Array(1);
+
           const tick = () => {
-            const w = k32.WaitForSingleObject(hp, 0);
-            if (w === WAIT_TIMEOUT) return void setTimeout(tick, POLL_MS);
+            const result = k32.WaitForSingleObject(hp, 0);
+            if (result === WAIT_TIMEOUT) return void setTimeout(tick, POLL_MS);
             // Signaled: read the exit code. Any other result (WAIT_FAILED) ends the polling with -1.
-            const got = w === WAIT_OBJECT_0 && k32.GetExitCodeProcess(hp, ptr(code));
+            const got = result === WAIT_OBJECT_0 && k32.GetExitCodeProcess(hp, ptr(code));
             k32.CloseHandle(hp);
-            resolve(got ? code[0]! : -1);
+            resolve(got ? code[0] : -1);
           };
+
           setTimeout(tick, POLL_MS);
         });
         return { pid, exited };

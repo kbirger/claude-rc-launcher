@@ -7,15 +7,21 @@ const root = resolve(import.meta.dir, "..");
 const dist = join(root, "web", "dist");
 
 const walk = (dir: string, url: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? walk(join(dir, e.name), `${url}${e.name}/`) : e.isFile() ? [`${url}${e.name}`] : [],
+  readdirSync(dir, { withFileTypes: true }).flatMap((dirent) =>
+    dirent.isDirectory()
+      ? walk(join(dir, dirent.name), `${url}${dirent.name}/`)
+      : dirent.isFile()
+        ? [`${url}${dirent.name}`]
+        : [],
   );
 
 const files = walk(dist, "/").sort();
 if (!files.includes("/index.html")) throw new Error("web/dist/index.html not found; build the web app first");
 
-const imports = files.map((f, i) => `import f${i} from "../../web/dist${f}" with { type: "file" };`);
-const entries = files.map((f, i) => `  [${JSON.stringify(f)}, { path: f${i}, type: ${JSON.stringify(contentType(f))} }],`);
+const imports = files.map((file, index) => `import f${index} from "../../web/dist${file}" with { type: "file" };`);
+const entries = files.map(
+  (file, index) => `  [${JSON.stringify(file)}, { path: f${index}, type: ${JSON.stringify(contentType(file))} }],`,
+);
 writeFileSync(
   join(root, "server", "src", "embedded.ts"),
   `// @ts-nocheck

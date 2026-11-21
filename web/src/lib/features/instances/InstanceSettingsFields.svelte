@@ -5,43 +5,59 @@
 
   // Draws each setting of the node help as a choice, with the node explanation under each value. All text comes from the
   // node, and it renders as text. A setting or a value that this page does not know is left out, so it cannot be sent.
-  let { help, value, onchange, disabled = false }: { help: SettingsHelp; value: InstanceSettings; onchange: (v: InstanceSettings) => void; disabled?: boolean } = $props();
+  let {
+    help,
+    value,
+    onchange,
+    disabled = false,
+  }: {
+    help: SettingsHelp;
+    value: InstanceSettings;
+    onchange: (value: InstanceSettings) => void;
+    disabled?: boolean;
+  } = $props();
 
   const uid = $props.id();
 
-  const fits = (key: string, v: unknown) => (key === "createSession" ? typeof v === "boolean" : v === "same-dir" || v === "worktree");
+  const fits = (key: string, candidate: unknown) =>
+    key === "createSession" ? typeof candidate === "boolean" : candidate === "same-dir" || candidate === "worktree";
   const shown = $derived(
     help.settings
-      .filter((s) => s.key === "createSession" || s.key === "spawnMode")
-      .map((s) => ({ ...s, values: s.values.filter((v) => fits(s.key, v.value)) }))
-      .filter((s) => s.values.length > 0),
+      .filter((setting) => setting.key === "createSession" || setting.key === "spawnMode")
+      .map((setting) => ({ ...setting, values: setting.values.filter((option) => fits(setting.key, option.value)) }))
+      .filter((setting) => setting.values.length > 0),
   );
 
   // The radio group works with strings, so a value is matched by its text and the node value is sent back unchanged.
   function choose(key: "createSession" | "spawnMode", values: { value: boolean | string }[], text: string) {
-    const found = values.find((v) => String(v.value) === text);
+    const found = values.find((option) => String(option.value) === text);
     if (found) onchange({ ...value, [key]: found.value } as InstanceSettings);
   }
 </script>
 
 <div class="grid min-w-0 gap-4">
-  {#each shown as s, n (s.key)}
+  {#each shown as setting, index (setting.key)}
     <fieldset class="m-0 grid min-w-0 gap-2 border-0 p-0" {disabled}>
-      <legend class="mb-1 p-0 text-sm font-medium [overflow-wrap:anywhere]">{s.label}</legend>
-      <RadioGroup.Root value={String(value[s.key])} {disabled} aria-label={s.label} onValueChange={(text) => choose(s.key, s.values, text)}>
-        {#each s.values as v, k (k)}
-          <Field.Label for="{uid}-{n}-{k}">
+      <legend class="mb-1 p-0 text-sm font-medium [overflow-wrap:anywhere]">{setting.label}</legend>
+      <RadioGroup.Root
+        value={String(value[setting.key])}
+        {disabled}
+        aria-label={setting.label}
+        onValueChange={(text) => choose(setting.key, setting.values, text)}
+      >
+        {#each setting.values as entry, key (key)}
+          <Field.Label for="{uid}-{index}-{key}">
             <Field.Field orientation="horizontal">
               <Field.Content>
-                <Field.Title>{v.label}</Field.Title>
-                <Field.Description>{v.explanation}</Field.Description>
+                <Field.Title>{entry.label}</Field.Title>
+                <Field.Description>{entry.explanation}</Field.Description>
               </Field.Content>
-              <RadioGroup.Item value={String(v.value)} id="{uid}-{n}-{k}" class="mt-0.5" />
+              <RadioGroup.Item value={String(entry.value)} id="{uid}-{index}-{key}" class="mt-0.5" />
             </Field.Field>
           </Field.Label>
         {/each}
       </RadioGroup.Root>
-      {#if s.limits}<p class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{s.limits}</p>{/if}
+      {#if setting.limits}<p class="text-xs text-muted-foreground [overflow-wrap:anywhere]">{setting.limits}</p>{/if}
     </fieldset>
   {/each}
 </div>

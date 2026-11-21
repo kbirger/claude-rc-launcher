@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findSessionSocket, readLiveSessions, statStartTime, type LiveFs, type ProcReads } from "../src/livesessions";
+import { findSessionSocket, readLiveSessions, statStartTime } from "../src/livesessions";
+import type { LiveFs, ProcReads } from "../src/livesessions";
+import { defined } from "./support";
 
 const HOME = "/h";
 const DIR = join(HOME, ".claude", "sessions");
@@ -11,40 +13,64 @@ const S2 = "22222222-2222-2222-2222-222222222222";
 const MACHINE = "9b8897d1776243e09c1d9e28b59898cc";
 
 const file = (pid: number, extra: object = {}) =>
-  JSON.stringify({ pid, sessionId: S1, cwd: "/work", kind: "interactive", entrypoint: "sdk-cli", status: "busy", statusUpdatedAt: 1, name: "proj-1", nameSource: "derived", updatedAt: 1, ...extra });
+  JSON.stringify({
+    pid,
+    sessionId: S1,
+    cwd: "/work",
+    kind: "interactive",
+    entrypoint: "sdk-cli",
+    status: "busy",
+    statusUpdatedAt: 1,
+    name: "proj-1",
+    nameSource: "derived",
+    updatedAt: 1,
+    ...extra,
+  });
 
 /** A sessions folder in memory. `asked` records every path the reader opened, `listed` counts the names it took. */
-function fakeFs(files: Record<string, string>, asked: string[] = [], listed = { n: 0 }): LiveFs {
+function fakeFs(files: Record<string, string>, asked: string[] = [], listed = { count: 0 }): LiveFs {
   return {
     entries: async function* (dir) {
       if (dir !== DIR) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+
       for (const name of Object.keys(files)) {
-        listed.n++;
+        listed.count++;
         yield name;
       }
     },
-    readHead: async (p, max) => {
-      asked.push(p);
-      const name = p.slice(DIR.length + 1);
+    readHead: (path, max) => {
+      asked.push(path);
+      const name = path.slice(DIR.length + 1);
       const text = files[name];
-      if (text === undefined) throw new Error("ENOENT");
-      return Buffer.from(text).subarray(0, max);
+      if (text === undefined) return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve(Buffer.from(text).subarray(0, max));
     },
-    realpath: async (p) => p,
+    realpath: (path) => Promise.resolve(path),
   };
 }
 
 /** No /proc: liveness falls back to `alive`. */
-const NO_PROC: ProcReads = { startTime: async () => undefined, machineId: async () => undefined, pidNamespace: async () => undefined, firstSession: async () => undefined };
+const NO_PROC: ProcReads = {
+  startTime: () => Promise.resolve(undefined),
+  machineId: () => Promise.resolve(undefined),
+  pidNamespace: () => Promise.resolve(undefined),
+  firstSession: () => Promise.resolve(undefined),
+};
 const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
-const live = (files: Record<string, string>, pids: number[], extra: Partial<Parameters<typeof readLiveSessions>[0]> = {}) =>
-  readLiveSessions({ home: HOME, fs: fakeFs(files), alive: alive(pids), proc: NO_PROC, ...extra });
+const live = (
+  files: Record<string, string>,
+  pids: number[],
+  extra: Partial<Parameters<typeof readLiveSessions>[0]> = {},
+) => readLiveSessions({ home: HOME, fs: fakeFs(files), alive: alive(pids), proc: NO_PROC, ...extra });
 
 describe("readLiveSessions", () => {
   test("a file of a running process gives its status, Remote Control state and name", async () => {
-    const files = { "100.json": file(100, { bridgeSessionId: "cse_abc" }), "200.json": file(200, { sessionId: S2, status: "idle", name: "other" }) };
-    const m = await live(files, [100, 200]);
-    expect([...m.entries()]).toEqual([
+    const files = {
+      "100.json": file(100, { bridgeSessionId: "cse_abc" }),
+      "200.json": file(200, { sessionId: S2, status: "idle", name: "other" }),
+    };
+    const item = await live(files, [100, 200]);
+    expect([...item.entries()]).toEqual([
       [S1, { status: "busy", remoteControl: true, name: "proj-1", nameIsDefault: true, bridgeId: "cse_abc" }],
       [S2, { status: "idle", remoteControl: false, name: "other", nameIsDefault: true }],
     ]);
@@ -57,24 +83,37 @@ describe("readLiveSessions", () => {
   test("key files are never opened, and nothing but .json files is", async () => {
     const asked: string[] = [];
     const files = { "100.json": file(100), "100.abc123.key": "peerToken", "notes.txt": "x", "100.json.key": "t" };
-    const m = await readLiveSessions({ home: HOME, fs: fakeFs(files, asked), alive: alive([100]), proc: NO_PROC });
-    expect(m.size).toBe(1);
+    const liveSessions = await readLiveSessions({
+      home: HOME,
+      fs: fakeFs(files, asked),
+      alive: alive([100]),
+      proc: NO_PROC,
+    });
+    expect(liveSessions.size).toBe(1);
     expect(asked).toEqual([join(DIR, "100.json")]);
   });
 
   test("a file over 64 KB and a file that is not valid JSON are skipped", async () => {
     const big = file(100, { pad: "x".repeat(70 * 1024) });
-    const files = { "100.json": big, "200.json": "{not json", "300.json": "[1,2]", "400.json": file(400, { sessionId: S2 }) };
+    const files = {
+      "100.json": big,
+      "200.json": "{not json",
+      "300.json": "[1,2]",
+      "400.json": file(400, { sessionId: S2 }),
+    };
     expect([...(await live(files, [100, 200, 300, 400])).keys()]).toEqual([S2]);
   });
 
   test("only the whitelisted fields are returned", async () => {
-    const m = await live({ "100.json": file(100, { peerToken: "SECRET", messagingSocketPath: "/tmp/sock", bridgeSessionId: "cse_1" }) }, [100]);
-    const v = m.get(S1)!;
-    expect(Object.keys(v).sort()).toEqual(["bridgeId", "name", "nameIsDefault", "remoteControl", "status"]);
-    expect(JSON.stringify(v)).not.toContain("SECRET");
-    expect(JSON.stringify(v)).not.toContain("sock");
-    expect(v.bridgeId).toBe("cse_1");
+    const item = await live(
+      { "100.json": file(100, { peerToken: "SECRET", messagingSocketPath: "/tmp/sock", bridgeSessionId: "cse_1" }) },
+      [100],
+    );
+    const liveInfo = defined(item.get(S1));
+    expect(Object.keys(liveInfo).sort()).toEqual(["bridgeId", "name", "nameIsDefault", "remoteControl", "status"]);
+    expect(JSON.stringify(liveInfo)).not.toContain("SECRET");
+    expect(JSON.stringify(liveInfo)).not.toContain("sock");
+    expect(liveInfo.bridgeId).toBe("cse_1");
   });
 
   test("nameIsDefault is true only for nameSource derived", async () => {
@@ -84,17 +123,22 @@ describe("readLiveSessions", () => {
       ["unknown", { nameSource: "future" }, false],
       ["user", { nameSource: "user" }, false],
     ];
+
     for (const [label, extra, want] of cases) {
-      const v = (await live({ "100.json": file(100, extra) }, [100])).get(S1)!;
-      expect([label, v.nameIsDefault === true]).toEqual([label, want]);
+      const liveInfo = defined((await live({ "100.json": file(100, extra) }, [100])).get(S1));
+      expect([label, liveInfo.nameIsDefault === true]).toEqual([label, want]);
     }
-    expect(JSON.stringify((await live({ "100.json": file(100, { nameSource: "user" }) }, [100])).get(S1))).not.toContain("nameSource");
+
+    expect(
+      JSON.stringify((await live({ "100.json": file(100, { nameSource: "user" }) }, [100])).get(S1)),
+    ).not.toContain("nameSource");
   });
 
   test("the first session of the process is returned only when it differs from the one in the file", async () => {
-    const proc = (first: string | undefined): ProcReads => ({ ...NO_PROC, firstSession: async () => first });
+    const proc = (first: string | undefined): ProcReads => ({ ...NO_PROC, firstSession: () => Promise.resolve(first) });
     const files = { "100.json": file(100) };
-    const run = (first: string | undefined) => readLiveSessions({ home: HOME, fs: fakeFs(files), alive: alive([100]), proc: proc(first) });
+    const run = (first: string | undefined) =>
+      readLiveSessions({ home: HOME, fs: fakeFs(files), alive: alive([100]), proc: proc(first) });
     expect((await run(S2)).get(S1)?.firstSessionId).toBe(S2);
     expect((await run(S1)).get(S1)?.firstSessionId).toBeUndefined();
     expect((await run(undefined)).get(S1)?.firstSessionId).toBeUndefined();
@@ -109,88 +153,129 @@ describe("readLiveSessions", () => {
       "102.json": file(102, { sessionId: "../x" }),
       "104.json": file(104, { pid: "104" }),
     };
-    const m = await readLiveSessions({ home: HOME, fs: fakeFs(files), alive: (p) => (checked.push(p), true), proc: NO_PROC });
-    expect(m.size).toBe(0);
+    const liveSessions = await readLiveSessions({
+      home: HOME,
+      fs: fakeFs(files),
+      alive: (item) => (checked.push(item), true),
+      proc: NO_PROC,
+    });
+    expect(liveSessions.size).toBe(0);
     expect(checked).not.toContain(0);
     expect(checked).not.toContain(-1);
   });
 
   test("a status other than busy or idle keeps the session live, with no status", async () => {
-    const files = { "100.json": file(100, { status: "waiting" }), "101.json": file(101, { status: "x".repeat(5000), sessionId: S2 }) };
-    const m = await live(files, [100, 101]);
-    expect([...m.entries()]).toEqual([
+    const files = {
+      "100.json": file(100, { status: "waiting" }),
+      "101.json": file(101, { status: "x".repeat(5000), sessionId: S2 }),
+    };
+    const item = await live(files, [100, 101]);
+    expect([...item.entries()]).toEqual([
       [S1, { remoteControl: false, name: "proj-1", nameIsDefault: true }],
       [S2, { remoteControl: false, name: "proj-1", nameIsDefault: true }],
     ]);
-    expect("status" in m.get(S1)!).toBe(false);
+    expect("status" in defined(item.get(S1))).toBe(false);
   });
 
   test("a name that is not a string is left out", async () => {
-    expect((await live({ "100.json": file(100, { name: 7 }) }, [100])).get(S1)).toEqual({ status: "busy", remoteControl: false });
+    expect((await live({ "100.json": file(100, { name: 7 }) }, [100])).get(S1)).toEqual({
+      status: "busy",
+      remoteControl: false,
+    });
   });
 
   test("a missing sessions folder gives an empty map", async () => {
-    const m = await readLiveSessions({ home: "/nowhere", fs: fakeFs({}), alive: alive([]), proc: NO_PROC });
-    expect(m.size).toBe(0);
+    const liveSessions = await readLiveSessions({ home: "/nowhere", fs: fakeFs({}), alive: alive([]), proc: NO_PROC });
+    expect(liveSessions.size).toBe(0);
   });
 
   test("at most 500 .json files are opened, and the listing stops there", async () => {
     const asked: string[] = [];
-    const listed = { n: 0 };
+    const listed = { count: 0 };
     const files: Record<string, string> = {};
-    for (let i = 1; i <= 10000; i++) files[`${i}.json`] = file(i);
+    for (let index = 1; index <= 10000; index++) files[`${index}.json`] = file(index);
     await readLiveSessions({ home: HOME, fs: fakeFs(files, asked, listed), alive: alive([]), proc: NO_PROC });
     expect(asked.length).toBe(500);
-    expect(listed.n).toBeLessThan(10000);
+    expect(listed.count).toBeLessThan(10000);
   });
 
   test("a folder of 10,000 other names is not fully listed", async () => {
-    const listed = { n: 0 };
+    const listed = { count: 0 };
     const files: Record<string, string> = {};
-    for (let i = 1; i <= 10000; i++) files[`${i}.x.key`] = "t";
+    for (let index = 1; index <= 10000; index++) files[`${index}.x.key`] = "t";
     files["1.json"] = file(1);
     const asked: string[] = [];
     await readLiveSessions({ home: HOME, fs: fakeFs(files, asked, listed), alive: alive([1]), proc: NO_PROC });
-    expect(listed.n).toBe(5000);
+    expect(listed.count).toBe(5000);
     expect(asked).toEqual([]);
   });
 });
 
 describe("pid reuse", () => {
-  const proc = (o: Partial<ProcReads> = {}): ProcReads => ({ ...NO_PROC, ...o });
+  const proc = (item: Partial<ProcReads> = {}): ProcReads => ({ ...NO_PROC, ...item });
   const domain = (machine = MACHINE, ns = "4026532689") => `linux:${machine}:pid:[${ns}]`;
 
   test("a process whose start time matches procStart is live, without kill", async () => {
-    const m = await live({ "100.json": file(100, { procStart: "273029972" }) }, [], { proc: proc({ startTime: async () => "273029972" }) });
-    expect(m.size).toBe(1);
+    const item = await live({ "100.json": file(100, { procStart: "273029972" }) }, [], {
+      proc: proc({ startTime: () => Promise.resolve("273029972") }),
+    });
+    expect(item.size).toBe(1);
   });
 
   test("a process whose start time differs from procStart is a reused pid and not live", async () => {
-    const m = await live({ "100.json": file(100, { procStart: "273029972" }) }, [100], { proc: proc({ startTime: async () => "999" }) });
-    expect(m.size).toBe(0);
+    const item = await live({ "100.json": file(100, { procStart: "273029972" }) }, [100], {
+      proc: proc({ startTime: () => Promise.resolve("999") }),
+    });
+    expect(item.size).toBe(0);
   });
 
   test("a pid that /proc does not have is not live, without kill", async () => {
-    const m = await live({ "100.json": file(100, { procStart: "1" }) }, [100], { proc: proc({ startTime: async () => "gone" }) });
-    expect(m.size).toBe(0);
+    const item = await live({ "100.json": file(100, { procStart: "1" }) }, [100], {
+      proc: proc({ startTime: () => Promise.resolve("gone") }),
+    });
+    expect(item.size).toBe(0);
   });
 
   test("when /proc cannot be read, kill(pid, 0) decides", async () => {
-    const f = { "100.json": file(100, { procStart: "1" }) };
-    expect((await live(f, [100])).size).toBe(1);
-    expect((await live(f, [])).size).toBe(0);
+    const item = { "100.json": file(100, { procStart: "1" }) };
+    expect((await live(item, [100])).size).toBe(1);
+    expect((await live(item, [])).size).toBe(0);
   });
 
   test("a pidDomain of another machine or another pid namespace is not live", async () => {
-    const here = proc({ startTime: async () => "1", machineId: async () => MACHINE, pidNamespace: async () => "4026532689" });
-    expect((await live({ "100.json": file(100, { procStart: "1", pidDomain: domain() }) }, [], { proc: here })).size).toBe(1);
-    expect((await live({ "100.json": file(100, { procStart: "1", pidDomain: domain("0".repeat(32)) }) }, [100], { proc: here })).size).toBe(0);
-    expect((await live({ "100.json": file(100, { procStart: "1", pidDomain: domain(MACHINE, "1") }) }, [100], { proc: here })).size).toBe(0);
+    const here = proc({
+      startTime: () => Promise.resolve("1"),
+      machineId: () => Promise.resolve(MACHINE),
+      pidNamespace: () => Promise.resolve("4026532689"),
+    });
+    expect(
+      (await live({ "100.json": file(100, { procStart: "1", pidDomain: domain() }) }, [], { proc: here })).size,
+    ).toBe(1);
+    expect(
+      (
+        await live({ "100.json": file(100, { procStart: "1", pidDomain: domain("0".repeat(32)) }) }, [100], {
+          proc: here,
+        })
+      ).size,
+    ).toBe(0);
+    expect(
+      (
+        await live({ "100.json": file(100, { procStart: "1", pidDomain: domain(MACHINE, "1") }) }, [100], {
+          proc: here,
+        })
+      ).size,
+    ).toBe(0);
   });
 
   test("an unreadable machine id or namespace does not skip on that basis", async () => {
-    const blind = proc({ startTime: async () => "1" });
-    expect((await live({ "100.json": file(100, { procStart: "1", pidDomain: domain("0".repeat(32), "1") }) }, [], { proc: blind })).size).toBe(1);
+    const blind = proc({ startTime: () => Promise.resolve("1") });
+    expect(
+      (
+        await live({ "100.json": file(100, { procStart: "1", pidDomain: domain("0".repeat(32), "1") }) }, [], {
+          proc: blind,
+        })
+      ).size,
+    ).toBe(1);
   });
 });
 
@@ -204,6 +289,7 @@ test("statStartTime takes field 22, counted after the last closing parenthesis",
 describe("the real file system", () => {
   async function withHome(fn: (home: string, outside: string) => Promise<void>) {
     const base = await realpath(await mkdtemp(join(tmpdir(), "live-")));
+
     try {
       const home = join(base, "home");
       const outside = join(base, "outside");
@@ -256,7 +342,10 @@ describe("findSessionSocket", () => {
   });
 
   test("findSessionSocket takes the newest file of the session", async () => {
-    const files = { "100.json": file(100, { messagingSocketPath: "/a.sock", updatedAt: 1 }), "200.json": file(200, { messagingSocketPath: "/b.sock", updatedAt: 5 }) };
+    const files = {
+      "100.json": file(100, { messagingSocketPath: "/a.sock", updatedAt: 1 }),
+      "200.json": file(200, { messagingSocketPath: "/b.sock", updatedAt: 5 }),
+    };
     expect(await find(files, [100, 200])).toBe("/b.sock");
   });
 
@@ -282,14 +371,14 @@ describe("findSessionSocket", () => {
     const asked: string[] = [];
     await find({ "100.json": file(100, { messagingSocketPath: SOCK }), "100.abc.key": "peerToken" }, [100], S1, asked);
     expect(asked.length).toBeGreaterThan(0);
-    expect(asked.some((p) => p.endsWith(".key"))).toBe(false);
+    expect(asked.some((item) => item.endsWith(".key"))).toBe(false);
   });
 });
 
 describe("readLiveSessions and the socket path", () => {
   test("readLiveSessions output has no socket path", async () => {
-    const m = await live({ "100.json": file(100, { messagingSocketPath: "/run/secret-place.sock" }) }, [100]);
-    expect(m.size).toBe(1);
-    expect(JSON.stringify([...m.entries()])).not.toContain("secret-place");
+    const item = await live({ "100.json": file(100, { messagingSocketPath: "/run/secret-place.sock" }) }, [100]);
+    expect(item.size).toBe(1);
+    expect(JSON.stringify([...item.entries()])).not.toContain("secret-place");
   });
 });

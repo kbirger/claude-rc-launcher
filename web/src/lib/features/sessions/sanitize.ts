@@ -8,7 +8,33 @@ declare const safe: unique symbol;
 export type SafeHtml = string & { readonly [safe]: true };
 
 /** The only tags that markdown output may keep. No img, svg, math, iframe, form, input, style, meta, base or details. */
-export const MARKDOWN_TAGS = ["a", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong", "del", "table", "thead", "tbody", "tr", "th", "td"] as const;
+export const MARKDOWN_TAGS = [
+  "a",
+  "p",
+  "br",
+  "hr",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "ul",
+  "ol",
+  "li",
+  "blockquote",
+  "pre",
+  "code",
+  "em",
+  "strong",
+  "del",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+] as const;
 // A link address must start with one of these. DOMPurify tests the address after it removes control characters and white space.
 const URI = /^(?:https?:|mailto:)/i;
 
@@ -43,7 +69,8 @@ export function sanitizeMarkdownHtml(html: string): SafeHtml {
   });
   if (!fragment) return "" as SafeHtml; // DOMPurify gives no fragment when nothing is left
   // A link that lost its href (javascript:, data:, a bad scheme) is not a link: keep its content, drop the tag.
-  for (const a of Array.from(fragment.querySelectorAll("a:not([href])"))) a.replaceWith(...Array.from(a.childNodes));
+  for (const element of Array.from(fragment.querySelectorAll("a:not([href])")))
+    element.replaceWith(...Array.from(element.childNodes));
   const box = document.createElement("div");
   box.appendChild(fragment);
   return box.innerHTML as SafeHtml;

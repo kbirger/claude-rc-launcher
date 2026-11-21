@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { open, stat, type FileHandle } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 export type RepoKind = "git" | "github";
@@ -10,46 +11,52 @@ const MAX_CONFIG_BYTES = 256 * 1024;
 function isGithubUrl(raw: string): boolean {
   const url = raw.trim();
   let authority: string;
-  const m = /^(?:https?|ssh|git):\/\/([^/?#]*)/i.exec(url);
-  if (m) {
-    authority = m[1];
+  const match = /^(?:https?|ssh|git):\/\/([^/?#]*)/i.exec(url);
+
+  if (match) {
+    authority = match[1];
   } else if (!url.includes("://")) {
     // scp-like form: [user@]host:path
-    const s = /^([^/:]+):/.exec(url);
-    if (!s) return false;
-    authority = s[1];
+    const scpMatch = /^([^/:]+):/.exec(url);
+    if (!scpMatch) return false;
+    authority = scpMatch[1];
   } else {
     return false;
   }
+
   let host = authority.slice(authority.lastIndexOf("@") + 1);
-  if (m) host = host.replace(/:\d*$/, "");
+  if (match) host = host.replace(/:\d*$/, "");
   return host.toLowerCase() === "github.com";
 }
 
-function stripComment(v: string): string {
-  const i = v.search(/\s[#;]/);
-  return (i === -1 ? v : v.slice(0, i)).trim();
+function stripComment(text: string): string {
+  const position = text.search(/\s[#;]/);
+  return (position === -1 ? text : text.slice(0, position)).trim();
 }
 
 /** True when a `[remote "..."]` section has a `url` or `pushurl` that points at github.com. */
 function hasGithubRemote(text: string): boolean {
   let inRemote = false;
+
   for (const line of text.split(/\r?\n/)) {
-    const t = line.trim();
-    if (t === "" || t.startsWith("#") || t.startsWith(";")) continue;
-    if (t.startsWith("[")) {
-      inRemote = /^\[\s*remote\s+"/i.test(t);
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+
+    if (trimmed.startsWith("[")) {
+      inRemote = /^\[\s*remote\s+"/i.test(trimmed);
       continue;
     }
+
     if (!inRemote) continue;
-    const eq = t.indexOf("=");
+    const eq = trimmed.indexOf("=");
     if (eq === -1) continue;
-    const key = t.slice(0, eq).trim().toLowerCase();
+    const key = trimmed.slice(0, eq).trim().toLowerCase();
     if (key !== "url" && key !== "pushurl") continue;
-    let value = stripComment(t.slice(eq + 1));
+    let value = stripComment(trimmed.slice(eq + 1));
     if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
     if (isGithubUrl(value)) return true;
   }
+
   return false;
 }
 
@@ -66,54 +73,68 @@ function hasGithubRemote(text: string): boolean {
  */
 export async function repoKind(dir: string): Promise<RepoKind | undefined> {
   const handles: FileHandle[] = [];
+
   try {
     let folder: FileHandle;
+
     try {
       folder = await open(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     } catch {
       return undefined;
     }
+
     handles.push(folder);
     let base = dir;
     const viaProc = `/proc/self/fd/${folder.fd}`;
+
     try {
       await stat(viaProc);
       base = viaProc;
     } catch {
       // No /proc: fall back to the path, as the comment above says.
     }
+
     let git: FileHandle;
+
     try {
       git = await open(join(base, ".git"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     } catch {
       return undefined; // not found, or a symlink (ELOOP): a regular folder
     }
+
     handles.push(git);
     const gst = await git.stat();
     if (!gst.isDirectory()) return "git"; // a worktree or submodule pointer file, not read
     let fh: FileHandle;
+
     try {
-      fh = await open(join(base === dir ? join(dir, ".git") : `/proc/self/fd/${git.fd}`, "config"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      fh = await open(
+        join(base === dir ? join(dir, ".git") : `/proc/self/fd/${git.fd}`, "config"),
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
     } catch {
       return "git";
     }
+
     handles.push(fh);
     const cs = await fh.stat();
     // A hard link could be a file of another user, so only a file with one link is read.
     if (!cs.isFile() || cs.nlink !== 1 || cs.size > MAX_CONFIG_BYTES) return "git";
     // Read at most one byte over the stat size, so a file that grows after the stat still cannot pass the cap.
     const buf = Buffer.alloc(Math.min(cs.size, MAX_CONFIG_BYTES) + 1);
-    let n = 0;
+    let count = 0;
+
     for (;;) {
-      const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
+      const { bytesRead } = await fh.read(buf, count, buf.length - count, count);
       if (bytesRead === 0) break;
-      n += bytesRead;
-      if (n === buf.length) return "git";
+      count += bytesRead;
+      if (count === buf.length) return "git";
     }
-    return hasGithubRemote(buf.toString("utf8", 0, n)) ? "github" : "git";
+
+    return hasGithubRemote(buf.toString("utf8", 0, count)) ? "github" : "git";
   } catch {
     return "git";
   } finally {
-    for (const h of handles) await h.close().catch(() => {});
+    for (const fileHandle of handles) await fileHandle.close().catch(() => {});
   }
 }

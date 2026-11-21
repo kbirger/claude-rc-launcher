@@ -17,7 +17,7 @@ test("a Windows path uses the backslash", () => {
 });
 
 test("a path with both separators uses the slash", () => {
-  expect(breadcrumbs("C:/a\\b").map((c) => c.label)).toEqual(["C:", "a\\b"]);
+  expect(breadcrumbs("C:/a\\b").map((breadcrumb) => breadcrumb.label)).toEqual(["C:", "a\\b"]);
 });
 
 test("an empty path gives no crumbs", () => {

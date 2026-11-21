@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
-import { streamSSE, type SSEStreamingApi } from "hono/streaming";
+import { streamSSE } from "hono/streaming";
+import type { SSEStreamingApi } from "hono/streaming";
 
 type Streams = Set<SSEStreamingApi>;
 const registries = new WeakMap<object, Streams>();
@@ -9,8 +10,8 @@ const KEY = "sseStreams";
 export function trackStreams(app: Hono): void {
   const set: Streams = new Set();
   registries.set(app, set);
-  app.use("*", async (c, next) => {
-    c.set(KEY as never, set as never);
+  app.use("*", async (context, next) => {
+    context.set(KEY as never, set as never);
     await next();
   });
 }
@@ -20,14 +21,15 @@ export function trackStreams(app: Hono): void {
  * to a browser causes ERR_HTTP2_PROTOCOL_ERROR. Bun frames the body itself, so the response needs neither.
  * An app that called `trackStreams` can end its open streams cleanly (see `stopServer`).
  */
-export function sseResponse(c: Context, run: (s: SSEStreamingApi) => Promise<void>): Response {
-  const set = c.get(KEY as never) as Streams | undefined;
-  const res = streamSSE(c, async (s) => {
-    set?.add(s);
+export function sseResponse(context: Context, run: (stream: SSEStreamingApi) => Promise<void>): Response {
+  const set = context.get(KEY as never) as Streams | undefined;
+  const res = streamSSE(context, async (stream) => {
+    set?.add(stream);
+
     try {
-      await run(s);
+      await run(stream);
     } finally {
-      set?.delete(s);
+      set?.delete(stream);
     }
   });
   res.headers.delete("Transfer-Encoding");
@@ -37,7 +39,7 @@ export function sseResponse(c: Context, run: (s: SSEStreamingApi) => Promise<voi
 
 /** Ends every open SSE response of `app` with a proper end of body. */
 export function closeStreams(app: Hono): void {
-  for (const s of [...(registries.get(app) ?? [])]) void s.close().catch(() => {});
+  for (const stream of [...(registries.get(app) ?? [])]) void stream.close().catch(() => {});
 }
 
 /**
@@ -48,6 +50,6 @@ export function closeStreams(app: Hono): void {
 export function stopServer(server: { stop(force?: boolean): unknown }, app: Hono, forceMs = 2000): void {
   closeStreams(app);
   void server.stop();
-  const t = setTimeout(() => void server.stop(true), forceMs) as { unref?: () => void };
-  t.unref?.();
+  const timer = setTimeout(() => void server.stop(true), forceMs) as { unref?: () => void };
+  timer.unref?.();
 }

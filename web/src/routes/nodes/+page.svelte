@@ -11,20 +11,31 @@
   const rename = createMutation(() => renameHostMutation(useQueryClient()));
   const update = createMutation(() => updateHostMutation(useQueryClient()));
   // The hub answers 202 and then restarts, so a lost connection right after the hub call is expected and is not an error.
-  async function updateNode(h: { id: string; target?: string }) {
+  async function updateNode(entry: { id: string; target?: string }) {
     try {
-      await update.mutateAsync({ host: h.id, release: h.id === "local" ? undefined : h.target ?? latest });
-    } catch (e) {
-      if (!(h.id === "local" && !(e instanceof ApiError))) throw e;
+      await update.mutateAsync({
+        host: entry.id,
+        release: entry.id === "local" ? undefined : (entry.target ?? latest),
+      });
+    } catch (caught) {
+      if (!(entry.id === "local" && !(caught instanceof ApiError))) throw caught;
     }
   }
   // The latest release is the same for every machine: the hub reports it as the target.
-  const latest = $derived(shell.hosts.find((h) => h.id === "local")?.target ?? shell.hosts.find((h) => h.target)?.target);
+  const latest = $derived(
+    shell.hosts.find((entry) => entry.id === "local")?.target ?? shell.hosts.find((entry) => entry.target)?.target,
+  );
 </script>
 
 <h2 class="font-heading mb-3 text-lg font-bold">Nodes</h2>
 <!-- A tap on a node shows the instances of that node. -->
-<NodeList hosts={shell.hosts} onselect={(id) => void goto(instancesHref(id))} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
+<NodeList
+  hosts={shell.hosts}
+  onselect={(id) => void goto(instancesHref(id))}
+  {latest}
+  onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined}
+  onupdate={shell.can("admin") ? updateNode : undefined}
+/>
 {#each shell.hosts as h (h.id)}
   {#if showsFinishedPanel(lastEntry(shell.updates, h.id))}
     <div class="mt-3"><UpdateOutput host={h.id} open={false} /></div>

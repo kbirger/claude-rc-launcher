@@ -1,26 +1,9 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { ApiError } from "../../shared/http";
 import { addRule, getBlocked, removeRule, getSessionPermissions, getUserPermissions, isUnsupported } from "./api";
+import { useFetchStub } from "../../../../test/fetch-stub";
 
-const realFetch = globalThis.fetch;
-const realLoc = (globalThis as any).location;
-let calls: { url: string; init?: RequestInit }[] = [];
-
-function stub(status: number, body: unknown) {
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
-    calls.push({ url: String(url), init });
-    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  }) as any;
-}
-
-beforeEach(() => {
-  calls = [];
-  (globalThis as any).location = { href: "/" };
-});
-afterEach(() => {
-  globalThis.fetch = realFetch;
-  (globalThis as any).location = realLoc;
-});
+const { calls, stub } = useFetchStub();
 
 const SID = "11111111-2222-3333-4444-555555555555";
 
@@ -41,7 +24,9 @@ test("getSessionPermissions and getBlocked use the session paths", async () => {
 });
 
 test("the answers are passed through", async () => {
-  const layers = [{ scope: "user", path: "/h/.claude/settings.json", writable: false, state: "ok", rules: [], warnings: [] }];
+  const layers = [
+    { scope: "user", path: "/h/.claude/settings.json", writable: false, state: "ok", rules: [], warnings: [] },
+  ];
   stub(200, { layers });
   expect(await getSessionPermissions("h", "i", SID)).toEqual({ layers });
 });
@@ -80,9 +65,9 @@ test("addRule and removeRule with a session use the session routes", async () =>
 
 test("an error answer throws an ApiError with its status", async () => {
   stub(409, { error: "changed" });
-  const e = await addRule("h", "i", SID, edit).catch((x) => x);
-  expect(e).toBeInstanceOf(ApiError);
-  expect(e.status).toBe(409);
+  const entry = await addRule("h", "i", SID, edit).catch((error) => error);
+  expect(entry).toBeInstanceOf(ApiError);
+  expect(entry.status).toBe(409);
 });
 
 test("addRule sends nudge true in the body", async () => {

@@ -6,20 +6,25 @@ export interface ChangeSource {
   setActive(active: boolean): void;
 }
 
-export type Timers = { setTimeout(fn: () => void, ms: number): unknown; clearTimeout(handle: unknown): void };
+export interface Timers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
 
 export const realTimers: Timers = {
   setTimeout(fn, ms) {
-    const h = setTimeout(fn, ms);
-    (h as { unref?: () => void }).unref?.();
-    return h;
+    const handle = setTimeout(fn, ms);
+    (handle as { unref?: () => void }).unref?.();
+    return handle;
   },
   clearTimeout(handle) {
     clearTimeout(handle as ReturnType<typeof setTimeout>);
   },
 };
 
-export const PASSIVE_ALL_MS = 300_000, ACTIVE_LIVE_MS = 3_000, ACTIVE_ALL_MS = 10_000;
+export const PASSIVE_ALL_MS = 300_000,
+  ACTIVE_LIVE_MS = 3_000,
+  ACTIVE_ALL_MS = 10_000;
 
 export class PollSource implements ChangeSource {
   private readonly passiveAllMs: number;
@@ -30,11 +35,11 @@ export class PollSource implements ChangeSource {
   private active = false;
   private handles: unknown[] = [];
 
-  constructor(o: { passiveAllMs?: number; activeLiveMs?: number; activeAllMs?: number; timers?: Timers } = {}) {
-    this.passiveAllMs = o.passiveAllMs ?? PASSIVE_ALL_MS;
-    this.activeLiveMs = o.activeLiveMs ?? ACTIVE_LIVE_MS;
-    this.activeAllMs = o.activeAllMs ?? ACTIVE_ALL_MS;
-    this.timers = o.timers ?? realTimers;
+  constructor(options: { passiveAllMs?: number; activeLiveMs?: number; activeAllMs?: number; timers?: Timers } = {}) {
+    this.passiveAllMs = options.passiveAllMs ?? PASSIVE_ALL_MS;
+    this.activeLiveMs = options.activeLiveMs ?? ACTIVE_LIVE_MS;
+    this.activeAllMs = options.activeAllMs ?? ACTIVE_ALL_MS;
+    this.timers = options.timers ?? realTimers;
   }
 
   start(onTrigger: (t: Trigger) => void): void {
@@ -57,7 +62,7 @@ export class PollSource implements ChangeSource {
   }
 
   private clear(): void {
-    for (const h of this.handles) this.timers.clearTimeout(h);
+    for (const handle of this.handles) this.timers.clearTimeout(handle);
     this.handles = [];
   }
 
@@ -72,11 +77,13 @@ export class PollSource implements ChangeSource {
 
   private every(ms: number, trigger: Trigger): void {
     const slot = this.handles.length;
+
     const tick = () => {
       if (!this.onTrigger) return;
       this.handles[slot] = this.timers.setTimeout(tick, ms);
       this.onTrigger(trigger);
     };
+
     this.handles.push(this.timers.setTimeout(tick, ms));
   }
 }

@@ -8,6 +8,7 @@
   import Github from "@tabler/icons-svelte/icons/brand-github-filled";
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
+  import { resolve } from "$app/paths";
   import { Button } from "#lib/components/ui/button/index.js";
   import Avatar from "./Avatar.svelte";
   import { getShell } from "./context";
@@ -17,30 +18,52 @@
   const shell = getShell();
   // The update history is part of Updates (the "All history" link there), so it is not a menu item. It lights up Updates.
   const items = [
-    { href: "/sessions", label: "Sessions", icon: Messages },
-    { href: "/instances", label: "Instances", icon: Home },
-    { href: "/nodes", label: "Nodes", icon: Server },
-    { href: "/updates", label: "Updates", icon: ArrowUp, also: "/history" },
-    { href: "/appearance", label: "Appearance", icon: Palette },
+    { href: resolve("/sessions"), label: "Sessions", icon: Messages },
+    { href: resolve("/instances"), label: "Instances", icon: Home },
+    { href: resolve("/nodes"), label: "Nodes", icon: Server },
+    { href: resolve("/updates"), label: "Updates", icon: ArrowUp, also: resolve("/history") },
+    { href: resolve("/appearance"), label: "Appearance", icon: Palette },
   ];
 </script>
 
 <Sheet.Root bind:open>
-  <Sheet.Content side="bottom" class="mx-auto max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]">
+  <Sheet.Content
+    side="bottom"
+    class="mx-auto max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]"
+  >
     <Sheet.Header>
-      <Sheet.Title class="flex items-center gap-2">{#if shell.user}<Avatar name={shell.user} email={shell.email} /><span>{shell.user}{#if shell.role}<span class="ml-1.5 font-normal text-muted-foreground">· {shell.role}</span>{/if}</span>{:else}Menu{/if}</Sheet.Title>
+      <Sheet.Title class="flex items-center gap-2">
+        {#if shell.user}<Avatar name={shell.user} email={shell.email} /><span>
+            {shell.user}{#if shell.role}<span class="ml-1.5 font-normal text-muted-foreground">
+                · {shell.role}
+              </span>{/if}
+          </span>{:else}Menu{/if}
+      </Sheet.Title>
       <Sheet.Description class="sr-only">Pages and links.</Sheet.Description>
     </Sheet.Header>
     <nav class="grid gap-1 px-4" aria-label="Menu">
       {#each items as it (it.href)}
-        <Button variant={page.url.pathname === it.href || page.url.pathname === it.also ? "secondary" : "ghost"} size="touch" class="justify-start" href={it.href} onclick={() => (open = false)}>
+        <Button
+          variant={page.url.pathname === it.href || page.url.pathname === it.also ? "secondary" : "ghost"}
+          size="touch"
+          class="justify-start"
+          href={it.href}
+          onclick={() => (open = false)}
+        >
           <it.icon size={20} aria-hidden="true" />{it.label}
         </Button>
       {/each}
-      <Button variant="ghost" size="touch" class="justify-start" href={REPO_URL} target="_blank" rel="noopener noreferrer">
+      <Button
+        variant="ghost"
+        size="touch"
+        class="justify-start"
+        externalHref={REPO_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         <Github size={20} aria-hidden="true" />GitHub
       </Button>
-      <Button variant="ghost" size="touch" class="justify-start" href={shell.logoutUrl}>
+      <Button variant="ghost" size="touch" class="justify-start" externalHref={shell.logoutUrl}>
         <LogOut size={20} aria-hidden="true" />Log out
       </Button>
     </nav>

@@ -9,8 +9,8 @@ test("initials use the first letters of the first two words", () => {
 });
 
 test("the Gravatar address hashes the trimmed lower-case email", async () => {
-  const a = await gravatarUrl(" Dev@Example.com ", 64);
-  const b = await gravatarUrl("dev@example.com", 64);
-  expect(a).toBe(b);
-  expect(a).toMatch(/^https:\/\/www\.gravatar\.com\/avatar\/[0-9a-f]{64}\?s=64&d=404$/);
+  const left = await gravatarUrl(" Dev@Example.com ", 64);
+  const right = await gravatarUrl("dev@example.com", 64);
+  expect(left).toBe(right);
+  expect(left).toMatch(/^https:\/\/www\.gravatar\.com\/avatar\/[0-9a-f]{64}\?s=64&d=404$/);
 });

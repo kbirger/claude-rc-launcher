@@ -5,7 +5,13 @@ import type { LogLine, UpdateEntry } from "../features/updates";
 import { HISTORY_KEY, LATEST_KEY, LOGS_KEY, UPDATES_KEY } from "../features/updates";
 import { keepStream, type Visibility } from "./stream";
 
-export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
+export type Presence = {
+  host: string;
+  status: "online" | "offline" | "restarting" | "error";
+  version?: string;
+  reason?: string;
+  at: string;
+};
 
 const MAX_LINES = 200;
 const HOST_STATUS = { online: "ok", offline: "offline", restarting: "restarting", error: "error" } as const;
@@ -16,7 +22,7 @@ type Timer = ReturnType<typeof setTimeout>;
  * Keeps the shared event stream open (see `keepStream` for the retries and the hidden tab) and writes its events into
  * the query cache. After a reconnect it invalidates the keys that it owns.
  */
-export function connectEvents(o: {
+export function connectEvents(options: {
   client: QueryClient;
   open?: (url: string) => EventSource;
   delays?: number[];
@@ -25,26 +31,33 @@ export function connectEvents(o: {
   visibility?: Visibility;
   hiddenMs?: number;
   /** Where the `[claude-rc]` lines go. Never gets output lines or error text of a node. */
-  log?: { info(...a: unknown[]): void; warn(...a: unknown[]): void };
+  log?: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
 }): () => void {
-  const log = o.log ?? console;
+  const log = options.log ?? console;
 
   // Patches status, version and error of the cached host. Returns true when the host list is stale: the version changed,
   // or the host is not in a loaded list (a new node). A cold cache is left alone.
-  const patchHost = (p: Presence): boolean => {
+  const patchHost = (item: Presence): boolean => {
     let stale = false;
-    const status = Object.hasOwn(HOST_STATUS, p.status) ? HOST_STATUS[p.status] : "error";
-    o.client.setQueryData<HostInfo[]>(HOSTS_KEY, (cur) => {
+    const status = Object.hasOwn(HOST_STATUS, item.status) ? HOST_STATUS[item.status] : "error";
+    options.client.setQueryData<HostInfo[]>(HOSTS_KEY, (cur) => {
       if (!cur) return cur;
-      if (!cur.some((h) => h.id === p.host)) {
+
+      if (!cur.some((host) => host.id === item.host)) {
         stale = true;
         return cur;
       }
-      return cur.map((h) => {
-        if (h.id !== p.host) return h;
-        stale = p.version !== undefined && p.version !== h.version;
-        const { error: _drop, ...rest } = h;
-        return { ...rest, status, ...(p.version !== undefined ? { version: p.version } : {}), ...(p.status !== "online" && p.reason ? { error: p.reason } : {}) };
+
+      return cur.map((host) => {
+        if (host.id !== item.host) return host;
+        stale = item.version !== undefined && item.version !== host.version;
+        const { error: _drop, ...rest } = host;
+        return {
+          ...rest,
+          status,
+          ...(item.version !== undefined ? { version: item.version } : {}),
+          ...(item.status !== "online" && item.reason ? { error: item.reason } : {}),
+        };
       });
     });
     return stale;
@@ -54,42 +67,52 @@ export function connectEvents(o: {
   // changes the host list (the version, `stale`) and a finished update adds an item to the history. A new step or a new
   // output line changes neither. The first list only sets the starting point.
   let seen: Map<string, string> | undefined;
-  const offCache = o.client.getQueryCache().subscribe((ev) => {
-    if (ev.type !== "updated" || ev.action.type !== "success" || ev.query.queryKey.length !== 1 || ev.query.queryKey[0] !== UPDATES_KEY[0]) return;
+  const offCache = options.client.getQueryCache().subscribe((ev) => {
+    if (
+      ev.type !== "updated" ||
+      ev.action.type !== "success" ||
+      ev.query.queryKey.length !== 1 ||
+      ev.query.queryKey[0] !== UPDATES_KEY[0]
+    )
+      return;
     const data = ev.query.state.data as UpdateEntry[] | undefined;
     if (!Array.isArray(data)) return;
-    const next = new Map(data.map((e) => [e.host, `${e.startedAt}|${e.status}`]));
+    const next = new Map(data.map((event) => [event.host, `${event.startedAt}|${event.status}`]));
+
     if (seen) {
       let hosts = false;
       let history = false;
-      for (const e of data) {
-        if (seen.get(e.host) === next.get(e.host)) continue;
+
+      for (const event of data) {
+        if (seen.get(event.host) === next.get(event.host)) continue;
         hosts = true;
-        if (e.status !== "running") history = true;
+        if (event.status !== "running") history = true;
       }
-      if (hosts) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-      if (history) void o.client.invalidateQueries({ queryKey: HISTORY_KEY });
+
+      if (hosts) void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+      if (history) void options.client.invalidateQueries({ queryKey: HISTORY_KEY });
     }
+
     seen = next;
   });
 
   const stopStream = keepStream({
     url: "/api/events",
     name: "event stream",
-    open: o.open,
-    delays: o.delays,
-    setTimeout: o.setTimeout,
-    clearTimeout: o.clearTimeout,
-    visibility: o.visibility,
-    hiddenMs: o.hiddenMs,
+    open: options.open,
+    delays: options.delays,
+    setTimeout: options.setTimeout,
+    clearTimeout: options.clearTimeout,
+    visibility: options.visibility,
+    hiddenMs: options.hiddenMs,
     log,
     // After a reconnect the page may have missed events: read the state again. The first open needs no read, the snapshot carries it.
     onOpen(opens) {
       if (opens <= 1) return;
-      void o.client.invalidateQueries({ queryKey: UPDATES_KEY });
-      void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-      void o.client.invalidateQueries({ queryKey: HISTORY_KEY });
-      void o.client.invalidateQueries({ queryKey: LATEST_KEY });
+      void options.client.invalidateQueries({ queryKey: UPDATES_KEY });
+      void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+      void options.client.invalidateQueries({ queryKey: HISTORY_KEY });
+      void options.client.invalidateQueries({ queryKey: LATEST_KEY });
     },
     listeners: {
       snapshot(data) {
@@ -97,30 +120,45 @@ export function connectEvents(o: {
           const snap = JSON.parse(data);
           if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
           log.info(`[claude-rc] snapshot: ${snap.updates.length} updates, ${snap.presence.length} hosts`);
-          o.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, snap.updates);
-          if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs)) o.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, snap.logs);
-          if ((snap.presence as Presence[]).map((p) => patchHost(p)).some(Boolean)) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-        } catch {}
+          options.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, snap.updates);
+          if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs))
+            options.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, snap.logs);
+          if ((snap.presence as Presence[]).map((item) => patchHost(item)).some(Boolean))
+            void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+        } catch {
+          // A snapshot that does not parse is skipped. The next event brings the state.
+        }
       },
       update(data) {
         try {
           const entry = JSON.parse(data) as UpdateEntry;
-          o.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, (cur = []) => {
-            const i = cur.findIndex((x) => x.host === entry.host);
-            return i < 0 ? [...cur, entry] : cur.map((x, j) => (j === i ? entry : x));
+          options.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, (cur = []) => {
+            const index = cur.findIndex((existing) => existing.host === entry.host);
+            return index < 0
+              ? [...cur, entry]
+              : cur.map((existing, position) => (position === index ? entry : existing));
           });
-        } catch {}
+        } catch {
+          // An event that does not parse is skipped. The next event brings the state.
+        }
       },
       log(data) {
         try {
-          const l = JSON.parse(data) as { host: string; line: string; at: string };
-          o.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, (cur = {}) => ({ ...cur, [l.host]: [...(cur[l.host] ?? []), { line: l.line, at: l.at }].slice(-MAX_LINES) }));
-        } catch {}
+          const line = JSON.parse(data) as { host: string; line: string; at: string };
+          options.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, (cur = {}) => ({
+            ...cur,
+            [line.host]: [...(cur[line.host] ?? []), { line: line.line, at: line.at }].slice(-MAX_LINES),
+          }));
+        } catch {
+          // An event that does not parse is skipped. The next event brings the state.
+        }
       },
       presence(data) {
         try {
-          if (patchHost(JSON.parse(data) as Presence)) void o.client.invalidateQueries({ queryKey: HOSTS_KEY });
-        } catch {}
+          if (patchHost(JSON.parse(data) as Presence)) void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+        } catch {
+          // An event that does not parse is skipped. The next event brings the state.
+        }
       },
     },
   });

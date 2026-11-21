@@ -6,7 +6,11 @@
   // (an update just finished well) it throws its claws up, hops and sprays confetti.
   // When an update fails (`failed`), the crab settles on its legs, sags and fades to the error colour; it stays that
   // way until the next update starts or `failed` turns off.
-  let { active = false, celebrate = false, failed = false }: { active?: boolean; celebrate?: boolean; failed?: boolean } = $props();
+  let {
+    active = false,
+    celebrate = false,
+    failed = false,
+  }: { active?: boolean; celebrate?: boolean; failed?: boolean } = $props();
 
   type Phase = "float" | "bounce" | "spin" | "settle" | "celebrate";
   const BOUNCE_S = 1.65;
@@ -32,15 +36,30 @@
     "....#.#..#.#....",
     "....#.#..#.#....",
   ];
-  const cells: { x: number; y: number; eye: boolean; claw: boolean; leg: boolean; seed: number }[] = [];
-  rows.forEach((r, y) =>
-    [...r].forEach((v, x) => {
-      if (v === "#") cells.push({ x, y, eye: y === 1 && (x === 5 || x === 10), claw: y >= 3 && y <= 5 && (x < 4 || x > 11), leg: y >= 9, seed: x * 127.1 + y * 311.7 });
+  const cells: { posX: number; posY: number; eye: boolean; claw: boolean; leg: boolean; seed: number }[] = [];
+  rows.forEach((row, index) =>
+    [...row].forEach((char, column) => {
+      if (char === "#")
+        cells.push({
+          posX: column,
+          posY: index,
+          eye: index === 1 && (column === 5 || column === 10),
+          claw: index >= 3 && index <= 5 && (column < 4 || column > 11),
+          leg: index >= 9,
+          seed: column * 127.1 + index * 311.7,
+        });
     }),
   );
   // The sprite is extruded into a block of this many layers. The eyes are only on the front layer (the last one).
   const LAYERS = 7;
-  const voxels = cells.flatMap((q) => Array.from({ length: LAYERS }, (_, layer) => ({ ...q, layer, eye: q.eye && layer === LAYERS - 1, seed: q.seed + layer * 17.3 })));
+  const voxels = cells.flatMap((cell) =>
+    Array.from({ length: LAYERS }, (_unused, layer) => ({
+      ...cell,
+      layer,
+      eye: cell.eye && layer === LAYERS - 1,
+      seed: cell.seed + layer * 17.3,
+    })),
+  );
 
   let canvas: HTMLCanvasElement;
   let phase: Phase = "float";
@@ -54,7 +73,18 @@
   let sag = 0; // how far the crab has given up, 0 to 1: it eases toward 1 after a failure
   let celebratePending = false; // the crab is busy (bouncing or slowing down): celebrate when it is back to float
   let confettiSpawned = false;
-  type Piece = { x: number; y: number; vx: number; vy: number; rot: number; spin: number; size: number; life: number; age: number; color: string };
+  type Piece = {
+    posX: number;
+    posY: number;
+    vx: number;
+    vy: number;
+    rot: number;
+    spin: number;
+    size: number;
+    life: number;
+    age: number;
+    color: string;
+  };
   let confetti: Piece[] = [];
 
   function startCelebrate() {
@@ -67,8 +97,10 @@
   // The bounce starts when `active` turns on; the settle starts when it turns off.
   $effect(() => {
     const now = active;
+
     if (now && !wasActive) {
       celebratePending = false;
+
       if (phase === "settle") {
         phase = "spin"; // the update came back while the crab was slowing down: keep turning
       } else {
@@ -82,6 +114,7 @@
       phaseTime = 0;
       settleTarget = Math.ceil(angle / TAU) * TAU;
     }
+
     // A bounce that is still going when the update ends finishes first (see frame).
     wasActive = now;
   });
@@ -89,22 +122,25 @@
   // The celebration starts when `celebrate` turns on. A crab that is still turning slows down first.
   $effect(() => {
     const now = celebrate;
+
     if (now && !wasCelebrate && !active) {
       if (phase === "float") startCelebrate();
       else if (phase === "celebrate") phaseTime = 0;
       else celebratePending = true;
     }
+
     wasCelebrate = now;
   });
 
-  function spawnConfetti(cell: number, x: number, y: number) {
+  function spawnConfetti(cell: number, originX: number, originY: number) {
     const style = getComputedStyle(canvas);
-    for (let i = 0; i < CONFETTI_COUNT; i++) {
+
+    for (let index = 0; index < CONFETTI_COUNT; index++) {
       const angle = -Math.PI * (0.12 + Math.random() * 0.76); // up and to both sides
       const speed = (10 + Math.random() * 12) * cell;
       confetti.push({
-        x: x + (Math.random() - 0.5) * 6 * cell,
-        y: y + Math.random() * cell,
+        posX: originX + (Math.random() - 0.5) * 6 * cell,
+        posY: originY + Math.random() * cell,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         rot: Math.random() * TAU,
@@ -112,7 +148,7 @@
         size: cell * (0.4 + Math.random() * 0.45),
         life: 1.6 + Math.random() * 0.8,
         age: 0,
-        color: style.getPropertyValue(CONFETTI_COLORS[i % CONFETTI_COLORS.length]!).trim() || "#e97050",
+        color: style.getPropertyValue(CONFETTI_COLORS[index % CONFETTI_COLORS.length]!).trim() || "#e97050",
       });
     }
   }
@@ -120,16 +156,18 @@
   function frame(ctx: CanvasRenderingContext2D, dt: number, still: boolean) {
     time += dt;
     phaseTime += dt;
-    const p = POWER;
+    const power = POWER;
     const cw = canvas.clientWidth;
     const ch = canvas.clientHeight;
     const dpr = Math.min(devicePixelRatio || 1, 2);
-    const w = Math.round(cw * dpr);
-    const h = Math.round(ch * dpr);
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
+    const pixelWidth = Math.round(cw * dpr);
+    const pixelHeight = Math.round(ch * dpr);
+
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
     }
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
 
@@ -151,34 +189,38 @@
     sag = still ? sagTarget : sag + (sagTarget - sag) * (1 - Math.exp(-3 * dt));
     if (sag < 0.001) sag = 0;
     const body = sag > 0 ? `color-mix(in srgb, ${danger} ${Math.round(sag * 100)}%, ${primary})` : primary;
-    const smooth = (v: number) => {
-      const t = Math.min(1, Math.max(0, v));
-      return t * t * (3 - 2 * t);
+
+    const smooth = (ratio: number) => {
+      const clamped = Math.min(1, Math.max(0, ratio));
+      return clamped * clamped * (3 - 2 * clamped);
     };
 
     if (phase === "bounce") {
-      const t = phaseTime / BOUNCE_S;
-      if (t >= 1) {
+      const progress = phaseTime / BOUNCE_S;
+
+      if (progress >= 1) {
         phase = active ? "spin" : "float";
         phaseTime = 0;
         if (phase === "float" && celebratePending) startCelebrate();
       } else {
-        const curve = Math.sin(Math.PI * t);
-        jump = curve * 2.3 * p;
-        const impact = Math.exp(-Math.pow((t - 0.97) / 0.055, 2));
-        sx = 1 + impact * 0.11 * p;
-        sy = 1 - impact * 0.13 * p + curve * 0.08 * p;
-        ax = Math.sin(time * 4) * 0.07 * p;
+        const curve = Math.sin(Math.PI * progress);
+        jump = curve * 2.3 * power;
+        const impact = Math.exp(-Math.pow((progress - 0.97) / 0.055, 2));
+        sx = 1 + impact * 0.11 * power;
+        sy = 1 - impact * 0.13 * power + curve * 0.08 * power;
+        ax = Math.sin(time * 4) * 0.07 * power;
       }
     }
+
     if (phase === "spin") {
       // Speeds up slowly: the speed only levels off after several seconds.
-      velocity += (1.6 * p - velocity * 0.12) * dt;
+      velocity += (1.6 * power - velocity * 0.12) * dt;
       angle += velocity * dt;
       spinning = true;
     } else if (phase === "settle") {
       // Slow down and stop facing front: the speed follows the angle that is left, so the stop is smooth.
       const left = settleTarget - angle;
+
       if (left < 0.02) {
         phase = "float";
         phaseTime = 0;
@@ -191,30 +233,35 @@
         spinning = true;
       }
     }
+
     if (phase === "celebrate") {
-      const t = phaseTime;
-      if (t >= CELEBRATE_S) {
+      const elapsed = phaseTime;
+
+      if (elapsed >= CELEBRATE_S) {
         phase = "float";
         phaseTime = 0;
       } else {
         // The claws go up fast, wave, and come down at the end; the crab hops twice meanwhile.
-        raise = smooth(t / 0.35) * (1 - smooth((t - (CELEBRATE_S - 0.6)) / 0.6));
-        const hop = t - 0.3;
+        raise = smooth(elapsed / 0.35) * (1 - smooth((elapsed - (CELEBRATE_S - 0.6)) / 0.6));
+        const hop = elapsed - 0.3;
         if (hop > 0 && hop < 1.4) jump = Math.abs(Math.sin((Math.PI * hop) / 0.7)) * 0.9;
         ax = Math.sin(time * 9) * 0.03 * raise;
-        if (!confettiSpawned && t >= CONFETTI_AT_S) {
+
+        if (!confettiSpawned && elapsed >= CONFETTI_AT_S) {
           confettiSpawned = true;
           spawnConfetti(cell, cw / 2, ch / 2 - 5 * cell);
         }
       }
     }
+
     if (phase === "float") {
       // A crab that has given up stops floating.
-      jump = Math.sin(time * 1.2) * 0.09 * p * (1 - sag);
-      ax = Math.sin(time * 0.8) * 0.035 * p * (1 - sag);
+      jump = Math.sin(time * 1.2) * 0.09 * power * (1 - sag);
+      ax = Math.sin(time * 0.8) * 0.035 * power * (1 - sag);
     }
+
     // The twirl turns around the vertical axis; while it floats the crab only sways a little.
-    const ay = spinning ? angle : phase === "float" ? Math.sin(time * 0.7) * 0.035 * p * (1 - sag) : 0;
+    const ay = spinning ? angle : phase === "float" ? Math.sin(time * 0.7) * 0.035 * power * (1 - sag) : 0;
 
     const originX = cw / 2;
     const originY = ch / 2 - jump * cell;
@@ -222,96 +269,118 @@
     const depth = 28 * cell;
     // The farthest a block gets from the centre (half the width plus half the depth), for the shading.
     const reach = 11 * cell;
-    const c = Math.cos(ax);
-    const s = Math.sin(ax);
+    const cosine = Math.cos(ax);
+    const sine = Math.sin(ax);
     const cy = Math.cos(ay);
     const sy2 = Math.sin(ay);
-    const rendered: { q: (typeof voxels)[number]; x: number; y: number; size: number; z: number }[] = [];
+    const rendered: { voxel: (typeof voxels)[number]; posX: number; posY: number; size: number; depth: number }[] = [];
 
-    for (const q of voxels) {
-      let x = (q.x - 7.5) * cell;
-      let y = (q.y - 5.5) * cell;
-      const z0 = (q.layer - (LAYERS - 1) / 2) * cell;
+    for (const voxel of voxels) {
+      let offsetX = (voxel.posX - 7.5) * cell;
+      let offsetY = (voxel.posY - 5.5) * cell;
+      const z0 = (voxel.layer - (LAYERS - 1) / 2) * cell;
       let dx = 0;
       let dy = 0;
-      const n = Math.sin(time * 1.5 + q.seed * 0.11) * 0.5 + Math.cos(time * 0.85 + q.seed * 0.07) * 0.3 + Math.sin(time * 2.2 + q.seed * 0.03) * 0.2;
+      const wobble =
+        Math.sin(time * 1.5 + voxel.seed * 0.11) * 0.5 +
+        Math.cos(time * 0.85 + voxel.seed * 0.07) * 0.3 +
+        Math.sin(time * 2.2 + voxel.seed * 0.03) * 0.2;
+
       if (phase === "float") {
-        dx = n * 0.1 * p * cell * (1 - sag);
-        dy = Math.cos(time * 1.3 + q.seed * 0.09) * 0.09 * p * cell * (1 - sag);
+        dx = wobble * 0.1 * power * cell * (1 - sag);
+        dy = Math.cos(time * 1.3 + voxel.seed * 0.09) * 0.09 * power * cell * (1 - sag);
       }
+
       if (sag > 0) {
         // The body sinks onto the legs (the bottom row stays on the floor), the claws droop and the eyes drop.
-        dy += sag * 0.8 * cell * (q.leg ? (11 - q.y) / 2 : 1);
-        if (q.claw) {
+        dy += sag * 0.8 * cell * (voxel.leg ? (11 - voxel.posY) / 2 : 1);
+
+        if (voxel.claw) {
           dy += sag * 1.4 * cell;
-          dx += (q.x < 8 ? -1 : 1) * sag * 0.3 * cell;
+          dx += (voxel.posX < 8 ? -1 : 1) * sag * 0.3 * cell;
         }
-        if (q.eye) dy += sag * 0.9 * cell;
+
+        if (voxel.eye) dy += sag * 0.9 * cell;
       }
+
       if (phase === "bounce") {
-        if (q.claw) dx += (q.x < 8 ? -1 : 1) * Math.sin(time * 4.1) * 0.16 * p * cell;
-        if (q.leg) dx += Math.sin(time * 5.5 + q.x) * 0.12 * p * cell;
+        if (voxel.claw) dx += (voxel.posX < 8 ? -1 : 1) * Math.sin(time * 4.1) * 0.16 * power * cell;
+        if (voxel.leg) dx += Math.sin(time * 5.5 + voxel.posX) * 0.12 * power * cell;
       }
-      if (raise > 0 && q.claw) {
-        const side = q.x < 8 ? -1 : 1;
+
+      if (raise > 0 && voxel.claw) {
+        const side = voxel.posX < 8 ? -1 : 1;
         dy -= raise * 3.4 * cell;
         dx += side * raise * 0.7 * cell;
         dy += Math.sin(time * 13 + side) * 0.3 * cell * raise;
         dx += side * Math.sin(time * 11) * 0.15 * cell * raise;
       }
-      if (spinning && (q.claw || q.leg)) {
-        const lag = DRAG * (q.claw ? 1 : 0.85) * velocity * 0.1;
-        dx += (y / cell) * lag * cell;
-        dy -= (x / cell) * lag * cell;
-        dx += Math.sin(time * velocity * 0.8 + q.seed * 0.035) * 0.16 * DRAG * cell;
-        dy += Math.cos(time * velocity * 0.8 + q.seed * 0.035) * 0.13 * DRAG * cell;
+
+      if (spinning && (voxel.claw || voxel.leg)) {
+        const lag = DRAG * (voxel.claw ? 1 : 0.85) * velocity * 0.1;
+        dx += (offsetY / cell) * lag * cell;
+        dy -= (offsetX / cell) * lag * cell;
+        dx += Math.sin(time * velocity * 0.8 + voxel.seed * 0.035) * 0.16 * DRAG * cell;
+        dy += Math.cos(time * velocity * 0.8 + voxel.seed * 0.035) * 0.13 * DRAG * cell;
       }
-      x = (x + dx) * sx;
-      y = (y + dy) * sy;
-      const rx = cy * x + sy2 * z0;
-      const rz = -sy2 * x + cy * z0;
-      const ry = c * y - s * rz;
-      const rz2 = s * y + c * rz;
+
+      offsetX = (offsetX + dx) * sx;
+      offsetY = (offsetY + dy) * sy;
+      const rx = cy * offsetX + sy2 * z0;
+      const rz = -sy2 * offsetX + cy * z0;
+      const ry = cosine * offsetY - sine * rz;
+      const rz2 = sine * offsetY + cosine * rz;
       const persp = depth / (depth - rz2);
-      rendered.push({ q, x: originX + rx * persp, y: originY + ry * persp, size: cell * 0.945 * persp, z: rz2 });
+      rendered.push({
+        voxel: voxel,
+        posX: originX + rx * persp,
+        posY: originY + ry * persp,
+        size: cell * 0.945 * persp,
+        depth: rz2,
+      });
     }
 
     // Far blocks first. The farther a block is, the darker it is, so the depth shows.
-    rendered.sort((a, b) => a.z - b.z);
-    for (const r of rendered) {
-      ctx.globalAlpha = r.q.eye ? 1 : still ? 1 : 0.94 + 0.06 * Math.sin(time * 1.2 + r.q.seed);
-      ctx.fillStyle = r.q.eye ? eye : body;
-      ctx.fillRect(r.x - r.size / 2, r.y - r.size / 2, r.size, r.size);
+    rendered.sort((left, right) => left.depth - right.depth);
+
+    for (const cube of rendered) {
+      ctx.globalAlpha = cube.voxel.eye ? 1 : still ? 1 : 0.94 + 0.06 * Math.sin(time * 1.2 + cube.voxel.seed);
+      ctx.fillStyle = cube.voxel.eye ? eye : body;
+      ctx.fillRect(cube.posX - cube.size / 2, cube.posY - cube.size / 2, cube.size, cube.size);
       // 0 for the front layer of a crab that faces front, growing with the distance behind it.
-      const far = 1 - Math.min(1, Math.max(0, (r.z + reach) / (reach + ((LAYERS - 1) / 2) * cell)));
-      if (!r.q.eye && far > 0.02) {
+      const far = 1 - Math.min(1, Math.max(0, (cube.depth + reach) / (reach + ((LAYERS - 1) / 2) * cell)));
+
+      if (!cube.voxel.eye && far > 0.02) {
         ctx.globalAlpha = far * 0.45;
         ctx.fillStyle = "#000";
-        ctx.fillRect(r.x - r.size / 2, r.y - r.size / 2, r.size, r.size);
+        ctx.fillRect(cube.posX - cube.size / 2, cube.posY - cube.size / 2, cube.size, cube.size);
       }
     }
 
     // Confetti in front of the crab: it flies up and out, falls, and fades.
     if (confetti.length) {
-      for (const k of confetti) {
-        k.age += dt;
-        k.vy += 45 * cell * dt;
-        k.vx *= Math.exp(-1.6 * dt);
-        k.x += k.vx * dt;
-        k.y += k.vy * dt;
-        k.rot += k.spin * dt;
+      for (const particle of confetti) {
+        particle.age += dt;
+        particle.vy += 45 * cell * dt;
+        particle.vx *= Math.exp(-1.6 * dt);
+        particle.posX += particle.vx * dt;
+        particle.posY += particle.vy * dt;
+        particle.rot += particle.spin * dt;
       }
-      confetti = confetti.filter((k) => k.age < k.life);
-      for (const k of confetti) {
-        ctx.globalAlpha = Math.min(1, (k.life - k.age) / 0.5);
-        ctx.fillStyle = k.color;
+
+      confetti = confetti.filter((particle) => particle.age < particle.life);
+
+      for (const particle of confetti) {
+        ctx.globalAlpha = Math.min(1, (particle.life - particle.age) / 0.5);
+        ctx.fillStyle = particle.color;
         ctx.save();
-        ctx.translate(k.x, k.y);
-        ctx.rotate(k.rot);
-        ctx.fillRect(-k.size / 2, -k.size / 2, k.size, k.size);
+        ctx.translate(particle.posX, particle.posY);
+        ctx.rotate(particle.rot);
+        ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
         ctx.restore();
       }
     }
+
     ctx.globalAlpha = 1;
   }
 
@@ -322,23 +391,28 @@
     const calm = matchMedia("(prefers-reduced-motion: reduce)");
     let raf = 0;
     let last = performance.now();
+
     const loop = (now: number) => {
       frame(ctx, Math.min((now - last) / 1000, 0.035), false);
       last = now;
       raf = requestAnimationFrame(loop);
     };
+
     const start = () => {
       cancelAnimationFrame(raf);
+
       if (calm.matches) frame(ctx, 0, true);
       else {
         last = performance.now();
         raf = requestAnimationFrame(loop);
       }
     };
+
     start();
     calm.addEventListener("change", start);
     const resized = new ResizeObserver(() => calm.matches && frame(ctx, 0, true));
     resized.observe(canvas);
+
     return () => {
       cancelAnimationFrame(raf);
       calm.removeEventListener("change", start);

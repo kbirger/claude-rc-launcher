@@ -13,10 +13,10 @@ const MAX_IDS = 100;
 const MAX_BYTES = 1024 * 1024;
 const MAX_BRIDGE_LEN = 256;
 
-type Data = Record<string, string[]>;
+type Data = Map<string, string[]>;
 
 export class SessionChains {
-  private data: Data = {};
+  private data: Data = new Map();
   private loaded?: Promise<void>;
   private writing: Promise<void> = Promise.resolve();
 
@@ -26,15 +26,17 @@ export class SessionChains {
   private load(): Promise<void> {
     this.loaded ??= (async () => {
       if (!this.file) return;
+
       try {
         const text = await readFile(this.file, "utf8");
         if (text.length > MAX_BYTES) return;
-        const v: unknown = JSON.parse(text);
-        if (!v || typeof v !== "object" || Array.isArray(v)) return;
-        for (const [bridge, ids] of Object.entries(v as Record<string, unknown>)) {
+        const parsed: unknown = JSON.parse(text);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+
+        for (const [bridge, ids] of Object.entries(parsed as Record<string, unknown>)) {
           if (bridge.length > MAX_BRIDGE_LEN || !Array.isArray(ids)) continue;
-          const good = ids.filter((i): i is string => typeof i === "string" && SESSION_ID.test(i)).slice(-MAX_IDS);
-          if (good.length) this.data[bridge] = good;
+          const good = ids.filter((id): id is string => typeof id === "string" && SESSION_ID.test(id)).slice(-MAX_IDS);
+          if (good.length) this.data.set(bridge, good);
         }
       } catch {
         // missing or not valid: start empty
@@ -47,11 +49,13 @@ export class SessionChains {
   async observe(pairs: Iterable<readonly [string, string]>): Promise<void> {
     await this.load();
     let changed = false;
+
     for (const [bridge, id] of pairs) {
       if (bridge.length === 0 || bridge.length > MAX_BRIDGE_LEN || !SESSION_ID.test(id)) continue;
-      const ids = this.data[bridge];
+      const ids = this.data.get(bridge);
+
       if (!ids) {
-        this.data[bridge] = [id];
+        this.data.set(bridge, [id]);
         changed = true;
       } else if (!ids.includes(id)) {
         ids.push(id);
@@ -59,17 +63,21 @@ export class SessionChains {
         changed = true;
       }
     }
+
     if (!changed) return;
-    const keys = Object.keys(this.data);
+    const keys = [...this.data.keys()];
     // Object keys keep insertion order, so the first keys are the oldest bridges.
-    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_BRIDGES))) delete this.data[k];
+    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_BRIDGES))) this.data.delete(key);
     await this.save();
   }
 
   /** Remember that `successor` came from `predecessor` with no bridge id to show it (a match by time, or a process link). */
   async link(predecessor: string, successor: string): Promise<void> {
     if (predecessor === successor || !SESSION_ID.test(predecessor) || !SESSION_ID.test(successor)) return;
-    await this.observe([[`link:${successor}`, predecessor], [`link:${successor}`, successor]]);
+    await this.observe([
+      [`link:${successor}`, predecessor],
+      [`link:${successor}`, successor],
+    ]);
   }
 
   /**
@@ -79,22 +87,25 @@ export class SessionChains {
   async chainOf(id: string): Promise<string[]> {
     await this.load();
     const chain = new Set([id]);
-    for (let grew = true; grew; ) {
+
+    for (let grew = true; grew;) {
       grew = false;
-      for (const ids of Object.values(this.data)) {
-        if (!ids.some((i) => chain.has(i))) continue;
-        for (const i of ids) if (!chain.has(i)) (chain.add(i), (grew = true));
+
+      for (const ids of this.data.values()) {
+        if (!ids.some((item) => chain.has(item))) continue;
+        for (const item of ids) if (!chain.has(item)) (chain.add(item), (grew = true));
       }
     }
+
     // In the order of the store, so that a chain from one bridge id keeps its order. `id` alone stays alone.
-    const ordered = [...new Set(Object.values(this.data).flat())].filter((i) => chain.has(i));
+    const ordered = [...new Set([...this.data.values()].flat())].filter((item) => chain.has(item));
     return ordered.length ? ordered : [id];
   }
 
   private save(): Promise<void> {
     const file = this.file;
     if (!file) return Promise.resolve();
-    const text = JSON.stringify(this.data);
+    const text = JSON.stringify(Object.fromEntries(this.data));
     this.writing = this.writing.then(async () => {
       try {
         await mkdir(dirname(file), { recursive: true });

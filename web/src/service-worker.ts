@@ -10,16 +10,24 @@ declare const self: ServiceWorkerGlobalScope;
 // Only the hashed build files are cached. Pages and API calls always go to the network, because the hub puts every
 // page behind login and the data is live: a cached page could be a login redirect or stale session data.
 const CACHE = `app-${version}`;
-const BUILD = immutable.map((f) => `/${f.path}`);
+const BUILD = immutable.map((immutableItem) => `/${immutableItem.path}`);
 const ASSETS = new Set(BUILD);
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(BUILD)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((item) => item.addAll(BUILD))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim()),
   );
 });
 

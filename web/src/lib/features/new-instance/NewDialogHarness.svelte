@@ -4,7 +4,12 @@
   import type { HostInfo } from "../hosts";
   import NewDialog from "./NewDialog.svelte";
 
-  let { client, host, hosts, onhost }: { client: QueryClient; host: string; hosts: HostInfo[]; onhost: (id: string) => void } = $props();
+  let {
+    client,
+    host,
+    hosts,
+    onhost,
+  }: { client: QueryClient; host: string; hosts: HostInfo[]; onhost: (id: string) => void } = $props();
 </script>
 
 <QueryClientProvider {client}>

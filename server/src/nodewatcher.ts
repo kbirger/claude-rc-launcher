@@ -1,12 +1,25 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
-import type { StepName } from "./updateevents";
+import { isObject } from "./requests";
 import type { SessionsPayload } from "./sessionindex";
-import { cutLine, MAX_AT, type UpdateLog } from "./updatelog";
+import type { StepName } from "./updateevents";
+import { cutLine, MAX_AT } from "./updatelog";
+import type { UpdateLog } from "./updatelog";
 
-export type Presence = { host: string; status: "online" | "offline" | "restarting" | "error"; version?: string; reason?: string; at: string };
+export interface Presence {
+  host: string;
+  status: "online" | "offline" | "restarting" | "error";
+  version?: string;
+  reason?: string;
+  at: string;
+}
 
-type StepEvent = { step: StepName; to?: string; client?: string; detail?: string };
+interface StepEvent {
+  step: StepName;
+  to?: string;
+  client?: string;
+  detail?: string;
+}
 type Registry = Pick<HostRegistry, "list" | "get" | "onChange">;
 
 const MAX_VERSION = 64;
@@ -29,24 +42,28 @@ const STEPS: Record<StepName, true> = {
 };
 
 const defaultSleep = (ms: number) =>
-  new Promise<void>((r) => {
-    const t = setTimeout(r, ms) as { unref?: () => void };
-    t.unref?.();
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms) as { unref?: () => void };
+    timer.unref?.();
   });
 
-const isStr = (v: unknown): v is string => typeof v === "string";
+const isStr = (value: unknown): value is string => typeof value === "string";
+const isStep = (value: unknown): value is StepName =>
+  isStr(value) && Object.prototype.hasOwnProperty.call(STEPS, value);
 
-function asSessions(v: unknown): SessionsPayload | undefined {
-  if (!v || typeof v !== "object") return undefined;
-  const r = v as Record<string, unknown>;
-  const flag = r.truncated === undefined || typeof r.truncated === "boolean";
-  return isStr(r.scannedAt) && typeof r.available === "boolean" && Array.isArray(r.sessions) && flag ? (r as unknown as SessionsPayload) : undefined;
+function asSessions(value: unknown): SessionsPayload | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const flag = record.truncated === undefined || typeof record.truncated === "boolean";
+  return isStr(record.scannedAt) && typeof record.available === "boolean" && Array.isArray(record.sessions) && flag
+    ? (record as unknown as SessionsPayload)
+    : undefined;
 }
 
 function parse(data: string): Record<string, unknown> | undefined {
   try {
-    const v = JSON.parse(data);
-    return v && typeof v === "object" ? (v as Record<string, unknown>) : undefined;
+    const parsed: unknown = JSON.parse(data);
+    return isObject(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -57,19 +74,19 @@ function parse(data: string): Record<string, unknown> | undefined {
  * publishes the presence of the node, copies the output lines into `log` and reports the steps. A stream that
  * is silent for 45 seconds is aborted. Bytes count as activity even when they are keepalive comments.
  */
-export function createNodeWatchers(o: {
+export function createNodeWatchers(options: {
   registry: Registry;
   log: UpdateLog;
-  onPresence(p: Presence): void;
-  onStep(host: string, e: StepEvent): void;
-  onSessions?(host: string, e: SessionsPayload): void;
+  onPresence(presence: Presence): void;
+  onStep(host: string, stepEvent: StepEvent): void;
+  onSessions?(host: string, payload: SessionsPayload): void;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
 }): { presence(): Presence[]; endRestarting(host: string): void; stop(): void } {
-  const now = o.now ?? (() => new Date());
-  const sleep = o.sleep ?? defaultSleep;
-  const random = o.random ?? Math.random;
+  const now = options.now ?? (() => new Date());
+  const sleep = options.sleep ?? defaultSleep;
+  const random = options.random ?? Math.random;
   const presence = new Map<string, Presence>();
   const running = new Map<string, AbortController>();
   const enders = new Map<string, () => void>();
@@ -85,8 +102,15 @@ export function createNodeWatchers(o: {
   // Resolves after `ms`, or at once when `signal` aborts. Leaves no listener behind.
   const wait = (ms: number, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
-      if (signal.aborted) return resolve();
-      const onAbort = () => resolve();
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+
+      const onAbort = () => {
+        resolve();
+      };
+
       signal.addEventListener("abort", onAbort, { once: true });
       void sleep(ms).then(() => {
         signal.removeEventListener("abort", onAbort);
@@ -94,18 +118,35 @@ export function createNodeWatchers(o: {
       });
     });
 
-  const publishFor = (id: string, signal: AbortSignal, status: Presence["status"], extra: { version?: string; reason?: string } = {}) => {
+  const publishFor = (
+    id: string,
+    signal: AbortSignal,
+    status: Presence["status"],
+    extra: { version?: string; reason?: string } = {},
+  ) => {
     if (signal.aborted) return;
     const old = presence.get(id);
-    if (old && old.status === status && old.version === extra.version && old.reason === extra.reason) return;
-    const p: Presence = { host: id, status, ...(extra.version !== undefined ? { version: extra.version } : {}), ...(extra.reason !== undefined ? { reason: extra.reason } : {}), at: now().toISOString() };
-    presence.set(id, p);
-    safe(() => o.onPresence(p));
+    if (old?.status === status && old.version === extra.version && old.reason === extra.reason) return;
+    const entry: Presence = {
+      host: id,
+      status,
+      ...(extra.version !== undefined ? { version: extra.version } : {}),
+      ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
+      at: now().toISOString(),
+    };
+    presence.set(id, entry);
+    safe(() => {
+      options.onPresence(entry);
+    });
   };
 
   async function watch(id: string, ctl: AbortController): Promise<void> {
     const signal = ctl.signal;
-    const publish = (status: Presence["status"], extra: { version?: string; reason?: string } = {}) => publishFor(id, signal, status, extra);
+
+    const publish = (status: Presence["status"], extra: { version?: string; reason?: string } = {}) => {
+      publishFor(id, signal, status, extra);
+    };
+
     let attempt = 0;
     let lastStep: StepName | undefined;
     let restartDeadline: number | undefined;
@@ -119,45 +160,68 @@ export function createNodeWatchers(o: {
       if (cls === undefined || OFFLINE_CLASSES.has(cls)) publish("offline", cls ? { reason: cls } : {});
       else publish("error", { reason: cls });
     };
+
     // The presence after a drop. After a `restarting` step, a node that is gone is `restarting` for 90 seconds.
     const dropped = (cls: string | undefined) => {
       lastClass = cls;
+
       if (lastStep === "restarting" && !(cls && HARD_CLASSES.has(cls))) {
         restartDeadline ??= now().getTime() + RESTART_WINDOW_MS;
-        if (now().getTime() < restartDeadline) return publish("restarting");
+
+        if (now().getTime() < restartDeadline) {
+          publish("restarting");
+          return;
+        }
       }
+
       settle(cls);
     };
+
     // The restart window is over: `restarting` becomes `offline` (with a reason only for a class that means offline).
     const endWindow = () => {
       lastStep = undefined;
       restartDeadline = undefined;
-      if (presence.get(id)?.status === "restarting") publish("offline", lastClass !== undefined && OFFLINE_CLASSES.has(lastClass) ? { reason: lastClass } : {});
+      if (presence.get(id)?.status === "restarting")
+        publish("offline", lastClass !== undefined && OFFLINE_CLASSES.has(lastClass) ? { reason: lastClass } : {});
     };
+
     enders.set(id, endWindow);
 
+    // Functions, so that TypeScript does not narrow `signal.aborted` and `failure`: both change during an await.
+    const aborted = () => signal.aborted;
+
     while (!signal.aborted) {
-      const entry = o.registry.get(id);
-      if (!entry) return;
+      const response = options.registry.get(id);
+      if (!response) return;
       const ac = new AbortController();
-      const stopAll = () => ac.abort();
+
+      const stopAll = () => {
+        ac.abort();
+      };
+
       signal.addEventListener("abort", stopAll, { once: true });
       let last = now().getTime();
       let silent = false;
+      const wasSilent = () => silent;
       let done = false;
+
       const watchdog = async () => {
         for (;;) {
           const rest = SILENCE_MS - (now().getTime() - last);
+
           if (rest <= 0) {
             silent = true;
             ac.abort();
             return;
           }
+
           await wait(rest, ac.signal);
           if (done || ac.signal.aborted) return;
         }
       };
+
       void watchdog();
+
       // A connect attempt that is still running at the end of the restart window must not keep `restarting`.
       if (restartDeadline !== undefined && presence.get(id)?.status === "restarting") {
         void wait(Math.max(restartDeadline - now().getTime(), 0), ac.signal).then(() => {
@@ -166,90 +230,110 @@ export function createNodeWatchers(o: {
       }
 
       let failure: string | undefined;
+      const failureOf = () => failure;
       let snapshotAt: number | undefined;
+
       try {
-        const events = await entry.client.stream("/api/events", { signal: ac.signal, onActivity: () => (last = now().getTime()) });
+        const events = await response.client.stream("/api/events", {
+          signal: ac.signal,
+          onActivity: () => (last = now().getTime()),
+        });
         let pending = new Map<string, number>();
+
         for await (const ev of events) {
-          if (signal.aborted) break;
+          if (aborted()) break;
+
           if (ev.event === "snapshot") {
             const snap = parse(ev.data);
             if (!snap) throw new HostError(id, "bad response");
-            const upd = snap.update && typeof snap.update === "object" ? (snap.update as Record<string, unknown>) : undefined;
+            const upd =
+              snap.update && typeof snap.update === "object" ? (snap.update as Record<string, unknown>) : undefined;
             const started = upd && isStr(upd.startedAt) ? upd.startedAt : undefined;
+
             if (started !== undefined) {
               if (isStr(lastStarted) && lastStarted !== started) {
-                o.log.clear(id); // the hub missed the start of this update
+                options.log.clear(id); // the hub missed the start of this update
                 seen = [];
               }
+
               lastStarted = started;
             }
+
             snapshotAt = now().getTime();
             restartDeadline = undefined;
-            lastStep = upd && isStr(upd.step) && Object.hasOwn(STEPS, upd.step) ? (upd.step as StepName) : undefined;
+            lastStep = upd && isStep(upd.step) ? upd.step : undefined;
             pending = new Map();
-            for (const k of seen) pending.set(k, (pending.get(k) ?? 0) + 1);
+            for (const item of seen) pending.set(item, (pending.get(item) ?? 0) + 1);
             publish("online", isStr(snap.version) ? { version: snap.version.slice(0, MAX_VERSION) } : {});
             const list = asSessions(snap.sessions);
-            if (list) safe(() => o.onSessions?.(id, list));
+            if (list) safe(() => options.onSessions?.(id, list));
           } else if (ev.event === "log") {
-            const e = parse(ev.data);
-            if (!e || !isStr(e.line)) continue;
+            const record = parse(ev.data);
+            if (!record || !isStr(record.line)) continue;
             // The key holds the node's own time (cut) and the cut line, so a replay matches whatever the stored time is.
-            const key = `${isStr(e.at) ? e.at.slice(0, MAX_AT) : ""}\u0000${cutLine(e.line)}`;
-            const n = pending.get(key) ?? 0;
-            if (n > 0) {
-              pending.set(key, n - 1); // the node replays a line that the hub already holds
+            const key = `${isStr(record.at) ? record.at.slice(0, MAX_AT) : ""}\u0000${cutLine(record.line)}`;
+            const count = pending.get(key) ?? 0;
+
+            if (count > 0) {
+              pending.set(key, count - 1); // the node replays a line that the hub already holds
             } else {
               seen.push(key);
               if (seen.length > 200) seen.shift();
-              o.log.add(id, e.line, isStr(e.at) ? e.at : undefined);
+              options.log.add(id, record.line, isStr(record.at) ? record.at : undefined);
             }
           } else if (ev.event === "sessions") {
             const list = asSessions(parse(ev.data));
-            if (list) safe(() => o.onSessions?.(id, list));
+            if (list) safe(() => options.onSessions?.(id, list));
           } else if (ev.event === "step") {
-            const e = parse(ev.data);
-            if (!e || !isStr(e.step) || !Object.hasOwn(STEPS, e.step)) continue;
+            const record = parse(ev.data);
+            if (!record || !isStep(record.step)) continue;
             const step: StepEvent = {
-              step: e.step as StepName,
-              ...(isStr(e.to) ? { to: e.to } : {}),
-              ...(isStr(e.client) ? { client: e.client } : {}),
-              ...(isStr(e.detail) ? { detail: e.detail } : {}),
+              step: record.step,
+              ...(isStr(record.to) ? { to: record.to } : {}),
+              ...(isStr(record.client) ? { client: record.client } : {}),
+              ...(isStr(record.detail) ? { detail: record.detail } : {}),
             };
             lastStep = step.step;
+
             if (step.step === "downloading") {
-              o.log.clear(id);
+              options.log.clear(id);
               seen = [];
               pending = new Map();
               lastStarted = null;
             }
-            safe(() => o.onStep(id, step));
+
+            safe(() => {
+              options.onStep(id, step);
+            });
           }
         }
-      } catch (e) {
-        failure = e instanceof HostError ? e.reason : "bad response";
+      } catch (error) {
+        failure = error instanceof HostError ? error.reason : "bad response";
       } finally {
         done = true;
         signal.removeEventListener("abort", stopAll);
         ac.abort();
       }
-      if (signal.aborted) return;
+
+      if (aborted()) return;
       if (snapshotAt !== undefined && now().getTime() - snapshotAt >= STABLE_MS) attempt = 0;
-      dropped(failure ?? (silent ? "timeout" : undefined));
+      dropped(failureOf() ?? (wasSilent() ? "timeout" : undefined));
 
       // Wait before the next try. A node in the restart window turns `offline` when the window ends.
-      const base = WAITS_MS[Math.min(attempt++, WAITS_MS.length - 1)]!;
+      const base = WAITS_MS[Math.min(attempt++, WAITS_MS.length - 1)];
       let ms = base * (1 + JITTER * random());
+
       if (presence.get(id)?.status === "restarting" && restartDeadline !== undefined) {
         const rest = Math.max(restartDeadline - now().getTime(), 0);
+
         if (rest < ms) {
           await wait(rest, signal);
-          if (signal.aborted) return;
+          if (aborted()) return;
           endWindow();
           ms -= rest;
         }
       }
+
       await wait(ms, signal);
     }
   }
@@ -271,24 +355,27 @@ export function createNodeWatchers(o: {
     if (id === "local" || running.has(id)) return;
     const ctl = new AbortController();
     running.set(id, ctl);
-    void supervise(id, ctl).catch(() => {}).finally(() => {
-      if (running.get(id) === ctl) running.delete(id);
-    });
+    void supervise(id, ctl)
+      .catch(() => {})
+      .finally(() => {
+        if (running.get(id) === ctl) running.delete(id);
+      });
   };
+
   const stopOne = (id: string) => {
     running.get(id)?.abort();
     running.delete(id);
     enders.delete(id);
-    o.log.clear(id);
+    options.log.clear(id);
     presence.delete(id);
   };
 
   // A rename keeps the id and the client, so the stream stays open.
-  const off = o.registry.onChange((e) => {
-    if (e.type === "added") start(e.id);
-    else if (e.type === "removed") stopOne(e.id);
+  const off = options.registry.onChange((change) => {
+    if (change.type === "added") start(change.id);
+    else if (change.type === "removed") stopOne(change.id);
   });
-  for (const e of o.registry.list()) start(e.host.id);
+  for (const hostEntry of options.registry.list()) start(hostEntry.host.id);
 
   return {
     presence: () => [...presence.values()],

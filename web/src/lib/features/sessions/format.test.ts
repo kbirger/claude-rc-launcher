@@ -1,5 +1,21 @@
 import { expect, test } from "vitest";
-import { ago, humanSize, joinPath, lastSegments, relativeTo, sessionDetail, sessionMatches, sessionState, sessionTitle, sessionsHref, showHidden, touchedRows, worktreeName, splitPath } from "./format";
+import type { GlobalSession } from "./api";
+import {
+  ago,
+  humanSize,
+  joinPath,
+  lastSegments,
+  relativeTo,
+  sessionDetail,
+  sessionMatches,
+  sessionState,
+  sessionTitle,
+  sessionsHref,
+  showHidden,
+  touchedRows,
+  worktreeName,
+  splitPath,
+} from "./format";
 
 test("relativeTo cuts the root off a path inside it", () => {
   expect(relativeTo("/r/p", "/r/p/src/a.ts")).toBe("src/a.ts");
@@ -64,13 +80,22 @@ test("worktreeName handles a Windows root", () => {
 });
 
 test("touchedRows keeps the node order, newest first", () => {
-  const f = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at, confirmed: true });
-  const rows = touchedRows([f("/r/new.ts", "2026-11-11T12:00:00Z"), f("/r/mid.ts", "2026-11-11T11:00:00Z"), f("/r/old.ts", "2026-11-11T10:00:00Z")], "/r");
-  expect(rows.map((r) => r.rel)).toEqual(["new.ts", "mid.ts", "old.ts"]);
+  const helper = (path: string, at: string) => ({ path, inside: true, tool: "edit" as const, at, confirmed: true });
+  const rows = touchedRows(
+    [
+      helper("/r/new.ts", "2026-11-11T12:00:00Z"),
+      helper("/r/mid.ts", "2026-11-11T11:00:00Z"),
+      helper("/r/old.ts", "2026-11-11T10:00:00Z"),
+    ],
+    "/r",
+  );
+  expect(rows.map((row) => row.rel)).toEqual(["new.ts", "mid.ts", "old.ts"]);
 });
 
 test("sessionsHref carries hidden=1 and drops a false hidden", () => {
-  expect(sessionsHref({ session: "s", view: "folder", path: "src", hidden: true })).toBe("/sessions?session=s&view=folder&path=src&hidden=1");
+  expect(sessionsHref({ session: "s", view: "folder", path: "src", hidden: true })).toBe(
+    "/sessions?session=s&view=folder&path=src&hidden=1",
+  );
   expect(sessionsHref({ session: "s", view: "folder", hidden: false })).toBe("/sessions?session=s&view=folder");
 });
 
@@ -93,8 +118,8 @@ test("sessionsHref encodes awkward values so they come back unchanged", () => {
   expect(href.startsWith("/sessions?")).toBe(true);
   // Stays a same-origin path: never a protocol or a protocol-relative URL.
   expect(new URL(href, "https://hub.example").origin).toBe("https://hub.example");
-  const q = new URL(href, "https://hub.example").searchParams;
-  for (const [k, v] of Object.entries(vals)) expect(q.get(k)).toBe(v);
+  const urlSearchParams = new URL(href, "https://hub.example").searchParams;
+  for (const [key, value] of Object.entries(vals)) expect(urlSearchParams.get(key)).toBe(value);
   expect(href).not.toContain("#");
   expect(href).toContain("%2B");
 });
@@ -108,7 +133,11 @@ test("sessionTitle gives the name or a placeholder", () => {
 });
 
 test("sessionDetail lists id, age and a real branch only", () => {
-  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /), "main"]);
+  expect(sessionDetail({ ...sess, branch: "main" }, NOW)).toEqual([
+    "abcdef12",
+    expect.stringMatching(/^2h ago · /),
+    "main",
+  ]);
   expect(sessionDetail({ ...sess, branch: "HEAD" }, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
   expect(sessionDetail(sess, NOW)).toEqual(["abcdef12", expect.stringMatching(/^2h ago · /)]);
 });
@@ -131,7 +160,10 @@ test("touchedRows gives no link to a file that was not written (denied, failed o
     ],
     "/r",
   );
-  expect(rows.map((r) => [r.rel, r.link])).toEqual([["src/a.ts", undefined], [undefined, undefined]]);
+  expect(rows.map((row) => [row.rel, row.link])).toEqual([
+    ["src/a.ts", undefined],
+    [undefined, undefined],
+  ]);
 });
 
 test("touchedRows keeps the link when an older node sends no confirmed field (the node is the gate)", () => {
@@ -148,13 +180,25 @@ test("touchedRows links every written row: inside files by relative path, the re
     ],
     "/r",
   );
-  expect(rows.map((r) => r.link)).toEqual([{ file: "src/a.ts" }, { abs: "/home/u/notes.md" }, { abs: "/r" }]);
+  expect(rows.map((row) => row.link)).toEqual([{ file: "src/a.ts" }, { abs: "/home/u/notes.md" }, { abs: "/r" }]);
   expect(rows[1]!.rel).toBeUndefined();
 });
 
 test("sessionState is live for a running session, and busy only for the busy status", () => {
-  expect(sessionState({ ...sess, live: { status: "busy", remoteControl: false } })).toEqual({ live: true, busy: true, label: "live", title: "Running, busy", remoteControl: false });
-  expect(sessionState({ ...sess, live: { status: "idle", remoteControl: false } })).toEqual({ live: true, busy: false, label: "live", title: "Running, idle", remoteControl: false });
+  expect(sessionState({ ...sess, live: { status: "busy", remoteControl: false } })).toEqual({
+    live: true,
+    busy: true,
+    label: "live",
+    title: "Running, busy",
+    remoteControl: false,
+  });
+  expect(sessionState({ ...sess, live: { status: "idle", remoteControl: false } })).toEqual({
+    live: true,
+    busy: false,
+    label: "live",
+    title: "Running, idle",
+    remoteControl: false,
+  });
 });
 
 test("sessionState carries the Remote Control flag", () => {
@@ -162,12 +206,22 @@ test("sessionState carries the Remote Control flag", () => {
 });
 
 test("sessionState is offline for a session that is not running", () => {
-  expect(sessionState(sess)).toEqual({ live: false, busy: false, label: "offline", title: "Not running", remoteControl: false });
+  expect(sessionState(sess)).toEqual({
+    live: false,
+    busy: false,
+    label: "offline",
+    title: "Not running",
+    remoteControl: false,
+  });
 });
 
 test("sessionState names no status for a value other than busy or idle, or for none", () => {
   expect(sessionState({ ...sess, live: { status: "x".repeat(32), remoteControl: false } }).title).toBe("Running");
-  expect(sessionState({ ...sess, live: { status: "", remoteControl: true } })).toMatchObject({ live: true, title: "Running", remoteControl: true });
+  expect(sessionState({ ...sess, live: { status: "", remoteControl: true } })).toMatchObject({
+    live: true,
+    title: "Running",
+    remoteControl: true,
+  });
   expect(sessionState({ ...sess, live: { remoteControl: false } }).title).toBe("Running");
 });
 
@@ -180,19 +234,26 @@ test("splitPath gives the last name and the folder above it", () => {
 });
 
 test("sessionMatches needs every word in the name, id, branch or folder", () => {
-  const s = { ...sess, name: "Fix login", branch: "feat/auth", root: "/r/app" };
-  expect(sessionMatches(s, "")).toBe(true);
-  expect(sessionMatches(s, "LOGIN auth")).toBe(true);
-  expect(sessionMatches(s, "abcdef12")).toBe(true);
-  expect(sessionMatches(s, "login nope")).toBe(false);
+  const item = { ...sess, name: "Fix login", branch: "feat/auth", root: "/r/app" };
+  expect(sessionMatches(item, "")).toBe(true);
+  expect(sessionMatches(item, "LOGIN auth")).toBe(true);
+  expect(sessionMatches(item, "abcdef12")).toBe(true);
+  expect(sessionMatches(item, "login nope")).toBe(false);
 });
 
 test("globalMatches also matches the node name and the instance name", async () => {
   const { globalMatches } = await import("./format");
-  const s: any = { id: "abcdef12", root: "/work/proj", startedAt: "", lastActiveAt: "", instance: { id: "i", name: "Blog", path: "/p", state: "active" }, host: { id: "nas", name: "Basement NAS" } };
-  expect(globalMatches(s, "basement")).toBe(true);
-  expect(globalMatches(s, "BLOG")).toBe(true);
-  expect(globalMatches(s, "proj")).toBe(true);
-  expect(globalMatches(s, "zzz")).toBe(false);
-  expect(globalMatches(s, "")).toBe(true);
+  const text: GlobalSession = {
+    id: "abcdef12",
+    root: "/work/proj",
+    startedAt: "",
+    lastActiveAt: "",
+    instance: { id: "i", name: "Blog", path: "/p", state: "active" },
+    host: { id: "nas", name: "Basement NAS" },
+  };
+  expect(globalMatches(text, "basement")).toBe(true);
+  expect(globalMatches(text, "BLOG")).toBe(true);
+  expect(globalMatches(text, "proj")).toBe(true);
+  expect(globalMatches(text, "zzz")).toBe(false);
+  expect(globalMatches(text, "")).toBe(true);
 });

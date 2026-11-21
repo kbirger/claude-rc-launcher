@@ -1,13 +1,33 @@
-import { SignJWT, decodeProtectedHeader, exportJWK, exportPKCS8, generateKeyPair, importJWK, importPKCS8, jwtVerify } from "jose";
+import {
+  SignJWT,
+  decodeProtectedHeader,
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+  importJWK,
+  importPKCS8,
+  jwtVerify,
+} from "jose";
 import { X509Certificate, createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { actStore } from "./roles";
 
-export type HubKey = { privateKey: CryptoKey; publicKey: string; kid: string };
-export type ProofRequest = { method: string; pathAndQuery: string; body: string };
+export interface HubKey {
+  privateKey: CryptoKey;
+  publicKey: string;
+  kid: string;
+}
+export interface ProofRequest {
+  method: string;
+  pathAndQuery: string;
+  body: string;
+}
 /** Who the hub acted for. A proof from a hub that does not send them gives an empty object. */
-export type ProofActor = { actSub?: string; actRole?: string };
+export interface ProofActor {
+  actSub?: string;
+  actRole?: string;
+}
 const ACT_MAX = 128;
 
 export class ProofError extends Error {
@@ -25,10 +45,10 @@ const CLOCK_TOLERANCE_S = 5;
 
 const sha256Hex = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
 
-async function describeKey(privateKey: CryptoKey, x: string): Promise<HubKey> {
-  const raw = Buffer.from(x, "base64url");
-  if (raw.length !== 32) throw new Error("hub key is not an Ed25519 key");
-  return { privateKey, publicKey: x, kid: sha256Hex(raw).slice(0, 16) };
+function describeKey(privateKey: CryptoKey, publicKey: string): Promise<HubKey> {
+  const raw = Buffer.from(publicKey, "base64url");
+  if (raw.length !== 32) return Promise.reject(new Error("hub key is not an Ed25519 key"));
+  return Promise.resolve({ privateKey, publicKey: publicKey, kid: sha256Hex(raw).slice(0, 16) });
 }
 
 /**
@@ -38,37 +58,46 @@ async function describeKey(privateKey: CryptoKey, x: string): Promise<HubKey> {
  */
 export async function loadOrCreateHubKey(dir: string): Promise<HubKey> {
   const file = path.join(dir, KEY_FILE);
+
   if (existsSync(file)) {
     let pem: string;
+
     try {
       pem = readFileSync(file, "utf8");
-    } catch (e) {
-      throw new Error(`cannot read hub key ${file}: ${(e as Error).message}`, { cause: e });
+    } catch (error) {
+      throw new Error(`cannot read hub key ${file}: ${(error as Error).message}`, { cause: error });
     }
+
     try {
-      const privateKey = (await importPKCS8(pem, "EdDSA", { extractable: true })) as CryptoKey;
+      const privateKey = await importPKCS8(pem, "EdDSA", { extractable: true });
       const jwk = await exportJWK(privateKey);
       if (jwk.crv !== "Ed25519" || !jwk.x) throw new Error("not an Ed25519 key");
       return await describeKey(privateKey, jwk.x);
-    } catch (e) {
+    } catch (error) {
       throw new Error(
         `cannot parse ${file}. If the file is empty or damaged, delete it and restart the hub, then update the hub key on every node (see "Rotating the hub key" in docs/multi-host.md).`,
-        { cause: e },
+        { cause: error },
       );
     }
   }
+
   const { privateKey } = await generateKeyPair("EdDSA", { crv: "Ed25519", extractable: true });
   const pem = await exportPKCS8(privateKey);
   mkdirSync(dir, { recursive: true });
+
   try {
     writeFileSync(file, pem, { mode: 0o600, flag: "wx" });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`another process is creating ${file}; retry`, { cause: e });
-    throw e;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      throw new Error(`another process is creating ${file}; retry`, { cause: error });
+    throw error;
   }
+
   chmodSync(file, 0o600);
   const jwk = await exportJWK(privateKey);
-  return describeKey(privateKey as CryptoKey, jwk.x!);
+  if (!jwk.x) throw new Error("the exported hub key has no public part");
+
+  return describeKey(privateKey, jwk.x);
 }
 
 /** `sha256:<hex>` of the DER form of a PEM certificate. */
@@ -81,12 +110,19 @@ export async function signProof(
   key: HubKey,
   req: ProofRequest,
   aud: string,
-  o: { now?: () => number; jti?: () => string } = {},
+  options: { now?: () => number; jti?: () => string } = {},
 ): Promise<string> {
-  const iat = Math.floor((o.now ?? Date.now)() / 1000);
+  const iat = Math.floor((options.now ?? Date.now)() / 1000);
   // The user and the role of the request in progress. The node watchers and other work with no user act as `system`.
   const act = actStore.getStore() ?? { sub: "system", role: "system" };
-  return new SignJWT({ htm: req.method, htu: req.pathAndQuery, bh: sha256Hex(req.body), jti: (o.jti ?? crypto.randomUUID.bind(crypto))(), act_sub: act.sub.slice(0, ACT_MAX), act_role: act.role.slice(0, ACT_MAX) })
+  return new SignJWT({
+    htm: req.method,
+    htu: req.pathAndQuery,
+    bh: sha256Hex(req.body),
+    jti: (options.jti ?? crypto.randomUUID.bind(crypto))(),
+    act_sub: act.sub.slice(0, ACT_MAX),
+    act_role: act.role.slice(0, ACT_MAX),
+  })
     .setProtectedHeader({ alg: "EdDSA", kid: key.kid })
     .setIssuer(ISSUER)
     .setAudience(aud)
@@ -96,60 +132,70 @@ export async function signProof(
 }
 
 /** Verifies proofs against trusted hub public keys (base64url, 32 bytes). A `jti` is accepted once. */
-export function createProofVerifier(o: {
+export function createProofVerifier(options: {
   keys: string[];
   selfFingerprint: string;
   now?: () => number;
 }): (jwt: string, req: ProofRequest) => Promise<ProofActor> {
-  const now = o.now ?? Date.now;
+  const now = options.now ?? Date.now;
   const byKid = new Map<string, Promise<CryptoKey>>();
-  for (const x of o.keys) {
-    const kid = sha256Hex(Buffer.from(x, "base64url")).slice(0, 16);
-    byKid.set(kid, importJWK({ kty: "OKP", crv: "Ed25519", x }, "EdDSA") as Promise<CryptoKey>);
+
+  for (const key of options.keys) {
+    const kid = sha256Hex(Buffer.from(key, "base64url")).slice(0, 16);
+    // eslint-disable-next-line id-length -- "x" is the public key member name that the JWK standard (RFC 8037) defines
+    byKid.set(kid, importJWK({ kty: "OKP", crv: "Ed25519", x: key }, "EdDSA"));
   }
+
   const seen = new Map<string, number>(); // jti -> exp (seconds)
 
   return async (jwt, req) => {
-    const fail = (m: string, cause?: unknown): never => {
-      throw new ProofError(`invalid hub proof: ${m}`, { cause });
+    // The explicit type lets TypeScript see that a call never returns, so the checks below narrow the claims.
+    const fail: (reason: string, cause?: unknown) => never = (reason, cause) => {
+      throw new ProofError(`invalid hub proof: ${reason}`, { cause });
     };
+
     let kid: string | undefined;
+
     try {
       kid = decodeProtectedHeader(jwt).kid;
-    } catch (e) {
-      return fail("malformed token", e);
+    } catch (error) {
+      return fail("malformed token", error);
     }
+
     const key = kid ? byKid.get(kid) : undefined;
     if (!key) return fail("unknown key");
 
-    let p;
+    let entry;
+
     try {
-      ({ payload: p } = await jwtVerify(jwt, await key, {
+      ({ payload: entry } = await jwtVerify(jwt, await key, {
         algorithms: ["EdDSA"],
         currentDate: new Date(now()),
         clockTolerance: CLOCK_TOLERANCE_S,
         requiredClaims: ["exp", "iat"],
       }));
-    } catch (e) {
-      return fail((e as Error).message, e);
+    } catch (error) {
+      return fail((error as Error).message, error);
     }
 
-    const t = Math.floor(now() / 1000);
-    if (p.iss !== ISSUER) fail("wrong issuer");
-    if (p.aud !== o.selfFingerprint) fail("wrong audience");
-    if (p.exp! - p.iat! > MAX_LIFETIME_S) fail("lifetime too long");
-    if (p.iat! > t + CLOCK_TOLERANCE_S) fail("issued in the future");
-    if (p.htm !== req.method) fail("method mismatch");
-    if (p.htu !== req.pathAndQuery) fail("path mismatch");
-    if (p.bh !== sha256Hex(req.body)) fail("body mismatch");
-    if (typeof p.jti !== "string" || !p.jti) fail("missing jti");
+    const nowSeconds = Math.floor(now() / 1000);
+    if (entry.iss !== ISSUER) fail("wrong issuer");
+    if (entry.aud !== options.selfFingerprint) fail("wrong audience");
+    const { exp, iat, jti } = entry;
+    if (exp === undefined || iat === undefined) fail("missing time claims");
+    if (exp - iat > MAX_LIFETIME_S) fail("lifetime too long");
+    if (iat > nowSeconds + CLOCK_TOLERANCE_S) fail("issued in the future");
+    if (entry.htm !== req.method) fail("method mismatch");
+    if (entry.htu !== req.pathAndQuery) fail("path mismatch");
+    if (entry.bh !== sha256Hex(req.body)) fail("body mismatch");
+    if (typeof jti !== "string" || !jti) fail("missing jti");
 
-    for (const [j, exp] of seen) if (exp + CLOCK_TOLERANCE_S < t) seen.delete(j);
-    if (seen.has(p.jti!)) fail("replayed");
-    seen.set(p.jti!, p.exp!);
-    const str = (v: unknown) => (typeof v === "string" && v ? v.slice(0, ACT_MAX) : undefined);
-    const actSub = str(p.act_sub);
-    const actRole = str(p.act_role);
+    for (const [jti, exp] of seen) if (exp + CLOCK_TOLERANCE_S < nowSeconds) seen.delete(jti);
+    if (seen.has(jti)) fail("replayed");
+    seen.set(jti, exp);
+    const str = (value: unknown) => (typeof value === "string" && value ? value.slice(0, ACT_MAX) : undefined);
+    const actSub = str(entry.act_sub);
+    const actRole = str(entry.act_role);
     return { ...(actSub ? { actSub } : {}), ...(actRole ? { actRole } : {}) };
   };
 }

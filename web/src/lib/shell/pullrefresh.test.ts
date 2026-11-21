@@ -16,7 +16,7 @@ test("a release refreshes only from the threshold on", () => {
 const node = (parentElement: ReturnType<typeof node> | null = null, scrollTop = 0, role: string | null = null) => ({
   scrollTop,
   parentElement,
-  getAttribute: (n: string) => (n === "role" ? role : null),
+  getAttribute: (count: string) => (count === "role" ? role : null),
 });
 
 test("a pull starts only at the page top with nothing scrolled under the finger", () => {

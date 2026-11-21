@@ -1,4 +1,6 @@
 // Small helpers for the permission screens. They only use values the API gave.
+import { resolve } from "$app/paths";
+import type { ResolvedPathname } from "$app/types";
 import { bashParts, suggestRules } from "./suggest";
 import type { BlockedCall, BlockReason, Layer, LayerScope, Rule } from "./api";
 
@@ -11,7 +13,13 @@ const SCOPE_LABELS: Record<LayerScope, string> = {
 };
 export const scopeLabel = (scope: string): string => SCOPE_LABELS[scope as LayerScope] ?? scope;
 
-const SCOPE_BADGES: Record<LayerScope, string> = { user: "User", project: "Project", local: "Local", "legacy-local": "Local (older)", managed: "Managed" };
+const SCOPE_BADGES: Record<LayerScope, string> = {
+  user: "User",
+  project: "Project",
+  local: "Local",
+  "legacy-local": "Local (older)",
+  managed: "Managed",
+};
 /** A short label for the badge of a rule: which file it comes from. */
 export const scopeBadge = (scope: string): string => SCOPE_BADGES[scope as LayerScope] ?? scope;
 
@@ -19,7 +27,11 @@ export type FlatRule = { raw: string; scopes: string[]; shadowedBy?: Rule["shado
 export type RuleGroup = { list: Rule["list"]; title: string; rules: FlatRule[] };
 
 // Claude Code evaluates deny, then ask, then allow, across all files. The first match wins, so this is the order of the groups.
-const GROUPS = [["deny", "Deny"], ["ask", "Ask"], ["allow", "Allow"]] as const;
+const GROUPS = [
+  ["deny", "Deny"],
+  ["ask", "Ask"],
+  ["allow", "Allow"],
+] as const;
 
 /**
  * The rules of all layers as one list for each of Deny, Ask and Allow. The same rule text in several files is one row with all
@@ -28,20 +40,24 @@ const GROUPS = [["deny", "Deny"], ["ask", "Ask"], ["allow", "Allow"]] as const;
  */
 export function flatRules(layers: Layer[], only?: string): RuleGroup[] {
   const groups: RuleGroup[] = [];
+
   for (const [list, title] of GROUPS) {
     const byRaw = new Map<string, FlatRule>();
-    for (const l of layers) {
-      for (const r of l.rules) {
-        if (r.list !== list) continue;
-        const row = byRaw.get(r.raw) ?? { raw: r.raw, scopes: [] };
-        if (!row.scopes.includes(l.scope)) row.scopes.push(l.scope);
-        if (r.shadowedBy && !row.shadowedBy) row.shadowedBy = r.shadowedBy;
-        byRaw.set(r.raw, row);
+
+    for (const layer of layers) {
+      for (const rule of layer.rules) {
+        if (rule.list !== list) continue;
+        const row = byRaw.get(rule.raw) ?? { raw: rule.raw, scopes: [] };
+        if (!row.scopes.includes(layer.scope)) row.scopes.push(layer.scope);
+        if (rule.shadowedBy && !row.shadowedBy) row.shadowedBy = rule.shadowedBy;
+        byRaw.set(rule.raw, row);
       }
     }
-    const rules = [...byRaw.values()].filter((r) => only === undefined || r.scopes.includes(only));
+
+    const rules = [...byRaw.values()].filter((flatRule) => only === undefined || flatRule.scopes.includes(only));
     if (rules.length > 0) groups.push({ list, title, rules });
   }
+
   return groups;
 }
 
@@ -52,24 +68,36 @@ const REASON_LABELS: Record<BlockReason, string> = {
   deny_rule: "Deny rule",
   safety_check: "Safety check",
 };
-export const reasonLabel = (r: BlockReason): string => REASON_LABELS[r] ?? r;
+export const reasonLabel = (blockReason: BlockReason): string => REASON_LABELS[blockReason] ?? blockReason;
 /** A deny rule or a safety check is firm. The other reasons can be fixed with a rule. */
-export const reasonVariant = (r: BlockReason): "secondary" | "outline" | "destructive" => (r === "deny_rule" || r === "safety_check" ? "destructive" : r === "needs_approval" ? "secondary" : "outline");
+export const reasonVariant = (blockReason: BlockReason): "secondary" | "outline" | "destructive" =>
+  blockReason === "deny_rule" || blockReason === "safety_check"
+    ? "destructive"
+    : blockReason === "needs_approval"
+      ? "secondary"
+      : "outline";
 
 const MAX_SUMMARY = 300;
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "Read", "NotebookEdit"]);
 
 /** What the call tried to do, in one short text: the command for Bash, the file for a file tool, else the tool name. */
-export function summaryOf(c: Pick<BlockedCall, "tool" | "input">): string {
-  const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : undefined);
-  const text = c.tool === "Bash" ? str(c.input.command) : FILE_TOOLS.has(c.tool) ? (str(c.input.file_path) ?? str(c.input.notebook_path)) : undefined;
-  const out = text ?? c.tool;
+export function summaryOf(pick: Pick<BlockedCall, "tool" | "input">): string {
+  const str = (value: unknown) => (typeof value === "string" && value.length > 0 ? value : undefined);
+  const text =
+    pick.tool === "Bash"
+      ? str(pick.input.command)
+      : FILE_TOOLS.has(pick.tool)
+        ? (str(pick.input.file_path) ?? str(pick.input.notebook_path))
+        : undefined;
+  const out = text ?? pick.tool;
   return out.length > MAX_SUMMARY ? `${out.slice(0, MAX_SUMMARY)}…` : out;
 }
 
-export const permissionsHref = (host: string, instance: string): string => `/permissions?${new URLSearchParams({ host, instance })}`;
+export const permissionsHref = (host: string, instance: string): ResolvedPathname =>
+  resolve(`/permissions?${new URLSearchParams({ host, instance })}`);
 
-export const CLASSIFIER_WARNING = "Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.";
+export const CLASSIFIER_WARNING =
+  "Auto mode blocked this call. A narrow allow rule, like the one below, clears it. A rule that allows any command, such as Bash(*), does not.";
 export const RELOAD_MESSAGE = "The file changed. Reload.";
 export const NUDGE_LABEL = "Tell the session to try again";
 export const NUDGE_SENT = "Sent to the session. It may still wait for you to approve the message.";
@@ -90,16 +118,19 @@ export function scopeWarning(scope: string): string | undefined {
 }
 
 /** A warning about the call that was blocked. The user_rejected case is an extra tap, not a text. */
-export const blockWarning = (reason: BlockReason): string | undefined => (reason === "classifier" ? CLASSIFIER_WARNING : undefined);
+export const blockWarning = (reason: BlockReason): string | undefined =>
+  reason === "classifier" ? CLASSIFIER_WARNING : undefined;
 
 export const listLabel = (list: Rule["list"]): string => list[0]!.toUpperCase() + list.slice(1);
 
 /** The words around the rule and the path in the confirm line: "Add RULE to Allow in PATH" or "Remove RULE from Deny in PATH". */
-export const confirmWords = (mode: "add" | "remove", list: Rule["list"]): [string, string] => (mode === "add" ? ["Add", `to ${listLabel(list)} in`] : ["Remove", `from ${listLabel(list)} in`]);
+export const confirmWords = (mode: "add" | "remove", list: Rule["list"]): [string, string] =>
+  mode === "add" ? ["Add", `to ${listLabel(list)} in`] : ["Remove", `from ${listLabel(list)} in`];
 
 // Matching is exact text, plus the simple prefix form `Bash(prefix *)`. It does not know the other wildcards or the rules of
 // Claude Code for compound commands, so "probably fixed" is a hint and not a promise.
 const BASH_RULE = /^Bash\(([\s\S]*)\)$/;
+
 function bashRuleCovers(raw: string, part: string): boolean {
   if (part.includes("*")) return false;
   const body = BASH_RULE.exec(raw)?.[1];
@@ -112,16 +143,24 @@ function bashRuleCovers(raw: string, part: string): boolean {
 
 /** The pieces of a call that a rule must cover: each command of a Bash line, or each exact suggestion. */
 function units(call: BlockedCall): Array<(raw: string) => boolean> {
-  if (call.tool === "Bash") return typeof call.input.command === "string" ? bashParts(call.input.command).map((part) => (raw: string) => bashRuleCovers(raw, part)) : [];
-  return suggestRules(call).filter((s) => !s.broad).map((s) => (raw: string) => raw === s.raw);
+  if (call.tool === "Bash")
+    return typeof call.input.command === "string"
+      ? bashParts(call.input.command).map((part) => (raw: string) => bashRuleCovers(raw, part))
+      : [];
+  return suggestRules(call)
+    .filter((suggestRule) => !suggestRule.broad)
+    .map((suggestRule) => (raw: string) => raw === suggestRule.raw);
 }
 
-const rulesOf = (layers: Layer[], list: Rule["list"]) => layers.flatMap((l) => l.rules.filter((r) => r.list === list).map((r) => ({ raw: r.raw, scope: l.scope })));
+const rulesOf = (layers: Layer[], list: Rule["list"]) =>
+  layers.flatMap((layer) =>
+    layer.rules.filter((rule) => rule.list === list).map((rule) => ({ raw: rule.raw, scope: layer.scope })),
+  );
 
 /** The deny rule that matches the call, with its file. Undefined when none is found. */
 export function deniedBy(call: BlockedCall, layers: Layer[]): { raw: string; scope: string } | undefined {
   const us = units(call);
-  return rulesOf(layers, "deny").find((r) => us.some((u) => u(r.raw)));
+  return rulesOf(layers, "deny").find((rule) => us.some((matcher) => matcher(rule.raw)));
 }
 
 /**
@@ -131,8 +170,11 @@ export function deniedBy(call: BlockedCall, layers: Layer[]): { raw: string; sco
 export function probablyFixed(call: BlockedCall, layers: Layer[]): boolean {
   const us = units(call);
   if (us.length === 0) return false;
-  const allow = rulesOf(layers.filter((l) => l.state === "ok"), "allow");
-  if (!us.every((u) => allow.some((r) => u(r.raw)))) return false;
+  const allow = rulesOf(
+    layers.filter((layer) => layer.state === "ok"),
+    "allow",
+  );
+  if (!us.every((matcher) => allow.some((rule) => matcher(rule.raw)))) return false;
   const stop = [...rulesOf(layers, "deny"), ...rulesOf(layers, "ask")];
-  return !stop.some((r) => us.some((u) => u(r.raw)));
+  return !stop.some((rule) => us.some((matcher) => matcher(rule.raw)));
 }

@@ -13,7 +13,7 @@ describe("browserCommand", () => {
     expect(args).not.toContain("/c");
     expect(args).not.toContain("start");
     expect(args.at(-1)).toBe(URL_WITH_AMPERSANDS); // the whole URL, as one argument
-    expect(args.filter((a) => a.includes("client_id"))).toHaveLength(1);
+    expect(args.filter((arg) => arg.includes("client_id"))).toHaveLength(1);
   });
 
   test("macOS and the others pass the whole URL as the only argument", () => {

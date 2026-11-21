@@ -5,15 +5,26 @@
  * emits a full `sessions` event if the list changed. Events are combined: at most one in each combine window.
  * `get()` answers the node route with the last result and does not change the scan rate. See docs/session-files.md.
  */
-import { PollSource, realTimers, type ChangeSource, type Timers, type Trigger } from "./changesource";
-import { HttpError, type Instance, type Instances } from "./instances";
+import { PollSource, realTimers } from "./changesource";
+import type { ChangeSource, Timers, Trigger } from "./changesource";
+import { HttpError } from "./instances";
+import type { Instance, Instances } from "./instances";
 import type { LiveInfo } from "./livesessions";
-import { liveOf, mapLimit, type SessionCatalog, type SessionSummary } from "./sessioncatalog";
+import { liveOf, mapLimit } from "./sessioncatalog";
+import type { SessionCatalog, SessionSummary } from "./sessioncatalog";
 
 export type SessionRow = SessionSummary & { instance: { id: string; name: string; path: string; state: string } };
-export type SessionsAnswer = { scannedAt: string; sessions: SessionRow[] };
+export interface SessionsAnswer {
+  scannedAt: string;
+  sessions: SessionRow[];
+}
 /** `truncated` is true when the list was over MAX_SESSIONS_BYTES and only the newest rows were kept. It is absent when nothing was cut. */
-export type SessionsPayload = { scannedAt: string; available: boolean; sessions: SessionRow[]; truncated?: boolean };
+export interface SessionsPayload {
+  scannedAt: string;
+  available: boolean;
+  sessions: SessionRow[];
+  truncated?: boolean;
+}
 export type SessionsEvent = { type: "sessions" } & SessionsPayload;
 
 /** A `lastActiveAt` move smaller than this from the last event does not count as a change. */
@@ -28,32 +39,41 @@ export const ACTIVE_THRESHOLD_MS = 30_000,
 
 /** Room for the fields around the rows: `scannedAt`, `available`, `truncated` and the brackets. */
 const WRAP_BYTES = 200;
-const bytesOf = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
+const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
 /**
  * Keeps the rows under `maxBytes` as JSON. A list that fits comes back as it is. A list that does not fit keeps the
  * newest rows (by `lastActiveAt`) that fit, in their old order, and says `truncated: true`.
  */
-export function capSessions(rows: SessionRow[], maxBytes = MAX_SESSIONS_BYTES): { sessions: SessionRow[]; truncated?: true } {
+export function capSessions(
+  rows: SessionRow[],
+  maxBytes = MAX_SESSIONS_BYTES,
+): { sessions: SessionRow[]; truncated?: true } {
   const budget = maxBytes - WRAP_BYTES;
   if (bytesOf(rows) <= budget) return { sessions: rows };
-  const time = (r: SessionRow) => {
-    const t = Date.parse(r.lastActiveAt);
-    return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+
+  const time = (row: SessionRow) => {
+    const stamp = Date.parse(row.lastActiveAt);
+    return Number.isNaN(stamp) ? Number.NEGATIVE_INFINITY : stamp;
   };
-  const order = rows.map((r, i) => ({ i, t: time(r) })).sort((a, b) => b.t - a.t || a.i - b.i);
+
+  const order = rows
+    .map((row, index) => ({ position: index, stamp: time(row) }))
+    .sort((left, right) => right.stamp - left.stamp || left.position - right.position);
   const keep = new Set<number>();
   let used = 2; // the brackets of the array
-  for (const { i } of order) {
-    const size = bytesOf(rows[i]) + (keep.size > 0 ? 1 : 0);
+
+  for (const { position: index } of order) {
+    const size = bytesOf(rows[index]) + (keep.size > 0 ? 1 : 0);
     if (used + size > budget) break;
     used += size;
-    keep.add(i);
+    keep.add(index);
   }
-  return { sessions: rows.filter((_r, i) => keep.has(i)), truncated: true };
+
+  return { sessions: rows.filter((_r, index) => keep.has(index)), truncated: true };
 }
 
-export type SessionIndexOptions = {
+export interface SessionIndexOptions {
   instances: Instances;
   catalog: SessionCatalog;
   /** Tells the index when to look again. Default: a PollSource. */
@@ -67,17 +87,23 @@ export type SessionIndexOptions = {
   timers?: Timers;
   now?: () => number;
   log?: (message: string) => void;
-};
+}
 
-type Copy = { at: number; sessions: SessionRow[]; homes: Map<string, string> };
+interface Copy {
+  at: number;
+  sessions: SessionRow[];
+  homes: Map<string, string>;
+}
 
 const keyOf = (row: SessionRow) => `${row.instance.id}\u0000${row.id}`;
 
 /** A row as text with the keys sorted at every level, without `lastActiveAt`. */
 function canon(row: SessionRow): string {
   const { lastActiveAt: _ignored, ...rest } = row;
-  return JSON.stringify(rest, (_k, v: unknown) =>
-    v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : v,
+  return JSON.stringify(rest, (_k, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)))
+      : value,
   );
 }
 
@@ -109,18 +135,26 @@ export class SessionIndex {
     this.timers = o.timers ?? realTimers;
     this.source = o.source ?? new PollSource({ timers: this.timers });
     this.now = o.now ?? Date.now;
-    this.log = o.log ?? ((m) => console.error(m));
+    this.log =
+      o.log ??
+      ((message) => {
+        console.error(message);
+      });
   }
 
   /** Starts the source, then scans all. With no claudeHome it emits one unavailable event and starts nothing. */
   start(): void {
     if (this.started) return;
     this.started = true;
+
     if (!this.o.instances.claudeHome) {
       this.emit({ type: "sessions", scannedAt: new Date(this.now()).toISOString(), available: false, sessions: [] });
       return;
     }
-    this.source.start((t) => this.trigger(t));
+
+    this.source.start((trigger) => {
+      this.trigger(trigger);
+    });
     this.trigger({ scope: "all" });
   }
 
@@ -131,17 +165,20 @@ export class SessionIndex {
     this.clearCombine();
   }
 
-  trigger(t: Trigger): void {
+  trigger(request: Trigger): void {
     if (!this.o.instances.claudeHome) return;
-    if (t.scope === "live") {
+
+    if (request.scope === "live") {
       if (this.copy) void this.publish();
       return;
     }
+
     if (this.running) {
       this.dirty = true;
       return;
     }
-    if (t.scope === "instance" && this.copy) void this.run(() => this.scanInstance(t.id));
+
+    if (request.scope === "instance" && this.copy) void this.run(() => this.scanInstance(request.id));
     else void this.scan();
   }
 
@@ -162,12 +199,29 @@ export class SessionIndex {
   /** The last result, with the running state of each session read again. The first call waits for the first scan. */
   async get(): Promise<SessionsAnswer> {
     if (!this.o.instances.claudeHome) throw new HttpError(501, "sessions are not available on this host");
-    if (!this.copy) {
+
+    let copy = this.current();
+
+    if (!copy) {
       await this.scan();
-      if (!this.copy) throw new HttpError(503, "could not list sessions");
+      copy = this.current();
     }
-    const copy = this.copy;
+
+    if (!copy) throw new HttpError(503, "could not list sessions");
     return { scannedAt: new Date(copy.at).toISOString(), sessions: await this.withLive(copy) };
+  }
+
+  // These read a field that changes during an await. A call hides the narrowing that TypeScript keeps from before the await.
+  private current(): Copy | undefined {
+    return this.copy;
+  }
+
+  private isDirty(): boolean {
+    return this.dirty;
+  }
+
+  private needsAgain(): boolean {
+    return this.publishAgain;
   }
 
   /** Reads all instances now. One scan runs at a time: a call during a scan gets that scan. It never rejects. */
@@ -182,7 +236,8 @@ export class SessionIndex {
       try {
         this.dirty = false;
         await first();
-        while (this.dirty) {
+
+        while (this.isDirty()) {
           this.dirty = false;
           await this.scanOnce();
         }
@@ -196,7 +251,11 @@ export class SessionIndex {
   /** The rows of the copy with the live-session files read again. The copy is not changed. */
   private async withLive(copy: Copy): Promise<SessionRow[]> {
     const live = new Map<string, ReadonlyMap<string, LiveInfo> | undefined>();
-    await Promise.all([...copy.homes].map(async ([id, home]) => live.set(id, await this.o.catalog.readLive(home).catch(() => undefined))));
+    await Promise.all(
+      [...copy.homes].map(async ([id, home]) =>
+        live.set(id, await this.o.catalog.readLive(home).catch(() => undefined)),
+      ),
+    );
     return copy.sessions.map((row): SessionRow => {
       const map = live.get(row.instance.id);
       if (!map) return row;
@@ -212,12 +271,13 @@ export class SessionIndex {
       this.publishAgain = true;
       return this.publishing;
     }
+
     this.publishing = (async () => {
       try {
         do {
           this.publishAgain = false;
           await this.publishOnce();
-        } while (this.publishAgain);
+        } while (this.needsAgain());
       } finally {
         this.publishing = undefined;
       }
@@ -230,8 +290,10 @@ export class SessionIndex {
     if (!copy) return;
     // Cap before the compare: the last event holds the capped rows, so both sides are capped the same way.
     const capped = capSessions(await this.withLive(copy), this.maxSessionsBytes);
-    if (this.last && !this.differs(this.last.sessions, capped.sessions) && this.last.truncated === capped.truncated) return;
+    if (this.last && !this.differs(this.last.sessions, capped.sessions) && this.last.truncated === capped.truncated)
+      return;
     const wait = this.lastEmitAt + this.combineMs - this.now();
+
     if (wait > 0) {
       // Inside the window: one timer publishes the newest state at its end.
       if (this.combineTimer === undefined && this.started) {
@@ -240,30 +302,35 @@ export class SessionIndex {
           void this.publish();
         }, wait);
       }
+
       return;
     }
+
     this.emit({ type: "sessions", scannedAt: new Date(copy.at).toISOString(), available: true, ...capped });
   }
 
   private differs(old: SessionRow[], next: SessionRow[]): boolean {
     if (old.length !== next.length) return true;
-    const byKey = new Map(old.map((r) => [keyOf(r), r]));
+    const byKey = new Map(old.map((row) => [keyOf(row), row]));
     if (byKey.size !== next.length) return true;
+
     for (const row of next) {
       const was = byKey.get(keyOf(row));
       if (!was) return true;
       if (canon(was) !== canon(row)) return true;
       if (Math.abs(Date.parse(row.lastActiveAt) - Date.parse(was.lastActiveAt)) >= this.thresholdMs) return true;
     }
+
     return false;
   }
 
-  private emit(e: SessionsEvent): void {
-    this.last = e;
+  private emit(event: SessionsEvent): void {
+    this.last = event;
     this.lastEmitAt = this.now();
+
     for (const fn of this.listeners) {
       try {
-        fn(e);
+        fn(event);
       } catch (err) {
         this.log(`sessions listener failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -276,12 +343,13 @@ export class SessionIndex {
   }
 
   /** The rows of one instance; an instance that cannot be read gives no rows and no home. */
-  private async readInstance(i: Instance): Promise<{ rows: SessionRow[]; home?: string }> {
+  private async readInstance(target: Instance): Promise<{ rows: SessionRow[]; home?: string }> {
     try {
-      const h = await this.o.instances.claudeHome!(i.id);
-      const rows = await this.o.catalog.instance(h).list();
-      const instance = { id: i.id, name: i.name, path: i.path, state: i.state };
-      return { rows: rows.map((s) => ({ ...s, instance })), home: h.home };
+      const claudeHome = await this.o.instances.claudeHome?.(target.id);
+      if (!claudeHome) return { rows: [] };
+      const rows = await this.o.catalog.instance(claudeHome).list();
+      const instance = { id: target.id, name: target.name, path: target.path, state: target.state };
+      return { rows: rows.map((summary) => ({ ...summary, instance })), home: claudeHome.home };
     } catch {
       return { rows: [] };
     }
@@ -291,35 +359,42 @@ export class SessionIndex {
     try {
       const instances = await this.o.instances.list();
       const homes = new Map<string, string>();
-      const groups = await mapLimit(instances, this.concurrency, async (i): Promise<SessionRow[]> => {
-        const got = await this.readInstance(i);
-        if (got.home !== undefined) homes.set(i.id, got.home);
+      const groups = await mapLimit(instances, this.concurrency, async (target): Promise<SessionRow[]> => {
+        const got = await this.readInstance(target);
+        if (got.home !== undefined) homes.set(target.id, got.home);
         return got.rows;
       });
       this.copy = { at: this.now(), sessions: groups.flat(), homes };
-    } catch (e) {
-      this.log(`session scan failed: ${e instanceof Error ? e.message : String(e)}`);
+    } catch (caught) {
+      this.log(`session scan failed: ${caught instanceof Error ? caught.message : String(caught)}`);
       return;
     }
+
     await this.publish();
   }
 
   /** Rescans one instance and replaces its rows. If the instance is gone, scans all. */
   private async scanInstance(id: string): Promise<void> {
     let found: Instance | undefined;
+
     try {
-      found = (await this.o.instances.list()).find((i) => i.id === id);
-    } catch (e) {
-      this.log(`session scan failed: ${e instanceof Error ? e.message : String(e)}`);
+      found = (await this.o.instances.list()).find((item) => item.id === id);
+    } catch (caught) {
+      this.log(`session scan failed: ${caught instanceof Error ? caught.message : String(caught)}`);
       return;
     }
+
     if (!found || !this.copy) return this.scanOnce();
     const got = await this.readInstance(found);
     const old = this.copy;
     const homes = new Map(old.homes);
     if (got.home !== undefined) homes.set(id, got.home);
     else homes.delete(id);
-    this.copy = { at: this.now(), sessions: [...old.sessions.filter((r) => r.instance.id !== id), ...got.rows], homes };
+    this.copy = {
+      at: this.now(),
+      sessions: [...old.sessions.filter((row) => row.instance.id !== id), ...got.rows],
+      homes,
+    };
     await this.publish();
   }
 }

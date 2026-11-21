@@ -29,14 +29,16 @@ const ALLOWED: Record<string, Record<string, number>> = {
   "lib/features/sessions/sanitize.ts": { innerHTML: 1 },
 };
 
-const isTest = (f: string) => /\.test\.[cm]?[jt]sx?$/.test(f);
+const isTest = (item: string) => /\.test\.[cm]?[jt]sx?$/.test(item);
 
 function sources(): string[] {
   const out: string[] = [];
-  for (const f of new Bun.Glob("**/*").scanSync({ cwd: SRC, onlyFiles: true })) {
-    if (isTest(f) || /(^|\/)(node_modules|dist)\//.test(f)) continue;
-    out.push(f);
+
+  for (const item of new Bun.Glob("**/*").scanSync({ cwd: SRC, onlyFiles: true })) {
+    if (isTest(item) || /(^|\/)(node_modules|dist)\//.test(item)) continue;
+    out.push(item);
   }
+
   return out.sort();
 }
 
@@ -50,13 +52,16 @@ test("every source file under web/src is scanned", () => {
 
 test("no raw HTML or code-from-string sink exists outside the allow-list", () => {
   const hits: Record<string, Record<string, number>> = {};
-  for (const f of sources()) {
-    const text = readFileSync(join(SRC, f), "utf8");
+
+  for (const source of sources()) {
+    const text = readFileSync(join(SRC, source), "utf8");
+
     for (const [name, re] of Object.entries(SINKS)) {
-      const n = text.match(re)?.length ?? 0;
-      if (n > 0) (hits[f] ??= {})[name] = n;
+      const count = text.match(re)?.length ?? 0;
+      if (count > 0) (hits[source] ??= {})[name] = count;
     }
   }
+
   expect(hits).toEqual(ALLOWED);
 });
 

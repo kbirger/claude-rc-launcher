@@ -3,7 +3,8 @@ import { inFilter, pruneNodes, readNodes, toggleNode, writeNodes } from "./nodef
 
 const real = globalThis.sessionStorage;
 afterEach(() => Object.defineProperty(globalThis, "sessionStorage", { value: real, configurable: true }));
-const withStorage = (s: unknown) => Object.defineProperty(globalThis, "sessionStorage", { value: s, configurable: true });
+const withStorage = (value: unknown) =>
+  Object.defineProperty(globalThis, "sessionStorage", { value: value, configurable: true });
 
 test("toggleNode adds and removes", () => {
   expect(toggleNode([], "a")).toEqual(["a"]);
@@ -22,7 +23,10 @@ test("inFilter is true for any id when the selection is empty", () => {
 
 test("writeNodes and readNodes round-trip through sessionStorage", () => {
   const store = new Map<string, string>();
-  withStorage({ getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
+  withStorage({
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  });
   writeNodes(["a", "b"]);
   expect(store.get("claude-rc-nodes")).toBe('["a","b"]');
   expect(readNodes()).toEqual(["a", "b"]);
@@ -33,11 +37,20 @@ test("readNodes returns [] for broken JSON, a non-array, a non-string item and a
     withStorage({ getItem: () => raw });
     expect(readNodes()).toEqual([]);
   }
-  withStorage({ getItem: () => { throw new Error("blocked"); } });
+
+  withStorage({
+    getItem: () => {
+      throw new Error("blocked");
+    },
+  });
   expect(readNodes()).toEqual([]);
 });
 
 test("writeNodes does not throw when the storage throws", () => {
-  withStorage({ setItem: () => { throw new Error("blocked"); } });
+  withStorage({
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  });
   expect(() => writeNodes(["a"])).not.toThrow();
 });

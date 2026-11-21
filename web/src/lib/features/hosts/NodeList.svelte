@@ -22,7 +22,19 @@
   // `latest` is the newest release; a component behind it (or a service behind the hub) gets the update badge.
   // `onrename` makes the name of a node (one that was paired with the CLI, not the hub) editable. It rejects with the error to show.
   // `onupdate` updates a node to the latest release. It rejects with the error to show.
-  let { hosts, onselect, latest, onrename, onupdate }: { hosts: HostInfo[]; onselect: (id: string) => void; latest?: string; onrename?: (id: string, name: string) => Promise<unknown>; onupdate?: (h: HostInfo) => Promise<unknown> } = $props();
+  let {
+    hosts,
+    onselect,
+    latest,
+    onrename,
+    onupdate,
+  }: {
+    hosts: HostInfo[];
+    onselect: (id: string) => void;
+    latest?: string;
+    onrename?: (id: string, name: string) => Promise<unknown>;
+    onupdate?: (h: HostInfo) => Promise<unknown>;
+  } = $props();
 
   let editing = $state<string | null>(null);
   let draft = $state("");
@@ -31,54 +43,75 @@
   let updating = $state<string | null>(null);
   let ask = $state<Ask | null>(null);
   let updateError = $state<Record<string, string>>({});
-  const renamable = (h: HostInfo) => !!onrename && h.id !== "local" && h.source === "managed";
-  function edit(h: HostInfo) {
-    editing = h.id;
-    draft = h.name;
+  const renamable = (host: HostInfo) => !!onrename && host.id !== "local" && host.source === "managed";
+  function edit(host: HostInfo) {
+    editing = host.id;
+    draft = host.name;
     error = "";
   }
-  async function save(h: HostInfo) {
+  async function save(host: HostInfo) {
     const name = draft.trim();
-    if (!name || name === h.name) return void (editing = null);
+    if (!name || name === host.name) return void (editing = null);
     saving = true;
+
     try {
-      await onrename!(h.id, name);
+      await onrename!(host.id, name);
       editing = null;
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
     } finally {
       saving = false;
     }
   }
-  async function update(h: HostInfo) {
-    updating = h.id;
-    delete updateError[h.id];
+  async function update(host: HostInfo) {
+    updating = host.id;
+    delete updateError[host.id];
+
     try {
-      await onupdate!(h);
-    } catch (e) {
-      updateError[h.id] = e instanceof Error ? e.message : String(e);
+      await onupdate!(host);
+    } catch (caught) {
+      updateError[host.id] = caught instanceof Error ? caught.message : String(caught);
     } finally {
       updating = null;
     }
   }
 
-  const hasContent = (h: HostInfo) => h.status === "ok" || (editing === h.id && !!error) || !!updateError[h.id] || !!h.error;
+  const hasContent = (host: HostInfo) =>
+    host.status === "ok" || (editing === host.id && !!error) || !!updateError[host.id] || !!host.error;
 </script>
 
 <ul class="grid gap-3" aria-label="Nodes">
   {#each hosts as h (h.id)}
     {#snippet title()}{h.name}{/snippet}
     {#snippet titleEditor()}
-      <form id="rename-{h.id}" class="flex min-w-0 flex-1 basis-32" onsubmit={(e) => { e.preventDefault(); void save(h); }}>
-        <!-- svelte-ignore a11y_autofocus -->
-        <Input autofocus bind:value={draft} maxlength={64} aria-label="Node name" class="h-7 flex-1 px-2 font-semibold" onkeydown={(e) => e.key === "Escape" && (editing = null)} />
+      <form
+        id="rename-{h.id}"
+        class="flex min-w-0 flex-1 basis-32"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void save(h);
+        }}
+      >
+        <Input
+          autofocus
+          bind:value={draft}
+          maxlength={64}
+          aria-label="Node name"
+          class="h-7 flex-1 px-2 font-semibold"
+          onkeydown={(event) => event.key === "Escape" && (editing = null)}
+        />
       </form>
     {/snippet}
     <!-- The hub is the special node, so its pill has the primary tone. An agent has the plain pill. -->
-    {#snippet titleAside()}<Badge variant="outline" class={cn(BADGE, roleOf(h) === "hub" ? PRIMARY : MUTED)}>{roleOf(h)}</Badge>{/snippet}
+    {#snippet titleAside()}<Badge variant="outline" class={cn(BADGE, roleOf(h) === "hub" ? PRIMARY : MUTED)}>
+        {roleOf(h)}
+      </Badge>{/snippet}
     <!-- The health of the node is a plain dot: green (ok), orange (restarting) or red (any other status). The status is the tooltip and the label for a screen reader. -->
     {#snippet status()}
-      <StatusDot tone={h.status === "ok" ? "ok" : h.status === "restarting" ? "warn" : "bad"} label="Status: {h.status}" />
+      <StatusDot
+        tone={h.status === "ok" ? "ok" : h.status === "restarting" ? "warn" : "bad"}
+        label="Status: {h.status}"
+      />
     {/snippet}
     <!-- One pill for each component, with its update badge, then the error texts. -->
     {#snippet content()}
@@ -87,7 +120,12 @@
           <Badge variant="outline" class={cn(BADGE, MUTED)}>
             {c.text}
             {#if c.outdated}
-              <span class="size-2 flex-none rounded-full bg-warning" title="Update available" role="img" aria-label="Update available for the {c.key}"></span>
+              <span
+                class="size-2 flex-none rounded-full bg-warning"
+                title="Update available"
+                role="img"
+                aria-label="Update available for the {c.key}"
+              ></span>
             {/if}
           </Badge>
         {/each}
@@ -100,24 +138,58 @@
     {/snippet}
     {#snippet actions()}
       {#if editing === h.id}
-        <Button type="button" variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground" onclick={() => (editing = null)} aria-label="Cancel rename">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="h-8 px-2 text-muted-foreground"
+          onclick={() => (editing = null)}
+          aria-label="Cancel rename"
+        >
           <Close aria-hidden="true" />Cancel
         </Button>
       {:else}
-        <Button variant="ghost" size="sm" class="h-8 px-2 text-muted-foreground" onclick={() => edit(h)} aria-label="Rename {h.name}">
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-8 px-2 text-muted-foreground"
+          onclick={() => edit(h)}
+          aria-label="Rename {h.name}"
+        >
           <Pencil aria-hidden="true" />Rename
         </Button>
       {/if}
     {/snippet}
     {#snippet actionsEnd()}
       {#if editing === h.id}
-        <Button type="submit" form="rename-{h.id}" variant="ghost" size="sm" class="h-8 px-2 text-primary" disabled={saving} aria-label="Save name">
+        <Button
+          type="submit"
+          form="rename-{h.id}"
+          variant="ghost"
+          size="sm"
+          class="h-8 px-2 text-primary"
+          disabled={saving}
+          aria-label="Save name"
+        >
           <Check aria-hidden="true" />Save
         </Button>
       {:else}
-        {#if onupdate && h.status === "ok" && components(h, latest).some((c) => c.outdated)}
+        {#if onupdate && h.status === "ok" && components(h, latest).some((component) => component.outdated)}
           <!-- The yellow dot on the pill shows that a component is behind. This button updates the service and the client of the node. -->
-          <Button variant="ghost" size="sm" class="h-8 px-2 text-warning hover:bg-warning/10 hover:text-warning" disabled={updating === h.id} onclick={() => (ask = { title: `Update ${h.name}?`, body: "The update replaces the service and the client of this node.", label: "Update", run: () => update(h) })} aria-label="Update {h.name}">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-8 px-2 text-warning hover:bg-warning/10 hover:text-warning"
+            disabled={updating === h.id}
+            onclick={() =>
+              (ask = {
+                title: `Update ${h.name}?`,
+                body: "The update replaces the service and the client of this node.",
+                label: "Update",
+                run: () => update(h),
+              })}
+            aria-label="Update {h.name}"
+          >
             <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
           </Button>
         {/if}

@@ -1,10 +1,16 @@
 <script lang="ts" module>
-  import type { Component, SvelteComponent } from "svelte";
+  import type { Icon as TablerIcon } from "@tabler/icons-svelte";
 
   // The class of a strip button label: only the icon shows in a narrow strip, and the text stays as the accessible name. The strip is the @container/strip.
   export const stripLabel = "sr-only @md/strip:not-sr-only";
 
-  export type OverflowItem = { label: string; icon?: Component<any> | (new (...args: any[]) => SvelteComponent<any>); onselect: () => void; destructive?: boolean; disabled?: boolean };
+  export type OverflowItem = {
+    label: string;
+    icon?: TablerIcon;
+    onselect: () => void;
+    destructive?: boolean;
+    disabled?: boolean;
+  };
 </script>
 
 <script lang="ts">
@@ -60,7 +66,13 @@
 <Card.Root
   {size}
   data-slot="entity-card"
-  class={cn("gap-2 *:px-4", selected && "ring-2 ring-primary", pending && "opacity-60", pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50", className)}
+  class={cn(
+    "gap-2 *:px-4",
+    selected && "ring-2 ring-primary",
+    pending && "opacity-60",
+    pending === "starting" && "ring-0 border border-dashed border-muted-foreground/50",
+    className,
+  )}
 >
   <Card.Content class="flex flex-col gap-1.5">
     <div class="flex items-start justify-between gap-2">
@@ -69,7 +81,9 @@
         {#if titleEditor}
           <div class="min-w-0 flex-1">{@render titleEditor()}</div>
         {:else}
-          <h3 class="font-heading min-w-0 truncate text-base leading-tight font-semibold" title={titleText}>{@render title()}</h3>
+          <h3 class="font-heading min-w-0 truncate text-base leading-tight font-semibold" title={titleText}>
+            {@render title()}
+          </h3>
         {/if}
         {#if titleAside}<span class="flex flex-none items-center">{@render titleAside()}</span>{/if}
       </div>
@@ -94,10 +108,15 @@
                 {/snippet}
               </DropdownMenu.Trigger>
               <DropdownMenu.Content align="end" class="w-auto min-w-40">
-                {#each overflow as item, n (n)}
-                  <DropdownMenu.Item class="min-h-11" variant={item.destructive ? "destructive" : "default"} disabled={item.disabled} onSelect={item.onselect}>
-                    {#if item.icon}{@const Icon = item.icon}<Icon aria-hidden="true" />{/if}
-                    {item.label}
+                {#each overflow as action, index (index)}
+                  <DropdownMenu.Item
+                    class="min-h-11"
+                    variant={action.destructive ? "destructive" : "default"}
+                    disabled={action.disabled}
+                    onSelect={action.onselect}
+                  >
+                    {#if action.icon}{@const Icon = action.icon}<Icon aria-hidden="true" />{/if}
+                    {action.label}
                   </DropdownMenu.Item>
                 {/each}
               </DropdownMenu.Content>

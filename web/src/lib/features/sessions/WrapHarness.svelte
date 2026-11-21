@@ -16,6 +16,14 @@
   {:else if which === "folder"}
     <FileBrowser host="h" instance="i" session="s" {path} hidden={false} {now} />
   {:else}
-    <GlobalSessionList hosts={[{ id: "h", name: "h", status: "ok" }]} nodes={[]} host="" instance="" {now} ontoggle={() => {}} onclear={() => {}} />
+    <GlobalSessionList
+      hosts={[{ id: "h", name: "h", status: "ok" }]}
+      nodes={[]}
+      host=""
+      instance=""
+      {now}
+      ontoggle={() => {}}
+      onclear={() => {}}
+    />
   {/if}
 </QueryClientProvider>

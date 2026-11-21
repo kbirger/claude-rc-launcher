@@ -15,7 +15,23 @@
 
   // The sessions of all nodes. `nodes` is the node selection (empty: all). `host` and `instance` narrow the list to one instance (from the address):
   // the heading then names the instance and its node, and the node filter is gone, because the choice is made.
-  let { hosts, nodes, host, instance, now, ontoggle, onclear }: { hosts: HostInfo[]; nodes: string[]; host: string; instance: string; now: number; ontoggle: (id: string) => void; onclear: () => void } = $props();
+  let {
+    hosts,
+    nodes,
+    host,
+    instance,
+    now,
+    ontoggle,
+    onclear,
+  }: {
+    hosts: HostInfo[];
+    nodes: string[];
+    host: string;
+    instance: string;
+    now: number;
+    ontoggle: (id: string) => void;
+    onclear: () => void;
+  } = $props();
 
   // useQueryClient reads the Svelte context, so it runs at setup. The page holds the sessions stream while it is open.
   const client = useQueryClient();
@@ -26,43 +42,65 @@
   const filtered = $derived(!!host && !!instance);
 
   // One source for both: the hub list of all nodes, which the sessions stream keeps fresh. One instance keeps the rows of that host and instance.
-  const q = createQuery(allSessionsQuery);
+  const allSessions = createQuery(allSessionsQuery);
 
   // The names for the heading come from the host list and the instance list of that node.
   const names = createQuery(() => ({ ...instancesQuery(host), refetchInterval: false as const, enabled: filtered }));
-  const instanceName = $derived(names.data?.find((i) => i.id === instance)?.name ?? instance.slice(0, 8));
-  const nodeName = $derived(hosts.find((h) => h.id === host)?.name ?? host);
+  const instanceName = $derived(names.data?.find((entry) => entry.id === instance)?.name ?? instance.slice(0, 8));
+  const nodeName = $derived(hosts.find((entry) => entry.id === host)?.name ?? host);
 
   const scoped = $derived<GlobalSession[]>(
-    (q.data?.sessions ?? []).filter((s) => (filtered ? s.host.id === host && s.instance.id === instance : inFilter(nodes, s.host.id))),
+    (allSessions.data?.sessions ?? []).filter((entry) =>
+      filtered ? entry.host.id === host && entry.instance.id === instance : inFilter(nodes, entry.host.id),
+    ),
   );
-  const shown = $derived(sortSessions(scoped.filter((s) => globalMatches(s, filter))));
+  const shown = $derived(sortSessions(scoped.filter((entry) => globalMatches(entry, filter))));
   // A node that did not answer is named, so that a missing node is not mistaken for "no sessions". One instance names its own node only.
   const notices = $derived(
-    (q.data?.hosts ?? [])
-      .filter((h) => h.status !== "ok" && (filtered ? h.id === host : inFilter(nodes, h.id)))
-      .map((h) => ({ id: h.id, text: hostNotice(h) })),
+    (allSessions.data?.hosts ?? [])
+      .filter((entry) => entry.status !== "ok" && (filtered ? entry.id === host : inFilter(nodes, entry.id)))
+      .map((entry) => ({ id: entry.id, text: hostNotice(entry) })),
   );
 </script>
 
-<h2 class="font-heading mb-3 text-lg font-bold [overflow-wrap:anywhere]">{filtered ? `Sessions: ${instanceName} on ${nodeName}` : "Sessions"}</h2>
-{#if q.isPending}
+<h2 class="font-heading mb-3 text-lg font-bold [overflow-wrap:anywhere]">
+  {filtered ? `Sessions: ${instanceName} on ${nodeName}` : "Sessions"}
+</h2>
+{#if allSessions.isPending}
   <p class="text-muted-foreground">Loading sessions...</p>
-<!-- A failed refresh keeps the rows that are there: the error shows only when there is no list. -->
-{:else if q.error && !q.data}
-  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
+  <!-- A failed refresh keeps the rows that are there: the error shows only when there is no list. -->
+{:else if allSessions.error && !allSessions.data}
+  <Alert.Root variant="destructive"><Alert.Description>{allSessions.error.message}</Alert.Description></Alert.Root>
 {:else}
   <!-- The node chips and the filter are a bar of their own, with a line between it and the list. It sticks under the header (61px) so it stays in view while the list scrolls. Up to 480px wide the header is hidden, so it sticks to the top there. -->
-  <div class="sticky top-[env(safe-area-inset-top)] min-[481px]:top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3">
+  <div
+    class="sticky top-[env(safe-area-inset-top)] min-[481px]:top-[61px] z-30 -mx-4 mb-3 grid gap-2 border-b bg-background px-4 pt-3 pb-3"
+  >
     <!-- The node filter is one button, so it takes the same room for any number of nodes. It shares the row with the text filter. -->
     <div class="flex gap-2">
-      {#if hosts.length > 1 && !filtered}<div class="min-w-0 max-w-[50%] shrink-0"><NodeFilter {hosts} selected={nodes} {ontoggle} {onclear} /></div>{/if}
+      {#if hosts.length > 1 && !filtered}<div class="min-w-0 max-w-[50%] shrink-0">
+          <NodeFilter {hosts} selected={nodes} {ontoggle} {onclear} />
+        </div>{/if}
       <div class="relative min-w-0 flex-1">
-        <Search size={18} class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input type="search" bind:value={filter} placeholder="Filter sessions" aria-label="Filter sessions" class="h-11 pl-10" />
+        <Search
+          size={18}
+          class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <Input
+          type="search"
+          bind:value={filter}
+          placeholder="Filter sessions"
+          aria-label="Filter sessions"
+          class="h-11 pl-10"
+        />
       </div>
     </div>
-    <p class="text-xs text-muted-foreground" aria-live="polite">{filter ? `${shown.length} of ${scoped.length} sessions` : `${scoped.length} ${scoped.length === 1 ? "session" : "sessions"}`}</p>
+    <p class="text-xs text-muted-foreground" aria-live="polite">
+      {filter
+        ? `${shown.length} of ${scoped.length} sessions`
+        : `${scoped.length} ${scoped.length === 1 ? "session" : "sessions"}`}
+    </p>
   </div>
   {#each notices as n (n.id)}
     <Alert.Root class="mb-3"><Alert.Description>{n.text}</Alert.Description></Alert.Root>
@@ -74,7 +112,7 @@
   {:else}
     <ul class="grid grid-cols-[minmax(0,1fr)] gap-3">
       {#each shown as s (sessionKey(s))}
-        <li class="min-w-0"><SessionCard {s} {now} where={!filtered} /></li>
+        <li class="min-w-0"><SessionCard session={s} {now} where={!filtered} /></li>
       {/each}
     </ul>
   {/if}

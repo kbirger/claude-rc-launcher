@@ -1,10 +1,13 @@
 export type SpawnMode = "same-dir" | "worktree";
-export type InstanceSettings = { createSession: boolean; spawnMode: SpawnMode };
+export interface InstanceSettings {
+  createSession: boolean;
+  spawnMode: SpawnMode;
+}
 export type SettingsPatch = Partial<InstanceSettings>;
 
 export const DEFAULT_SETTINGS: InstanceSettings = { createSession: true, spawnMode: "same-dir" };
 
-export type SettingsHelp = {
+export interface SettingsHelp {
   settings: {
     key: "createSession" | "spawnMode";
     label: string;
@@ -13,33 +16,38 @@ export type SettingsHelp = {
   }[];
   /** The settings that a start with no settings gets on this node. An older node does not send them. */
   defaults?: InstanceSettings;
-};
+}
 
 export function settingsFromArgs(args: string[]): InstanceSettings {
   let spawnMode: SpawnMode = DEFAULT_SETTINGS.spawnMode;
   let createSession = DEFAULT_SETTINGS.createSession;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    let v: string | undefined;
-    if (a === "--spawn") v = args[i + 1];
-    else if (a.startsWith("--spawn=")) v = a.slice("--spawn=".length);
-    else if (a === "--no-create-session-in-dir") createSession = false;
-    else if (a === "--create-session-in-dir") createSession = true;
-    if (v === "same-dir" || v === "worktree") spawnMode = v;
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    let value: string | undefined;
+    if (arg === "--spawn") value = args[index + 1];
+    else if (arg.startsWith("--spawn=")) value = arg.slice("--spawn=".length);
+    else if (arg === "--no-create-session-in-dir") createSession = false;
+    else if (arg === "--create-session-in-dir") createSession = true;
+    if (value === "same-dir" || value === "worktree") spawnMode = value;
   }
+
   return { createSession, spawnMode };
 }
 
-export function argsWith(base: string[], s: InstanceSettings): string[] {
+export function argsWith(base: string[], instanceSettings: InstanceSettings): string[] {
   const out: string[] = [];
-  for (let i = 0; i < base.length; i++) {
-    const a = base[i];
-    if (a === "--spawn") i++;
-    else if (a.startsWith("--spawn=") || a === "--create-session-in-dir" || a === "--no-create-session-in-dir") continue;
-    else out.push(a);
+
+  for (let index = 0; index < base.length; index++) {
+    const arg = base[index];
+    if (arg === "--spawn") index++;
+    else if (arg.startsWith("--spawn=") || arg === "--create-session-in-dir" || arg === "--no-create-session-in-dir")
+      continue;
+    else out.push(arg);
   }
-  out.push("--spawn", s.spawnMode);
-  if (!s.createSession) out.push("--no-create-session-in-dir");
+
+  out.push("--spawn", instanceSettings.spawnMode);
+  if (!instanceSettings.createSession) out.push("--no-create-session-in-dir");
   return out;
 }
 
@@ -62,7 +70,8 @@ export const SETTINGS_HELP: SettingsHelp = {
             "The server starts with no session. When a client asks, the server makes a session. At each stop, claude.ai archives the sessions of the server, so none comes back after a crash or a restart. While the folder holds a recoverable session, the server refuses to start.",
         },
       ],
-      limits: "A change restarts a running instance and checks that it stays up. A paused instance only saves the change.",
+      limits:
+        "A change restarts a running instance and checks that it stays up. A paused instance only saves the change.",
     },
     {
       key: "spawnMode",
@@ -80,7 +89,8 @@ export const SETTINGS_HELP: SettingsHelp = {
             "Each new session gets its own git worktree. The first session stays in the folder. The folder must be a git repository.",
         },
       ],
-      limits: "A change restarts a running instance and checks that it stays up. A paused instance only saves the change. The worktree mode needs a git repository.",
+      limits:
+        "A change restarts a running instance and checks that it stays up. A paused instance only saves the change. The worktree mode needs a git repository.",
     },
   ],
 };

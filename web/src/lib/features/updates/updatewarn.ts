@@ -18,13 +18,21 @@ const MIN_GAP_MS = 30_000;
  * gets a bar and no reload, so that a typed path is not lost. A reload within 30 seconds of the last one is
  * never repeated: it shows the bar, so that a hub that serves old files cannot make a loop.
  */
-export function reloadDecision(o: { loaded: string | undefined; current: string | undefined; dialogOpen: boolean; lastReloadAt: number; now: number }): ReloadDecision {
-  if (!o.loaded || !o.current || o.loaded === o.current) return "none";
-  if (o.dialogOpen || o.now - o.lastReloadAt < MIN_GAP_MS) return "bar";
+export function reloadDecision(options: {
+  loaded: string | undefined;
+  current: string | undefined;
+  dialogOpen: boolean;
+  lastReloadAt: number;
+  now: number;
+}): ReloadDecision {
+  if (!options.loaded || !options.current || options.loaded === options.current) return "none";
+  if (options.dialogOpen || options.now - options.lastReloadAt < MIN_GAP_MS) return "bar";
   return "reload";
 }
 
 /** The names of the hosts in `list` that run on Windows, where an update restarts the sessions. */
 export function windowsNames(list: { id: string; name: string }[], hosts: HostInfo[]): string[] {
-  return list.filter((n) => hosts.find((h) => h.id === n.id)?.platform === "win32").map((n) => n.name);
+  return list
+    .filter((item) => hosts.find((host) => host.id === item.id)?.platform === "win32")
+    .map((item) => item.name);
 }

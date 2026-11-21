@@ -7,13 +7,13 @@ import { absRefused, PathError, resolveWithinRoots } from "../src/paths";
 let base: string;
 let home: string;
 
-async function status(p: Promise<unknown>): Promise<number | string> {
+async function status(promise: Promise<unknown>): Promise<number | string> {
   try {
-    await p;
+    await promise;
     return "ok";
-  } catch (e) {
-    if (e instanceof PathError) return e.status;
-    throw e;
+  } catch (error) {
+    if (error instanceof PathError) return error.status;
+    throw error;
   }
 }
 
@@ -61,8 +61,12 @@ describe("resolveWithinRoots", () => {
     expect(await status(resolveWithinRoots(undefined as unknown as string, [home]))).toBe(400);
   });
   test("multiple roots; non-existent root ignored", async () => {
-    const r = await resolveWithinRoots(join(base, "home2", "a"), [join(base, "missing"), home, join(base, "home2")]);
-    expect(r).toBe(join(await realpath(join(base, "home2")), "a"));
+    const withinRoots = await resolveWithinRoots(join(base, "home2", "a"), [
+      join(base, "missing"),
+      home,
+      join(base, "home2"),
+    ]);
+    expect(withinRoots).toBe(join(await realpath(join(base, "home2")), "a"));
   });
   test("no usable roots is 403", async () => {
     expect(await status(resolveWithinRoots(home, []))).toBe(403);
@@ -91,9 +95,14 @@ describe("absRefused (an abs that is never served, even when touched)", () => {
       "C:\\a.txt:stream",
       "C:\\a.txt::$DATA",
     ];
-    for (const p of refused) expect({ p, refused: absRefused(p, { platform: "win32" }) }).toEqual({ p, refused: true });
-    for (const p of ["C:\\Users\\u\\a.txt", "c:/Users/u/a.txt", "D:\\x\\..\\y.txt", "Z:\\"]) {
-      expect({ p, refused: absRefused(p, { platform: "win32" }) }).toEqual({ p, refused: false });
+    for (const item of refused)
+      expect({ path: item, refused: absRefused(item, { platform: "win32" }) }).toEqual({
+        path: item,
+        refused: true,
+      });
+
+    for (const item of ["C:\\Users\\u\\a.txt", "c:/Users/u/a.txt", "D:\\x\\..\\y.txt", "Z:\\"]) {
+      expect({ path: item, refused: absRefused(item, { platform: "win32" }) }).toEqual({ path: item, refused: false });
     }
   });
 
@@ -106,11 +115,37 @@ describe("absRefused (an abs that is never served, even when touched)", () => {
 
   test("elsewhere /proc, /sys, /dev and the state folders are refused, by whole names only", () => {
     const dirs = ["/var/lib/claude-rc-launcher"];
-    for (const p of ["/proc", "/proc/self/environ", "/proc/1/root/etc/shadow", "/sys/kernel/x", "/dev/null", "/dev/shm/x", "/home/../proc/version", "//proc/version", "/var/lib/claude-rc-launcher/hub-key.pem", "/var/lib/claude-rc-launcher"]) {
-      expect({ p, refused: absRefused(p, { platform: "linux", dirs }) }).toEqual({ p, refused: true });
+
+    for (const path of [
+      "/proc",
+      "/proc/self/environ",
+      "/proc/1/root/etc/shadow",
+      "/sys/kernel/x",
+      "/dev/null",
+      "/dev/shm/x",
+      "/home/../proc/version",
+      "//proc/version",
+      "/var/lib/claude-rc-launcher/hub-key.pem",
+      "/var/lib/claude-rc-launcher",
+    ]) {
+      expect({ path: path, refused: absRefused(path, { platform: "linux", dirs }) }).toEqual({
+        path: path,
+        refused: true,
+      });
     }
-    for (const p of ["/process.txt", "/devices/x", "/system/x", "/home/u/proc/a", "/var/lib/claude-rc-launcher-old/x", "/var/lib/x"]) {
-      expect({ p, refused: absRefused(p, { platform: "linux", dirs }) }).toEqual({ p, refused: false });
+
+    for (const path of [
+      "/process.txt",
+      "/devices/x",
+      "/system/x",
+      "/home/u/proc/a",
+      "/var/lib/claude-rc-launcher-old/x",
+      "/var/lib/x",
+    ]) {
+      expect({ path: path, refused: absRefused(path, { platform: "linux", dirs }) }).toEqual({
+        path: path,
+        refused: false,
+      });
     }
   });
 });

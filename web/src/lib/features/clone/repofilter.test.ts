@@ -2,10 +2,10 @@ import { expect, test } from "vitest";
 import { filterGroups } from "./repofilter";
 import type { RepoGroup } from "./api";
 
-const r = (name: string) => ({ name, private: false, pushedAt: "" });
+const helper = (name: string) => ({ name, private: false, pushedAt: "" });
 const groups: RepoGroup[] = [
-  { owner: "alice", repos: [r("alice/Web-App"), r("alice/cli")] },
-  { owner: "org", repos: [r("org/docs")] },
+  { owner: "alice", repos: [helper("alice/Web-App"), helper("alice/cli")] },
+  { owner: "org", repos: [helper("org/docs")] },
 ];
 
 test("empty or blank query returns all groups", () => {
@@ -14,12 +14,12 @@ test("empty or blank query returns all groups", () => {
 });
 
 test("case-insensitive substring match on the repo name", () => {
-  expect(filterGroups(groups, "WEB")).toEqual([{ owner: "alice", repos: [r("alice/Web-App")] }]);
-  expect(filterGroups(groups, "org/")).toEqual([{ owner: "org", repos: [r("org/docs")] }]);
+  expect(filterGroups(groups, "WEB")).toEqual([{ owner: "alice", repos: [helper("alice/Web-App")] }]);
+  expect(filterGroups(groups, "org/")).toEqual([{ owner: "org", repos: [helper("org/docs")] }]);
 });
 
 test("groups that end up empty are dropped, no match gives []", () => {
-  expect(filterGroups(groups, "docs").map((g) => g.owner)).toEqual(["org"]);
+  expect(filterGroups(groups, "docs").map((filterGroup) => filterGroup.owner)).toEqual(["org"]);
   expect(filterGroups(groups, "zzz")).toEqual([]);
 });
 

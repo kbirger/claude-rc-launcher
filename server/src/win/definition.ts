@@ -13,18 +13,25 @@ const BASELINE = 1;
 const MARKER = /<!--\s*claude-rc-service-definition:\s*(\d{1,4})\s*-->/;
 const SERVICE_XML = "claude-rc-launcher-svc.xml";
 
-export type DefinitionStatus = { installed: number; required: number };
+export interface DefinitionStatus {
+  installed: number;
+  required: number;
+}
 
 export function parseInstalledDefinition(xml: string): number {
-  const m = MARKER.exec(xml);
-  return m ? Number(m[1]) : BASELINE;
+  const match = MARKER.exec(xml);
+  return match ? Number(match[1]) : BASELINE;
 }
 
 /** The installed and the required version, read from the XML next to the agent. Undefined when the file cannot be read. */
-export function definitionStatus(o: { exePath: string; readFile(path: string): string; required?: number }): DefinitionStatus | undefined {
+export function definitionStatus(options: {
+  exePath: string;
+  readFile(path: string): string;
+  required?: number;
+}): DefinitionStatus | undefined {
   try {
-    const xml = o.readFile(win32.join(win32.dirname(o.exePath), SERVICE_XML));
-    return { installed: parseInstalledDefinition(xml), required: o.required ?? REQUIRED_DEFINITION };
+    const xml = options.readFile(win32.join(win32.dirname(options.exePath), SERVICE_XML));
+    return { installed: parseInstalledDefinition(xml), required: options.required ?? REQUIRED_DEFINITION };
   } catch {
     return undefined;
   }

@@ -6,8 +6,8 @@ export type Mode = (typeof MODES)[number];
 const THEME_KEY = "theme";
 const MODE_KEY = "mode";
 
-export const isTheme = (v: unknown): v is ThemeName => THEMES.includes(v as ThemeName);
-export const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode);
+export const isTheme = (value: unknown): value is ThemeName => THEMES.includes(value as ThemeName);
+export const isMode = (value: unknown): value is Mode => MODES.includes(value as Mode);
 
 /** Every palette has a light and a dark variant, so only the mode decides. */
 export function resolveDark(mode: Mode, systemDark: boolean): boolean {
@@ -40,6 +40,7 @@ export function loadChoice(): { theme: ThemeName; mode: Mode } {
   } catch {
     /* no location: ignore */
   }
+
   const theme = read(THEME_KEY);
   const mode = read(MODE_KEY);
   return { theme: isTheme(theme) ? theme : "claude", mode: isMode(mode) ? mode : "system" };

@@ -9,7 +9,11 @@ export const RELEASE_TAG_RE = /^v?\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$/;
 
 const RELEASE_BASE = `https://github.com/${RELEASE_REPO}/releases`;
 
-export type RunResult = { code: number; stdout: string; stderr: string };
+export interface RunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
 
 /**
  * The side effects the release code needs. The caller decides whether `run` uses sudo. Tests replace all of it.
@@ -28,15 +32,17 @@ export class ReleaseError extends Error {
   }
 }
 
-export const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+export const sha256 = (uint8Array: Uint8Array): string => createHash("sha256").update(uint8Array).digest("hex");
 
 async function get(io: Pick<ReleaseIo, "fetch">, url: string): Promise<Uint8Array> {
   let res: Response;
+
   try {
     res = await io.fetch(url);
-  } catch (e) {
-    throw new ReleaseError(`cannot download ${url}: ${(e as Error).message}`);
+  } catch (error) {
+    throw new ReleaseError(`cannot download ${url}: ${(error as Error).message}`);
   }
+
   if (!res.ok) throw new ReleaseError(`cannot download ${url}: HTTP ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -45,18 +51,24 @@ async function get(io: Pick<ReleaseIo, "fetch">, url: string): Promise<Uint8Arra
  * Downloads one release asset and checks it against SHA256SUMS of the same release. Throws ReleaseError when the
  * tag is malformed, a download fails or the checksum does not match.
  */
-export async function downloadAsset(io: Pick<ReleaseIo, "fetch">, asset: string, release?: string): Promise<Uint8Array> {
+export async function downloadAsset(
+  io: Pick<ReleaseIo, "fetch">,
+  asset: string,
+  release?: string,
+): Promise<Uint8Array> {
   if (release !== undefined && !RELEASE_TAG_RE.test(release)) throw new ReleaseError(`invalid release tag: ${release}`);
   const base = release === undefined ? `${RELEASE_BASE}/latest/download` : `${RELEASE_BASE}/download/${release}`;
   const [bin, sums] = await Promise.all([get(io, `${base}/${asset}`), get(io, `${base}/SHA256SUMS`)]);
   const line = new TextDecoder()
     .decode(sums)
     .split("\n")
-    .map((l) => l.trim().split(/\s+/))
-    .find((p) => p[1] === asset);
-  if (!line || line[0] !== sha256(bin)) {
+    .map((part) => part.trim().split(/\s+/))
+    .find((item) => item[1] === asset);
+
+  if (line?.[0] !== sha256(bin)) {
     throw new ReleaseError(`the checksum of ${asset} does not match SHA256SUMS. Nothing was installed`);
   }
+
   return bin;
 }
 
@@ -66,19 +78,24 @@ export async function downloadAsset(io: Pick<ReleaseIo, "fetch">, asset: string,
  */
 export function installWithBackup(io: ReleaseIo, target: string, binary: Uint8Array): void {
   const tmp = io.writeTemp(path.basename(target), binary);
+
   const step = (args: string[], what: string) => {
-    const r = io.run(args);
-    if (r.code !== 0) {
-      throw new ReleaseError(`${what} failed (${args[0]} exit ${r.code})${r.stderr ? `: ${r.stderr.trim()}` : ""}`);
+    const runResult = io.run(args);
+
+    if (runResult.code !== 0) {
+      throw new ReleaseError(
+        `${what} failed (${args[0]} exit ${runResult.code})${runResult.stderr ? `: ${runResult.stderr.trim()}` : ""}`,
+      );
     }
   };
+
   try {
     step(["install", "-m", "755", tmp, `${target}.new`], "installing the binary");
     step(["cp", "-p", target, `${target}.prev`], "backing up the installed binary");
     step(["mv", "-f", `${target}.new`, target], "installing the binary");
-  } catch (e) {
+  } catch (error) {
     io.run(["rm", "-f", `${target}.new`]);
-    throw e;
+    throw error;
   } finally {
     io.removeTemp(tmp);
   }

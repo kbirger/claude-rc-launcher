@@ -3,12 +3,14 @@ import path from "node:path";
 import { computeVersion } from "../../scripts/version";
 
 type Git = Record<string, string | null>;
+
 function version(git: Git, env: Record<string, string | undefined> = {}) {
   return computeVersion({
     env,
-    git: (args) => (args.join(" ") in git ? git[args.join(" ")]! : null),
+    git: (args) => (args.join(" ") in git ? git[args.join(" ")] : null),
   });
 }
+
 const local = (over: Git = {}): Git => ({
   "describe --tags --abbrev=0": "v0.2.0",
   "rev-parse --abbrev-ref HEAD": "feat/multi-host",
@@ -32,7 +34,9 @@ describe("computeVersion", () => {
     expect(version(local({ "rev-parse --abbrev-ref HEAD": "HEAD" }))).toBe("0.2.0+detached.dbe45d4");
   });
   test("a dirty tree adds .dirty", () => {
-    expect(version(local({ "status --porcelain --untracked-files=no": " M a.ts" }))).toBe("0.2.0+feat-multi-host.dbe45d4.dirty");
+    expect(version(local({ "status --porcelain --untracked-files=no": " M a.ts" }))).toBe(
+      "0.2.0+feat-multi-host.dbe45d4.dirty",
+    );
   });
   test("no tag gives base 0.0.0", () => {
     expect(version(local({ "describe --tags --abbrev=0": null }))).toBe("0.0.0+feat-multi-host.dbe45d4");
@@ -49,15 +53,29 @@ describe("computeVersion", () => {
 
 describe("claude-rc-launcher --version", () => {
   const entry = path.resolve(import.meta.dir, "../src/index.ts");
+
   async function run(...args: string[]) {
-    const p = Bun.spawn([process.execPath, entry, ...args], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
-    const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    const subprocess = Bun.spawn([process.execPath, entry, ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(subprocess.stdout).text(),
+      new Response(subprocess.stderr).text(),
+      subprocess.exited,
+    ]);
     return { stdout, stderr, code };
   }
+
   test("prints the version and exits at once", async () => {
     expect(await run("--version")).toEqual({ stdout: "claude-rc-launcher dev\n", stderr: "", code: 0 });
   });
   test("wins when it is not the first argument and no config exists", async () => {
-    expect(await run("--config", "/nonexistent", "--version")).toEqual({ stdout: "claude-rc-launcher dev\n", stderr: "", code: 0 });
+    expect(await run("--config", "/nonexistent", "--version")).toEqual({
+      stdout: "claude-rc-launcher dev\n",
+      stderr: "",
+      code: 0,
+    });
   });
 });

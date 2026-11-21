@@ -2,13 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HttpError } from "../src/instances";
 import { PROBE_INTERVAL_MS, SETTLE_MS } from "../src/instancechange";
+import { HttpError } from "../src/instances";
 import { PathError } from "../src/paths";
 import type { TrustStore } from "../src/trust";
 import { instanceId } from "../src/unit";
+import { WinInstances, taskkillTree } from "../src/win/instances";
+import type { Spawned, WinDeps, WinInstanceOptions } from "../src/win/instances";
 import { RestrictedTokenError } from "../src/win/token";
-import { WinInstances, taskkillTree, type Spawned, type WinDeps, type WinInstanceOptions } from "../src/win/instances";
+import { rejection, defined } from "./support";
 
 const ROOT = "C:\\work";
 const P1 = "C:\\work\\one";
@@ -29,96 +31,159 @@ let trustedPaths: Set<string>;
 let trustAdds: string[];
 let nextPid: number;
 
-const resolve = async (p: string, roots: string[]) => {
-  if (!roots.some((r) => p === r || p.startsWith(r + "\\"))) throw new PathError(403, "path outside allowed roots");
-  return p;
+const resolve = (item: string, roots: string[]) => {
+  if (!roots.some((root) => item === root || item.startsWith(root + "\\")))
+    return Promise.reject(new PathError(403, "path outside allowed roots"));
+  return Promise.resolve(item);
 };
+
 const trust: TrustStore = {
-  checker: async () => (p) => trustedPaths.has(p),
-  add: async (_u, p) => { trustAdds.push(p); trustedPaths.add(p); },
+  checker: () => Promise.resolve((item) => trustedPaths.has(item)),
+  add: (_u, absPath) => {
+    trustAdds.push(absPath);
+    trustedPaths.add(absPath);
+    return Promise.resolve();
+  },
 };
 
 function opts(over: Partial<WinInstanceOptions> = {}): WinInstanceOptions {
-  return { roots: [ROOT], serviceUser: "svc", serviceHome: "C:\\Users\\svc", claudeBin: "C:\\Users\\svc\\.local\\bin\\claude.exe", claudeRcArgs: ["--spawn", "same-dir"], namePrefix: "", instanceDir: dir, ...over };
+  return {
+    roots: [ROOT],
+    serviceUser: "svc",
+    serviceHome: "C:\\Users\\svc",
+    claudeBin: "C:\\Users\\svc\\.local\\bin\\claude.exe",
+    claudeRcArgs: ["--spawn", "same-dir"],
+    namePrefix: "",
+    instanceDir: dir,
+    ...over,
+  };
 }
+
 function make(over: Partial<WinInstanceOptions> = {}, deps: Partial<WinDeps> = {}) {
   return new WinInstances(opts(over), {
-    spawn: (cmd, args, o) => {
+    spawn: (cmd, args, item) => {
       if (spawnError) throw spawnError;
-      let exit!: (c: number) => void;
-      const exited = new Promise<number>((r) => { exit = r; });
-      const p: FakeProc = { pid: nextPid++, exited, cmd, args, cwd: o.cwd, logFile: o.logFile, exit: (c = 1) => exit(c) };
-      procs.push(p);
-      return p;
+      let exit!: (value: number) => void;
+      const exited = new Promise<number>((entry) => {
+        exit = entry;
+      });
+      const fakeProc: FakeProc = {
+        pid: nextPid++,
+        exited,
+        cmd,
+        args,
+        cwd: item.cwd,
+        logFile: item.logFile,
+        exit: (code = 1) => {
+          exit(code);
+        },
+      };
+      procs.push(fakeProc);
+      return fakeProc;
     },
-    killTree: async (pid) => {
-      if (killError) throw killError;
+    killTree: (pid) => {
+      if (killError) return Promise.reject(killError);
       killed.push(pid);
-      procs.find((p) => p.pid === pid)?.exit(1); // a killed process exits
+      procs.find((fakeProc) => fakeProc.pid === pid)?.exit(1); // a killed process exits
+      return Promise.resolve();
     },
-    sleep: (ms) => new Promise<void>((r) => {
-      if (ms === PROBE_INTERVAL_MS) probeSleeps.push(r);
-      else if (ms !== SETTLE_MS) sleeps.push(r); // the guard of a restart never ends in a test
-    }),
+    sleep: (ms) =>
+      new Promise<void>((item) => {
+        if (ms === PROBE_INTERVAL_MS) probeSleeps.push(item);
+        else if (ms !== SETTLE_MS) sleeps.push(item); // the guard of a restart never ends in a test
+      }),
     now: () => new Date("2026-11-08T12:00:00Z"),
     resolvePath: resolve,
     trust,
     restartDelayMs: 10,
-    repoKind: async (d) => (repos.has(d) ? "git" : undefined),
+    repoKind: (item) => Promise.resolve(repos.has(item) ? "git" : undefined),
     ...deps,
   });
 }
-const flush = () => new Promise<void>((r) => setTimeout(r, 0));
-const status = async (p: Promise<unknown>) => {
-  try { await p; return "ok"; } catch (e) {
-    if (e instanceof HttpError || e instanceof PathError) return e.status;
-    throw e;
+
+const flush = () => new Promise<void>((item) => setTimeout(item, 0));
+
+const status = async (promise: Promise<unknown>) => {
+  try {
+    await promise;
+    return "ok";
+  } catch (error) {
+    if (error instanceof HttpError || error instanceof PathError) return error.status;
+    throw error;
   }
 };
+
 const stateFile = () => join(dir, "instances.json");
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "winst-"));
-  procs = []; killed = []; sleeps = []; probeSleeps = []; repos = new Set([P1]); spawnError = null; killError = null; trustedPaths = new Set([P1, P2]); trustAdds = []; nextPid = 100;
+  procs = [];
+  killed = [];
+  sleeps = [];
+  probeSleeps = [];
+  repos = new Set([P1]);
+  spawnError = null;
+  killError = null;
+  trustedPaths = new Set([P1, P2]);
+  trustAdds = [];
+  nextPid = 100;
 });
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
 
 describe("start", () => {
   test("starts claude in the folder and reports it active", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
     expect(procs).toHaveLength(1);
-    expect(procs[0]!.cmd).toBe("C:\\Users\\svc\\.local\\bin\\claude.exe");
-    expect(procs[0]!.args).toEqual(["remote-control", "--name", "one", "--spawn", "same-dir"]);
-    expect(procs[0]!.cwd).toBe(P1);
-    expect(procs[0]!.logFile).toBe(join(dir, "logs", `${instanceId(P1)}.log`));
-    expect(inst).toEqual({ id: instanceId(P1), path: P1, name: "one", state: "active", startedAt: "2026-11-08T12:00:00.000Z", settings: { createSession: true, spawnMode: "same-dir" } });
-    expect(await s.list()).toEqual([inst]);
+    expect(procs[0].cmd).toBe("C:\\Users\\svc\\.local\\bin\\claude.exe");
+    expect(procs[0].args).toEqual(["remote-control", "--name", "one", "--spawn", "same-dir"]);
+    expect(procs[0].cwd).toBe(P1);
+    expect(procs[0].logFile).toBe(join(dir, "logs", `${instanceId(P1)}.log`));
+    expect(inst).toEqual({
+      id: instanceId(P1),
+      path: P1,
+      name: "one",
+      state: "active",
+      startedAt: "2026-11-08T12:00:00.000Z",
+      settings: { createSession: true, spawnMode: "same-dir" },
+    });
+    expect(await winInstances.list()).toEqual([inst]);
   });
 
   test("lists the instance in the state file", async () => {
     await make().start({ path: P1, name: "mine" });
-    expect(JSON.parse(await readFile(stateFile(), "utf8"))).toEqual({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "mine", createSession: true, spawnMode: "same-dir" }] });
+    expect(JSON.parse(await readFile(stateFile(), "utf8"))).toEqual({
+      version: 1,
+      instances: [{ id: instanceId(P1), path: P1, name: "mine", createSession: true, spawnMode: "same-dir" }],
+    });
   });
 
   test("a bad name is 400 and a path outside the roots is 403, with nothing started", async () => {
-    const s = make();
-    expect(await status(s.start({ path: P1, name: "-bad" }))).toBe(400);
-    expect(await status(s.start({ path: "D:\\elsewhere" }))).toBe(403);
+    const winInstances = make();
+    expect(await status(winInstances.start({ path: P1, name: "-bad" }))).toBe(400);
+    expect(await status(winInstances.start({ path: "D:\\elsewhere" }))).toBe(403);
     expect(procs).toHaveLength(0);
   });
 
   test("another user is 400; the service user is accepted", async () => {
-    const s = make();
-    expect(await status(s.start({ path: P1, user: "alice" }))).toBe(400);
-    expect(await status(s.start({ path: P1, user: "svc" }))).toBe("ok");
+    const winInstances = make();
+    expect(await status(winInstances.start({ path: P1, user: "alice" }))).toBe(400);
+    expect(await status(winInstances.start({ path: P1, user: "svc" }))).toBe("ok");
   });
 
   test("an untrusted folder is 428 and nothing starts", async () => {
     trustedPaths.clear();
-    const s = make();
+    const winInstances = make();
     let err: unknown;
-    try { await s.start({ path: P1 }); } catch (e) { err = e; }
+
+    try {
+      await winInstances.start({ path: P1 });
+    } catch (error) {
+      err = error;
+    }
+
     expect(err).toBeInstanceOf(HttpError);
     expect((err as HttpError).status).toBe(428);
     expect((err as HttpError).extra).toEqual({ code: "untrusted", user: "svc", path: P1 });
@@ -134,11 +199,17 @@ describe("start", () => {
   });
 
   test("a second start in the same folder is 409 and does not change trust", async () => {
-    const s = make();
-    await s.start({ path: P1 });
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
     trustedPaths.clear();
     let err: unknown;
-    try { await s.start({ path: P1, addTrust: true }); } catch (e) { err = e; }
+
+    try {
+      await winInstances.start({ path: P1, addTrust: true });
+    } catch (error) {
+      err = error;
+    }
+
     expect((err as HttpError).status).toBe(409);
     expect(((err as HttpError).extra as { instance: { id: string } }).instance.id).toBe(instanceId(P1));
     expect(trustAdds).toEqual([]);
@@ -146,109 +217,120 @@ describe("start", () => {
   });
 
   test("two parallel starts in one folder: one wins, one is 409", async () => {
-    const s = make();
-    const r = await Promise.all([status(s.start({ path: P1 })), status(s.start({ path: P1 }))]);
-    expect(r.sort()).toEqual([409, "ok"]);
+    const winInstances = make();
+    const results = await Promise.all([
+      status(winInstances.start({ path: P1 })),
+      status(winInstances.start({ path: P1 })),
+    ]);
+    expect(results.sort()).toEqual([409, "ok"]);
     expect(procs).toHaveLength(1);
   });
 
   test("a program that cannot start is 500 and leaves nothing behind", async () => {
     spawnError = new Error("ENOENT claude.exe");
-    const s = make();
+    const winInstances = make();
     let err: unknown;
-    try { await s.start({ path: P1 }); } catch (e) { err = e; }
+
+    try {
+      await winInstances.start({ path: P1 });
+    } catch (error) {
+      err = error;
+    }
+
     expect((err as HttpError).status).toBe(500);
     expect((err as HttpError).message).toContain("ENOENT claude.exe");
-    expect(await s.list()).toEqual([]);
+    expect(await winInstances.list()).toEqual([]);
     expect(await readFile(stateFile(), "utf8").catch(() => null)).toBeNull();
   });
 
   test("when the instance list cannot be saved, the start is undone", async () => {
     await writeFile(join(dir, "blocker"), "x");
-    const s = make({ instanceDir: join(dir, "blocker", "sub") }); // a file where a folder must be
-    expect(await status(s.start({ path: P1 }))).toBe(500);
-    expect(await s.list()).toEqual([]);
+    const winInstances = make({ instanceDir: join(dir, "blocker", "sub") }); // a file where a folder must be
+    expect(await status(winInstances.start({ path: P1 }))).toBe(500);
+    expect(await winInstances.list()).toEqual([]);
     expect(killed).toEqual([100]);
     // the folder is free again
     spawnError = null;
-    expect(await status(s.start({ path: P1 }))).toBe(500);
+    expect(await status(winInstances.start({ path: P1 }))).toBe(500);
   });
 });
 
 describe("supervision", () => {
   test("an instance that exits is started again after the delay", async () => {
-    const s = make();
-    await s.start({ path: P1 });
-    procs[0]!.exit(1);
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
+    procs[0].exit(1);
     await flush();
-    expect((await s.list())[0]!.state).toBe("activating");
-    expect((await s.list())[0]!.startedAt).toBeNull();
+    expect((await winInstances.list())[0].state).toBe("activating");
+    expect((await winInstances.list())[0].startedAt).toBeNull();
     expect(procs).toHaveLength(1);
-    sleeps.shift()!();
+    defined(sleeps.shift())();
     await flush();
     expect(procs).toHaveLength(2);
-    expect(procs[1]!.args).toEqual(procs[0]!.args);
-    expect((await s.list())[0]!.state).toBe("active");
+    expect(procs[1].args).toEqual(procs[0].args);
+    expect((await winInstances.list())[0].state).toBe("active");
   });
 
   test("when the restart itself fails, the state is failed and it tries again", async () => {
-    const s = make();
-    await s.start({ path: P1 });
-    procs[0]!.exit(1);
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
+    procs[0].exit(1);
     await flush();
     spawnError = new Error("disk gone");
-    sleeps.shift()!();
+    defined(sleeps.shift())();
     await flush();
-    expect((await s.list())[0]!.state).toBe("failed");
+    expect((await winInstances.list())[0].state).toBe("failed");
     spawnError = null;
-    sleeps.shift()!();
+    defined(sleeps.shift())();
     await flush();
-    expect((await s.list())[0]!.state).toBe("active");
+    expect((await winInstances.list())[0].state).toBe("active");
   });
 });
 
 describe("stop", () => {
   test("ends the process tree, removes the instance and updates the state file", async () => {
-    const s = make();
-    await s.start({ path: P1 });
-    await s.start({ path: P2 });
-    await s.stop(instanceId(P1));
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
+    await winInstances.start({ path: P2 });
+    await winInstances.stop(instanceId(P1));
     expect(killed).toEqual([100]);
-    expect((await s.list()).map((i) => i.path)).toEqual([P2]);
-    expect(JSON.parse(await readFile(stateFile(), "utf8")).instances.map((i: { path: string }) => i.path)).toEqual([P2]);
+    expect((await winInstances.list()).map((instance) => instance.path)).toEqual([P2]);
+    expect(
+      JSON.parse(await readFile(stateFile(), "utf8")).instances.map((instance: { path: string }) => instance.path),
+    ).toEqual([P2]);
     expect(procs).toHaveLength(2); // not started again
   });
 
   test("stopping an instance that waits to restart does not start it again", async () => {
-    const s = make();
-    await s.start({ path: P1 });
-    procs[0]!.exit(1);
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
+    procs[0].exit(1);
     await flush();
-    await s.stop(instanceId(P1));
+    await winInstances.stop(instanceId(P1));
     await flush();
     expect(procs).toHaveLength(1);
-    expect(await s.list()).toEqual([]);
+    expect(await winInstances.list()).toEqual([]);
   });
 
   test("an unknown or malformed id is 404", async () => {
-    const s = make();
-    expect(await status(s.stop("0".repeat(12)))).toBe(404);
-    expect(await status(s.stop("../etc"))).toBe(404);
+    const winInstances = make();
+    expect(await status(winInstances.stop("0".repeat(12)))).toBe(404);
+    expect(await status(winInstances.stop("../etc"))).toBe(404);
   });
 
   test("when the process cannot be ended, it is 500 and the instance stays and keeps running", async () => {
-    const s = make();
-    await s.start({ path: P1 });
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
     killError = new Error("access denied");
-    expect(await status(s.stop(instanceId(P1)))).toBe(500);
-    expect(await s.list()).toHaveLength(1);
+    expect(await status(winInstances.stop(instanceId(P1)))).toBe(500);
+    expect(await winInstances.list()).toHaveLength(1);
     killError = null;
-    procs[0]!.exit(1);
+    procs[0].exit(1);
     await flush();
-    sleeps.shift()!();
+    defined(sleeps.shift())();
     await flush();
     expect(procs).toHaveLength(2); // supervision continues
-    expect(await status(s.stop(instanceId(P1)))).toBe("ok");
+    expect(await status(winInstances.stop(instanceId(P1)))).toBe("ok");
   });
 });
 
@@ -258,61 +340,71 @@ describe("users, trust and folder owner", () => {
   });
 
   test("dirOwnerFor is undefined for the service user and 400 for anyone else", async () => {
-    const s = make();
-    expect(await s.dirOwnerFor()).toBeUndefined();
-    expect(await s.dirOwnerFor("svc")).toBeUndefined();
-    expect(await status(s.dirOwnerFor("alice"))).toBe(400);
+    const winInstances = make();
+    expect(await winInstances.dirOwnerFor()).toBeUndefined();
+    expect(await winInstances.dirOwnerFor("svc")).toBeUndefined();
+    expect(await status(winInstances.dirOwnerFor("alice"))).toBe(400);
   });
 
   test("trustFilter reads the service user's trust and refuses other users", async () => {
-    const s = make();
-    const f = await s.trustFilter();
-    expect(f(P1)).toBe(true);
-    expect(f("C:\\work\\unknown")).toBe(false);
-    expect(await status(s.trustFilter("alice"))).toBe(400);
+    const winInstances = make();
+    const helper = await winInstances.trustFilter();
+    expect(helper(P1)).toBe(true);
+    expect(helper("C:\\work\\unknown")).toBe(false);
+    expect(await status(winInstances.trustFilter("alice"))).toBe(400);
   });
 });
 
 describe("logs", () => {
   test("returns the last lines, at most the number asked for", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
     await mkdir(join(dir, "logs"), { recursive: true });
     await writeFile(join(dir, "logs", `${inst.id}.log`), "a\r\nb\r\nc\r\nd\r\n");
-    expect(await s.logs(inst.id, 2)).toBe("c\nd\n");
-    expect(await s.logs(inst.id, 100)).toBe("a\nb\nc\nd\n");
-    expect(await s.logs(inst.id, 0)).toBe("d\n"); // at least one line
+    expect(await winInstances.logs(inst.id, 2)).toBe("c\nd\n");
+    expect(await winInstances.logs(inst.id, 100)).toBe("a\nb\nc\nd\n");
+    expect(await winInstances.logs(inst.id, 0)).toBe("d\n"); // at least one line
   });
 
   test("no log file yet gives an empty answer; an unknown id is 404", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    expect(await s.logs(inst.id, 10)).toBe("");
-    expect(await status(s.logs("0".repeat(12), 10))).toBe(404);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    expect(await winInstances.logs(inst.id, 10)).toBe("");
+    expect(await status(winInstances.logs("0".repeat(12), 10))).toBe(404);
   });
 
   test("a big log is read from the end, without a partial first line", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
     await mkdir(join(dir, "logs"), { recursive: true });
     const line = "x".repeat(99) + "\n";
     await writeFile(join(dir, "logs", `${inst.id}.log`), line.repeat(10_000)); // 1 MB
-    const out = await s.logs(inst.id, 500);
+    const out = await winInstances.logs(inst.id, 500);
     expect(out.split("\n").filter(Boolean)).toHaveLength(500);
-    expect(out.split("\n").filter(Boolean).every((l) => l === "x".repeat(99))).toBe(true);
+    expect(
+      out
+        .split("\n")
+        .filter(Boolean)
+        .every((part) => part === "x".repeat(99)),
+    ).toBe(true);
   });
 });
 
 describe("restore and close", () => {
-  async function seed(entries: unknown[]) { await writeFile(stateFile(), JSON.stringify({ version: 1, instances: entries })); }
+  async function seed(entries: unknown[]) {
+    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: entries }));
+  }
 
   test("starts again what the state file lists", async () => {
-    await seed([{ id: instanceId(P1), path: P1, name: "one" }, { id: instanceId(P2), path: P2, name: "two" }]);
-    const s = make();
-    expect(await s.restore()).toBe(2);
+    await seed([
+      { id: instanceId(P1), path: P1, name: "one" },
+      { id: instanceId(P2), path: P2, name: "two" },
+    ]);
+    const winInstances = make();
+    expect(await winInstances.restore()).toBe(2);
     await flush();
-    expect(procs.map((p) => p.cwd).sort()).toEqual([P1, P2]);
-    expect((await s.list()).map((i) => i.state)).toEqual(["active", "active"]);
+    expect(procs.map((fakeProc) => fakeProc.cwd).sort()).toEqual([P1, P2]);
+    expect((await winInstances.list()).map((instance) => instance.state)).toEqual(["active", "active"]);
   });
 
   test("skips entries that are invalid, outside the roots, or whose id does not match the path", async () => {
@@ -323,10 +415,10 @@ describe("restore and close", () => {
       { id: instanceId(P1), path: P1, name: "-bad" },
       { id: instanceId(P1), path: P1, name: "good" },
     ]);
-    const s = make();
-    expect(await s.restore()).toBe(1);
+    const winInstances = make();
+    expect(await winInstances.restore()).toBe(1);
     await flush();
-    expect((await s.list()).map((i) => i.name)).toEqual(["good"]);
+    expect((await winInstances.list()).map((instance) => instance.name)).toEqual(["good"]);
   });
 
   test("a missing or broken state file starts nothing", async () => {
@@ -340,17 +432,17 @@ describe("restore and close", () => {
   test("a restored instance that cannot start is failed, not lost", async () => {
     await seed([{ id: instanceId(P1), path: P1, name: "one" }]);
     spawnError = new Error("no claude");
-    const s = make();
-    await s.restore();
+    const winInstances = make();
+    await winInstances.restore();
     await flush();
-    expect((await s.list())[0]!.state).toBe("failed");
+    expect((await winInstances.list())[0].state).toBe("failed");
   });
 
   test("close ends every process but keeps the state file, so restore brings them back", async () => {
-    const s = make();
-    await s.start({ path: P1 });
-    await s.start({ path: P2 });
-    await s.close();
+    const winInstances = make();
+    await winInstances.start({ path: P1 });
+    await winInstances.start({ path: P2 });
+    await winInstances.close();
     expect(killed.sort()).toEqual([100, 101]);
     const again = make();
     expect(await again.restore()).toBe(2);
@@ -360,13 +452,19 @@ describe("restore and close", () => {
 describe("taskkillTree", () => {
   test("runs taskkill on the whole tree", async () => {
     const calls: [string, string[]][] = [];
-    await taskkillTree(async (c, a) => { calls.push([c, a]); return { code: 0, stdout: "", stderr: "" }; })(4242);
+    await taskkillTree((cmd, args) => {
+      calls.push([cmd, args]);
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    })(4242);
     expect(calls).toEqual([["taskkill", ["/PID", "4242", "/T", "/F"]]]);
   });
 
   test("a process that is already gone (128) is fine; any other failure throws", async () => {
-    await taskkillTree(async () => ({ code: 128, stdout: "", stderr: "not found" }))(1);
-    await expect(taskkillTree(async () => ({ code: 1, stdout: "", stderr: "Access is denied." }))(1)).rejects.toThrow("Access is denied.");
+    await taskkillTree(() => Promise.resolve({ code: 128, stdout: "", stderr: "not found" }))(1);
+    expect(
+      (await rejection(taskkillTree(() => Promise.resolve({ code: 1, stdout: "", stderr: "Access is denied." }))(1)))
+        .message,
+    ).toContain("Access is denied.");
   });
 });
 
@@ -374,62 +472,96 @@ describe("restricted sessions", () => {
   let via: string[];
   let restrictedError: Error | null;
   let restrictedCalls = 0;
+
   function makeSvc(admin: boolean, withRestricted = true) {
-    const fake = (tag: string): ((cmd: string, args: string[], o: { cwd: string; logFile: string }) => Spawned) => (cmd, args, o) => {
-      if (tag === "restricted") restrictedCalls++;
-      if (tag === "restricted" && restrictedError) throw restrictedError;
-      let exit!: (c: number) => void;
-      const exited = new Promise<number>((r) => { exit = r; });
-      via.push(tag);
-      const p: FakeProc = { pid: nextPid++, exited, cmd, args, cwd: o.cwd, logFile: o.logFile, exit: (c = 1) => exit(c) };
-      procs.push(p);
-      return p;
-    };
+    const fake =
+      (tag: string): ((cmd: string, args: string[], event: { cwd: string; logFile: string }) => Spawned) =>
+      (cmd, args, options) => {
+        if (tag === "restricted") restrictedCalls++;
+        if (tag === "restricted" && restrictedError) throw restrictedError;
+        let exit!: (value: number) => void;
+        const exited = new Promise<number>((entry) => {
+          exit = entry;
+        });
+        via.push(tag);
+        const fakeProc: FakeProc = {
+          pid: nextPid++,
+          exited,
+          cmd,
+          args,
+          cwd: options.cwd,
+          logFile: options.logFile,
+          exit: (code = 1) => {
+            exit(code);
+          },
+        };
+        procs.push(fakeProc);
+        return fakeProc;
+      };
+
     return new WinInstances(opts({ serviceIsAdmin: admin }), {
       spawn: fake("full"),
       ...(withRestricted ? { spawnRestricted: fake("restricted") } : {}),
-      killTree: async (pid) => { killed.push(pid); procs.find((p) => p.pid === pid)?.exit(1); },
-      sleep: () => new Promise<void>((r) => { sleeps.push(r); }),
+      killTree: (pid) => {
+        killed.push(pid);
+        procs.find((fakeProc) => fakeProc.pid === pid)?.exit(1);
+        return Promise.resolve();
+      },
+      sleep: () =>
+        new Promise<void>((item) => {
+          sleeps.push(item);
+        }),
       now: () => new Date("2026-11-08T12:00:00Z"),
       resolvePath: resolve,
       trust,
       restartDelayMs: 10,
     });
   }
-  beforeEach(() => { via = []; restrictedError = null; restrictedCalls = 0; });
+
+  beforeEach(() => {
+    via = [];
+    restrictedError = null;
+    restrictedCalls = 0;
+  });
 
   test("administrator service lists two entries, the restricted one first", async () => {
-    expect(await makeSvc(true).users()).toEqual({ selectable: true, default: "svc", users: [{ name: "svc" }, { name: "svc (admin)" }] });
+    expect(await makeSvc(true).users()).toEqual({
+      selectable: true,
+      default: "svc",
+      users: [{ name: "svc" }, { name: "svc (admin)" }],
+    });
   });
 
   test("administrator service: default and bare user are restricted, (admin) is full", async () => {
-    const s = makeSvc(true);
-    const a = await s.start({ path: P1, user: undefined });
-    const b = await s.start({ path: P2, user: "svc" });
+    const winInstances = makeSvc(true);
+    const instance = await winInstances.start({ path: P1, user: undefined });
+    const item = await winInstances.start({ path: P2, user: "svc" });
     expect(via).toEqual(["restricted", "restricted"]);
-    expect(a.user).toBe("svc");
-    expect(b.user).toBe("svc");
-    await s.stop(a.id);
-    const c = await s.start({ path: P1, user: "svc (admin)" });
+    expect(instance.user).toBe("svc");
+    expect(item.user).toBe("svc");
+    await winInstances.stop(instance.id);
+    const entry = await winInstances.start({ path: P1, user: "svc (admin)" });
     expect(via).toEqual(["restricted", "restricted", "full"]);
-    expect(c.user).toBe("svc (admin)");
+    expect(entry.user).toBe("svc (admin)");
   });
 
   test("administrator service: every wrong user is 400 from start, dirOwnerFor and trustFilter", async () => {
-    const s = makeSvc(true);
-    for (const u of ["svc(admin)", "SVC (ADMIN)", "svc (admin) ", "other"]) {
-      expect(await status(s.start({ path: P1, user: u }))).toBe(400);
-      expect(await status(s.dirOwnerFor(u))).toBe(400);
-      expect(await status(s.trustFilter(u))).toBe(400);
+    const winInstances = makeSvc(true);
+
+    for (const item of ["svc(admin)", "SVC (ADMIN)", "svc (admin) ", "other"]) {
+      expect(await status(winInstances.start({ path: P1, user: item }))).toBe(400);
+      expect(await status(winInstances.dirOwnerFor(item))).toBe(400);
+      expect(await status(winInstances.trustFilter(item))).toBe(400);
     }
+
     expect(procs).toHaveLength(0);
   });
 
   test("standard service: one entry, no user on the instance, (admin) is 400, no restricted spawn", async () => {
-    const s = makeSvc(false, false);
-    expect(await s.users()).toEqual({ selectable: false, default: "svc", users: [{ name: "svc" }] });
-    expect(await status(s.start({ path: P1, user: "svc (admin)" }))).toBe(400);
-    const inst = await s.start({ path: P1 });
+    const winInstances = makeSvc(false, false);
+    expect(await winInstances.users()).toEqual({ selectable: false, default: "svc", users: [{ name: "svc" }] });
+    expect(await status(winInstances.start({ path: P1, user: "svc (admin)" }))).toBe(400);
+    const inst = await winInstances.start({ path: P1 });
     expect(inst.user).toBeUndefined();
     expect(via).toEqual(["full"]);
   });
@@ -439,22 +571,25 @@ describe("restricted sessions", () => {
   });
 
   test("admin round-trips through the state file; a file without it restores restricted", async () => {
-    const s = makeSvc(true);
-    await s.start({ path: P1, user: "svc (admin)" });
-    await s.start({ path: P2 });
+    const winInstances = makeSvc(true);
+    await winInstances.start({ path: P1, user: "svc (admin)" });
+    await winInstances.start({ path: P2 });
     const doc = JSON.parse(await readFile(stateFile(), "utf8"));
-    expect(doc.instances.find((i: { path: string }) => i.path === P1).admin).toBe(true);
-    expect(doc.instances.find((i: { path: string }) => i.path === P2).admin).toBeUndefined();
-    await s.close();
+    expect(doc.instances.find((instance: { path: string }) => instance.path === P1).admin).toBe(true);
+    expect(doc.instances.find((instance: { path: string }) => instance.path === P2).admin).toBeUndefined();
+    await winInstances.close();
     via.length = 0;
-    const r = makeSvc(true);
-    expect(await r.restore()).toBe(2);
+    const svc = makeSvc(true);
+    expect(await svc.restore()).toBe(2);
     await flush();
     expect([...via].sort()).toEqual(["full", "restricted"]);
-    expect((await r.list()).map((i) => i.user).sort()).toEqual(["svc", "svc (admin)"]);
-    await r.close();
+    expect((await svc.list()).map((instance) => instance.user).sort()).toEqual(["svc", "svc (admin)"]);
+    await svc.close();
 
-    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }));
+    await writeFile(
+      stateFile(),
+      JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }),
+    );
     via.length = 0;
     const r2 = makeSvc(true);
     await r2.restore();
@@ -465,55 +600,73 @@ describe("restricted sessions", () => {
 
   test("428 carries the chosen entry", async () => {
     trustedPaths.clear();
-    const s = makeSvc(true);
-    const err = (await s.start({ path: P1, user: "svc (admin)" }).catch((e) => e)) as HttpError;
+    const winInstances = makeSvc(true);
+    const err = (await winInstances.start({ path: P1, user: "svc (admin)" }).catch((error) => error)) as HttpError;
     expect(err.status).toBe(428);
     expect((err.extra as { user?: string }).user).toBe("svc (admin)");
-    const err2 = (await s.start({ path: P1 }).catch((e) => e)) as HttpError;
+    const err2 = (await winInstances.start({ path: P1 }).catch((error) => error)) as HttpError;
     expect((err2.extra as { user?: string }).user).toBe("svc");
   });
 
   test("a RestrictedTokenError from start is 500 and nothing is listed or saved", async () => {
     restrictedError = new RestrictedTokenError("no token");
-    const s = makeSvc(true);
-    expect(await status(s.start({ path: P1 }))).toBe(500);
-    expect(await s.list()).toEqual([]);
-    await expect(readFile(stateFile(), "utf8")).rejects.toThrow();
+    const winInstances = makeSvc(true);
+    expect(await status(winInstances.start({ path: P1 }))).toBe(500);
+    expect(await winInstances.list()).toEqual([]);
+    expect(await rejection(readFile(stateFile(), "utf8"))).toBeInstanceOf(Error);
   });
 
   test("a RestrictedTokenError on restore goes to failed, is tried once and logged once", async () => {
-    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }));
+    await writeFile(
+      stateFile(),
+      JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }),
+    );
     restrictedError = new RestrictedTokenError("no token");
     const logs: string[] = [];
     const orig = console.error;
-    console.error = (...a: unknown[]) => { logs.push(a.join(" ")); };
+
+    console.error = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+    };
+
     let calls = 0;
-    const s = makeSvc(true);
+    const winInstances = makeSvc(true);
+
     try {
-      await s.restore();
+      await winInstances.restore();
       await flush();
-      for (let i = 0; i < 5; i++) { sleeps.splice(0).forEach((r) => r()); await flush(); }
+
+      for (let index = 0; index < 5; index++) {
+        sleeps.splice(0).forEach((callback) => {
+          callback();
+        });
+        await flush();
+      }
+
       calls = restrictedCalls;
-      expect((await s.list())[0]!.state).toBe("failed");
-      await s.close();
-    } finally { console.error = orig; }
+      expect((await winInstances.list())[0].state).toBe("failed");
+      await winInstances.close();
+    } finally {
+      console.error = orig;
+    }
+
     expect(calls).toBe(1);
     expect(sleeps).toHaveLength(0);
-    expect(logs.filter((l) => l.includes("no token"))).toHaveLength(1);
+    expect(logs.filter((log) => log.includes("no token"))).toHaveLength(1);
     expect(JSON.parse(await readFile(stateFile(), "utf8")).instances).toHaveLength(1);
   });
 });
 
 describe("claudeHome", () => {
   test("returns the entry path and the service home", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    expect(await s.claudeHome(inst.id)).toEqual({ path: P1, home: "C:\\Users\\svc" });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    expect(await winInstances.claudeHome(inst.id)).toEqual({ path: P1, home: "C:\\Users\\svc" });
   });
   test("an unknown or bad id is 404", async () => {
-    const s = make();
-    expect(await status(s.claudeHome("0123456789ab"))).toBe(404);
-    expect(await status(s.claudeHome("x"))).toBe(404);
+    const winInstances = make();
+    expect(await status(winInstances.claudeHome("0123456789ab"))).toBe(404);
+    expect(await status(winInstances.claudeHome("x"))).toBe(404);
   });
 });
 
@@ -523,267 +676,331 @@ describe("instance settings", () => {
   const DEFAULT_ARGS = ["remote-control", "--name", "one", "--spawn", "same-dir"];
 
   /** Lets the wait after a change go on until the call ends. Only the probe sleeps end, so no restart delay passes. */
-  async function settle<T>(p: Promise<T>): Promise<T> {
+  async function settle<Value>(promise: Promise<Value>): Promise<Value> {
     let done = false;
-    p.then(() => { done = true; }, () => { done = true; });
+    promise.then(
+      () => {
+        done = true;
+      },
+      () => {
+        done = true;
+      },
+    );
     const deadline = Date.now() + 3_000;
+
     while (!done) {
       if (Date.now() > deadline) throw new Error("the change did not end");
       await flush();
-      probeSleeps.splice(0).forEach((r) => r());
+      probeSleeps.splice(0).forEach((callback) => {
+        callback();
+      });
     }
-    return p;
+
+    return promise;
   }
+
   /** Waits until `cond` is true. The file system work of a change needs more than one turn. */
   async function until(cond: () => boolean) {
     const deadline = Date.now() + 3_000;
     while (!cond() && Date.now() <= deadline) await flush();
     expect(cond()).toBe(true);
   }
+
   /** Waits for the wait after a change to begin, then ends `n` probe sleeps, so the wait is inside its window. */
-  async function probes(n: number) {
+  async function probes(count: number) {
     await until(() => probeSleeps.length > 0);
-    for (let i = 0; i < n; i++) {
+
+    for (let index = 0; index < count; index++) {
       await until(() => probeSleeps.length > 0);
-      probeSleeps.shift()!();
+      defined(probeSleeps.shift())();
     }
+
     await flush();
   }
-  const errOf = async (p: Promise<unknown>) => (await p.then(() => undefined, (e) => e)) as HttpError;
+
+  const errOf = async (promise: Promise<unknown>) =>
+    (await promise.then(
+      () => undefined,
+      (entry) => entry,
+    )) as HttpError;
   const fileRecord = async () => JSON.parse(await readFile(stateFile(), "utf8")).instances[0];
 
   test("start with settings passes the flags, saves them and returns them", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1, settings: { createSession: false } });
-    expect(procs[0]!.args).toEqual(NO_SESSION);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1, settings: { createSession: false } });
+    expect(procs[0].args).toEqual(NO_SESSION);
     expect(inst.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
-    expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "same-dir" });
-    expect((await s.list())[0]!.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(await fileRecord()).toEqual({
+      id: instanceId(P1),
+      path: P1,
+      name: "one",
+      createSession: false,
+      spawnMode: "same-dir",
+    });
+    expect((await winInstances.list())[0].settings).toEqual({ createSession: false, spawnMode: "same-dir" });
   });
 
   test("start: worktree in a folder that is not a repository is 400, a bad value is 400, nothing starts", async () => {
-    const s = make();
-    expect(await status(s.start({ path: P2, settings: { spawnMode: "worktree" } }))).toBe(400);
-    expect(await status(s.start({ path: P1, settings: { spawnMode: "elsewhere" as never } }))).toBe(400);
+    const winInstances = make();
+    expect(await status(winInstances.start({ path: P2, settings: { spawnMode: "worktree" } }))).toBe(400);
+    expect(await status(winInstances.start({ path: P1, settings: { spawnMode: "elsewhere" as never } }))).toBe(400);
     // the operator default counts too
-    const w = make({ claudeRcArgs: ["--spawn", "worktree"] });
-    expect(await status(w.start({ path: P2 }))).toBe(400);
+    const made = make({ claudeRcArgs: ["--spawn", "worktree"] });
+    expect(await status(made.start({ path: P2 }))).toBe(400);
     expect(procs).toHaveLength(0);
     expect(await readFile(stateFile(), "utf8").catch(() => null)).toBeNull();
   });
 
   test("the operator list gives the defaults and the instance values replace its managed flags", async () => {
-    const s = make({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir", "--verbose"] });
-    const inst = await s.start({ path: P1, settings: { createSession: true } });
+    const winInstances = make({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir", "--verbose"] });
+    const inst = await winInstances.start({ path: P1, settings: { createSession: true } });
     expect(inst.settings).toEqual({ createSession: true, spawnMode: "worktree" });
-    expect(procs[0]!.args).toEqual(["remote-control", "--name", "one", "--verbose", "--spawn", "worktree"]);
+    expect(procs[0].args).toEqual(["remote-control", "--name", "one", "--verbose", "--spawn", "worktree"]);
   });
 
   test("an old state file without settings restores with the defaults; after update the file has both fields", async () => {
-    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }));
-    const s = make();
-    expect(await s.restore()).toBe(1);
+    await writeFile(
+      stateFile(),
+      JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one" }] }),
+    );
+    const winInstances = make();
+    expect(await winInstances.restore()).toBe(1);
     await flush();
-    expect(procs[0]!.args).toEqual(DEFAULT_ARGS);
-    expect((await s.list())[0]!.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
-    const r = await settle(s.update(instanceId(P1), { createSession: false }));
-    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(r.applied).toBe(true);
-    expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "same-dir" });
+    expect(procs[0].args).toEqual(DEFAULT_ARGS);
+    expect((await winInstances.list())[0].settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    const updateResult = await settle(winInstances.update(instanceId(P1), { createSession: false }));
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.applied).toBe(true);
+    expect(await fileRecord()).toEqual({
+      id: instanceId(P1),
+      path: P1,
+      name: "one",
+      createSession: false,
+      spawnMode: "same-dir",
+    });
   });
 
   test("restore reads the settings of each record and spawns with them", async () => {
-    await writeFile(stateFile(), JSON.stringify({ version: 1, instances: [{ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "worktree" }] }));
-    const s = make();
-    await s.restore();
+    await writeFile(
+      stateFile(),
+      JSON.stringify({
+        version: 1,
+        instances: [{ id: instanceId(P1), path: P1, name: "one", createSession: false, spawnMode: "worktree" }],
+      }),
+    );
+    const winInstances = make();
+    await winInstances.restore();
     await flush();
-    expect(procs[0]!.args).toEqual(["remote-control", "--name", "one", "--spawn", "worktree", "--no-create-session-in-dir"]);
-    expect((await s.list())[0]!.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(procs[0].args).toEqual([
+      "remote-control",
+      "--name",
+      "one",
+      "--spawn",
+      "worktree",
+      "--no-create-session-in-dir",
+    ]);
+    expect((await winInstances.list())[0].settings).toEqual({ createSession: false, spawnMode: "worktree" });
   });
 
   test("update kills the tree once, starts the new settings at once and keeps them when the server stays up", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const p = s.update(inst.id, { createSession: false });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(0);
     expect(killed).toEqual([100]);
     expect(procs).toHaveLength(2);
-    expect(procs[1]!.args).toEqual(NO_SESSION);
+    expect(procs[1].args).toEqual(NO_SESSION);
     expect(sleeps).toHaveLength(0); // no restart delay
-    const r = await settle(p);
-    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
-    expect(r.instance.state).toBe("active");
+    const updateResult = await settle(update);
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(updateResult.instance.state).toBe("active");
     expect((await fileRecord()).createSession).toBe(false);
     expect(procs).toHaveLength(2);
   });
 
   test("the wait lasts the full 20 seconds of probes", async () => {
     const seen: number[] = [];
-    const s = make({}, { sleep: async (ms) => { if (ms === PROBE_INTERVAL_MS) seen.push(ms); else await new Promise(() => {}); } });
-    const inst = await s.start({ path: P1 });
-    await s.update(inst.id, { createSession: false });
-    expect(seen.reduce((a, b) => a + b, 0)).toBe(SETTLE_MS);
+    const winInstances = make(
+      {},
+      {
+        sleep: async (ms) => {
+          if (ms === PROBE_INTERVAL_MS) seen.push(ms);
+          else await new Promise(() => {});
+        },
+      },
+    );
+    const inst = await winInstances.start({ path: P1 });
+    await winInstances.update(inst.id, { createSession: false });
+    expect(seen.reduce((total, item) => total + item, 0)).toBe(SETTLE_MS);
   });
 
   test("a server that exits 69 inside the window: the old record and settings come back, 409 settings_refused", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const p = s.update(inst.id, { createSession: false });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(3);
-    expect(procs[1]!.args).toEqual(NO_SESSION);
-    procs[1]!.exit(69);
-    const err = await errOf(settle(p));
+    expect(procs[1].args).toEqual(NO_SESSION);
+    procs[1].exit(69);
+    const err = await errOf(settle(update));
     expect(err.status).toBe(409);
     expect(err.extra).toEqual({ code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } });
     expect(procs).toHaveLength(3);
-    expect(procs[2]!.args).toEqual(DEFAULT_ARGS);
-    expect(await fileRecord()).toEqual({ id: instanceId(P1), path: P1, name: "one", createSession: true, spawnMode: "same-dir" });
-    const now = (await s.list())[0]!;
+    expect(procs[2].args).toEqual(DEFAULT_ARGS);
+    expect(await fileRecord()).toEqual({
+      id: instanceId(P1),
+      path: P1,
+      name: "one",
+      createSession: true,
+      spawnMode: "same-dir",
+    });
+    const now = (await winInstances.list())[0];
     expect(now.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
     expect(now.state).toBe("active");
     // the lock is free again
-    expect(await status(settle(s.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
+    expect(await status(settle(winInstances.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
   });
 
   test("the log text 'already served' after the change counts as refused", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const p = s.update(inst.id, { createSession: false });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(1);
     await mkdir(join(dir, "logs"), { recursive: true });
     await writeFile(join(dir, "logs", `${inst.id}.log`), REFUSED_TEXT);
-    procs[1]!.exit(1);
-    expect((await errOf(settle(p))).extra).toMatchObject({ code: "settings_refused" });
+    procs[1].exit(1);
+    expect((await errOf(settle(update))).extra).toMatchObject({ code: "settings_refused" });
   });
 
   test("an 'already served' text from before the change does not count; other exits are settings_failed", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
     await mkdir(join(dir, "logs"), { recursive: true });
     await writeFile(join(dir, "logs", `${inst.id}.log`), REFUSED_TEXT);
-    const p = s.update(inst.id, { createSession: false });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(1);
-    procs[1]!.exit(1);
-    const err = await errOf(settle(p));
+    procs[1].exit(1);
+    const err = await errOf(settle(update));
     expect(err.status).toBe(409);
     expect(err.extra).toEqual({ code: "settings_failed", settings: { createSession: true, spawnMode: "same-dir" } });
-    expect(procs.at(-1)!.args).toEqual(DEFAULT_ARGS);
+    expect(defined(procs.at(-1)).args).toEqual(DEFAULT_ARGS);
   });
 
   test("an exit 69 from before the change does not make a healthy new server look refused", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    procs[0]!.exit(69); // a crash before the change: the supervisor waits to start it again
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    procs[0].exit(69); // a crash before the change: the supervisor waits to start it again
     await flush();
     expect(sleeps).toHaveLength(1);
-    const r = await settle(s.update(inst.id, { createSession: false }));
-    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    const updateResult = await settle(winInstances.update(inst.id, { createSession: false }));
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
     expect(procs).toHaveLength(2);
-    expect(procs[1]!.args).toEqual(NO_SESSION);
+    expect(procs[1].args).toEqual(NO_SESSION);
   });
 
   test("an exit 69 from before the change does not count when the new start fails", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    procs[0]!.exit(69);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    procs[0].exit(69);
     await flush();
     spawnError = new Error("disk gone");
-    const err = await errOf(settle(s.update(inst.id, { createSession: false })));
+    const err = await errOf(settle(winInstances.update(inst.id, { createSession: false })));
     expect(err.status).toBe(409);
     expect(err.extra).toMatchObject({ code: "settings_failed" });
   });
 
   test("two changes to one instance together: the second is 409, the first finishes", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const first = s.update(inst.id, { createSession: false });
-    const second = await errOf(s.update(inst.id, { spawnMode: "worktree" }));
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const first = winInstances.update(inst.id, { createSession: false });
+    const second = await errOf(winInstances.update(inst.id, { spawnMode: "worktree" }));
     expect(second.status).toBe(409);
     expect(second.message).toBe("change in progress");
-    const r = await settle(first);
-    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    const updateResult = await settle(first);
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
     expect(procs).toHaveLength(2);
   });
 
   test("a patch equal to the current settings does nothing", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const r = await s.update(inst.id, { createSession: true, spawnMode: "same-dir" });
-    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(r.instance.settings).toEqual(r.previous);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const updateResult = await winInstances.update(inst.id, { createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual(updateResult.previous);
     expect(killed).toEqual([]);
     expect(procs).toHaveLength(1);
   });
 
   test("bad input changes nothing and always frees the lock", async () => {
-    const s = make();
-    const inst = await s.start({ path: P2 });
-    expect(await status(s.update(inst.id, { spawnMode: "worktree" }))).toBe(400); // P2 is not a repository
-    expect(await status(s.update(inst.id, { createSession: "no" as never }))).toBe(400);
-    expect(await status(s.update("0".repeat(12), { createSession: false }))).toBe(404);
-    expect(await status(s.update("../x", { createSession: false }))).toBe(404);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P2 });
+    expect(await status(winInstances.update(inst.id, { spawnMode: "worktree" }))).toBe(400); // P2 is not a repository
+    expect(await status(winInstances.update(inst.id, { createSession: "no" as never }))).toBe(400);
+    expect(await status(winInstances.update("0".repeat(12), { createSession: false }))).toBe(404);
+    expect(await status(winInstances.update("../x", { createSession: false }))).toBe(404);
     expect(killed).toEqual([]);
     expect(await fileRecord()).toMatchObject({ createSession: true, spawnMode: "same-dir" });
-    expect(await status(settle(s.update(inst.id, { createSession: false })))).toBe("ok");
+    expect(await status(settle(winInstances.update(inst.id, { createSession: false })))).toBe("ok");
   });
 
   test("when the old process cannot be ended, the old record comes back and it is 409 settings_failed", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
     killError = new Error("access denied");
-    const err = await errOf(settle(s.update(inst.id, { createSession: false })));
+    const err = await errOf(settle(winInstances.update(inst.id, { createSession: false })));
     expect(err.status).toBe(409);
     expect(err.extra).toMatchObject({ code: "settings_failed" });
     expect(err.message).toContain("access denied");
     expect(await fileRecord()).toMatchObject({ createSession: true });
-    expect((await s.list())[0]!.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect((await winInstances.list())[0].settings).toEqual({ createSession: true, spawnMode: "same-dir" });
     expect(procs).toHaveLength(1); // the old process runs on
     killError = null;
-    expect(await status(settle(s.update(inst.id, { createSession: false })))).toBe("ok");
+    expect(await status(settle(winInstances.update(inst.id, { createSession: false })))).toBe("ok");
   });
 
   test("when the old record cannot be saved again, it is 500 undo_failed and the lock is free", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const p = s.update(inst.id, { createSession: false });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(1);
     // a folder where the state file must be: the next save fails
     await rm(stateFile());
     await mkdir(join(stateFile(), "x"), { recursive: true });
-    procs[1]!.exit(69);
-    const err = await errOf(settle(p));
+    procs[1].exit(69);
+    const err = await errOf(settle(update));
     expect(err.status).toBe(500);
     expect(err.extra).toEqual({ code: "undo_failed" });
     await rm(stateFile(), { recursive: true });
-    expect(await status(settle(s.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
+    expect(await status(settle(winInstances.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
   });
 
   test("stop during a change is 409 and leaves no process behind", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const p = s.update(inst.id, { createSession: false });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(1);
-    expect(await status(s.stop(inst.id))).toBe(409);
-    expect(await status(s.restart(inst.id))).toBe(409);
-    await settle(p);
-    await s.stop(inst.id);
-    expect(await s.list()).toEqual([]);
+    expect(await status(winInstances.stop(inst.id))).toBe(409);
+    expect(await status(winInstances.restart(inst.id))).toBe(409);
+    await settle(update);
+    await winInstances.stop(inst.id);
+    expect(await winInstances.list()).toEqual([]);
     expect(killed).toEqual([100, 101]);
     expect(procs).toHaveLength(2);
   });
 
   test("close during a change ends the change and starts nothing again", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    const p = s.update(inst.id, { createSession: false });
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    const update = winInstances.update(inst.id, { createSession: false });
     await probes(1);
-    await s.close();
-    const err = await errOf(settle(p));
+    await winInstances.close();
+    const err = await errOf(settle(update));
     expect(err.status).toBe(409);
     expect(err.extra).toMatchObject({ code: "settings_failed" });
     await flush();
-    sleeps.splice(0).forEach((r) => r());
+    sleeps.splice(0).forEach((callback) => {
+      callback();
+    });
     await flush();
     expect(procs).toHaveLength(2);
     expect(killed).toEqual([100, 101]);
@@ -791,71 +1008,81 @@ describe("instance settings", () => {
   });
 
   test("restart kills the tree once and the supervisor starts a new process at once, with no wait", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1, settings: { createSession: false } });
-    await s.restart(inst.id);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1, settings: { createSession: false } });
+    await winInstances.restart(inst.id);
     expect(killed).toEqual([100]);
     expect(procs).toHaveLength(2);
-    expect(procs[1]!.args).toEqual(NO_SESSION);
+    expect(procs[1].args).toEqual(NO_SESSION);
     expect(sleeps).toHaveLength(0);
-    expect((await s.list())[0]!.state).toBe("active");
+    expect((await winInstances.list())[0].state).toBe("active");
     // a later crash waits the restart delay as before
-    procs[1]!.exit(1);
+    procs[1].exit(1);
     await flush();
     expect(sleeps).toHaveLength(1);
     expect(procs).toHaveLength(2);
   });
 
   test("restart of an instance that waits to start again starts it at once", async () => {
-    const s = make();
-    const inst = await s.start({ path: P1 });
-    procs[0]!.exit(1);
+    const winInstances = make();
+    const inst = await winInstances.start({ path: P1 });
+    procs[0].exit(1);
     await flush();
-    await s.restart(inst.id);
+    await winInstances.restart(inst.id);
     expect(killed).toEqual([]);
     expect(procs).toHaveLength(2);
-    expect((await s.list())[0]!.state).toBe("active");
+    expect((await winInstances.list())[0].state).toBe("active");
   });
 
   test("restart: an unknown id is 404 and a kill that fails is 500", async () => {
-    const s = make();
-    expect(await status(s.restart("0".repeat(12)))).toBe(404);
-    const inst = await s.start({ path: P1 });
+    const winInstances = make();
+    expect(await status(winInstances.restart("0".repeat(12)))).toBe(404);
+    const inst = await winInstances.start({ path: P1 });
     killError = new Error("access denied");
-    expect(await status(s.restart(inst.id))).toBe(500);
+    expect(await status(winInstances.restart(inst.id))).toBe(500);
     killError = null;
-    await s.restart(inst.id);
+    await winInstances.restart(inst.id);
     expect(procs).toHaveLength(2);
   });
 });
 
 describe("persist", () => {
   test("two overlapping saves run one after another and the last one wins", async () => {
-    const s = make();
-    await s.start({ path: P1, name: "one" });
-    await s.start({ path: P2, name: "two" });
-    const save = () => (s as unknown as { persist(): Promise<void> }).persist();
-    const entry = (id: string) => (s as unknown as { entries: Map<string, { settings: { createSession: boolean } }> }).entries.get(id)!;
+    const winInstances = make();
+    await winInstances.start({ path: P1, name: "one" });
+    await winInstances.start({ path: P2, name: "two" });
+    const save = () => (winInstances as unknown as { persist(): Promise<void> }).persist();
+    const entry = (id: string) =>
+      defined(
+        (winInstances as unknown as { entries: Map<string, { settings: { createSession: boolean } }> }).entries.get(id),
+      );
     const all: Promise<void>[] = [];
-    for (let i = 0; i < 10; i++) {
-      entry(instanceId(P2)).settings.createSession = i % 2 === 0;
+
+    for (let index = 0; index < 10; index++) {
+      entry(instanceId(P2)).settings.createSession = index % 2 === 0;
       all.push(save());
     }
+
     entry(instanceId(P2)).settings.createSession = false;
     all.push(save());
     await Promise.all(all);
     const doc = JSON.parse(await readFile(stateFile(), "utf8"));
-    expect(doc.instances.find((x: { id: string }) => x.id === instanceId(P2)).createSession).toBe(false);
+    expect(doc.instances.find((instance: { id: string }) => instance.id === instanceId(P2)).createSession).toBe(false);
     expect(await Bun.file(`${stateFile()}.tmp`).exists()).toBe(false);
   });
 
   test("a failed save does not stop the next one", async () => {
-    const s = make();
-    await s.start({ path: P1, name: "one" });
-    const save = () => (s as unknown as { persist(): Promise<void> }).persist();
+    const winInstances = make();
+    await winInstances.start({ path: P1, name: "one" });
+    const save = () => (winInstances as unknown as { persist(): Promise<void> }).persist();
     await rm(dir, { recursive: true, force: true });
     await writeFile(dir, "not a folder");
-    expect(await save().then(() => "ok", () => "failed")).toBe("failed");
+    expect(
+      await save().then(
+        () => "ok",
+        () => "failed",
+      ),
+    ).toBe("failed");
     await rm(dir, { force: true });
     await save();
     expect(JSON.parse(await readFile(stateFile(), "utf8")).instances).toHaveLength(1);

@@ -1,8 +1,16 @@
 import { expect, test } from "vitest";
+import type { HostInfo } from "../hosts";
+import type { UpdateEntry } from "./api";
 import { busyReason, reloadDecision, windowsNames } from "./updatewarn";
 
 const now = new Date("2026-11-10T12:00:00Z");
-const run = { host: "a", startedAt: "2026-11-10T11:59:00Z", startedBy: "u", from: "1", status: "running" } as any;
+const run = {
+  host: "a",
+  startedAt: "2026-11-10T11:59:00Z",
+  startedBy: "u",
+  from: "1",
+  status: "running",
+} satisfies UpdateEntry;
 
 test("busyReason: a running update or a restarting host", () => {
   expect(busyReason({ id: "a", name: "a", status: "ok" }, run, now)).toBe("is updating");
@@ -23,6 +31,19 @@ test("reloadDecision", () => {
 });
 
 test("windowsNames keeps only Windows hosts", () => {
-  const hosts = [{ id: "w", name: "W", status: "ok", platform: "win32" }, { id: "l", name: "L", status: "ok", platform: "linux" }, { id: "x", name: "X", status: "ok" }] as any;
-  expect(windowsNames([{ id: "w", name: "W" }, { id: "l", name: "L" }, { id: "x", name: "X" }], hosts)).toEqual(["W"]);
+  const hosts = [
+    { id: "w", name: "W", status: "ok", platform: "win32" },
+    { id: "l", name: "L", status: "ok", platform: "linux" },
+    { id: "x", name: "X", status: "ok" },
+  ] satisfies HostInfo[];
+  expect(
+    windowsNames(
+      [
+        { id: "w", name: "W" },
+        { id: "l", name: "L" },
+        { id: "x", name: "X" },
+      ],
+      hosts,
+    ),
+  ).toEqual(["W"]);
 });

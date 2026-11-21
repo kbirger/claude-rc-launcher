@@ -2,7 +2,14 @@
 // only by import(). The editor builds only the lines in view, so a 512 KB file or one very long line opens at once.
 // It writes text nodes, never HTML, so text from a file cannot become markup.
 import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, WidgetType, highlightSpecialChars, lineNumbers } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  WidgetType,
+  highlightSpecialChars,
+  lineNumbers,
+} from "@codemirror/view";
 import { codeHighlight, codeTheme } from "./codetheme";
 import { collapsedRanges } from "./longlines";
 import { tooManySpecialChars } from "./specialchars";
@@ -44,7 +51,14 @@ class HiddenRest extends WidgetType {
 
 /** The hidden ends of the long lines of a text, as one decoration set (see longlines.ts). Empty for a normal text. */
 function hiddenRests(text: string): DecorationSet {
-  return Decoration.set(collapsedRanges(text).map((r) => Decoration.replace({ widget: new HiddenRest(r.to - r.from) }).range(r.from, r.to)));
+  return Decoration.set(
+    collapsedRanges(text).map((collapsedRange) =>
+      Decoration.replace({ widget: new HiddenRest(collapsedRange.to - collapsedRange.from) }).range(
+        collapsedRange.from,
+        collapsedRange.to,
+      ),
+    ),
+  );
 }
 
 export function createEditor(parent: HTMLElement, initial: EditorOptions): Editor {
@@ -54,6 +68,7 @@ export function createEditor(parent: HTMLElement, initial: EditorOptions): Edito
   const numbersC = new Compartment();
   const wrapExt = () => (opts.wrap ? EditorView.lineWrapping : []);
   const numbersExt = () => (opts.lineNumbers ? lineNumbers() : []);
+
   const build = () => {
     const rests = hiddenRests(opts.text);
     return EditorState.create({
@@ -76,6 +91,7 @@ export function createEditor(parent: HTMLElement, initial: EditorOptions): Edito
       ],
     });
   };
+
   const view = new EditorView({ parent, state: build() });
   return {
     setText(text) {
@@ -94,6 +110,7 @@ export function createEditor(parent: HTMLElement, initial: EditorOptions): Edito
       // of the lines it has not drawn: the line at the top moved by 5 to 19 lines on a 6,000 line file. We find that line
       // first and ask the view to scroll it back to the top once the new layout is known.
       const top = lineAtTopOfScreen(view);
+      // eslint-disable-next-line id-length -- "y" is the option name that CodeMirror defines
       if (top !== undefined) effects.push(EditorView.scrollIntoView(top, { y: "start", yMargin: 0 }));
       view.dispatch({ effects });
     },

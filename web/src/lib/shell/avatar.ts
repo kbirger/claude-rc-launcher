@@ -4,7 +4,7 @@ export async function gravatarUrl(email: string, size = 64): Promise<string | un
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) return undefined;
   const digest = await subtle.digest("SHA-256", new TextEncoder().encode(email.trim().toLowerCase()));
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = [...new Uint8Array(digest)].map((right) => right.toString(16).padStart(2, "0")).join("");
   return `https://www.gravatar.com/avatar/${hex}?s=${size}&d=404`;
 }
 
@@ -12,5 +12,8 @@ export async function gravatarUrl(email: string, size = 64): Promise<string | un
 export function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "?";
-  return words.slice(0, 2).map((w) => [...w][0]!.toUpperCase()).join("");
+  return words
+    .slice(0, 2)
+    .map((word) => [...word][0]!.toUpperCase())
+    .join("");
 }

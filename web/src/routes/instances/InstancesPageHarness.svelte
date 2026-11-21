@@ -5,11 +5,29 @@
   import { setShell } from "#lib/shell/context";
   import Page from "./+page.svelte";
 
-  let { client, hosts, selected = [], calls = [] }: { client: QueryClient; hosts: HostInfo[]; selected?: string[]; calls?: string[] } = $props();
+  let {
+    client,
+    hosts,
+    selected = [],
+    calls = [],
+  }: { client: QueryClient; hosts: HostInfo[]; selected?: string[]; calls?: string[] } = $props();
   setShell({
-    flow: { selected: "local", startError: "", openNew: () => calls.push("open"), pick: (id: string) => calls.push(`pick ${id}`) },
-    get hosts() { return hosts; },
-    nodes: { get selected() { return selected; }, toggle: () => {}, clear: () => {} },
+    flow: {
+      selected: "local",
+      startError: "",
+      openNew: () => calls.push("open"),
+      pick: (id: string) => calls.push(`pick ${id}`),
+    },
+    get hosts() {
+      return hosts;
+    },
+    nodes: {
+      get selected() {
+        return selected;
+      },
+      toggle: () => {},
+      clear: () => {},
+    },
     can: () => true,
   } as never);
 </script>

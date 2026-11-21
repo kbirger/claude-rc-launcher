@@ -28,6 +28,6 @@ export type MkdirArgs = { parent: string; name: string; user?: string };
 
 export const mkdirMutation = (host: string, client: QueryClient) => ({
   mutationKey: ["mkdir", host] as const,
-  mutationFn: (v: MkdirArgs) => mkdir(host, v.parent, v.name, v.user),
+  mutationFn: (mkdirArgs: MkdirArgs) => mkdir(host, mkdirArgs.parent, mkdirArgs.name, mkdirArgs.user),
   onSettled: () => client.invalidateQueries({ queryKey: ["browse", host] }),
 });

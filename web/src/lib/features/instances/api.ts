@@ -20,7 +20,15 @@ export type SettingsHelp = {
 };
 
 // An old node has no settings: the field is missing.
-export type Instance = { id: string; path: string; name: string; state: string; startedAt: string | null; user?: string; settings?: InstanceSettings };
+export type Instance = {
+  id: string;
+  path: string;
+  name: string;
+  state: string;
+  startedAt: string | null;
+  user?: string;
+  settings?: InstanceSettings;
+};
 
 export type StartOpts = { user?: string; addTrust?: boolean; createSession?: boolean; spawnMode?: SpawnMode };
 
@@ -34,27 +42,37 @@ export const startInstance = (host: string, path: string, name?: string, opts?: 
     ...(opts?.createSession !== undefined ? { createSession: opts.createSession } : {}),
     ...(opts?.spawnMode !== undefined ? { spawnMode: opts.spawnMode } : {}),
   });
-export const stopInstance = (host: string, id: string) => request<void>("DELETE", `${hostUrl(host)}/instances/${encodeURIComponent(id)}`);
-export const pauseInstance = (host: string, id: string) => request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/pause`);
-export const resumeInstance = (host: string, id: string) => request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/resume`);
+export const stopInstance = (host: string, id: string) =>
+  request<void>("DELETE", `${hostUrl(host)}/instances/${encodeURIComponent(id)}`);
+export const pauseInstance = (host: string, id: string) =>
+  request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/pause`);
+export const resumeInstance = (host: string, id: string) =>
+  request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/resume`);
 export const getLogs = async (host: string, id: string, lines = 100) =>
-  (await request<{ log: string }>("GET", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/logs?lines=${lines}`)).log;
+  (await request<{ log: string }>("GET", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/logs?lines=${lines}`))
+    .log;
 
 /** The settings help of the node. Null for an old node, which answers 404, or for an answer that is not a help object. */
 export async function getInstanceSettingsHelp(host: string): Promise<SettingsHelp | null> {
   try {
-    const h = await request<SettingsHelp>("GET", `${hostUrl(host)}/instance-settings`);
-    return h && Array.isArray(h.settings) ? h : null;
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return null;
-    throw e;
+    const response = await request<SettingsHelp>("GET", `${hostUrl(host)}/instance-settings`);
+    return response && Array.isArray(response.settings) ? response : null;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
 }
+
 /**
  * Changes the settings and restarts the instance. A refused or undone change answers 409 with the reason and the old settings.
  * `applied` is false when the instance is paused: the node only saved the change. An older node does not send it.
  */
 export const updateInstanceSettings = (host: string, id: string, patch: SettingsPatch) =>
-  request<{ instance: Instance; previous: InstanceSettings; applied?: boolean }>("PATCH", `${hostUrl(host)}/instances/${encodeURIComponent(id)}`, patch);
+  request<{ instance: Instance; previous: InstanceSettings; applied?: boolean }>(
+    "PATCH",
+    `${hostUrl(host)}/instances/${encodeURIComponent(id)}`,
+    patch,
+  );
 /** Restarts one instance with its current settings. */
-export const restartInstance = (host: string, id: string) => request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/restart`);
+export const restartInstance = (host: string, id: string) =>
+  request<void>("POST", `${hostUrl(host)}/instances/${encodeURIComponent(id)}/restart`);

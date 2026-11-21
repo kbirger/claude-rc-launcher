@@ -1,5 +1,15 @@
 import { describe, expect, test } from "vitest";
-import { LANGUAGES, MARKDOWN_LIMIT, PLAIN_PRE_LIMIT, PLAIN_PRE_LINE_LIMIT, longestLine, isMarkdownName, languageFor, showsInPre, viewKind } from "./viewkind";
+import {
+  LANGUAGES,
+  MARKDOWN_LIMIT,
+  PLAIN_PRE_LIMIT,
+  PLAIN_PRE_LINE_LIMIT,
+  longestLine,
+  isMarkdownName,
+  languageFor,
+  showsInPre,
+  viewKind,
+} from "./viewkind";
 
 describe("languageFor", () => {
   test("picks the grammar by extension, without case", () => {
@@ -23,7 +33,15 @@ describe("languageFor", () => {
     expect(languageFor("rules.mk")).toBe("makefile");
   });
   test("picks Dockerfile.<suffix> and <name>.dockerfile as dockerfile, in any case", () => {
-    for (const n of ["Dockerfile.dev", "Dockerfile.prod", "dockerfile.test", "DOCKERFILE.CI", "x.dockerfile", "sub/Dockerfile.dev"]) expect(languageFor(n), n).toBe("dockerfile");
+    for (const count of [
+      "Dockerfile.dev",
+      "Dockerfile.prod",
+      "dockerfile.test",
+      "DOCKERFILE.CI",
+      "x.dockerfile",
+      "sub/Dockerfile.dev",
+    ])
+      expect(languageFor(count), count).toBe("dockerfile");
     expect(languageFor("Dockerfilex")).toBeUndefined();
     expect(languageFor("my.Dockerfile.bak")).toBeUndefined();
   });
@@ -32,7 +50,19 @@ describe("languageFor", () => {
     expect(languageFor("C:\\proj\\Makefile")).toBe("makefile");
   });
   test("gives undefined for an unknown name, a hidden file with no extension, and names that match object keys", () => {
-    for (const n of ["notes.txt", "LICENSE", "", "a.", ".gitignore", "constructor", "x.constructor", "toString", "x.__proto__", "x.hasOwnProperty"]) expect(languageFor(n), n).toBeUndefined();
+    for (const count of [
+      "notes.txt",
+      "LICENSE",
+      "",
+      "a.",
+      ".gitignore",
+      "constructor",
+      "x.constructor",
+      "toString",
+      "x.__proto__",
+      "x.hasOwnProperty",
+    ])
+      expect(languageFor(count), count).toBeUndefined();
   });
   test("LANGUAGES has 16 distinct entries: 15 that a name can pick, and markdown", () => {
     expect(LANGUAGES.length).toBe(16);
@@ -40,16 +70,17 @@ describe("languageFor", () => {
     expect(LANGUAGES).toContain("markdown");
   });
   test("no file name picks the markdown language: markdown files have their own view", () => {
-    for (const n of ["a.md", "a.markdown", "README.md"]) expect(languageFor(n), n).toBeUndefined();
+    for (const count of ["a.md", "a.markdown", "README.md"]) expect(languageFor(count), count).toBeUndefined();
   });
 });
 
 describe("isMarkdownName", () => {
   test("accepts .md and .markdown without case", () => {
-    for (const n of ["README.md", "a.MD", "notes.markdown", "docs/a.Md"]) expect(isMarkdownName(n), n).toBe(true);
+    for (const count of ["README.md", "a.MD", "notes.markdown", "docs/a.Md"])
+      expect(isMarkdownName(count), count).toBe(true);
   });
   test("refuses other names", () => {
-    for (const n of ["md", "a.mdx", "a.md.txt", "a.mdc", ""]) expect(isMarkdownName(n), n).toBe(false);
+    for (const count of ["md", "a.mdx", "a.md.txt", "a.mdc", ""]) expect(isMarkdownName(count), count).toBe(false);
   });
 });
 
@@ -75,7 +106,10 @@ describe("viewKind", () => {
     expect(viewKind("a.md", 128 * 1024).kind).toBe("plain");
   });
   test("a too large markdown file has a note that names the limit and says characters", () => {
-    expect(viewKind("a.md", MARKDOWN_LIMIT + 1)).toEqual({ kind: "plain", note: "This file has more than 64 K characters (K is 1,024), which is too many to format. It shows as plain text." });
+    expect(viewKind("a.md", MARKDOWN_LIMIT + 1)).toEqual({
+      kind: "plain",
+      note: "This file has more than 64 K characters (K is 1,024), which is too many to format. It shows as plain text.",
+    });
   });
   test("a plain text shows in a pre box up to 8 K characters, inclusive", () => {
     expect(PLAIN_PRE_LIMIT).toBe(8192);

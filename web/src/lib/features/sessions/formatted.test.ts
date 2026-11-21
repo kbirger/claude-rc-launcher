@@ -7,9 +7,9 @@ const doc = (html: string) => new DOMParser().parseFromString(html, "text/html")
 
 describe("formatText", () => {
   test("markdown renders and the result is sanitized", async () => {
-    const r = await formatText("a.md", "# x");
-    expect(r.kind).toBe("markdown");
-    expect(doc(r.kind === "markdown" ? r.html : "").querySelector("h1")?.textContent).toBe("x");
+    const item = await formatText("a.md", "# x");
+    expect(item.kind).toBe("markdown");
+    expect(doc(item.kind === "markdown" ? item.html : "").querySelector("h1")?.textContent).toBe("x");
   });
   test("a file that is not markdown is plain at once: code is shown by CodeView", async () => {
     expect(await formatText("a.txt", "x")).toEqual({ kind: "plain" });
@@ -24,24 +24,26 @@ describe("formatText", () => {
     expect((await formatText("a.md", "x ".repeat(MARKDOWN_LIMIT / 2))).kind).toBe("markdown");
   });
   test("a file that is too complex is plain with its own note, different from the failed note", async () => {
-    const r = await formatText("a.md", "*a ".repeat(MARKDOWN_LIMIT / 6) + "a* ".repeat(MARKDOWN_LIMIT / 6));
-    expect(r).toEqual({ kind: "plain", note: TOO_COMPLEX_NOTE });
+    const item = await formatText("a.md", "*a ".repeat(MARKDOWN_LIMIT / 6) + "a* ".repeat(MARKDOWN_LIMIT / 6));
+    expect(item).toEqual({ kind: "plain", note: TOO_COMPLEX_NOTE });
     expect(TOO_COMPLEX_NOTE).not.toBe(FAILED_NOTE);
   });
   test("deep nesting does not throw: it renders or falls back to plain text with a note", async () => {
-    const r = await formatText("a.md", "> ".repeat(MARKDOWN_LIMIT / 2));
-    if (r.kind === "plain") expect([FAILED_NOTE, TOO_COMPLEX_NOTE]).toContain(r.note);
+    const item = await formatText("a.md", "> ".repeat(MARKDOWN_LIMIT / 2));
+    if (item.kind === "plain") expect([FAILED_NOTE, TOO_COMPLEX_NOTE]).toContain(item.note);
   });
 });
 
 describe("the real renderer on hostile text", () => {
   test("a script link and an image handler are removed from markdown", async () => {
-    const r = await formatText("a.md", "[x](javascript:1)\n\n<img src=x onerror=1>\n\n[ok](https://example.com)");
-    expect(r.kind).toBe("markdown");
-    const d = doc(r.kind === "markdown" ? r.html : "");
-    expect(d.querySelectorAll("img, script, [onerror]").length).toBe(0);
-    expect(Array.from(d.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual(["https://example.com"]);
-    expect(d.body.textContent).toContain("<img src=x onerror=1>");
-    expect(d.body.textContent).toContain("x");
+    const item = await formatText("a.md", "[x](javascript:1)\n\n<img src=x onerror=1>\n\n[ok](https://example.com)");
+    expect(item.kind).toBe("markdown");
+    const document = doc(item.kind === "markdown" ? item.html : "");
+    expect(document.querySelectorAll("img, script, [onerror]").length).toBe(0);
+    expect(Array.from(document.querySelectorAll("a")).map((anchor) => anchor.getAttribute("href"))).toEqual([
+      "https://example.com",
+    ]);
+    expect(document.body.textContent).toContain("<img src=x onerror=1>");
+    expect(document.body.textContent).toContain("x");
   });
 });

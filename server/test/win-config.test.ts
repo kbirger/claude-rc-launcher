@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError, parseConfig, windowsDataDir, type ConfigIo } from "../src/config";
+import { ConfigError, parseConfig, windowsDataDir } from "../src/config";
+import type { ConfigIo } from "../src/config";
 import { resolveConfigPath } from "../src/configfile";
 import { accountName, checkServiceAccount } from "../src/win/account";
+import { defined } from "./support";
 
 const io: ConfigIo = { readFile: () => "x".repeat(40) };
 const node = (extra: Record<string, unknown> = {}) => ({
@@ -13,31 +15,33 @@ const node = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 const win = (raw: unknown) => parseConfig(raw, io, { windows: true });
+
 const winProblems = (raw: unknown): string => {
   try {
     win(raw);
-  } catch (e) {
-    expect(e).toBeInstanceOf(ConfigError);
-    return (e as Error).message;
+  } catch (error) {
+    expect(error).toBeInstanceOf(ConfigError);
+    return (error as Error).message;
   }
+
   throw new Error("no throw");
 };
 
 describe("Windows node config", () => {
   test("defaults come from the running account and ProgramData", () => {
-    const c = win(node());
-    expect(c.mode).toBe("node");
-    expect(c.serviceUser).toBe(os.userInfo().username);
-    expect(c.serviceHome).toBe(os.homedir());
-    expect(c.roots).toEqual([os.homedir()]);
+    const config = win(node());
+    expect(config.mode).toBe("node");
+    expect(config.serviceUser).toBe(os.userInfo().username);
+    expect(config.serviceHome).toBe(os.homedir());
+    expect(config.roots).toEqual([os.homedir()]);
     // Built with Windows path rules whatever the host is: a Linux host has a different home folder.
-    expect(c.claudeBin).toBe(path.win32.join(c.serviceHome, ".local", "bin", "claude.exe"));
-    expect(c.claudeBin.toLowerCase()).toEndWith("\\.local\\bin\\claude.exe");
-    expect(c.claudeRcArgs).toEqual(["--spawn", "same-dir"]);
-    expect(c.node!.tls.stateDir).toBe(windowsDataDir());
-    expect(c.unitDir).toBe("");
-    expect(c.servicePath).toBe("");
-    expect(c.sshAuthSock).toBeUndefined();
+    expect(config.claudeBin).toBe(path.win32.join(config.serviceHome, ".local", "bin", "claude.exe"));
+    expect(config.claudeBin.toLowerCase()).toEndWith("\\.local\\bin\\claude.exe");
+    expect(config.claudeRcArgs).toEqual(["--spawn", "same-dir"]);
+    expect(defined(config.node).tls.stateDir).toBe(windowsDataDir());
+    expect(config.unitDir).toBe("");
+    expect(config.servicePath).toBe("");
+    expect(config.sshAuthSock).toBeUndefined();
   });
 
   test("the mode may be left out, and a hub is refused", () => {
@@ -47,16 +51,24 @@ describe("Windows node config", () => {
   });
 
   test("service_user, service_home, roots, claude_bin and Windows paths are honored", () => {
-    const c = win(node({
-      instance: { service_user: "svc", service_home: "D:\\Users\\svc", roots: ["D:\\work", "E:\\src"], claude_bin: "D:\\tools\\claude.exe", name_prefix: "win-" },
-      tls: { names: ["h"], state_dir: "D:\\data\\rc" },
-    }));
-    expect(c.serviceUser).toBe("svc");
-    expect(c.serviceHome).toBe("D:\\Users\\svc");
-    expect(c.roots).toEqual(["D:\\work", "E:\\src"]);
-    expect(c.claudeBin).toBe("D:\\tools\\claude.exe");
-    expect(c.namePrefix).toBe("win-");
-    expect(c.node!.tls.stateDir).toBe("D:\\data\\rc");
+    const config = win(
+      node({
+        instance: {
+          service_user: "svc",
+          service_home: "D:\\Users\\svc",
+          roots: ["D:\\work", "E:\\src"],
+          claude_bin: "D:\\tools\\claude.exe",
+          name_prefix: "win-",
+        },
+        tls: { names: ["h"], state_dir: "D:\\data\\rc" },
+      }),
+    );
+    expect(config.serviceUser).toBe("svc");
+    expect(config.serviceHome).toBe("D:\\Users\\svc");
+    expect(config.roots).toEqual(["D:\\work", "E:\\src"]);
+    expect(config.claudeBin).toBe("D:\\tools\\claude.exe");
+    expect(config.namePrefix).toBe("win-");
+    expect(defined(config.node).tls.stateDir).toBe("D:\\data\\rc");
   });
 
   test("a relative path is refused", () => {
@@ -64,8 +76,13 @@ describe("Windows node config", () => {
   });
 
   test("the systemd-only keys are errors, each named", () => {
-    const msg = winProblems(node({ instance: { scope: "user", unit_dir: "/etc/systemd/system", service_path: "/usr/bin", ssh_auth_sock: "/run/x" } }));
-    for (const k of ["scope", "unit_dir", "service_path", "ssh_auth_sock"]) expect(msg).toContain(`instance.${k} is not supported on Windows`);
+    const msg = winProblems(
+      node({
+        instance: { scope: "user", unit_dir: "/etc/systemd/system", service_path: "/usr/bin", ssh_auth_sock: "/run/x" },
+      }),
+    );
+    for (const key of ["scope", "unit_dir", "service_path", "ssh_auth_sock"])
+      expect(msg).toContain(`instance.${key} is not supported on Windows`);
     expect(msg).not.toContain("unknown key");
   });
 
@@ -74,11 +91,11 @@ describe("Windows node config", () => {
   });
 
   test("the same file without the windows option keeps the Linux behavior", () => {
-    const c = parseConfig(node({ instance: { scope: "user", service_user: "alice" } }), io);
-    expect(c.scope).toBe("user");
-    expect(c.serviceHome).toBe("/home/alice");
-    expect(c.unitDir).toBe("/home/alice/.config/systemd/user");
-    expect(c.node!.tls.stateDir).toBe("/var/lib/claude-rc-launcher");
+    const config = parseConfig(node({ instance: { scope: "user", service_user: "alice" } }), io);
+    expect(config.scope).toBe("user");
+    expect(config.serviceHome).toBe("/home/alice");
+    expect(config.unitDir).toBe("/home/alice/.config/systemd/user");
+    expect(defined(config.node).tls.stateDir).toBe("/var/lib/claude-rc-launcher");
   });
 });
 
@@ -99,11 +116,17 @@ describe("service account check", () => {
   });
 
   test("the same account passes", () => {
-    expect(() => checkServiceAccount("kir", "KIR")).not.toThrow();
-    expect(() => checkServiceAccount("PC\\kir", "kir")).not.toThrow();
+    expect(() => {
+      checkServiceAccount("kir", "KIR");
+    }).not.toThrow();
+    expect(() => {
+      checkServiceAccount("PC\\kir", "kir");
+    }).not.toThrow();
   });
 
   test("a different account fails with both names in the message", () => {
-    expect(() => checkServiceAccount("svc", "kir")).toThrow(/"svc".*"kir"/);
+    expect(() => {
+      checkServiceAccount("svc", "kir");
+    }).toThrow(/"svc".*"kir"/);
   });
 });

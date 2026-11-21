@@ -1,25 +1,37 @@
-import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor, type OidcClient, type User } from "../src/auth";
+import { describe, expect, test } from "bun:test";
+import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor } from "../src/auth";
+import type { OidcClient, User } from "../src/auth";
 import type { Config, OidcUserAuth } from "../src/config";
 import { DEFAULT_ROLES } from "../src/roles";
+import { rejection, defined } from "./support";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
-const withSecret = (c: Config, s: string): Config => ({ ...c, userAuth: { ...(c.userAuth as OidcUserAuth), sessionSecret: s } });
+const withSecret = (config: Config, item: string): Config => ({
+  ...config,
+  userAuth: { ...(config.userAuth as OidcUserAuth), sessionSecret: item },
+});
 const mkCfg = (publicUrl = "https://rc.example.com"): Config =>
-  ({ publicUrl, userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" } } }) as Config;
+  ({
+    publicUrl,
+    userAuth: {
+      mode: "oidc",
+      sessionSecret: "s3cret-s3cret-s3cret",
+      oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s" },
+    },
+  }) as Config;
 
 function stub(fail = false) {
   const calls: any[] = [];
   const oidc: OidcClient = {
-    async authorizationUrl(p) {
-      calls.push(["url", p]);
-      return `https://idp/authorize?state=${p.state}`;
+    authorizationUrl(options) {
+      calls.push(["url", options]);
+      return Promise.resolve(`https://idp/authorize?state=${options.state}`);
     },
-    async exchange(p) {
-      calls.push(["exchange", p]);
-      if (fail) throw new Error("bad code");
-      return user;
+    exchange(options) {
+      calls.push(["exchange", options]);
+      if (fail) return Promise.reject(new Error("bad code"));
+      return Promise.resolve(user);
     },
   };
   return { oidc, calls };
@@ -28,104 +40,123 @@ function stub(fail = false) {
 function build(cfg = mkCfg(), oidc = stub().oidc, now = () => 1_000_000) {
   const ua = oidcUserAuth(cfg, oidc, now);
   const app = new Hono();
-  app.route("/auth", ua.routes!);
+  app.route("/auth", defined(ua.routes));
   app.use("*", ua.middleware);
-  app.get("/", (c) => c.json({ user: c.get("user" as never) }));
-  app.get("/api/x", (c) => c.json({ ok: true }));
+  app.get("/", (context) => context.json({ user: context.get("user" as never) }));
+  app.get("/api/x", (context) => context.json({ ok: true }));
   return app;
 }
 
-const setCookies = (r: Response) => r.headers.getSetCookie();
-const find = (r: Response, name: string) => setCookies(r).find((c) => c.startsWith(name + "="));
-const pair = (sc: string) => sc.split(";")[0]!;
+const setCookies = (response: Response) => response.headers.getSetCookie();
+const find = (response: Response, name: string) =>
+  setCookies(response).find((setCooky) => setCooky.startsWith(name + "="));
+const pair = (sc: string) => sc.split(";")[0];
 const CLEARED = /Max-Age=0|Expires=Thu, 01 Jan 1970/;
-const tamper = (p: string) => p.slice(0, -4) + (p.slice(-4) === "AAAA" ? "BBBB" : "AAAA");
+const tamper = (item: string) => item.slice(0, -4) + (item.endsWith("AAAA") ? "BBBB" : "AAAA");
 
 async function login(app: Hono) {
-  const r = await app.request("/auth/login");
-  const sc = find(r, "oidc_state")!;
-  const url = new URL(r.headers.get("location")!);
-  return { r, sc, state: url.searchParams.get("state")! };
+  const response = await app.request("/auth/login");
+  const sc = defined(find(response, "oidc_state"));
+  const url = new URL(defined(response.headers.get("location")));
+  return { response: response, sc, state: defined(url.searchParams.get("state")) };
 }
 
 describe("login", () => {
   test("discovery failure -> 502 readable page, logged", async () => {
-    const oidc: OidcClient = { async authorizationUrl() { throw new Error("discovery down"); }, async exchange() { return user; } };
+    const oidc: OidcClient = {
+      authorizationUrl() {
+        return Promise.reject(new Error("discovery down"));
+      },
+      exchange() {
+        return Promise.resolve(user);
+      },
+    };
     const orig = console.error;
     const logged: unknown[][] = [];
-    console.error = (...a: unknown[]) => { logged.push(a); };
+
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+
     try {
-      const r = await build(mkCfg(), oidc).request("/auth/login");
-      expect(r.status).toBe(502);
-      expect(r.headers.get("content-type")).toContain("text/html");
-      expect(await r.text()).toContain("identity provider");
-      expect(find(r, "oidc_state")).toBeUndefined();
+      const response = await build(mkCfg(), oidc).request("/auth/login");
+      expect(response.status).toBe(502);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      expect(await response.text()).toContain("identity provider");
+      expect(find(response, "oidc_state")).toBeUndefined();
     } finally {
       console.error = orig;
     }
+
     expect(logged.length).toBe(1);
   });
   test("redirects to provider and sets short-lived signed state cookie", async () => {
-    const s = stub();
-    const app = build(mkCfg(), s.oidc);
-    const { r, sc, state } = await login(app);
-    expect(r.status).toBe(302);
-    expect(r.headers.get("location")).toStartWith("https://idp/authorize");
+    const recorder = stub();
+    const app = build(mkCfg(), recorder.oidc);
+    const { response: response, sc, state } = await login(app);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toStartWith("https://idp/authorize");
     expect(sc).toContain("HttpOnly");
     expect(sc).toContain("SameSite=Lax");
     expect(sc).toContain("Max-Age=600");
     expect(sc).toContain("Path=/auth");
-    expect(s.calls[0][1].redirectUri).toBe("https://rc.example.com/auth/callback");
-    expect(s.calls[0][1].codeVerifier.length).toBeGreaterThan(20);
+    expect(recorder.calls[0][1].redirectUri).toBe("https://rc.example.com/auth/callback");
+    expect(recorder.calls[0][1].codeVerifier.length).toBeGreaterThan(20);
     expect(state.length).toBeGreaterThan(10);
   });
   test("trailing slash on publicUrl is stripped", async () => {
-    const s = stub();
-    await build(mkCfg("https://rc.example.com/"), s.oidc).request("/auth/login");
-    expect(s.calls[0][1].redirectUri).toBe("https://rc.example.com/auth/callback");
+    const recorder = stub();
+    await build(mkCfg("https://rc.example.com/"), recorder.oidc).request("/auth/login");
+    expect(recorder.calls[0][1].redirectUri).toBe("https://rc.example.com/auth/callback");
   });
 });
 
 describe("allowed_users", () => {
   const withAllowed = (allowed: string[]): Config => {
-    const c = mkCfg();
-    return { ...c, userAuth: { ...(c.userAuth as OidcUserAuth), allowedUsers: allowed } } as Config;
+    const config = mkCfg();
+    return { ...config, userAuth: { ...(config.userAuth as OidcUserAuth), allowedUsers: allowed } };
   };
+
   test("user not on the list -> 403 and no session cookie", async () => {
-    const s = stub();
-    const app = build(withAllowed(["someone-else"]), s.oidc);
+    const recorder = stub();
+    const app = build(withAllowed(["someone-else"]), recorder.oidc);
     const { sc, state } = await login(app);
-    const r = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
-    expect(r.status).toBe(403);
-    expect(find(r, "session")).toBeUndefined();
+    const response = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
+    expect(response.status).toBe(403);
+    expect(find(response, "session")).toBeUndefined();
   });
   test("listed user (by email) gets a session", async () => {
-    const s = stub();
-    const app = build(withAllowed(["a@x.io"]), s.oidc);
+    const recorder = stub();
+    const app = build(withAllowed(["a@x.io"]), recorder.oidc);
     const { sc, state } = await login(app);
-    const r = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
-    expect(r.status).toBe(302);
-    expect(find(r, "session")).toBeDefined();
+    const response = await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } });
+    expect(response.status).toBe(302);
+    expect(find(response, "session")).toBeDefined();
   });
 });
 
 describe("allowed_users on an existing session", () => {
   const withAllowed = (allowed: string[] | undefined): Config => {
-    const c = mkCfg();
-    return { ...c, userAuth: { ...(c.userAuth as OidcUserAuth), ...(allowed ? { allowedUsers: allowed } : {}) } } as Config;
+    const config = mkCfg();
+    return {
+      ...config,
+      userAuth: { ...(config.userAuth as OidcUserAuth), ...(allowed ? { allowedUsers: allowed } : {}) },
+    };
   };
+
   const NOW = 1_000_000;
-  const session = (cfg: Config, u: User = user) => mintSessionCookie(cfg, u, NOW + 60_000);
+  const session = (cfg: Config, item: User = user) => mintSessionCookie(cfg, item, NOW + 60_000);
   const get = (app: Hono, path: string, cookie: string) => app.request(path, { headers: { cookie } });
 
   test("a session of a user who is no longer listed gets 403 on the API and on pages, and the cookie is cleared", async () => {
     const cookie = await session(withAllowed(undefined), { sub: "u9", name: "Gone", username: "gone" });
     const app = build(withAllowed(["a@x.io"]));
-    for (const p of ["/api/x", "/"]) {
-      const r = await get(app, p, cookie);
-      expect([p, r.status]).toEqual([p, 403]);
-      expect(await r.json()).toEqual({ error: "user is not allowed" });
-      expect(find(r, "session")).toMatch(CLEARED);
+
+    for (const path of ["/api/x", "/"]) {
+      const response = await get(app, path, cookie);
+      expect([path, response.status]).toEqual([path, 403]);
+      expect(await response.json()).toEqual({ error: "user is not allowed" });
+      expect(find(response, "session")).toMatch(CLEARED);
     }
   });
 
@@ -150,40 +181,44 @@ describe("allowed_users on an existing session", () => {
 
 describe("callback", () => {
   test("matching state sets session cookie and redirects to /", async () => {
-    const s = stub();
-    const app = build(mkCfg(), s.oidc);
+    const recorder = stub();
+    const app = build(mkCfg(), recorder.oidc);
     const { sc, state } = await login(app);
-    const r = await app.request(`/auth/callback?code=abc&state=${state}&next=//evil.com`, { headers: { cookie: pair(sc) } });
-    expect(r.status).toBe(302);
-    expect(r.headers.get("location")).toBe("/");
-    const sess = find(r, "session")!;
+    const response = await app.request(`/auth/callback?code=abc&state=${state}&next=//evil.com`, {
+      headers: { cookie: pair(sc) },
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/");
+    const sess = defined(find(response, "session"));
     expect(sess).toContain("HttpOnly");
     expect(sess).toContain("SameSite=Lax");
     expect(sess).toContain("Max-Age=43200");
     expect(sess).toContain("Path=/");
     expect(sess).toContain("Secure");
-    const ex = s.calls.find((c) => c[0] === "exchange")[1];
+    const ex = recorder.calls.find((call) => call[0] === "exchange")[1];
     expect(ex.state).toBe(state);
     expect(ex.callbackUrl.searchParams.get("code")).toBe("abc");
     expect(ex.redirectUri).toBe("https://rc.example.com/auth/callback");
-    expect(find(r, "oidc_state")).toMatch(CLEARED);
+    expect(find(response, "oidc_state")).toMatch(CLEARED);
     const me = await app.request("/", { headers: { cookie: pair(sess) } });
     expect(me.status).toBe(200);
-    expect(((await me.json()) as any).user).toEqual(user);
+    expect((await me.json()).user).toEqual(user);
   });
   test("Secure flag absent for http publicUrl", async () => {
     const app = build(mkCfg("http://localhost:8080"));
     const { sc, state } = await login(app);
-    const r = await app.request(`/auth/callback?code=a&state=${state}`, { headers: { cookie: pair(sc) } });
-    expect(find(r, "session")).toBeDefined();
-    expect(find(r, "session")).not.toContain("Secure");
+    const response = await app.request(`/auth/callback?code=a&state=${state}`, { headers: { cookie: pair(sc) } });
+    expect(find(response, "session")).toBeDefined();
+    expect(find(response, "session")).not.toContain("Secure");
   });
-  async function expectFail(r: Response) {
-    expect(r.status).toBe(400);
-    expect(((await r.json()) as any).error).toBeString();
-    expect(find(r, "session")).toBeUndefined();
-    expect(find(r, "oidc_state")).toMatch(CLEARED);
+
+  async function expectFail(response: Response) {
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBeString();
+    expect(find(response, "session")).toBeUndefined();
+    expect(find(response, "oidc_state")).toMatch(CLEARED);
   }
+
   test("missing state cookie -> 400", async () => {
     const app = build();
     const { state } = await login(app);
@@ -202,7 +237,9 @@ describe("callback", () => {
   test("tampered state cookie -> 400", async () => {
     const app = build();
     const { sc, state } = await login(app);
-    await expectFail(await app.request(`/auth/callback?code=a&state=${state}`, { headers: { cookie: tamper(pair(sc)) } }));
+    await expectFail(
+      await app.request(`/auth/callback?code=a&state=${state}`, { headers: { cookie: tamper(pair(sc)) } }),
+    );
   });
   test("exchange error -> 400, no session", async () => {
     const app = build(mkCfg(), stub(true).oidc);
@@ -213,48 +250,56 @@ describe("callback", () => {
 
 describe("logout", () => {
   test("clears session and redirects to /", async () => {
-    const r = await build().request("/auth/logout");
-    expect(r.status).toBe(302);
-    expect(r.headers.get("location")).toBe("/");
-    expect(find(r, "session")).toMatch(CLEARED);
+    const response = await build().request("/auth/logout");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/");
+    expect(find(response, "session")).toMatch(CLEARED);
   });
   test("ends the identity provider session when the provider supports it", async () => {
     const asked: string[] = [];
     const oidc: OidcClient = {
       ...stub().oidc,
-      async endSessionUrl(p) {
-        asked.push(p.postLogoutRedirectUri);
-        return `https://idp/end-session/?post_logout_redirect_uri=${encodeURIComponent(p.postLogoutRedirectUri)}`;
+      endSessionUrl(options) {
+        asked.push(options.postLogoutRedirectUri);
+        return Promise.resolve(
+          `https://idp/end-session/?post_logout_redirect_uri=${encodeURIComponent(options.postLogoutRedirectUri)}`,
+        );
       },
     };
-    const r = await build(mkCfg(), oidc).request("/auth/logout");
-    expect(r.status).toBe(302);
-    expect(r.headers.get("location")).toStartWith("https://idp/end-session/");
+    const response = await build(mkCfg(), oidc).request("/auth/logout");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toStartWith("https://idp/end-session/");
     expect(asked).toEqual(["https://rc.example.com/"]);
-    expect(find(r, "session")).toMatch(CLEARED);
+    expect(find(response, "session")).toMatch(CLEARED);
   });
   test("provider has no end-session endpoint or is down: still clears session and goes to /", async () => {
-    const oidc: OidcClient = { ...stub().oidc, async endSessionUrl() { throw new Error("no end_session_endpoint"); } };
-    const r = await build(mkCfg(), oidc).request("/auth/logout");
-    expect(r.headers.get("location")).toBe("/");
-    expect(find(r, "session")).toMatch(CLEARED);
+    const oidc: OidcClient = {
+      ...stub().oidc,
+      endSessionUrl() {
+        return Promise.reject(new Error("no end_session_endpoint"));
+      },
+    };
+    const response = await build(mkCfg(), oidc).request("/auth/logout");
+    expect(response.headers.get("location")).toBe("/");
+    expect(find(response, "session")).toMatch(CLEARED);
   });
 });
 
 describe("requireUser", () => {
   async function session(app: Hono) {
     const { sc, state } = await login(app);
-    const r = await app.request(`/auth/callback?code=a&state=${state}`, { headers: { cookie: pair(sc) } });
-    return pair(find(r, "session")!);
+    const response = await app.request(`/auth/callback?code=a&state=${state}`, { headers: { cookie: pair(sc) } });
+    return pair(defined(find(response, "session")));
   }
+
   test("no cookie: 401 for api, 302 for pages", async () => {
     const app = build();
-    const a = await app.request("/api/x");
-    expect(a.status).toBe(401);
-    expect(await a.json()).toEqual({ error: "unauthenticated" });
-    const p = await app.request("/");
-    expect(p.status).toBe(302);
-    expect(p.headers.get("location")).toBe("/auth/login");
+    const response = await app.request("/api/x");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthenticated" });
+    const reply = await app.request("/");
+    expect(reply.status).toBe(302);
+    expect(reply.headers.get("location")).toBe("/auth/login");
   });
   test("valid session passes", async () => {
     const app = build();
@@ -268,17 +313,25 @@ describe("requireUser", () => {
     expect((await app.request("/", { headers: { cookie: tamper(ck) } })).status).toBe(302);
   });
   test("payload tampered with old signature rejected", async () => {
-    let t = 1_000_000;
-    const app = build(mkCfg(), stub().oidc, () => t);
+    const item = 1_000_000;
+    const app = build(mkCfg(), stub().oidc, () => item);
     const ck = await session(app);
     const decoded = decodeURIComponent(ck.slice("session=".length));
-    const i = decoded.lastIndexOf(".");
-    const payload = JSON.parse(decoded.slice(0, i));
-    const sig = decoded.slice(i);
-    const forge = (p: object) => `session=${encodeURIComponent(JSON.stringify(p) + sig)}`;
+    const position = decoded.lastIndexOf(".");
+    const payload = JSON.parse(decoded.slice(0, position));
+    const sig = decoded.slice(position);
+    const forge = (value: object) => `session=${encodeURIComponent(JSON.stringify(value) + sig)}`;
     expect((await app.request("/api/x", { headers: { cookie: ck } })).status).toBe(200);
-    expect((await app.request("/api/x", { headers: { cookie: forge({ ...payload, exp: payload.exp + 1e9 }) } })).status).toBe(401);
-    expect((await app.request("/api/x", { headers: { cookie: forge({ ...payload, user: { ...payload.user, sub: "admin" } }) } })).status).toBe(401);
+    expect(
+      (await app.request("/api/x", { headers: { cookie: forge({ ...payload, exp: payload.exp + 1e9 }) } })).status,
+    ).toBe(401);
+    expect(
+      (
+        await app.request("/api/x", {
+          headers: { cookie: forge({ ...payload, user: { ...payload.user, sub: "admin" } }) },
+        })
+      ).status,
+    ).toBe(401);
   });
   test("state cookie value is not accepted as a session", async () => {
     const app = build();
@@ -287,9 +340,9 @@ describe("requireUser", () => {
     expect((await app.request("/api/x", { headers: { cookie: forged } })).status).toBe(401);
   });
   test("exact /api is treated as API (401 json)", async () => {
-    const r = await build().request("/api");
-    expect(r.status).toBe(401);
-    expect(await r.json()).toEqual({ error: "unauthenticated" });
+    const response = await build().request("/api");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthenticated" });
   });
   test("cookie signed with another secret rejected", async () => {
     const other = build(withSecret(mkCfg(), "different-secret-value"));
@@ -297,12 +350,12 @@ describe("requireUser", () => {
     expect((await build().request("/api/x", { headers: { cookie: ck } })).status).toBe(401);
   });
   test("expired cookie rejected via injected clock", async () => {
-    let t = 1_000_000;
-    const app = build(mkCfg(), stub().oidc, () => t);
+    let item = 1_000_000;
+    const app = build(mkCfg(), stub().oidc, () => item);
     const ck = await session(app);
-    t += 12 * 3600 * 1000 - 1;
+    item += 12 * 3600 * 1000 - 1;
     expect((await app.request("/api/x", { headers: { cookie: ck } })).status).toBe(200);
-    t += 1;
+    item += 1;
     expect((await app.request("/api/x", { headers: { cookie: ck } })).status).toBe(401);
     expect((await app.request("/", { headers: { cookie: ck } })).status).toBe(302);
   });
@@ -311,26 +364,41 @@ describe("requireUser", () => {
 test("createOidcClient does not contact the IdP until first use", async () => {
   const cfg = mkCfg();
   (cfg.userAuth as OidcUserAuth).oidc.issuer = "http://127.0.0.1:1/";
-  const c = await createOidcClient(cfg);
-  await expect(c.authorizationUrl({ redirectUri: "http://x/cb", state: "s", codeVerifier: "v".repeat(43) })).rejects.toThrow();
+  const oidcClient = createOidcClient(cfg);
+  expect(
+    await rejection(
+      oidcClient.authorizationUrl({ redirectUri: "http://x/cb", state: "s", codeVerifier: "v".repeat(43) }),
+    ),
+  ).toBeInstanceOf(Error);
 });
 
 describe("roles", () => {
-  const callbackWith = async (u: User, cfg = mkCfg()) => {
-    const oidc: OidcClient = { async authorizationUrl(p) { return `https://idp/authorize?state=${p.state}`; }, async exchange() { return u; } };
+  const callbackWith = async (item: User, cfg = mkCfg()) => {
+    const oidc: OidcClient = {
+      authorizationUrl(options) {
+        return Promise.resolve(`https://idp/authorize?state=${options.state}`);
+      },
+      exchange() {
+        return Promise.resolve(item);
+      },
+    };
     const app = build(cfg, oidc);
     const { sc, state } = await login(app);
-    return { app, r: await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } }) };
+    return {
+      app,
+      response: await app.request(`/auth/callback?code=abc&state=${state}`, { headers: { cookie: pair(sc) } }),
+    };
   };
+
   test("the role none gives 403 and no session cookie", async () => {
-    const { r } = await callbackWith({ ...user, role: "none" });
-    expect(r.status).toBe(403);
-    expect(await r.json()).toEqual({ error: "access refused" });
-    expect(find(r, "session")).toBeUndefined();
+    const { response: response } = await callbackWith({ ...user, role: "none" });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "access refused" });
+    expect(find(response, "session")).toBeUndefined();
   });
   test("the role is kept in the session", async () => {
-    const { app, r } = await callbackWith({ ...user, role: "write" });
-    const cookie = pair(find(r, "session")!);
+    const { app, response: response } = await callbackWith({ ...user, role: "write" });
+    const cookie = pair(defined(find(response, "session")));
     const me = await app.request("/", { headers: { cookie } });
     expect(((await me.json()) as { user: User }).user.role).toBe("write");
   });
@@ -345,10 +413,10 @@ describe("roles", () => {
     expect(((await me.json()) as { user: User }).user.role).toBeUndefined();
   });
   test("the cookie life follows session_ttl_hours, and is 12 hours without it", async () => {
-    const c = mkCfg();
-    const two = { ...c, userAuth: { ...(c.userAuth as OidcUserAuth), sessionTtlHours: 2 } } as Config;
-    expect(find((await callbackWith(user, two)).r, "session")).toContain("Max-Age=7200");
-    expect(find((await callbackWith(user)).r, "session")).toContain("Max-Age=43200");
+    const config = mkCfg();
+    const two = { ...config, userAuth: { ...(config.userAuth as OidcUserAuth), sessionTtlHours: 2 } } as Config;
+    expect(find((await callbackWith(user, two)).response, "session")).toContain("Max-Age=7200");
+    expect(find((await callbackWith(user)).response, "session")).toContain("Max-Age=43200");
   });
   test("the scope adds the role scope when one is set", () => {
     expect(scopeFor(DEFAULT_ROLES)).toBe("openid email profile clauderc");

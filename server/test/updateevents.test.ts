@@ -1,37 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { type NodeEvent, NodeEvents } from "../src/updateevents";
+import { NodeEvents } from "../src/updateevents";
+import type { NodeEvent } from "../src/updateevents";
 
 const fixed = () => new Date("2026-11-10T10:00:00.000Z");
 
 describe("NodeEvents", () => {
   test("hooks reach every subscriber in order", () => {
     const ev = new NodeEvents({ now: fixed });
-    const a: NodeEvent[] = [];
-    const b: NodeEvent[] = [];
-    ev.subscribe((e) => a.push(e));
-    ev.subscribe((e) => b.push(e));
-    const h = ev.hooks();
-    h.onStep({ step: "downloading", to: "1.2.3" });
-    h.onLog("hello");
-    h.onStep({ step: "verifying" });
+    const nodeEvents: NodeEvent[] = [];
+    const item: NodeEvent[] = [];
+    ev.subscribe((nodeEvent) => nodeEvents.push(nodeEvent));
+    ev.subscribe((nodeEvent) => item.push(nodeEvent));
+    const required = ev.hooks();
+    required.onStep({ step: "downloading", to: "1.2.3" });
+    required.onLog("hello");
+    required.onStep({ step: "verifying" });
     const want: NodeEvent[] = [
       { type: "step", step: "downloading", to: "1.2.3" },
       { type: "log", line: "hello", at: "2026-11-10T10:00:00.000Z" },
       { type: "step", step: "verifying" },
     ];
-    expect(a).toEqual(want);
-    expect(b).toEqual(want);
+    expect(nodeEvents).toEqual(want);
+    expect(item).toEqual(want);
   });
 
   test("lines keeps only the last maxLines", () => {
     const ev = new NodeEvents({ now: fixed, maxLines: 3 });
-    for (const l of ["1", "2", "3", "4"]) ev.hooks().onLog(l);
-    expect(ev.lines().map((x) => x.line)).toEqual(["2", "3", "4"]);
+    for (const item of ["1", "2", "3", "4"]) ev.hooks().onLog(item);
+    expect(ev.lines().map((line) => line.line)).toEqual(["2", "3", "4"]);
   });
 
   test("lines defaults to 200", () => {
     const ev = new NodeEvents({ now: fixed });
-    for (let i = 0; i < 250; i++) ev.hooks().onLog(String(i));
+    for (let index = 0; index < 250; index++) ev.hooks().onLog(String(index));
     expect(ev.lines()).toHaveLength(200);
     expect(ev.lines()[0].line).toBe("50");
   });
@@ -66,13 +67,13 @@ describe("NodeEvents", () => {
     ev.hooks().onStep({ step: "downloading", to: "2" });
     expect(ev.lines()).toEqual([]);
     ev.hooks().onLog("new");
-    expect(ev.lines().map((x) => x.line)).toEqual(["new"]);
+    expect(ev.lines().map((line) => line.line)).toEqual(["new"]);
   });
 
   test("unsubscribed listener gets nothing", () => {
     const ev = new NodeEvents({ now: fixed });
     const got: NodeEvent[] = [];
-    const off = ev.subscribe((e) => got.push(e));
+    const off = ev.subscribe((nodeEvent) => got.push(nodeEvent));
     ev.hooks().onLog("a");
     off();
     ev.hooks().onLog("b");
@@ -85,8 +86,10 @@ describe("NodeEvents", () => {
     ev.subscribe(() => {
       throw new Error("bad");
     });
-    ev.subscribe((e) => got.push(e));
-    expect(() => ev.hooks().onLog("a")).not.toThrow();
+    ev.subscribe((nodeEvent) => got.push(nodeEvent));
+    expect(() => {
+      ev.hooks().onLog("a");
+    }).not.toThrow();
     expect(got).toHaveLength(1);
   });
 

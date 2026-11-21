@@ -1,6 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HttpError } from "./instances";
+import { hasOwn } from "./requests";
 import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 import type { SystemUser } from "./users";
 
@@ -15,22 +16,24 @@ export interface TrustStore {
   add(user: TrustOwner, absPath: string): Promise<void>;
 }
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function isTrustedIn(doc: unknown, absPath: string): boolean {
   if (!isObject(doc) || !isObject(doc.projects)) return false;
   const projects = doc.projects;
-  let p = absPath;
+  let current = absPath;
+
   for (;;) {
-    if (Object.hasOwn(projects, p)) {
-      const entry = projects[p];
-      if (isObject(entry) && entry.hasTrustDialogAccepted === true) return true;
+    if (hasOwn(projects, current)) {
+      const project = projects[current];
+      if (isObject(project) && project.hasTrustDialogAccepted === true) return true;
     }
-    const parent = dirname(p);
-    if (parent === p) return false;
-    p = parent;
+
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
   }
 }
 
@@ -41,37 +44,44 @@ type ReadResult =
 
 /** The trust file as a JSON object. The safe open (no symlink, no hard link, no FIFO, size cap) is in safefile.ts. */
 async function readDoc(file: string): Promise<ReadResult> {
-  const r = await readUserFile(file);
-  if (r.kind !== "ok") return r;
+  const fileRead = await readUserFile(file);
+  if (fileRead.kind !== "ok") return fileRead;
+
   try {
-    const doc = JSON.parse(r.bytes.toString("utf8"));
-    return isObject(doc) ? { kind: "ok", doc, mode: r.mode } : { kind: "invalid", reason: "it is not a JSON object" };
+    const doc: unknown = JSON.parse(fileRead.bytes.toString("utf8"));
+    return isObject(doc)
+      ? { kind: "ok", doc, mode: fileRead.mode }
+      : { kind: "invalid", reason: "it is not a JSON object" };
   } catch {
     return { kind: "invalid", reason: "it is not valid JSON" };
   }
 }
 
-export function fileTrust(o: {
-  chown?: (fh: FileHandle, uid: number, gid: number) => Promise<void>;
-  isRoot?: () => boolean;
-} = {}): TrustStore {
-  const chown = o.chown ?? ((fh, uid, gid) => fh.chown(uid, gid));
-  const isRoot = o.isRoot ?? (() => process.getuid?.() === 0);
+export function fileTrust(
+  options: {
+    chown?: (fh: FileHandle, uid: number, gid: number) => Promise<void>;
+    isRoot?: () => boolean;
+  } = {},
+): TrustStore {
+  const chown = options.chown ?? ((fh, uid, gid) => fh.chown(uid, gid));
+  const isRoot = options.isRoot ?? (() => process.getuid?.() === 0);
   const queues = new Map<string, Promise<unknown>>();
 
   // One add at a time per home, so two parallel read-modify-write cycles cannot lose an update.
-  function serial<T>(home: string, job: () => Promise<T>): Promise<T> {
+  function serial<Value>(home: string, job: () => Promise<Value>): Promise<Value> {
     const run = (queues.get(home) ?? Promise.resolve()).then(job, job);
     const tail = run.catch(() => {});
     queues.set(home, tail);
-    void tail.then(() => { if (queues.get(home) === tail) queues.delete(home); });
+    void tail.then(() => {
+      if (queues.get(home) === tail) queues.delete(home);
+    });
     return run;
   }
 
   return {
     async checker(home) {
-      const r = await readDoc(join(home, ".claude.json"));
-      const doc = r.kind === "ok" ? r.doc : null;
+      const readResult = await readDoc(join(home, ".claude.json"));
+      const doc = readResult.kind === "ok" ? readResult.doc : null;
       return (absPath) => isTrustedIn(doc, absPath);
     },
 
@@ -81,23 +91,32 @@ export function fileTrust(o: {
   };
 
   async function addOne(user: TrustOwner, absPath: string): Promise<void> {
-      const file = join(user.home, ".claude.json");
-      const r = await readDoc(file);
-      if (r.kind === "invalid") throw new HttpError(500, `cannot read the user's .claude.json: ${r.reason}`);
-      const doc = r.kind === "ok" ? r.doc : {};
-      const projects = isObject(doc.projects) ? doc.projects : {};
-      const prev = projects[absPath];
-      projects[absPath] = { ...(isObject(prev) ? prev : {}), hasTrustDialogAccepted: true };
-      doc.projects = projects;
+    const file = join(user.home, ".claude.json");
+    const readResult = await readDoc(file);
+    if (readResult.kind === "invalid")
+      throw new HttpError(500, `cannot read the user's .claude.json: ${readResult.reason}`);
+    const doc = readResult.kind === "ok" ? readResult.doc : {};
+    const projects = isObject(doc.projects) ? doc.projects : {};
+    const prev = projects[absPath];
+    projects[absPath] = { ...(isObject(prev) ? prev : {}), hasTrustDialogAccepted: true };
+    doc.projects = projects;
 
-      // The mode comes from the file that was read. The owner is always the target user from passwd,
-      // never the owner of what was found at the path. The shared writer does the temp file and the rename.
-      try {
-        await writeUserFile(file, Buffer.from(JSON.stringify(doc, null, 2) + "\n"), { ownerUid: user.uid, gid: user.gid, checkOwner: false, chown, isRoot });
-      } catch (e) {
-        if (e instanceof FileRefused) throw new HttpError(500, `cannot write the user's .claude.json: ${e.reason}`);
-        if (e instanceof FileConflict) throw new HttpError(500, "cannot write the user's .claude.json: it changed while it was written");
-        throw e;
-      }
+    // The mode comes from the file that was read. The owner is always the target user from passwd,
+    // never the owner of what was found at the path. The shared writer does the temp file and the rename.
+    try {
+      await writeUserFile(file, Buffer.from(JSON.stringify(doc, null, 2) + "\n"), {
+        ownerUid: user.uid,
+        gid: user.gid,
+        checkOwner: false,
+        chown,
+        isRoot,
+      });
+    } catch (error) {
+      if (error instanceof FileRefused)
+        throw new HttpError(500, `cannot write the user's .claude.json: ${error.reason}`);
+      if (error instanceof FileConflict)
+        throw new HttpError(500, "cannot write the user's .claude.json: it changed while it was written");
+      throw error;
+    }
   }
 }

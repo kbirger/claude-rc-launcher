@@ -41,7 +41,9 @@ export const filesQuery = (host: string, instance: string, session: string, path
 
 // One read each time a file opens: no cache is kept once it closes.
 export const previewQuery = (host: string, instance: string, session: string, path: string, abs = false) => ({
-  queryKey: (abs ? ["session-preview", host, instance, session, "abs", path] : ["session-preview", host, instance, session, path]) as readonly string[],
+  queryKey: (abs
+    ? ["session-preview", host, instance, session, "abs", path]
+    : ["session-preview", host, instance, session, path]) as readonly string[],
   queryFn: () => getPreview(host, instance, session, path, { abs }),
   staleTime: 0,
   gcTime: 0,

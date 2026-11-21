@@ -8,6 +8,7 @@ export const documentVisibility: Visibility = {
   hidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
   onChange(fn) {
     if (typeof document === "undefined") return () => {};
+
     document.addEventListener("visibilitychange", fn);
     return () => document.removeEventListener("visibilitychange", fn);
   },
@@ -24,7 +25,7 @@ export const HIDDEN_CLOSE_MS = 30_000;
  * (`onOpen` then gets an `opens` above 1). A stream that closes while the tab is hidden waits for the visible state.
  * Returns the stop function.
  */
-export function keepStream(o: {
+export function keepStream(options: {
   url: string;
   /** The name in the console lines, for example "event stream". */
   name: string;
@@ -38,15 +39,15 @@ export function keepStream(o: {
   clearTimeout?: (t: Timer) => void;
   visibility?: Visibility;
   hiddenMs?: number;
-  log?: { info(...a: unknown[]): void; warn(...a: unknown[]): void };
+  log?: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
 }): () => void {
-  const log = o.log ?? console;
-  const open = o.open ?? ((u: string) => new EventSource(u));
-  const delays = o.delays ?? [5000, 15000, 45000];
-  const setT = o.setTimeout ?? ((f, ms) => setTimeout(f, ms));
-  const clearT = o.clearTimeout ?? ((t) => clearTimeout(t));
-  const visibility = o.visibility ?? documentVisibility;
-  const hiddenMs = o.hiddenMs ?? HIDDEN_CLOSE_MS;
+  const log = options.log ?? console;
+  const open = options.open ?? ((url: string) => new EventSource(url));
+  const delays = options.delays ?? [5000, 15000, 45000];
+  const setT = options.setTimeout ?? ((file, ms) => setTimeout(file, ms));
+  const clearT = options.clearTimeout ?? ((item) => clearTimeout(item));
+  const visibility = options.visibility ?? documentVisibility;
+  const hiddenMs = options.hiddenMs ?? HIDDEN_CLOSE_MS;
   let es: EventSource | undefined;
   let stopped = false;
   let waiting = false;
@@ -61,6 +62,7 @@ export function keepStream(o: {
     if (timer !== undefined) clearT(timer);
     timer = undefined;
   };
+
   const clearHideTimer = () => {
     if (hideTimer !== undefined) clearT(hideTimer);
     hideTimer = undefined;
@@ -87,39 +89,46 @@ export function keepStream(o: {
     clearTimer();
     es?.close();
     es = undefined;
+
     if (visibility.hidden()) {
       park();
       return;
     }
-    const s = open(o.url);
-    es = s;
-    s.addEventListener("open", () => {
+
+    const text = open(options.url);
+    es = text;
+    text.addEventListener("open", () => {
       retries = 0;
       opens++;
-      log.info(`[claude-rc] ${o.name} open (open ${opens})`);
-      o.onOpen?.(opens);
+      log.info(`[claude-rc] ${options.name} open (open ${opens})`);
+      options.onOpen?.(opens);
     });
-    for (const [type, fn] of Object.entries(o.listeners)) {
-      s.addEventListener(type, (e) => {
+
+    for (const [type, fn] of Object.entries(options.listeners)) {
+      text.addEventListener(type, (event) => {
         retries = 0;
-        fn(String((e as MessageEvent).data));
+        fn(String((event as MessageEvent).data));
       });
     }
-    s.addEventListener("error", () => {
+
+    text.addEventListener("error", () => {
       // CLOSED (2): the browser gave up (a 502 from a proxy while the hub restarts, a 401, a 501). CONNECTING (0): the browser retries itself.
-      if (s.readyState !== 2) {
-        log.info(`[claude-rc] ${o.name} error (ready state ${s.readyState}), the browser retries`);
+      if (text.readyState !== 2) {
+        log.info(`[claude-rc] ${options.name} error (ready state ${text.readyState}), the browser retries`);
         return;
       }
-      if (stopped || waiting || parked || timer !== undefined || es !== s) return;
-      log.warn(`[claude-rc] ${o.name} closed`);
+
+      if (stopped || waiting || parked || timer !== undefined || es !== text) return;
+      log.warn(`[claude-rc] ${options.name} closed`);
+
       if (visibility.hidden()) {
-        log.info(`[claude-rc] ${o.name} will reconnect when the tab is visible`);
+        log.info(`[claude-rc] ${options.name} will reconnect when the tab is visible`);
         park();
         return;
       }
+
       if (retries < delays.length) {
-        log.info(`[claude-rc] ${o.name} reconnect in ${delays[retries]! / 1000}s`);
+        log.info(`[claude-rc] ${options.name} reconnect in ${delays[retries]! / 1000}s`);
         timer = setT(() => {
           timer = undefined;
           if (!stopped) connect();
@@ -127,7 +136,7 @@ export function keepStream(o: {
       } else {
         // The retries are used up (for example a real 401). Try once more on the next focus.
         waiting = true;
-        log.warn(`[claude-rc] ${o.name} retries used up, will reconnect on the next focus`);
+        log.warn(`[claude-rc] ${options.name} retries used up, will reconnect on the next focus`);
         globalThis.addEventListener("focus", onFocus);
       }
     });
@@ -135,18 +144,22 @@ export function keepStream(o: {
 
   const onVisibility = () => {
     if (stopped) return;
+
     if (visibility.hidden()) {
       if (hideTimer === undefined && !parked) {
         hideTimer = setT(() => {
           hideTimer = undefined;
           if (stopped || !visibility.hidden()) return;
-          log.info(`[claude-rc] ${o.name} closed, the tab is hidden`);
+          log.info(`[claude-rc] ${options.name} closed, the tab is hidden`);
           park();
         }, hiddenMs);
       }
+
       return;
     }
+
     clearHideTimer();
+
     if (parked) {
       parked = false;
       retries = 0;
@@ -156,6 +169,7 @@ export function keepStream(o: {
 
   const offVisibility = visibility.onChange(onVisibility);
   connect();
+
   return () => {
     stopped = true;
     offVisibility();

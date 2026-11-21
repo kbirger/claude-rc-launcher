@@ -35,17 +35,21 @@
  * (absRefused). The touched list and its confirmation rules are in touched.ts (touchedIn). The checks while a file is
  * opened (inside the root, links, hard links, no blocking open) are in sessionfs.ts.
  */
+import { Hono } from "hono";
+import type { Context } from "hono";
 import { posix, win32 as win32Path } from "node:path";
-import { Hono, type Context } from "hono";
-import { downloadHeaders } from "./disposition";
 import type { Identity } from "./asuser";
-import { HttpError, type Instances } from "./instances";
-import { bunRunner, type Runner } from "./runner";
+import { downloadHeaders } from "./disposition";
+import { HttpError } from "./instances";
+import type { Instances } from "./instances";
 import type { LiveInfo } from "./livesessions";
 import type { PinnedRoot } from "./pinnedroot";
-import { SessionCatalog, type Session, type SessionCatalogOptions } from "./sessioncatalog";
-import type { TranscriptFs } from "./transcriptfs";
+import { bunRunner } from "./runner";
+import type { Runner } from "./runner";
+import { SessionCatalog } from "./sessioncatalog";
+import type { Session, SessionCatalogOptions } from "./sessioncatalog";
 import type { openDownload as openDownloadDefault, previewIn as previewInDefault } from "./sessionfs";
+import type { TranscriptFs } from "./transcriptfs";
 
 /** An instance id: exactly 12 lowercase hex characters, for example "0123456789ab". */
 const ID_RE = /^[0-9a-f]{12}$/;
@@ -56,10 +60,11 @@ const ID_RE = /^[0-9a-f]{12}$/;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_ABS = 4096;
 /** Any control character (code 0 to 31, or 127). For example "/tmp/a\nb" has a line feed and is refused with 400. */
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f]/;
 
-export type SessionApiDeps = {
+// A control character: the C0 controls and DEL (the C1 range is left out of \p{Cc}).
+const CONTROL = /[^\P{Cc}\u0080-\u009f]/u;
+
+export interface SessionApiDeps {
   instances: Instances;
   fs?: TranscriptFs;
   /** Replace the file opener and the preview reader (tests). */
@@ -75,7 +80,7 @@ export type SessionApiDeps = {
   run?: Runner;
   /** One catalog for the whole app, so that every router shares one name cache. Without it, the options above build one. */
   sessions?: SessionCatalog;
-};
+}
 
 /** The catalog options that `deps` sets. An option that `deps` does not set is left out, so the catalog default applies. */
 function catalogOptions(deps: SessionApiDeps): SessionCatalogOptions {
@@ -97,19 +102,19 @@ type Target = { path: string } | { abs: string };
  * host without sessions) and the session found again from its transcript (400 for a bad id, 404 when there is none).
  */
 export function sessionLookup(instances: Instances, catalog: SessionCatalog) {
-  async function home(c: Context): Promise<{ path: string; home: string; identity?: Identity }> {
-    const id = c.req.param("id") ?? "";
+  async function home(context: Context): Promise<{ path: string; home: string; identity?: Identity }> {
+    const id = context.req.param("id") ?? "";
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.claudeHome) throw new HttpError(501, "sessions are not available on this host");
     return instances.claudeHome(id);
   }
 
   /** The session the request names, found again from its transcript on every request. */
-  async function sessionOf(c: Context): Promise<Session> {
-    const h = await home(c);
-    const sessionId = c.req.param("sid") ?? "";
+  async function sessionOf(context: Context): Promise<Session> {
+    const target = await home(context);
+    const sessionId = context.req.param("sid") ?? "";
     if (!SESSION_ID.test(sessionId)) throw new HttpError(400, "invalid session id");
-    const session = await catalog.instance(h).find(sessionId);
+    const session = await catalog.instance(target).find(sessionId);
     if (!session) throw new HttpError(404, "session not found");
     return session;
   }
@@ -124,83 +129,99 @@ export function sessionApi(deps: SessionApiDeps): Hono {
   const platform = catalog.platform;
   const run = deps.run ?? bunRunner;
   const win = platform === "win32";
-  const P = win ? win32Path : posix;
-  const r = new Hono();
+  const pathApi = win ? win32Path : posix;
+  const hono = new Hono();
 
   const { home, sessionOf } = sessionLookup(instances, catalog);
 
   /** The checked real root of the session the request names. */
-  async function pinnedOf(c: Context): Promise<PinnedRoot> {
-    return (await sessionOf(c)).open();
+  async function pinnedOf(context: Context): Promise<PinnedRoot> {
+    return (await sessionOf(context)).open();
   }
 
   /** Exactly one of `path` and `abs`. An `abs` must be absolute, at most 4096 characters, with no control character. */
-  function targetOf(c: Context): Target {
-    const path = c.req.query("path");
-    const abs = c.req.query("abs");
+  function targetOf(context: Context): Target {
+    const path = context.req.query("path");
+    const abs = context.req.query("abs");
     if (path !== undefined && abs !== undefined) throw new HttpError(400, "give path or abs, not both");
+
     if (abs === undefined) {
       if (path === undefined) throw new HttpError(400, "path is required");
       return { path };
     }
+
     if (abs.length > MAX_ABS || CONTROL.test(abs)) throw new HttpError(400, "invalid path");
-    if (!P.isAbsolute(abs)) throw new HttpError(400, "abs must be an absolute path");
+    if (!pathApi.isAbsolute(abs)) throw new HttpError(400, "abs must be an absolute path");
     return { abs };
   }
 
   // Live status is extra: when the running-session files cannot be read, the list is still answered (InstanceSessions.list).
-  r.get("/", async (c) => c.json(await catalog.instance(await home(c)).list()));
+  hono.get("/", async (context) => context.json(await catalog.instance(await home(context)).list()));
 
-  r.get("/:sid/touched", async (c) => {
-    const p = await pinnedOf(c);
+  hono.get("/:sid/touched", async (context) => {
+    const pinnedRoot = await pinnedOf(context);
     // Refused paths are left out, so that the list never shows a link that the abs gate answers with 404.
-    return c.json(await p.session.touched({ dirs: await catalog.refusedDirs() }));
+    return context.json(await pinnedRoot.session.touched({ dirs: await catalog.refusedDirs() }));
   });
 
   // What git shows as changed in the folder since the session started (also by commands that the touched list cannot see).
-  r.get("/:sid/changed", async (c) => {
-    const h = await home(c);
-    const p = await pinnedOf(c);
-    const identity = h.identity ?? { home: h.home, path: process.env.PATH ?? "/usr/bin:/bin" };
+  hono.get("/:sid/changed", async (context) => {
+    const target = await home(context);
+    const pinnedRoot = await pinnedOf(context);
+    const identity = target.identity ?? { home: target.home, path: process.env.PATH ?? "/usr/bin:/bin" };
     // A session that /clear joined to earlier ones started with the first of them.
-    const inst = catalog.instance(h);
-    const starts = await Promise.all((await catalog.chains.chainOf(p.session.id)).map(async (id) => (await inst.find(id))?.startedAt));
-    const since = starts.filter((t): t is string => typeof t === "string").sort()[0] ?? new Date(0).toISOString();
-    return c.json(await p.changed({ run, identity }, since));
+    const inst = catalog.instance(target);
+    const starts = await Promise.all(
+      (await catalog.chains.chainOf(pinnedRoot.session.id)).map(async (id) => (await inst.find(id))?.startedAt),
+    );
+    const since =
+      starts.filter((start): start is string => typeof start === "string").sort()[0] ?? new Date(0).toISOString();
+    return context.json(await pinnedRoot.changed({ run, identity }, since));
   });
 
-  r.get("/:sid/files", async (c) => {
-    if (c.req.query("abs") !== undefined) throw new HttpError(400, "abs is not accepted here");
-    return c.json(await (await pinnedOf(c)).list(c.req.query("path") ?? "", c.req.query("hidden") === "1"));
+  hono.get("/:sid/files", async (context) => {
+    if (context.req.query("abs") !== undefined) throw new HttpError(400, "abs is not accepted here");
+    return context.json(
+      await (await pinnedOf(context)).list(context.req.query("path") ?? "", context.req.query("hidden") === "1"),
+    );
   });
 
-  r.get("/:sid/file", async (c) => {
-    const t = targetOf(c);
-    const p = await pinnedOf(c);
-    const f = "path" in t ? await p.preview(t.path) : await (await p.touchedFile(t.abs)).preview();
-    c.header("X-Content-Type-Options", "nosniff");
-    return c.json(f);
+  hono.get("/:sid/file", async (context) => {
+    const target = targetOf(context);
+    const pinnedRoot = await pinnedOf(context);
+    const preview =
+      "path" in target
+        ? await pinnedRoot.preview(target.path)
+        : await (await pinnedRoot.touchedFile(target.abs)).preview();
+    context.header("X-Content-Type-Options", "nosniff");
+    return context.json(preview);
   });
 
-  r.get("/:sid/download", async (c) => {
-    const t = targetOf(c);
-    const p = await pinnedOf(c);
-    const d = "path" in t ? await p.download(t.path) : await (await p.touchedFile(t.abs)).download();
+  hono.get("/:sid/download", async (context) => {
+    const target = targetOf(context);
+    const pinnedRoot = await pinnedOf(context);
+    const download =
+      "path" in target
+        ? await pinnedRoot.download(target.path)
+        : await (await pinnedRoot.touchedFile(target.abs)).download();
+
     try {
-      const headers = downloadHeaders(d.name, d.size);
+      const headers = downloadHeaders(download.name, download.size);
+
       const onAbort = () => {
-        d.close();
-        d.stream.cancel().catch(() => {});
+        download.close();
+        download.stream.cancel().catch(() => {});
       };
-      const signal = c.req.raw.signal;
+
+      const signal = context.req.raw.signal;
       if (signal.aborted) onAbort();
       else signal.addEventListener("abort", onAbort, { once: true });
-      return new Response(d.stream, { headers });
-    } catch (e) {
-      d.close();
-      throw e;
+      return new Response(download.stream, { headers });
+    } catch (error) {
+      download.close();
+      throw error;
     }
   });
 
-  return r;
+  return hono;
 }

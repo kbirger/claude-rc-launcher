@@ -20,18 +20,18 @@ test("busy live sessions come first, then idle live, then the others by lastActi
     mk("busy", { live: { status: "busy", remoteControl: false }, lastActiveAt: "2025-01-01T00:00:00.000Z" }),
     mk("nostatus", { live: { remoteControl: true }, lastActiveAt: "2026-02-01T00:00:00.000Z" }),
   ];
-  expect(sortSessions(rows).map((s) => s.id)).toEqual(["busy", "nostatus", "idle", "new", "old"]);
+  expect(sortSessions(rows).map((text) => text.id)).toEqual(["busy", "nostatus", "idle", "new", "old"]);
 });
 
 test("equal times keep a stable order by id", () => {
   const rows = [mk("b"), mk("a"), mk("c")];
-  expect(sortSessions(rows).map((s) => s.id)).toEqual(["a", "b", "c"]);
+  expect(sortSessions(rows).map((text) => text.id)).toEqual(["a", "b", "c"]);
 });
 
 test("the input array is not changed", () => {
   const rows = [mk("b"), mk("a")];
   sortSessions(rows);
-  expect(rows.map((s) => s.id)).toEqual(["b", "a"]);
+  expect(rows.map((text) => text.id)).toEqual(["b", "a"]);
 });
 
 test("sessionKey differs for the same session id on two hosts", () => {

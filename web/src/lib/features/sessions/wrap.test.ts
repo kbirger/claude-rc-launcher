@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 // Class checks for the wrapped rows. The real proof that nothing scrolls sideways is the Chromium run in the task report.
-import { QueryClientProvider } from "@tanstack/svelte-query";
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "#lib/shared/query";
@@ -11,39 +10,80 @@ const long = "a".repeat(200);
 const deep = `src/${"d".repeat(60)}/${"e".repeat(60)}/${long}.svelte`;
 const touched: TouchedFile[] = [
   { path: `/proj/${deep}`, inside: true, tool: "write", at: "2026-11-12T10:00:00Z", confirmed: true },
-  { path: `/var/opt/${"x".repeat(100)}/outside.ts`, inside: false, tool: "edit", at: "2026-11-12T10:00:00Z", confirmed: true },
+  {
+    path: `/var/opt/${"x".repeat(100)}/outside.ts`,
+    inside: false,
+    tool: "edit",
+    at: "2026-11-12T10:00:00Z",
+    confirmed: true,
+  },
   { path: "/proj/not-written.ts", inside: true, tool: "write", at: "2026-11-12T10:00:00Z", confirmed: false },
 ];
-const listing: Listing = { path: "", parent: null, entries: [{ name: long, kind: "file", size: 5, mtime: "2026-11-12T10:00:00Z" }, { name: long + "b", kind: "dir", mtime: "2026-11-12T10:00:00Z" }, { name: "dev", kind: "other", mtime: "2026-11-12T10:00:00Z" }] };
-const sessions: Session[] = [{ id: "11111111-1111-4111-8111-111111111111", root: "/proj", name: long, branch: long, startedAt: "2026-11-12T10:00:00Z", lastActiveAt: "2026-11-12T10:00:00Z" }];
+const listing: Listing = {
+  path: "",
+  parent: null,
+  entries: [
+    { name: long, kind: "file", size: 5, mtime: "2026-11-12T10:00:00Z" },
+    { name: long + "b", kind: "dir", mtime: "2026-11-12T10:00:00Z" },
+    { name: "dev", kind: "other", mtime: "2026-11-12T10:00:00Z" },
+  ],
+};
+const sessions: Session[] = [
+  {
+    id: "11111111-1111-4111-8111-111111111111",
+    root: "/proj",
+    name: long,
+    branch: long,
+    startedAt: "2026-11-12T10:00:00Z",
+    lastActiveAt: "2026-11-12T10:00:00Z",
+  },
+];
 vi.mock("../../realtime/sessions", () => ({ connectSessions: () => () => {} }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   getTouched: async () => touched,
   listFiles: async () => listing,
-  listAllSessions: async () => ({ sessions: sessions.map((s) => ({ ...s, instance: { id: "0123456789ab", name: "i", path: "/proj", state: "active" }, host: { id: "h", name: "h" } })), hosts: [{ id: "h", name: "h", status: "ok" }] }),
+  listAllSessions: async () => ({
+    sessions: sessions.map((text) => ({
+      ...text,
+      instance: { id: "0123456789ab", name: "i", path: "/proj", state: "active" },
+      host: { id: "h", name: "h" },
+    })),
+    hosts: [{ id: "h", name: "h", status: "ok" }],
+  }),
 }));
 
 const open: Array<() => void> = [];
-afterEach(() => { for (const u of open.splice(0)) u(); });
+afterEach(() => {
+  for (const url of open.splice(0)) url();
+});
 
 async function show(which: "touched" | "folder" | "list", path = "") {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(WrapHarness, { target, props: { which, path, client: createQueryClient() } });
-  open.push(() => { unmount(c); target.remove(); });
+  const item = mount(WrapHarness, { target, props: { which, path, client: createQueryClient() } });
+  open.push(() => {
+    unmount(item);
+    target.remove();
+  });
   await vi.waitFor(() => expect(target.querySelector("li")).not.toBeNull());
   flushSync();
   return target;
 }
-const bad = (e: Element) => /\b(truncate|whitespace-nowrap|line-clamp-\d)\b/.test(e.className.toString());
+
+const bad = (event: Element) => /\b(truncate|whitespace-nowrap|line-clamp-\d)\b/.test(event.className.toString());
 // A badge holds one short fixed word (live, offline), never text from the user, so it may stay on one line. The session name in the list is cut with an ellipsis on purpose.
-const noClip = (t: HTMLElement) => expect([...t.querySelectorAll("*")].filter((e) => bad(e) && e.getAttribute("data-slot") !== "badge" && !e.hasAttribute("data-session-title"))).toEqual([]);
+const noClip = (item: HTMLElement) =>
+  expect(
+    [...item.querySelectorAll("*")].filter(
+      (event) => bad(event) && event.getAttribute("data-slot") !== "badge" && !event.hasAttribute("data-session-title"),
+    ),
+  ).toEqual([]);
 
 test("Touched rows show the name in bold and the folder below it, both wrapping", async () => {
-  const t = await show("touched");
-  noClip(t);
-  const rows = t.querySelectorAll("li");
+  const item = await show("touched");
+  noClip(item);
+  const rows = item.querySelectorAll("li");
   expect(rows).toHaveLength(3);
   const name = rows[0].querySelector("[data-file-name]")!;
   expect(name.textContent).toBe(`${long}.svelte`);
@@ -56,28 +96,35 @@ test("Touched rows show the name in bold and the folder below it, both wrapping"
   // Outside the session folder the absolute path stays.
   expect(rows[1].querySelector("[data-file-dir]")!.textContent).toBe(`/var/opt/${"x".repeat(100)}`);
   expect(rows[1].textContent).toContain("outside the session folder");
+
   // The row is a flex child that can shrink, at least 44 px high.
-  for (const li of rows) { expect(li.className).toContain("min-w-0"); expect(li.firstElementChild!.className).toContain("min-h-11"); expect(li.firstElementChild!.className).toContain("min-w-0"); }
+  for (const li of rows) {
+    expect(li.className).toContain("min-w-0");
+    expect(li.firstElementChild!.className).toContain("min-h-11");
+    expect(li.firstElementChild!.className).toContain("min-w-0");
+  }
 });
 
 test("Folder entries and the breadcrumb wrap", async () => {
-  const t = await show("folder", `${"p".repeat(100)}/q`);
-  noClip(t);
-  const names = [...t.querySelectorAll("li span")].filter((s) => s.textContent === long || s.textContent === `${long}b/`);
+  const item = await show("folder", `${"p".repeat(100)}/q`);
+  noClip(item);
+  const names = [...item.querySelectorAll("li span")].filter(
+    (text) => text.textContent === long || text.textContent === `${long}b/`,
+  );
   expect(names).toHaveLength(2);
-  for (const n of names) expect(n.className).toContain("[overflow-wrap:anywhere]");
-  const crumbs = t.querySelectorAll('nav[aria-label="Folder"] a');
+  for (const count of names) expect(count.className).toContain("[overflow-wrap:anywhere]");
+  const crumbs = item.querySelectorAll('nav[aria-label="Folder"] a');
   // The session folder and the first folder are links. The folder you are in (q) is the current crumb and not a link.
   expect(crumbs).toHaveLength(2);
-  for (const c of crumbs) expect(c.className).toContain("[overflow-wrap:anywhere]");
-  expect(t.querySelector('nav[aria-label="Folder"] [aria-current="page"]')!.textContent).toBe("q");
+  for (const crumb of crumbs) expect(crumb.className).toContain("[overflow-wrap:anywhere]");
+  expect(item.querySelector('nav[aria-label="Folder"] [aria-current="page"]')!.textContent).toBe("q");
 });
 
 test("Session rows cut the title to one line and wrap the details", async () => {
-  const t = await show("list");
-  noClip(t);
-  expect(t.textContent).toContain(long);
-  const title = t.querySelector("[data-session-title]")!;
+  const item = await show("list");
+  noClip(item);
+  expect(item.textContent).toContain(long);
+  const title = item.querySelector("[data-session-title]")!;
   expect(title.className).toContain("truncate");
   expect(title.getAttribute("title")).toBe(long);
 });

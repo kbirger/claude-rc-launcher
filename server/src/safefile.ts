@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readlink, realpath, rename, rm, type FileHandle } from "node:fs/promises";
+import { lstat, open, readlink, realpath, rename, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 /** Larger than any real settings file. A bigger file is refused, not read. */
@@ -31,55 +32,76 @@ export type FileRead =
  * `ownerUid` (the instance user, when this process is not that user) must own the real file. The owner is read from the
  * open handle, not from the path.
  */
-export async function readUserFile(file: string, o: { expectedPath?: string; ownerUid?: number; follow?: boolean } = {}): Promise<FileRead> {
+export async function readUserFile(
+  file: string,
+  options: { expectedPath?: string; ownerUid?: number; follow?: boolean } = {},
+): Promise<FileRead> {
   let target = file;
-  let expectedPath = o.expectedPath;
-  if (o.follow) {
+  let expectedPath = options.expectedPath;
+
+  if (options.follow) {
     try {
       target = await realpath(file);
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") return { kind: "missing" };
       return { kind: "invalid", reason: "it cannot be resolved" };
     }
+
     expectedPath = target;
   }
+
   let fh: FileHandle;
+
   try {
     fh = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return { kind: "missing" };
     if (code === "ELOOP") return { kind: "invalid", reason: "it is a symlink" };
     return { kind: "invalid", reason: "it cannot be opened" };
   }
+
   try {
     if (expectedPath !== undefined && process.platform === "linux") {
       let opened: string;
+
       try {
         opened = await readlink(`/proc/self/fd/${fh.fd}`);
       } catch {
         return { kind: "invalid", reason: "it cannot be verified" };
       }
+
       if (opened !== expectedPath) return { kind: "invalid", reason: "it is not at the expected place" };
     }
+
     const st = await fh.stat();
     if (!st.isFile()) return { kind: "invalid", reason: "it is not a regular file" };
     // A hard link could be another user's file. A copy written back would then belong to this user.
-    if (o.ownerUid !== undefined && st.uid !== o.ownerUid) return { kind: "invalid", reason: "owned by another user" };
+    if (options.ownerUid !== undefined && st.uid !== options.ownerUid)
+      return { kind: "invalid", reason: "owned by another user" };
     if (st.nlink !== 1) return { kind: "invalid", reason: "it has more than one link" };
     if (st.size > MAX_FILE_BYTES) return { kind: "invalid", reason: "it is too large" };
     // Read at most one byte over the cap, so a file that grows after the stat still cannot pass it.
     const buf = Buffer.alloc(MAX_FILE_BYTES + 1);
-    let n = 0;
+    let count = 0;
+
     for (;;) {
-      const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
+      const { bytesRead } = await fh.read(buf, count, buf.length - count, count);
       if (bytesRead === 0) break;
-      n += bytesRead;
-      if (n === buf.length) return { kind: "invalid", reason: "it is too large" };
+      count += bytesRead;
+      if (count === buf.length) return { kind: "invalid", reason: "it is too large" };
     }
-    const bytes = Buffer.from(buf.subarray(0, n));
-    return { kind: "ok", bytes, mode: st.mode & 0o777, hash: createHash("sha256").update(bytes).digest("hex"), mtimeMs: st.mtimeMs, ...(o.follow ? { realPath: target } : {}) };
+
+    const bytes = Buffer.from(buf.subarray(0, count));
+    return {
+      kind: "ok",
+      bytes,
+      mode: st.mode & 0o777,
+      hash: createHash("sha256").update(bytes).digest("hex"),
+      mtimeMs: st.mtimeMs,
+      ...(options.follow ? { realPath: target } : {}),
+    };
   } catch {
     return { kind: "invalid", reason: "it cannot be read" };
   } finally {
@@ -103,7 +125,7 @@ export class FileRefused extends Error {
   }
 }
 
-export type WriteOpts = {
+export interface WriteOpts {
   ownerUid?: number;
   gid?: number;
   /** Default true: the file and its folder must belong to `ownerUid`. False: `ownerUid` and `gid` only set the new owner. */
@@ -113,15 +135,18 @@ export type WriteOpts = {
   follow?: boolean; // write the real file behind a symlink
   chown?: (fh: FileHandle, uid: number, gid: number) => Promise<void>; // tests
   isRoot?: () => boolean; // tests
-};
+}
 
 // One write at a time per real path, so a hash check and the rename that follows it cannot interleave.
 const queues = new Map<string, Promise<unknown>>();
-function serial<T>(key: string, job: () => Promise<T>): Promise<T> {
+
+function serial<Value>(key: string, job: () => Promise<Value>): Promise<Value> {
   const run = (queues.get(key) ?? Promise.resolve()).then(job, job);
   const tail = run.catch(() => {});
   queues.set(key, tail);
-  void tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
+  void tail.then(() => {
+    if (queues.get(key) === tail) queues.delete(key);
+  });
   return run;
 }
 
@@ -134,17 +159,23 @@ function serial<T>(key: string, job: () => Promise<T>): Promise<T> {
  * symlink, hard link, other owner, too large). With `expectedHash` the fresh hash must match, else `FileConflict`.
  * The folder is checked with lstat just before the open: it must be a real folder of `ownerUid`.
  */
-export async function writeUserFile(file: string, bytes: Buffer, o: WriteOpts = {}): Promise<{ hash: string; realPath: string }> {
+export async function writeUserFile(
+  file: string,
+  bytes: Buffer,
+  writeOpts: WriteOpts = {},
+): Promise<{ hash: string; realPath: string }> {
   if (bytes.length > MAX_FILE_BYTES) throw new FileRefused("it is too large");
-  const chown = o.chown ?? ((fh, uid, gid) => fh.chown(uid, gid));
-  const isRoot = o.isRoot ?? (() => process.getuid?.() === 0);
+  const chown = writeOpts.chown ?? ((fh, uid, gid) => fh.chown(uid, gid));
+  const isRoot = writeOpts.isRoot ?? (() => process.getuid?.() === 0);
   // Fail closed: a root process that does not know the owner would leave a root-owned file in the user's folder.
-  if (isRoot() && (o.ownerUid === undefined || o.gid === undefined)) throw new FileRefused("the owner of the file is not known");
+  if (isRoot() && (writeOpts.ownerUid === undefined || writeOpts.gid === undefined))
+    throw new FileRefused("the owner of the file is not known");
 
   // The queue key: the real path of the file, or of its folder plus the name when the file does not exist yet.
   let key: string;
+
   try {
-    key = o.follow ? await realpath(file) : join(await realpath(dirname(file)), basename(file));
+    key = writeOpts.follow ? await realpath(file) : join(await realpath(dirname(file)), basename(file));
   } catch {
     try {
       key = join(await realpath(dirname(file)), basename(file));
@@ -154,37 +185,44 @@ export async function writeUserFile(file: string, bytes: Buffer, o: WriteOpts = 
   }
 
   return serial(key, async () => {
-    const checkUid = o.checkOwner === false ? undefined : o.ownerUid;
-    const r = await readUserFile(file, { follow: o.follow, ownerUid: checkUid });
-    if (r.kind === "invalid") throw new FileRefused(r.reason);
-    if (o.expectedHash !== undefined) {
-      const seen = r.kind === "ok" ? r.hash : null;
-      if (seen !== o.expectedHash) throw new FileConflict();
+    const checkUid = writeOpts.checkOwner === false ? undefined : writeOpts.ownerUid;
+    const fileRead = await readUserFile(file, { follow: writeOpts.follow, ownerUid: checkUid });
+    if (fileRead.kind === "invalid") throw new FileRefused(fileRead.reason);
+
+    if (writeOpts.expectedHash !== undefined) {
+      const seen = fileRead.kind === "ok" ? fileRead.hash : null;
+      if (seen !== writeOpts.expectedHash) throw new FileConflict();
     }
-    const target = r.kind === "ok" && r.realPath !== undefined ? r.realPath : key;
+
+    const target = fileRead.kind === "ok" && fileRead.realPath !== undefined ? fileRead.realPath : key;
     const dir = dirname(target);
     const dst = await lstat(dir).catch(() => null);
-    if (!dst || !dst.isDirectory()) throw new FileRefused("its folder is not a real folder");
+    if (!dst?.isDirectory()) throw new FileRefused("its folder is not a real folder");
     if (checkUid !== undefined && dst.uid !== checkUid) throw new FileRefused("its folder is owned by another user");
 
-    const mode = r.kind === "ok" ? r.mode : 0o600;
+    const mode = fileRead.kind === "ok" ? fileRead.mode : 0o600;
     // Random name plus O_EXCL ("wx"): never follows a symlink planted by the user.
     // All permission and owner changes go through the open handle, never the path.
     const tmp = `${target}.${randomBytes(8).toString("hex")}.tmp`;
+
     try {
       const fh = await open(tmp, "wx", 0o600);
+
       try {
         await fh.chmod(mode);
-        if (isRoot() && o.ownerUid !== undefined && o.gid !== undefined) await chown(fh, o.ownerUid, o.gid);
+        if (isRoot() && writeOpts.ownerUid !== undefined && writeOpts.gid !== undefined)
+          await chown(fh, writeOpts.ownerUid, writeOpts.gid);
         await fh.writeFile(bytes);
       } finally {
         await fh.close();
       }
+
       await rename(tmp, target);
-    } catch (e) {
+    } catch (error) {
       await rm(tmp, { force: true }).catch(() => {});
-      throw e;
+      throw error;
     }
+
     return { hash: createHash("sha256").update(bytes).digest("hex"), realPath: target };
   });
 }

@@ -8,13 +8,17 @@ export const MAX_FAILURES = 5;
 export const jobRetry = (failureCount: number, error: unknown): boolean =>
   (error as { status?: unknown } | null)?.status !== 404 && failureCount < MAX_FAILURES - 1;
 
-export const isCloneDone = (s?: { state: string }): boolean => s?.state === "done" || s?.state === "failed";
-export const isLoginDone = (s?: { state: string }): boolean => s !== undefined && s.state !== "pending";
+export const isCloneDone = (options?: { state: string }): boolean =>
+  options?.state === "done" || options?.state === "failed";
+export const isLoginDone = (options?: { state: string }): boolean =>
+  options !== undefined && options.state !== "pending";
 
-type JobState<T> = { state: { status: string; data: T | undefined } };
+type JobState<Value> = { state: { status: string; data: Value | undefined } };
 // After a give-up the status is "error" while the data still says the job runs, so polling must stop on the status too.
-const pollUntil = <T extends { state: string }>(done: (s?: T) => boolean, ms: number) => (q: JobState<T>): number | false =>
-  q.state.status === "error" || done(q.state.data) ? false : ms;
+const pollUntil =
+  <Value extends { state: string }>(done: (value?: Value) => boolean, ms: number) =>
+  (jobState: JobState<Value>): number | false =>
+    jobState.state.status === "error" || done(jobState.state.data) ? false : ms;
 
 export const reposQuery = (host: string, user?: string) => ({
   queryKey: ["repos", host, user ?? ""] as const,
@@ -51,10 +55,11 @@ export type LoginStartArgs = { user?: string };
 
 export const cloneStartMutation = (host: string) => ({
   mutationKey: ["clone-start", host] as const,
-  mutationFn: (v: CloneStartArgs) => cloneStart(host, v.repo, v.parent, v.user),
+  mutationFn: (cloneStartArgs: CloneStartArgs) =>
+    cloneStart(host, cloneStartArgs.repo, cloneStartArgs.parent, cloneStartArgs.user),
 });
 
 export const githubLoginStartMutation = (host: string) => ({
   mutationKey: ["github-login-start", host] as const,
-  mutationFn: (v: LoginStartArgs) => githubLoginStart(host, v.user),
+  mutationFn: (loginStartArgs: LoginStartArgs) => githubLoginStart(host, loginStartArgs.user),
 });

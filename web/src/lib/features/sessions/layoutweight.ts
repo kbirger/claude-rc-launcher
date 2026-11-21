@@ -10,15 +10,28 @@ const SPACE = 32;
  * medium mathematical spaces and the ideographic space). A text of 32,768 kana words that were separated by the ideographic
  * space took 23 s at 4x, as long as one with ASCII spaces would.
  */
-const isSeparator = (c: number): boolean =>
-  c === SPACE || (c >= 9 && c <= 13) || c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200b) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
+const isSeparator = (code: number): boolean =>
+  code === SPACE ||
+  (code >= 9 && code <= 13) ||
+  code === 0xa0 ||
+  code === 0x1680 ||
+  (code >= 0x2000 && code <= 0x200b) ||
+  code === 0x2028 ||
+  code === 0x2029 ||
+  code === 0x202f ||
+  code === 0x205f ||
+  code === 0x3000;
 
 /** The left-to-right and right-to-left marks, the embeddings and overrides, and the isolates. */
-const isBidiControl = (c: number): boolean => c === 0x200e || c === 0x200f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+const isBidiControl = (code: number): boolean =>
+  code === 0x200e || code === 0x200f || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
 
 /** Han, kana and the CJK symbols. The page may break a line after any of these, so a run of them is not one unbroken run. */
-const isIdeograph = (c: number): boolean =>
-  (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xffef) || (c >= 0x20000 && c <= 0x3ffff);
+const isIdeograph = (code: number): boolean =>
+  (code >= 0x2e80 && code <= 0x9fff) ||
+  (code >= 0xf900 && code <= 0xfaff) ||
+  (code >= 0xff00 && code <= 0xffef) ||
+  (code >= 0x20000 && code <= 0x3ffff);
 
 /**
  * The sum of the squares of the lengths of the unbroken runs: runs of characters that have no space, tab, line feed, carriage
@@ -27,14 +40,16 @@ const isIdeograph = (c: number): boolean =>
 export function runCost(text: string, limit: number): number {
   let cost = 0;
   let run = 0;
-  for (let i = 0; i <= text.length; i++) {
-    const c = i < text.length ? text.charCodeAt(i) : SPACE;
-    if (isSeparator(c) || isIdeograph(c)) {
+
+  for (let index = 0; index <= text.length; index++) {
+    const code = index < text.length ? text.charCodeAt(index) : SPACE;
+    if (isSeparator(code) || isIdeograph(code)) {
       cost += run * run;
       if (cost > limit) return cost;
       run = 0;
     } else run++;
   }
+
   return cost;
 }
 
@@ -49,16 +64,16 @@ const PRIVATE = 64; // private use
 const OTHER = 128; // symbols, emoji, rare scripts
 
 /** The class of a code point, 0 for a character that has no script (digits, punctuation, the zero width joiner, variation selectors). */
-function classOf(c: number): number {
-  if (c < 0x590) return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || c >= 0xc0 ? LATIN : 0;
-  if (c < 0x900) return RTL;
-  if (c < 0xe00) return INDIC;
-  if (c < 0x1100) return SEA;
-  if (c < 0x1200) return HANGUL;
-  if ((c >= 0x2000 && c <= 0x206f) || (c >= 0xfe00 && c <= 0xfe0f)) return 0;
-  if ((c >= 0xac00 && c <= 0xd7ff) || (c >= 0x3130 && c <= 0x318f)) return HANGUL;
-  if (isIdeograph(c)) return CJK;
-  if ((c >= 0xe000 && c <= 0xf8ff) || c >= 0xf0000) return PRIVATE;
+function classOf(code: number): number {
+  if (code < 0x590) return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a) || code >= 0xc0 ? LATIN : 0;
+  if (code < 0x900) return RTL;
+  if (code < 0xe00) return INDIC;
+  if (code < 0x1100) return SEA;
+  if (code < 0x1200) return HANGUL;
+  if ((code >= 0x2000 && code <= 0x206f) || (code >= 0xfe00 && code <= 0xfe0f)) return 0;
+  if ((code >= 0xac00 && code <= 0xd7ff) || (code >= 0x3130 && code <= 0x318f)) return HANGUL;
+  if (isIdeograph(code)) return CJK;
+  if ((code >= 0xe000 && code <= 0xf8ff) || code >= 0xf0000) return PRIVATE;
   return OTHER;
 }
 
@@ -106,37 +121,44 @@ export function blockWeights(text: string): Weights {
   let last = 0;
   let changes = 0;
   let symbols = 0;
-  for (let i = 0; i <= text.length; i++) {
-    let c = i < text.length ? text.charCodeAt(i) : SPACE;
-    if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
-      c = 0x10000 + ((c - 0xd800) << 10) + (text.charCodeAt(i + 1) - 0xdc00);
-      i++;
+
+  for (let index = 0; index <= text.length; index++) {
+    let code = index < text.length ? text.charCodeAt(index) : SPACE;
+
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) {
+      code = 0x10000 + ((code - 0xd800) << 10) + (text.charCodeAt(index + 1) - 0xdc00);
+      index++;
     }
-    const sep = isSeparator(c);
-    const k = sep ? 0 : classOf(c);
-    if (k === 0) {
+
+    const sep = isSeparator(code);
+    const key = sep ? 0 : classOf(code);
+
+    if (key === 0) {
       // White space, punctuation, digits, joiners and variation selectors end a word: each is a place where the page may break.
       if (high) {
-        const w = wordWeight(classes);
-        total += w + changes;
-        if (isHeavy(classes)) heavy += w;
+        const weight = wordWeight(classes);
+        total += weight + changes;
+        if (isHeavy(classes)) heavy += weight;
       }
+
       // Bidirectional controls make the page reorder the text (the weight is set from a run in which 7,000 words had them: 1.8 s at 4x).
-      if (isBidiControl(c)) total += 2;
+      if (isBidiControl(code)) total += 2;
       // A space that is not Latin (the ideographic space) needs a font of its own: Latin words with it between them took 14 s at 4x.
-      if (sep && c >= 0x590) total += 1;
+      if (sep && code >= 0x590) total += 1;
       classes = 0;
       high = false;
       last = 0;
       changes = 0;
       continue;
     }
-    if (c >= 0x590) high = true;
-    if (k === OTHER) symbols++;
-    if (last !== 0 && k !== last) changes++;
-    last = k;
-    classes |= k;
+
+    if (code >= 0x590) high = true;
+    if (key === OTHER) symbols++;
+    if (last !== 0 && key !== last) changes++;
+    last = key;
+    classes |= key;
   }
+
   // Symbols and emoji: the page picks a color font for each one ("a smiling face and a variation selector" in 7,000 words took 1.2 s).
   return { total: total + Math.ceil(symbols / 2), heavy };
 }

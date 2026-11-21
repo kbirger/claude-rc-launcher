@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from "svelte";
+import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { afterEach, expect, test, vi } from "vitest";
 import Stop from "@tabler/icons-svelte/icons/player-stop";
 import { stripLabel } from "./EntityCard.svelte";
@@ -7,29 +7,34 @@ import EntityCardHarness from "./EntityCardHarness.svelte";
 
 const open: Array<() => void> = [];
 afterEach(() => {
-  for (const u of open.splice(0)) u();
+  for (const item of open.splice(0)) item();
   document.body.innerHTML = "";
 });
 
-function show(props: Record<string, unknown> = {}) {
+function show(props: Partial<ComponentProps<typeof EntityCardHarness>> = {}) {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(EntityCardHarness, { target, props: props as any });
-  open.push(() => unmount(c));
+  const mounted = mount(EntityCardHarness, { target, props });
+  open.push(() => unmount(mounted));
   flushSync();
   return target;
 }
-const q = (s: string) => document.querySelector(s) as HTMLElement | null;
+
+const helper = (item: string) => document.querySelector(item) as HTMLElement | null;
 const menuButton = () => document.querySelector('button[aria-label="More actions"]') as HTMLButtonElement | null;
-const strip = () => q('[data-slot="entity-card-actions"]');
+const strip = () => helper('[data-slot="entity-card-actions"]');
 
 // Bits UI opens the menu on pointerdown, or on a key press on the trigger.
 function openMenu(label?: string) {
-  const b = (label ? document.querySelector(`button[aria-label="${label}"]`) : menuButton()) as HTMLButtonElement;
-  b.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" }));
+  const button = (label ? document.querySelector(`button[aria-label="${label}"]`) : menuButton()) as HTMLButtonElement;
+  button.dispatchEvent(
+    new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" }),
+  );
   flushSync();
 }
+
 const items = () => [...document.querySelectorAll('[role="menuitem"]')] as HTMLElement[];
+
 const click = (el: HTMLElement) => {
   el.click();
   flushSync();
@@ -37,23 +42,23 @@ const click = (el: HTMLElement) => {
 
 test("renders the title as a heading", () => {
   show();
-  expect(q("h3")?.textContent).toBe("Card name");
+  expect(helper("h3")?.textContent).toBe("Card name");
 });
 
 test("the title is one truncated line with the full text as its title", () => {
   show({ titleText: "Card name in full" });
-  const h = q("h3")!;
-  expect(h.className).toContain("truncate");
-  expect(h.className).toContain("min-w-0");
-  expect(h.getAttribute("title")).toBe("Card name in full");
-  expect(h.parentElement!.className).toContain("flex-1");
-  expect(h.parentElement!.className).not.toContain("flex-wrap");
+  const htmlElement = helper("h3")!;
+  expect(htmlElement.className).toContain("truncate");
+  expect(htmlElement.className).toContain("min-w-0");
+  expect(htmlElement.getAttribute("title")).toBe("Card name in full");
+  expect(htmlElement.parentElement!.className).toContain("flex-1");
+  expect(htmlElement.parentElement!.className).not.toContain("flex-wrap");
 });
 
 test("titleAside does not shrink and the editor fills the row", () => {
   show({ slots: ["titleAside", "titleEditor"] });
-  expect(q('[data-testid="aside"]')!.parentElement!.className).toContain("flex-none");
-  expect(q('[data-testid="editor"]')!.parentElement!.className).toContain("flex-1");
+  expect(helper('[data-testid="aside"]')!.parentElement!.className).toContain("flex-none");
+  expect(helper('[data-testid="editor"]')!.parentElement!.className).toContain("flex-1");
 });
 
 test("the strip has a fixed height and never wraps", () => {
@@ -62,10 +67,10 @@ test("the strip has a fixed height and never wraps", () => {
   expect(strip()!.className).toContain("flex-nowrap");
   expect(strip()!.className).not.toMatch(/(^|\s)flex-wrap/);
   expect(strip()!.className).toContain("@container/strip");
-  const left = q('[data-testid="actions"]')!.parentElement!;
+  const left = helper('[data-testid="actions"]')!.parentElement!;
   expect(left.className).not.toContain("flex-wrap");
   expect(left.className).toContain("min-w-0");
-  expect(q('[data-testid="actionsEnd"]')!.parentElement!.className).toContain("flex-none");
+  expect(helper('[data-testid="actionsEnd"]')!.parentElement!.className).toContain("flex-none");
 });
 
 test("stripLabel hides the text but keeps the accessible name", () => {
@@ -79,14 +84,14 @@ test("the overflow trigger draws the vertical dots icon", () => {
 
 test("renders subtitle, status, content, and actions in their slots", () => {
   show({ slots: ["subtitle", "status", "content", "actions", "actionsEnd"] });
-  expect(q('[data-testid="subtitle"]')?.textContent).toBe("Sub");
-  expect(q('[data-testid="status"]')?.textContent).toBe("Running");
+  expect(helper('[data-testid="subtitle"]')?.textContent).toBe("Sub");
+  expect(helper('[data-testid="status"]')?.textContent).toBe("Running");
   expect(document.body.textContent).toContain("pill one");
-  const s = strip()!;
-  expect(s.contains(q('[data-testid="actions"]'))).toBe(true);
-  expect(s.contains(q('[data-testid="actionsEnd"]'))).toBe(true);
+  const htmlElement = strip()!;
+  expect(htmlElement.contains(helper('[data-testid="actions"]'))).toBe(true);
+  expect(htmlElement.contains(helper('[data-testid="actionsEnd"]'))).toBe(true);
   // The status shares the header row with the title.
-  expect(q("h3")!.parentElement!.parentElement!.contains(q('[data-testid="status"]'))).toBe(true);
+  expect(helper("h3")!.parentElement!.parentElement!.contains(helper('[data-testid="status"]'))).toBe(true);
 });
 
 test("draws no action strip without actions, actionsEnd, or overflow", () => {
@@ -101,13 +106,19 @@ test("draws no overflow button without items", () => {
 });
 
 test("the overflow button has the label and opens a menu with the items", () => {
-  show({ overflow: [{ label: "Rename", onselect() {} }, { label: "Delete", destructive: true, onselect() {} }], overflowLabel: "Node actions" });
+  show({
+    overflow: [
+      { label: "Rename", onselect() {} },
+      { label: "Delete", destructive: true, onselect() {} },
+    ],
+    overflowLabel: "Node actions",
+  });
   expect(menuButton()).toBeNull();
-  const b = document.querySelector('button[aria-label="Node actions"]');
-  expect(b).not.toBeNull();
+  const element = document.querySelector('button[aria-label="Node actions"]');
+  expect(element).not.toBeNull();
   expect(items()).toHaveLength(0);
   openMenu("Node actions");
-  expect(items().map((i) => i.textContent?.trim())).toEqual(["Rename", "Delete"]);
+  expect(items().map((htmlElement) => htmlElement.textContent?.trim())).toEqual(["Rename", "Delete"]);
   expect(items()[1].getAttribute("data-variant")).toBe("destructive");
 });
 
@@ -137,7 +148,9 @@ test("Escape closes the menu", async () => {
   show({ overflow: [{ label: "Rename", onselect() {} }] });
   openMenu();
   expect(items()).toHaveLength(1);
-  (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  (document.activeElement ?? document.body).dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
   await vi.waitFor(() => {
     flushSync();
     expect(items()).toHaveLength(0);
@@ -146,9 +159,9 @@ test("Escape closes the menu", async () => {
 
 test.each(["Enter", "ArrowDown"])("the menu opens with %s on the trigger", async (key) => {
   show({ overflow: [{ label: "Rename", onselect() {} }] });
-  const b = menuButton()!;
-  b.focus();
-  b.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  const button = menuButton()!;
+  button.focus();
+  button.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
   await vi.waitFor(() => {
     flushSync();
     expect(items()).toHaveLength(1);
@@ -157,11 +170,13 @@ test.each(["Enter", "ArrowDown"])("the menu opens with %s on the trigger", async
 
 test("after Escape the focus returns to the trigger", async () => {
   show({ overflow: [{ label: "Rename", onselect() {} }] });
-  const b = menuButton()!;
-  b.focus();
-  b.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const button = menuButton()!;
+  button.focus();
+  button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   await vi.waitFor(() => expect(items()).toHaveLength(1));
-  (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  (document.activeElement ?? document.body).dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
   await vi.waitFor(() => {
     flushSync();
     expect(items()).toHaveLength(0);
@@ -172,29 +187,29 @@ test("after Escape the focus returns to the trigger", async () => {
 test("the menu is not as narrow as the trigger", () => {
   show({ overflow: [{ label: "Rename", onselect() {} }] });
   openMenu();
-  const c = q('[data-slot="dropdown-menu-content"]')!;
-  expect(c.className).toContain("min-w-40");
-  expect(c.className).toContain("w-auto");
-  expect(c.className).not.toContain("w-(--bits-dropdown-menu-anchor-width)");
+  const htmlElement = helper('[data-slot="dropdown-menu-content"]')!;
+  expect(htmlElement.className).toContain("min-w-40");
+  expect(htmlElement.className).toContain("w-auto");
+  expect(htmlElement.className).not.toContain("w-(--bits-dropdown-menu-anchor-width)");
 });
 
 test("titleAside renders outside the heading", () => {
   show({ slots: ["titleAside"] });
-  expect(q('[data-testid="aside"]')?.textContent).toBe("hub");
-  expect(q("h3")!.textContent).not.toContain("hub");
-  expect(q("h3")!.contains(q('[data-testid="aside"]'))).toBe(false);
+  expect(helper('[data-testid="aside"]')?.textContent).toBe("hub");
+  expect(helper("h3")!.textContent).not.toContain("hub");
+  expect(helper("h3")!.contains(helper('[data-testid="aside"]'))).toBe(false);
 });
 
 test("titleEditor replaces the heading", () => {
   show({ slots: ["titleEditor"] });
-  expect(q("h3")).toBeNull();
-  expect(q('[data-testid="editor"]')).not.toBeNull();
+  expect(helper("h3")).toBeNull();
+  expect(helper('[data-testid="editor"]')).not.toBeNull();
 });
 
 test("a form inside titleEditor is not inside an h3", () => {
   show({ slots: ["titleEditor", "titleAside"] });
-  expect(q('[data-testid="editor"]')!.closest("h3")).toBeNull();
-  expect(q('[data-testid="aside"]')).not.toBeNull();
+  expect(helper('[data-testid="editor"]')!.closest("h3")).toBeNull();
+  expect(helper('[data-testid="aside"]')).not.toBeNull();
 });
 
 test("selected adds a ring, not a border, and pending adds the dim class", () => {
@@ -216,15 +231,15 @@ test("selected adds a ring, not a border, and pending adds the dim class", () =>
 
 test("the footer renders after the action strip, and draws nothing when absent", () => {
   show({ slots: ["actions", "footer"] });
-  const f = q('[data-testid="footer"]')!;
-  expect(f).not.toBeNull();
-  expect(strip()!.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(strip()!.contains(f)).toBe(false);
-  expect(f.closest('[data-slot="card-content"]')).not.toBeNull();
+  const htmlElement = helper('[data-testid="footer"]')!;
+  expect(htmlElement).not.toBeNull();
+  expect(strip()!.compareDocumentPosition(htmlElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(strip()!.contains(htmlElement)).toBe(false);
+  expect(htmlElement.closest('[data-slot="card-content"]')).not.toBeNull();
   document.body.innerHTML = "";
   show({ slots: ["actions"] });
-  expect(q('[data-testid="footer"]')).toBeNull();
-  const content = q('[data-slot="card-content"]')!;
+  expect(helper('[data-testid="footer"]')).toBeNull();
+  const content = helper('[data-slot="card-content"]')!;
   expect(content.lastElementChild).toBe(strip());
 });
 

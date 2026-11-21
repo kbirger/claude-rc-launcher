@@ -2,23 +2,38 @@ import { describe, expect, test } from "bun:test";
 import { matchByTime } from "../src/sessioncatalog";
 import type { Found } from "../src/sessionscan";
 
-const T = Date.parse("2026-11-13T04:17:49.571Z");
-const f = (id: string, mtimeMs: number, clearedAt?: number): Found => ({ id, file: `/x/${id}`, mtimeMs, root: "/w", worktree: false, ...(clearedAt !== undefined ? { clearedAt } : {}) });
+const time = Date.parse("2026-11-13T04:17:49.571Z");
+const helper = (id: string, mtimeMs: number, clearedAt?: number): Found => ({
+  id,
+  file: `/x/${id}`,
+  mtimeMs,
+  root: "/w",
+  worktree: false,
+  ...(clearedAt !== undefined ? { clearedAt } : {}),
+});
 
 describe("matchByTime", () => {
   test("the one transcript with a last write at the /clear is the older one", () => {
-    expect(matchByTime([f("old", T + 190), f("new", T + 5000, T), f("other", T - 60000)])).toEqual([["old", "new"]]);
+    expect(
+      matchByTime([helper("old", time + 190), helper("new", time + 5000, time), helper("other", time - 60000)]),
+    ).toEqual([["old", "new"]]);
   });
   test("two candidates give no pair", () => {
-    expect(matchByTime([f("a", T + 100), f("b", T + 200), f("new", T + 5000, T)])).toEqual([]);
+    expect(matchByTime([helper("a", time + 100), helper("b", time + 200), helper("new", time + 5000, time)])).toEqual(
+      [],
+    );
   });
   test("an older transcript that two /clear transcripts want gives no pair", () => {
-    expect(matchByTime([f("old", T + 100), f("n1", T + 9000, T), f("n2", T + 9000, T + 300)])).toEqual([]);
+    expect(
+      matchByTime([helper("old", time + 100), helper("n1", time + 9000, time), helper("n2", time + 9000, time + 300)]),
+    ).toEqual([]);
   });
   test("a write long before or after the /clear does not match", () => {
-    expect(matchByTime([f("early", T - 25_000), f("late", T + 60_000), f("new", T + 5000, T)])).toEqual([]);
+    expect(
+      matchByTime([helper("early", time - 25_000), helper("late", time + 60_000), helper("new", time + 5000, time)]),
+    ).toEqual([]);
   });
   test("a transcript without /clear is never a successor", () => {
-    expect(matchByTime([f("a", T), f("b", T)])).toEqual([]);
+    expect(matchByTime([helper("a", time), helper("b", time)])).toEqual([]);
   });
 });

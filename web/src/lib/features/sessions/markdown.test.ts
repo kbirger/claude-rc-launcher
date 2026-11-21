@@ -3,33 +3,83 @@ import { describe, expect, test } from "vitest";
 import { MARKDOWN_LIMIT } from "./viewkind";
 import { sanitizeMarkdownHtml } from "./sanitize";
 import { blockWeights, weightOfWord } from "./layoutweight";
-import { MAX_BLOCK_WEIGHT, MAX_BRACKETS, MAX_ELEMENTS, MAX_HEAVY_WEIGHT, MAX_LEVEL, MAX_TOTAL_WEIGHT, MAX_RUN_COST, mdForTests, markdownToHtmlForTests, markdownToHtmlGuarded, renderMarkdown, renderMarkdownResult, safeHref } from "./markdown";
+import {
+  MAX_BLOCK_WEIGHT,
+  MAX_BRACKETS,
+  MAX_ELEMENTS,
+  MAX_HEAVY_WEIGHT,
+  MAX_LEVEL,
+  MAX_TOTAL_WEIGHT,
+  MAX_RUN_COST,
+  mdForTests,
+  markdownToHtmlForTests,
+  markdownToHtmlGuarded,
+  renderMarkdown,
+  renderMarkdownResult,
+  safeHref,
+} from "./markdown";
 import { formatText } from "./formatted";
 
-const TAGS = new Set(["a", "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong", "del", "table", "thead", "tbody", "tr", "th", "td"]);
+const TAGS = new Set([
+  "a",
+  "p",
+  "br",
+  "hr",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "ul",
+  "ol",
+  "li",
+  "blockquote",
+  "pre",
+  "code",
+  "em",
+  "strong",
+  "del",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+]);
+// eslint-disable-next-line id-length -- "a" is the HTML tag name
 const ATTRS: Record<string, string[]> = { a: ["href", "title", "target", "rel"], th: ["align"], td: ["align"] };
 
 /** Reads the HTML as a browser would and lists every problem. `final` is false for the output of layer 1 alone, which has no target and rel yet. */
 function problems(html: string, final: boolean): string[] {
   const out: string[] = [];
   const doc = new DOMParser().parseFromString(html, "text/html");
+
   for (const el of Array.from(doc.body.querySelectorAll("*"))) {
     const tag = el.tagName.toLowerCase();
     if (!TAGS.has(tag)) out.push(`tag ${tag}`);
-    for (const a of Array.from(el.attributes)) {
-      if (a.name.startsWith("on")) out.push(`handler ${a.name}`);
-      if (a.name === "style") out.push("style");
-      if (a.name === "src") out.push("src");
-      if (!(ATTRS[tag] ?? []).includes(a.name)) out.push(`attribute ${tag}.${a.name}`);
-      if (!final && (a.name === "target" || a.name === "rel")) out.push(`attribute ${tag}.${a.name} before layer 2`);
+
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.startsWith("on")) out.push(`handler ${attr.name}`);
+      if (attr.name === "style") out.push("style");
+      if (attr.name === "src") out.push("src");
+      if (!(ATTRS[tag] ?? []).includes(attr.name)) out.push(`attribute ${tag}.${attr.name}`);
+      if (!final && (attr.name === "target" || attr.name === "rel"))
+        out.push(`attribute ${tag}.${attr.name} before layer 2`);
     }
+
     if (tag === "a") {
       const raw = el.getAttribute("href");
       // Every link, in both layers, must have a good href: layer 2 turns a link without one into its text.
       if (!/^(https?:|mailto:)/i.test(raw ?? "")) out.push(`href ${raw}`);
-      if (final && (el.getAttribute("target") !== "_blank" || el.getAttribute("rel") !== "noopener noreferrer nofollow")) out.push("link target or rel");
+      if (
+        final &&
+        (el.getAttribute("target") !== "_blank" || el.getAttribute("rel") !== "noopener noreferrer nofollow")
+      )
+        out.push("link target or rel");
     }
   }
+
   return out;
 }
 
@@ -39,7 +89,7 @@ const PAYLOADS: Record<string, string> = {
   scriptUpper: "<SCRIPT SRC=//evil.example/x.js></SCRIPT>",
   onerrorImg: "<img src=x onerror=alert(1)>",
   onloadSvg: "<svg onload=alert(1)>",
-  onclickAttr: "<a href=\"https://ok.example\" onclick=\"alert(1)\">x</a>",
+  onclickAttr: '<a href="https://ok.example" onclick="alert(1)">x</a>',
   onmouseover: "<p onmouseover=alert(1)>hover</p>",
   inlineLink: "[x](javascript:alert(1))",
   inlineLinkCase: "[x](JaVaScRiPt:alert(1))",
@@ -66,64 +116,66 @@ const PAYLOADS: Record<string, string> = {
   autolink: "<javascript:alert(1)>",
   autolinkMail: "<a@b.example>",
   autolinkBare: "www.evil.example/x and https://ok.example/a_b",
-  imgOnerror: "![x](x \"t\" onerror=alert(1))",
+  imgOnerror: '![x](x "t" onerror=alert(1))',
   imgJs: "![x](javascript:alert(1))",
   imgRemote: "![tracker](https://evil.example/pixel.png)",
   imgRef: "![x][1]\n\n[1]: https://evil.example/p.png",
   imgData: "![x](data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+)",
   svg: "<svg><script>alert(1)</script></svg>",
-  svgUse: "<svg><use href=\"data:image/svg+xml,<svg id='x' xmlns='http://www.w3.org/2000/svg'><image href='1' onerror='alert(1)'/></svg>#x\"/></svg>",
-  math: "<math><mi//xlink:href=\"data:x,<script>alert(1)</script>\">",
-  iframe: "<iframe src=\"javascript:alert(1)\"></iframe>",
-  iframeSrcdoc: "<iframe srcdoc=\"<script>alert(1)</script>\"></iframe>",
-  object: "<object data=\"javascript:alert(1)\"></object><embed src=\"javascript:alert(1)\">",
-  form: "<form action=\"https://evil.example\"><input name=p><button>go</button></form>",
-  formaction: "<button formaction=\"javascript:alert(1)\">x</button>",
+  svgUse:
+    "<svg><use href=\"data:image/svg+xml,<svg id='x' xmlns='http://www.w3.org/2000/svg'><image href='1' onerror='alert(1)'/></svg>#x\"/></svg>",
+  math: '<math><mi//xlink:href="data:x,<script>alert(1)</script>">',
+  iframe: '<iframe src="javascript:alert(1)"></iframe>',
+  iframeSrcdoc: '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
+  object: '<object data="javascript:alert(1)"></object><embed src="javascript:alert(1)">',
+  form: '<form action="https://evil.example"><input name=p><button>go</button></form>',
+  formaction: '<button formaction="javascript:alert(1)">x</button>',
   style: "<style>*{background:url(https://evil.example/t)}</style>",
-  styleAttr: "<p style=\"background:url(https://evil.example/t)\">x</p>",
-  metaRefresh: "<meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\">",
-  base: "<base href=\"https://evil.example/\">[x](a)",
-  linkTag: "<link rel=stylesheet href=\"https://evil.example/x.css\">",
+  styleAttr: '<p style="background:url(https://evil.example/t)">x</p>',
+  metaRefresh: '<meta http-equiv="refresh" content="0;url=https://evil.example">',
+  base: '<base href="https://evil.example/">[x](a)',
+  linkTag: '<link rel=stylesheet href="https://evil.example/x.css">',
   htmlComment: "<!-- <script>alert(1)</script> -->",
   htmlCommentBroken: "<!--><script>alert(1)</script>-->",
   cdata: "<![CDATA[<script>alert(1)</script>]]>",
   nestedBroken: "<div><p><b><i>x</div></p></b></i><script>alert(1)",
   nestedBrokenTag: "<scr<script>ipt>alert(1)</scr</script>ipt>",
-  unclosed: "<a href=\"https://ok.example\" title=\"x><script>alert(1)</script>",
+  unclosed: '<a href="https://ok.example" title="x><script>alert(1)</script>',
   details: "<details open ontoggle=alert(1)><summary>s</summary>text</details>",
   mdInHtml: "<div>\n\n**bold** [x](javascript:alert(1))\n\n</div>",
   mdInHtmlInline: "<b>**x**</b> <i>[y](javascript:alert(1))</i>",
-  tableHtml: "| a | b |\n|---|---|\n| <img src=x onerror=alert(1)> | <script>alert(1)</script> |\n| [x](javascript:alert(1)) | `<b>` |",
+  tableHtml:
+    "| a | b |\n|---|---|\n| <img src=x onerror=alert(1)> | <script>alert(1)</script> |\n| [x](javascript:alert(1)) | `<b>` |",
   tableAlign: "| a | b |\n|:--|--:|\n| 1 | 2 |",
   footnote: "text[^1]\n\n[^1]: <script>alert(1)</script> [x](javascript:alert(1))",
   taskList: "- [x] <script>alert(1)</script>\n- [ ] [x](javascript:alert(1))",
   headingHtml: "# <img src=x onerror=alert(1)>",
   emphasisHtml: "*<script>alert(1)</script>* __<img src=x onerror=1>__",
   codeBlock: "```<script>alert(1)</script>\n<script>alert(1)</script>\n```",
-  codeLang: "```\"><script>alert(1)</script>\nx\n```",
+  codeLang: '```"><script>alert(1)</script>\nx\n```',
   codeSpan: "`<script>alert(1)</script>`",
   indentedCode: "    <script>alert(1)</script>",
   blockquote: "> <script>alert(1)</script>\n> [x](javascript:alert(1))",
-  titleAttr: "[x](https://ok.example \"\" onmouseover=\"alert(1)\")",
-  titleQuote: "[x](https://ok.example \"a\\\" onmouseover=\\\"alert(1)\")",
-  hrefQuote: "[x](https://ok.example/\"onmouseover=\"alert(1))",
-  hrefAngleQuote: "[x](<https://ok.example/\" onmouseover=\"alert(1)>)",
+  titleAttr: '[x](https://ok.example "" onmouseover="alert(1)")',
+  titleQuote: '[x](https://ok.example "a\\" onmouseover=\\"alert(1)")',
+  hrefQuote: '[x](https://ok.example/"onmouseover="alert(1))',
+  hrefAngleQuote: '[x](<https://ok.example/" onmouseover="alert(1)>)',
   mailtoLink: "[x](mailto:a@b.example?subject=hi)",
   unicodeColon: "[x](javascript：alert(1))",
   bidi: "[x](‮javascript:alert(1))",
   deepQuote: "> ".repeat(2000) + "x",
-  deepList: Array.from({ length: 300 }, (_, i) => " ".repeat(i * 2) + "- x").join("\n"),
+  deepList: Array.from({ length: 300 }, (_unused, item) => " ".repeat(item * 2) + "- x").join("\n"),
   deepBrackets: "[".repeat(5000) + "x](javascript:alert(1))",
   deepEmphasis: "*a ".repeat(5000),
   deepHtml: "<div>".repeat(5000) + "<script>alert(1)</script>",
   deepHtmlInline: "x<b>".repeat(5000) + "<img src=x onerror=1>",
   // Added in Task 3 beyond the plan list.
   x_svgStyleImg: "<svg><style><img src onerror=alert(1)>",
-  x_noscriptTitle: "<noscript><p title=\"</noscript><img src=x onerror=alert(1)>\">",
+  x_noscriptTitle: '<noscript><p title="</noscript><img src=x onerror=alert(1)>">',
   x_mathMglyph: "<math><mtext><table><mglyph><style><img src onerror=alert(1)>",
-  x_hrefEntityTab: "<a href=\"jav&#x09;ascript:alert(1)\">x</a>",
-  x_hrefEntityNewline: "<a href=\"jav&#x0A;ascript:alert(1)\">x</a>",
-  x_refDefJs: "[x][ref]\n\n[ref]: javascript:alert(1) \"t\"",
+  x_hrefEntityTab: '<a href="jav&#x09;ascript:alert(1)">x</a>',
+  x_hrefEntityNewline: '<a href="jav&#x0A;ascript:alert(1)">x</a>',
+  x_refDefJs: '[x][ref]\n\n[ref]: javascript:alert(1) "t"',
   x_refDefCaseInsensitive: "[Foo Bar]\n\n[foo bar]: JAVASCRIPT:alert(1)",
   x_leadingLineSep: "[x]( javascript:alert(1))",
   x_leadingParaSep: "[x]( javascript:alert(1))",
@@ -136,9 +188,9 @@ const PAYLOADS: Record<string, string> = {
   x_linkTextNestedLink: "[[a](javascript:alert(1))](https://ok.example)",
   x_autolinkJsAngle: "<JAVASCRIPT:alert(1)>",
   x_autolinkData: "<data:text/html,<script>alert(1)</script>>",
-  x_autolinkQuote: "<https://ok.example/\"onmouseover=\"alert(1)>",
-  x_bareUrlJs: "javascript:alert(1) and www.x.example\"onmouseover=\"alert(1)",
-  x_bareUrlQuote: "https://ok.example/\"onmouseover=\"alert(1)",
+  x_autolinkQuote: '<https://ok.example/"onmouseover="alert(1)>',
+  x_bareUrlJs: 'javascript:alert(1) and www.x.example"onmouseover="alert(1)',
+  x_bareUrlQuote: 'https://ok.example/"onmouseover="alert(1)',
   x_backslashBrackets: "\\[x\\](javascript:alert(1)) \\<script\\>alert(1)\\</script\\>",
   x_backslashParen: "[x](javascript:alert\\(1\\))",
   x_escapedLt: "&lt;script&gt;alert(1)&lt;/script&gt; &#60;script&#62;alert(1)&#60;/script&#62;",
@@ -147,11 +199,11 @@ const PAYLOADS: Record<string, string> = {
   x_longLineJs: "[x](javascript:" + "a".repeat(200000) + ")",
   x_longTextLine: "<b>".repeat(30000) + "x",
   x_nulInTag: "<scr\u0000ipt>alert(1)</scr\u0000ipt>",
-  x_nulInHref: "<a href=\"java\u0000script:alert(1)\">x</a>",
-  x_imgTitleHandler: "![a\" onerror=\"alert(1)](https://ok.example/x.png)",
+  x_nulInHref: '<a href="java\u0000script:alert(1)">x</a>',
+  x_imgTitleHandler: '![a" onerror="alert(1)](https://ok.example/x.png)',
   x_imgAltHtml: "![<script>alert(1)</script>](https://ok.example/x.png)",
-  x_imgSrcset: "<img srcset=\"x 1x\" src=x onerror=alert(1)>",
-  x_picture: "<picture><source srcset=\"javascript:alert(1)\"><img src=x onerror=alert(1)></picture>",
+  x_imgSrcset: '<img srcset="x 1x" src=x onerror=alert(1)>',
+  x_picture: '<picture><source srcset="javascript:alert(1)"><img src=x onerror=alert(1)></picture>',
   x_video: "<video src=x onerror=alert(1)><source onerror=alert(1)></video>",
   x_audio: "<audio src=x onerror=alert(1)></audio>",
   x_tableCellHtml: "| a |\n|---|\n| <svg onload=alert(1)> |",
@@ -166,16 +218,17 @@ const PAYLOADS: Record<string, string> = {
   x_scriptInLink: "[x](https://ok.example/<script>alert(1)</script>)",
   x_frameset: "<frameset onload=alert(1)><frame src=javascript:alert(1)></frameset>",
   x_templateTag: "<template><script>alert(1)</script></template>",
-  x_dataUrlInTitle: "[x](https://ok.example \"data:text/html,<script>alert(1)</script>\")",
+  x_dataUrlInTitle: '[x](https://ok.example "data:text/html,<script>alert(1)</script>")',
   x_codeFenceTilde: "~~~html\n<script>alert(1)</script>\n~~~",
-  x_rawDataHref: "<a href=\"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==\">x</a>",
-  x_rawDataHrefPlain: "<a href=\"data:text/html,hi\">x</a>",
-  x_rawDataHrefUpper: "<a href=\"DATA:text/html,hi\">x</a>",
+  x_rawDataHref: '<a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">x</a>',
+  x_rawDataHrefPlain: '<a href="data:text/html,hi">x</a>',
+  x_rawDataHrefUpper: '<a href="DATA:text/html,hi">x</a>',
   // A handler whose value starts with an allowed scheme word is a JavaScript label, so it still runs: "https:alert(1)".
-  x_handlerLabelHttps: "<a href=\"https://ok.example\" onclick=\"https:alert(1)\">x</a>",
-  x_handlerLabelMailto: "<a href=\"https://ok.example\" onmouseover=\"mailto:1;alert(1)\">x</a>",
-  x_handlerLabelOnerror: "<a href=\"https://ok.example\" onerror=\"http:alert(1)\" onfocus=\"https:alert(1)\" autofocus tabindex=1>x</a>",
-  x_styleAttrAllowedScheme: "<p style=\"https:x\">x</p><a href=\"https://ok.example\" style=\"https://x\">y</a>",
+  x_handlerLabelHttps: '<a href="https://ok.example" onclick="https:alert(1)">x</a>',
+  x_handlerLabelMailto: '<a href="https://ok.example" onmouseover="mailto:1;alert(1)">x</a>',
+  x_handlerLabelOnerror:
+    '<a href="https://ok.example" onerror="http:alert(1)" onfocus="https:alert(1)" autofocus tabindex=1>x</a>',
+  x_styleAttrAllowedScheme: '<p style="https:x">x</p><a href="https://ok.example" style="https://x">y</a>',
   x_htmlEntityInRef: "[x]\n\n[x]: <java&#115;cript:alert(1)>",
 };
 
@@ -183,6 +236,7 @@ describe("hostile markdown corpus", () => {
   test("has at least 80 payloads", () => {
     expect(Object.keys(PAYLOADS).length).toBeGreaterThanOrEqual(80);
   });
+
   for (const [name, src] of Object.entries(PAYLOADS)) {
     // Layer 1 alone must already be safe: it is the renderer, with no sanitizer after it.
     test(`${name}: the renderer alone is safe`, () => {
@@ -202,8 +256,8 @@ describe("formatText equals renderMarkdown for the whole corpus", () => {
   for (const [name, src] of Object.entries(PAYLOADS)) {
     test(name, async () => {
       const expected = renderMarkdown(src);
-      const r = await formatText("a.md", src);
-      if (r.kind === "markdown") expect(r.html).toBe(expected);
+      const item = await formatText("a.md", src);
+      if (item.kind === "markdown") expect(item.html).toBe(expected);
       else expect(expected === undefined || src.length > MARKDOWN_LIMIT).toBe(true);
     });
   }
@@ -215,7 +269,7 @@ describe("formatText equals renderMarkdown for the whole corpus", () => {
 // against layer 1 and against both layers above.
 const NESTED_RAW_HTML = new Set(["deepHtml", "deepHtmlInline", "x_longTextLine"]);
 describe("hostile markdown corpus, second layer alone (layer 1 bypassed)", () => {
-  for (const [name, src] of Object.entries(PAYLOADS).filter(([n]) => !NESTED_RAW_HTML.has(n))) {
+  for (const [name, src] of Object.entries(PAYLOADS).filter(([count]) => !NESTED_RAW_HTML.has(count))) {
     test(`${name}: sanitizeMarkdownHtml alone is safe`, () => {
       expect(problems(sanitizeMarkdownHtml(src), true)).toEqual([]);
     });
@@ -227,8 +281,10 @@ describe("hostile markdown corpus, second layer alone (layer 1 bypassed)", () =>
 
 describe("what renders", () => {
   test("a safe link keeps its text and address", () => {
-    const a = new DOMParser().parseFromString(renderMarkdown("[hi](https://example.com/a?b=1&c=2)")!, "text/html").querySelector("a")!;
-    expect([a.textContent, a.getAttribute("href")]).toEqual(["hi", "https://example.com/a?b=1&c=2"]);
+    const item = new DOMParser()
+      .parseFromString(renderMarkdown("[hi](https://example.com/a?b=1&c=2)")!, "text/html")
+      .querySelector("a")!;
+    expect([item.textContent, item.getAttribute("href")]).toEqual(["hi", "https://example.com/a?b=1&c=2"]);
   });
   test("a bad link becomes its plain text", () => {
     const doc = new DOMParser().parseFromString(renderMarkdown("[click me](javascript:alert(1))")!, "text/html");
@@ -246,12 +302,16 @@ describe("what renders", () => {
     expect(doc.querySelector("a")?.textContent).toBe("Image: logo");
   });
   test("task list items show as text marks", () => {
-    const text = new DOMParser().parseFromString(renderMarkdown("- [x] done\n- [ ] todo")!, "text/html").body.textContent;
+    const text = new DOMParser().parseFromString(renderMarkdown("- [x] done\n- [ ] todo")!, "text/html").body
+      .textContent;
     expect(text).toContain("[x] done");
     expect(text).toContain("[ ] todo");
   });
   test("tables, headings and code blocks render", () => {
-    const doc = new DOMParser().parseFromString(renderMarkdown("# T\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst a = 1;\n```")!, "text/html");
+    const doc = new DOMParser().parseFromString(
+      renderMarkdown("# T\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst a = 1;\n```")!,
+      "text/html",
+    );
     expect(doc.querySelector("h1")?.textContent).toBe("T");
     expect(doc.querySelectorAll("td").length).toBe(2);
     expect(doc.querySelector("pre code")?.textContent).toContain("const a = 1;");
@@ -264,7 +324,22 @@ describe("safeHref", () => {
     expect(safeHref("https://a.example/x")).toBe("https://a.example/x");
     expect(safeHref("HTTP://a.example")).toBe("HTTP://a.example");
     expect(safeHref("mailto:a@b.example")).toBe("mailto:a@b.example");
-    for (const bad of ["javascript:x", " https://a.example", "//a.example", "/a", "a.html", "data:x", "vbscript:x", "https://a.example/\"x", "https://a.example/<x", "https://a.example/\u0001", "", undefined, null]) {
+
+    for (const bad of [
+      "javascript:x",
+      " https://a.example",
+      "//a.example",
+      "/a",
+      "a.html",
+      "data:x",
+      "vbscript:x",
+      'https://a.example/"x',
+      "https://a.example/<x",
+      "https://a.example/\u0001",
+      "",
+      undefined,
+      null,
+    ]) {
       expect(safeHref(bad)).toBeUndefined();
     }
   });
@@ -272,7 +347,8 @@ describe("safeHref", () => {
 
 describe("limits", () => {
   test("a text of MARKDOWN_LIMIT characters renders in a few seconds, or gives undefined", () => {
-    const unit = "# t\n\nSome words in a paragraph, with a [link](https://ok.example) and `code`, and more words to fill the line, and more words to fill the line, and more words to fill the line, and more words to fill the line.\n\n- [ ] item **bold**\n\n";
+    const unit =
+      "# t\n\nSome words in a paragraph, with a [link](https://ok.example) and `code`, and more words to fill the line, and more words to fill the line, and more words to fill the line, and more words to fill the line.\n\n- [ ] item **bold**\n\n";
     const big = unit.repeat(Math.ceil(MARKDOWN_LIMIT / unit.length)).slice(0, MARKDOWN_LIMIT);
     const start = performance.now();
     const out = renderMarkdown(big);
@@ -305,15 +381,15 @@ describe("the complexity guard", () => {
     expect(markdownToHtmlGuarded("word ".repeat(10000))).toBeDefined();
   });
   test("an output much longer than the input is refused", () => {
-    expect(markdownToHtmlGuarded("\" ".repeat(2500))).toBeDefined();
+    expect(markdownToHtmlGuarded('" '.repeat(2500))).toBeDefined();
     expect(markdownToHtmlGuarded("a|b\n-|-\n" + "|\n".repeat(30))).toBeDefined();
   });
   test("the reason is complex for the guard and the page shows the complex note", async () => {
     const hostile = "- a\n".repeat(MAX_ELEMENTS);
     expect(renderMarkdownResult(hostile)).toEqual({ ok: false, reason: "complex" });
     expect(renderMarkdown(hostile)).toBeUndefined();
-    const r = await formatText("a.md", hostile);
-    expect(r).toEqual({ kind: "plain", note: "This file is too complex to format. Showing plain text." });
+    const item = await formatText("a.md", hostile);
+    expect(item).toEqual({ kind: "plain", note: "This file is too complex to format. Showing plain text." });
   });
   test("a refusal is fast: the guard runs before any rendering", () => {
     const start = performance.now();
@@ -327,19 +403,20 @@ describe("the complexity guard", () => {
 // paint at the size limit with the processor slowed down, and that the page stays responsive. The Chromium run in the task I
 // report does that.
 describe("inputs that were slow for other parsers render quickly", () => {
-  const N = MARKDOWN_LIMIT;
+  const count = MARKDOWN_LIMIT;
   const INPUTS: Record<string, string> = {
-    mixedStarUnderscore: "*a_".repeat(Math.floor(N / 3)),
-    underscoreA: "_a".repeat(N / 2),
-    stars: "*".repeat(N - 1) + "x",
-    quoteSpaced: "> ".repeat(N / 2),
-    brackets: "](x".repeat(Math.floor(N / 3)),
-    wordUnderscores: ("a" + "_".repeat(299) + "b").repeat(Math.floor(N / 301)),
+    mixedStarUnderscore: "*a_".repeat(Math.floor(count / 3)),
+    underscoreA: "_a".repeat(count / 2),
+    stars: "*".repeat(count - 1) + "x",
+    quoteSpaced: "> ".repeat(count / 2),
+    brackets: "](x".repeat(Math.floor(count / 3)),
+    wordUnderscores: ("a" + "_".repeat(299) + "b").repeat(Math.floor(count / 301)),
     full: "*a_".repeat(34133),
     fullUnderscoreA: "_a".repeat(51200),
     fullStars: "*".repeat(102400) + "x",
     fullQuotes: "> ".repeat(51200),
   };
+
   for (const [name, src] of Object.entries(INPUTS)) {
     test(`${name}: under 2 s`, () => {
       const start = performance.now();
@@ -354,29 +431,80 @@ describe("inputs that were slow for other parsers render quickly", () => {
 // plain text unless the address starts with http://, https:// or mailto:. They run through layer 1 alone, so layer 2 is not
 // what saves them.
 describe("every link form ends as plain text unless the address is http, https or mailto", () => {
-  const OK = ["[t](https://a.example/x)", "[t](HTTP://A.EXAMPLE)", "[t](mailto:a@b.example)", "<https://a.example>", "<mailto:a@b.example>", "[t][r]\n\n[r]: https://a.example", "[t]\n\n[t]: https://a.example", "![t](https://a.example/i.png)", "![t][r]\n\n[r]: https://a.example/i.png", "[![t](https://a.example/i.png)](https://b.example)"];
-  const BAD = [
-    "[t](javascript:alert(1))", "[t](JaVaScRiPt:alert(1))", "[t](java&#115;cript:alert(1))", "[t](&#x6A;avascript:alert(1))", "[t](javascript&colon;alert(1))", "[t](javascript&#58;alert(1))",
-    "[t](data:text/html,x)", "[t](vbscript:x)", "[t](file:///etc/passwd)", "[t](blob:https://a.example/x)", "[t](//a.example)", "[t](/a)", "[t](a.html)", "[t](#frag)", "[t](?q=1)", "[t](http:a)", "[t](https:/a)",
-    "[t]( javascript:x)", "[t](<javascript:x>)", "[t](java\tscript:x)", "[t](\u0001https://a.example)", "[t](https://a.example/\u0001)", "[t](https://a.example/\"x)",
-    "<javascript:alert(1)>", "<JAVASCRIPT:alert(1)>", "<data:text/html,x>", "<file:///x>", "<ftp://a.example>", "<a@b.example>x", 
-    "[t][r]\n\n[r]: javascript:alert(1)", "[t]\n\n[t]: data:x", "[t][]\n\n[t]: <vbscript:x>", "[t][r]\n\n[r]: //a.example",
-    "![t](javascript:alert(1))", "![t][r]\n\n[r]: data:image/svg+xml,x", "![t](x.png)", "![t](/x.png)", "![t](//a.example/x.png)", "![t](file:///x)",
-    "[![t](javascript:1)](javascript:2)", "[a [b](javascript:x)](https://c.example)", "www.a.example and https://a.example/b and a@b.example",
+  const OK = [
+    "[t](https://a.example/x)",
+    "[t](HTTP://A.EXAMPLE)",
+    "[t](mailto:a@b.example)",
+    "<https://a.example>",
+    "<mailto:a@b.example>",
+    "[t][r]\n\n[r]: https://a.example",
+    "[t]\n\n[t]: https://a.example",
+    "![t](https://a.example/i.png)",
+    "![t][r]\n\n[r]: https://a.example/i.png",
+    "[![t](https://a.example/i.png)](https://b.example)",
   ];
-  const hrefs = (html: string) => Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")).map((a) => a.getAttribute("href"));
+  const BAD = [
+    "[t](javascript:alert(1))",
+    "[t](JaVaScRiPt:alert(1))",
+    "[t](java&#115;cript:alert(1))",
+    "[t](&#x6A;avascript:alert(1))",
+    "[t](javascript&colon;alert(1))",
+    "[t](javascript&#58;alert(1))",
+    "[t](data:text/html,x)",
+    "[t](vbscript:x)",
+    "[t](file:///etc/passwd)",
+    "[t](blob:https://a.example/x)",
+    "[t](//a.example)",
+    "[t](/a)",
+    "[t](a.html)",
+    "[t](#frag)",
+    "[t](?q=1)",
+    "[t](http:a)",
+    "[t](https:/a)",
+    "[t]( javascript:x)",
+    "[t](<javascript:x>)",
+    "[t](java\tscript:x)",
+    "[t](\u0001https://a.example)",
+    "[t](https://a.example/\u0001)",
+    '[t](https://a.example/"x)',
+    "<javascript:alert(1)>",
+    "<JAVASCRIPT:alert(1)>",
+    "<data:text/html,x>",
+    "<file:///x>",
+    "<ftp://a.example>",
+    "<a@b.example>x",
+    "[t][r]\n\n[r]: javascript:alert(1)",
+    "[t]\n\n[t]: data:x",
+    "[t][]\n\n[t]: <vbscript:x>",
+    "[t][r]\n\n[r]: //a.example",
+    "![t](javascript:alert(1))",
+    "![t][r]\n\n[r]: data:image/svg+xml,x",
+    "![t](x.png)",
+    "![t](/x.png)",
+    "![t](//a.example/x.png)",
+    "![t](file:///x)",
+    "[![t](javascript:1)](javascript:2)",
+    "[a [b](javascript:x)](https://c.example)",
+    "www.a.example and https://a.example/b and a@b.example",
+  ];
+  const hrefs = (html: string) =>
+    Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")).map((item) =>
+      item.getAttribute("href"),
+    );
+
   for (const src of BAD) {
     test(`plain text: ${JSON.stringify(src).slice(0, 60)}`, () => {
       const html = markdownToHtmlForTests(src);
-      const d = new DOMParser().parseFromString(html, "text/html");
-      expect(d.querySelector("img, [src]")).toBeNull();
-      for (const h of hrefs(html)) expect(h).toMatch(/^(https?:\/\/|mailto:)/i);
+      const fromString = new DOMParser().parseFromString(html, "text/html");
+      expect(fromString.querySelector("img, [src]")).toBeNull();
+      for (const href of hrefs(html)) expect(href).toMatch(/^(https?:\/\/|mailto:)/i);
     });
   }
+
   test("the plain forms that are bad give no link at all", () => {
     for (const src of BAD.slice(0, 41)) {
       if (src.startsWith("[![") || src.startsWith("[a [b]")) continue;
-      if (src.startsWith("<a@b") || src.startsWith("www") || src.includes("\"x") || src.includes("\u0001")) continue; // the encoder makes these safe links: a quote becomes %22
+      if (src.startsWith("<a@b") || src.startsWith("www") || src.includes('"x') || src.includes("\u0001")) continue; // the encoder makes these safe links: a quote becomes %22
       expect(hrefs(markdownToHtmlForTests(src)), src).toEqual([]);
     }
   });
@@ -403,22 +531,32 @@ describe("the layout guard", () => {
     expect(markdownToHtmlGuarded("אa ".repeat(21845))).toBeUndefined();
   });
   test("reproduction: a private use character and a Han character in a word, 8,000 words (5.9 to 7.1 s at 4x) is refused", () => {
-    const text = Array.from({ length: 8000 }, (_, j) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ").join("");
+    const text = Array.from(
+      { length: 8000 },
+      (_unused, index) => cp(0xe000 + ((index * 7) % 6000)) + cp(0x4e00 + ((index * 13) % 20000)) + " ",
+    ).join("");
     expect(markdownToHtmlGuarded(text)).toBeUndefined();
   });
   test("reproduction: 21,000 two-character words of private use and Han (17 s at 4x) is refused", () => {
-    const text = Array.from({ length: 21000 }, (_, j) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ").join("");
+    const text = Array.from(
+      { length: 21000 },
+      (_unused, index) => cp(0xe000 + ((index * 7) % 6000)) + cp(0x4e00 + ((index * 13) % 20000)) + " ",
+    ).join("");
     expect(markdownToHtmlGuarded(text)).toBeUndefined();
   });
   test("Hebrew with Latin: about 900 words in a block is the limit (weight 9 each)", () => {
-    const n = Math.floor(MAX_BLOCK_WEIGHT / weightOfWord("אa"));
-    expect(markdownToHtmlGuarded("אa ".repeat(n))).toBeDefined();
-    expect(markdownToHtmlGuarded("אa ".repeat(n + 1))).toBeUndefined();
+    const count = Math.floor(MAX_BLOCK_WEIGHT / weightOfWord("אa"));
+    expect(markdownToHtmlGuarded("אa ".repeat(count))).toBeDefined();
+    expect(markdownToHtmlGuarded("אa ".repeat(count + 1))).toBeUndefined();
   });
   test("heavy words (private use with Han): refused above MAX_HEAVY_WEIGHT over the whole file, rendered below", () => {
-    const word = (j: number) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ";
-    expect(markdownToHtmlGuarded(Array.from({ length: MAX_HEAVY_WEIGHT / 8 - 1 }, (_, j) => word(j)).join(""))).toBeDefined();
-    expect(markdownToHtmlGuarded(Array.from({ length: MAX_HEAVY_WEIGHT / 8 + 1 }, (_, j) => word(j)).join(""))).toBeUndefined();
+    const word = (item: number) => cp(0xe000 + ((item * 7) % 6000)) + cp(0x4e00 + ((item * 13) % 20000)) + " ";
+    expect(
+      markdownToHtmlGuarded(Array.from({ length: MAX_HEAVY_WEIGHT / 8 - 1 }, (_unused, index) => word(index)).join("")),
+    ).toBeDefined();
+    expect(
+      markdownToHtmlGuarded(Array.from({ length: MAX_HEAVY_WEIGHT / 8 + 1 }, (_unused, index) => word(index)).join("")),
+    ).toBeUndefined();
   });
   test("many blocks just under the limit add up: the total weight is limited over the whole file", () => {
     const para = "aア ".repeat(Math.floor(MAX_BLOCK_WEIGHT / weightOfWord("aア")) - 10) + "\n\n";
@@ -427,14 +565,24 @@ describe("the layout guard", () => {
     expect(markdownToHtmlGuarded(para.repeat(blocks + 2))).toBeUndefined();
   });
   test("a heading, a list item, a table cell, a quote and a link text count as a block each", () => {
-    for (const wrap of [(t: string) => "# " + t, (t: string) => "- " + t, (t: string) => "> " + t, (t: string) => "| a |\n|---|\n| " + t + " |", (t: string) => "[" + t + "](https://e.example)"]) {
+    for (const wrap of [
+      (item: string) => "# " + item,
+      (item: string) => "- " + item,
+      (item: string) => "> " + item,
+      (item: string) => "| a |\n|---|\n| " + item + " |",
+      (item: string) => "[" + item + "](https://e.example)",
+    ]) {
       expect(markdownToHtmlGuarded(wrap("ア ".repeat(MAX_BLOCK_WEIGHT + 10)))).toBeUndefined();
       expect(markdownToHtmlGuarded(wrap("ア ".repeat(100)))).toBeDefined();
     }
   });
   test("Thai without spaces is refused through the run cost, Chinese without spaces is not", () => {
     expect(markdownToHtmlGuarded("ก".repeat(Math.ceil(Math.sqrt(MAX_RUN_COST)) + 1))).toBeUndefined();
-    expect(markdownToHtmlGuarded(Array.from({ length: 60000 }, (_, j) => cp(0x4e00 + ((j * 13) % 20000))).join(""))).toBeDefined();
+    expect(
+      markdownToHtmlGuarded(
+        Array.from({ length: 60000 }, (_unused, index) => cp(0x4e00 + ((index * 13) % 20000))).join(""),
+      ),
+    ).toBeDefined();
   });
   test("reproduction: Latin and Han letters alternating in one word of 64,000 characters (2.0 s at 4x) is refused", () => {
     expect(markdownToHtmlGuarded("A你".repeat(32000))).toBeUndefined();
@@ -446,7 +594,8 @@ describe("the layout guard", () => {
     expect(markdownToHtmlGuarded("ab\u3000".repeat(21845))).toBeUndefined();
   });
   test("reproduction: kana separated by a comma or a dash and no space, 32,768 of them (1.9 to 2.8 s at 4x) is refused", () => {
-    for (const sep of [",", "-", "/", "…", "—", "?", ")"]) expect(markdownToHtmlGuarded(("ア" + sep).repeat(32768)), sep).toBeUndefined();
+    for (const sep of [",", "-", "/", "…", "—", "?", ")"])
+      expect(markdownToHtmlGuarded(("ア" + sep).repeat(32768)), sep).toBeUndefined();
   });
   test("reproduction: a smiling face and a variation selector, 7,000 words of three (1.2 s at 4x) is refused", () => {
     expect(markdownToHtmlGuarded("☺️☺︎☺️☺︎☺️☺︎ ".repeat(5400))).toBeUndefined();
@@ -461,8 +610,16 @@ describe("the layout guard", () => {
   });
   test("normal prose of 60,000 characters in each of eight scripts still renders", () => {
     const prose: Record<string, { words: string[]; sep: string; end: string }> = {
-      ko: { words: ["오늘은", "날씨가", "정말", "좋아서", "공원에", "API를", "사용해서", "2024년에", "문서를"], sep: " ", end: ". " },
-      ja: { words: ["今日は", "天気が", "とても", "良かったので", "公園に", "APIを", "使って", "文書を"], sep: "", end: "。" },
+      ko: {
+        words: ["오늘은", "날씨가", "정말", "좋아서", "공원에", "API를", "사용해서", "2024년에", "문서를"],
+        sep: " ",
+        end: ". ",
+      },
+      ja: {
+        words: ["今日は", "天気が", "とても", "良かったので", "公園に", "APIを", "使って", "文書を"],
+        sep: "",
+        end: "。",
+      },
       zh: { words: ["今天", "天气", "非常", "好", "我们", "去", "公园", "使用", "API", "文档"], sep: "", end: "。" },
       hi: { words: ["आज", "मौसम", "बहुत", "अच्छा", "था", "इसलिए", "हम", "पार्क", "में"], sep: " ", end: "। " },
       ru: { words: ["Сегодня", "была", "очень", "хорошая", "погода", "поэтому", "мы", "пошли"], sep: " ", end: ". " },
@@ -470,19 +627,25 @@ describe("the layout guard", () => {
       th: { words: ["วันนี้", "อากาศ", "ดีมาก", "เราจึง", "ไปที่", "สวนสาธารณะ", "กับเพื่อน"], sep: "", end: " " },
       en: { words: ["Today", "the", "weather", "was", "very", "nice", "so", "we", "went"], sep: " ", end: ". " },
     };
-    for (const [lang, v] of Object.entries(prose)) {
-      let s = "";
-      let k = 0;
-      while (s.length < 60000) {
-        let p = "";
-        for (let i = 0; i < 4; i++) {
+
+    for (const [lang, value] of Object.entries(prose)) {
+      let item = "";
+      let key = 0;
+
+      while (item.length < 60000) {
+        let entry = "";
+
+        for (let index = 0; index < 4; index++) {
           let sentence = "";
-          for (let j = 0; j < 12; j++) sentence += (j && v.sep ? v.sep : "") + v.words[k++ % v.words.length];
-          p += sentence + v.end;
+          for (let element = 0; element < 12; element++)
+            sentence += (element && value.sep ? value.sep : "") + value.words[key++ % value.words.length];
+          entry += sentence + value.end;
         }
-        s += p.trim() + "\n\n";
+
+        item += entry.trim() + "\n\n";
       }
-      expect(markdownToHtmlGuarded(s), lang).toBeDefined();
+
+      expect(markdownToHtmlGuarded(item), lang).toBeDefined();
     }
   });
 });
@@ -491,19 +654,19 @@ describe("the layout guard", () => {
 // others would still keep the output safe.
 describe("the link rules alone", () => {
   const unsafe = "[t](javascript:alert(1)) and [u](https://a.example)";
-  const kids = (src: string) => (mdForTests.parse(src, {}).find((t) => t.type === "inline")?.children ?? []);
+  const kids = (src: string) => mdForTests.parse(src, {}).find((token) => token.type === "inline")?.children ?? [];
   test("the core rule hides the open and the close token of an unsafe link, and only those", () => {
-    const k = kids(unsafe);
-    const opens = k.filter((t) => t.type === "link_open");
-    const closes = k.filter((t) => t.type === "link_close");
-    expect(opens.map((t) => t.hidden)).toEqual([true, false]);
-    expect(closes.map((t) => t.hidden)).toEqual([true, false]);
+    const key = kids(unsafe);
+    const opens = key.filter((token) => token.type === "link_open");
+    const closes = key.filter((token) => token.type === "link_close");
+    expect(opens.map((open) => open.hidden)).toEqual([true, false]);
+    expect(closes.map((close) => close.hidden)).toEqual([true, false]);
   });
   test("the core rule also hides unsafe links inside the children of an image", () => {
-    const img = kids("![[a](javascript:x) b](https://y.example/i.png)").find((t) => t.type === "image")!;
-    const inner = (img.children ?? []).filter((t) => t.type === "link_open" || t.type === "link_close");
+    const img = kids("![[a](javascript:x) b](https://y.example/i.png)").find((kid) => kid.type === "image")!;
+    const inner = (img.children ?? []).filter((token) => token.type === "link_open" || token.type === "link_close");
     expect(inner.length).toBe(2);
-    expect(inner.every((t) => t.hidden)).toBe(true);
+    expect(inner.every((innerItem) => innerItem.hidden)).toBe(true);
   });
   test("the link renderer rule alone prints nothing for an unsafe address, and the tag for a safe one", () => {
     const rule = mdForTests.renderer.rules.link_open!;
@@ -514,7 +677,9 @@ describe("the link rules alone", () => {
     const good = new state.Token("link_open", "a", 1);
     good.attrSet("href", "https://a.example/x");
     good.attrSet("title", 't"x');
-    expect(rule([good], 0, mdForTests.options, {}, mdForTests.renderer)).toBe('<a href="https://a.example/x" title="t&quot;x">');
+    expect(rule([good], 0, mdForTests.options, {}, mdForTests.renderer)).toBe(
+      '<a href="https://a.example/x" title="t&quot;x">',
+    );
   });
   test("the image renderer rule alone prints plain text for an unsafe address and never prints the children", () => {
     const rule = mdForTests.renderer.rules.image!;
@@ -529,7 +694,9 @@ describe("the link rules alone", () => {
     good.attrSet("src", "https://a.example/i.png");
     good.content = "alt";
     good.children = [link];
-    expect(rule([good], 0, mdForTests.options, {}, mdForTests.renderer)).toBe('<a href="https://a.example/i.png">Image: alt</a>');
+    expect(rule([good], 0, mdForTests.options, {}, mdForTests.renderer)).toBe(
+      '<a href="https://a.example/i.png">Image: alt</a>',
+    );
   });
   test("validateLink accepts every address, because the strict check runs after the parse (this pins that design)", () => {
     expect(mdForTests.validateLink("javascript:alert(1)")).toBe(true);

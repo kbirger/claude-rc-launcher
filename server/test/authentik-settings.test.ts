@@ -6,22 +6,22 @@ const env = { AUTHENTIK_URL: "https://auth.example.com", AUTHENTIK_TOKEN: "t" };
 
 describe("parseSettings", () => {
   test("defaults match the old constants", () => {
-    const r = parseSettings(base, env);
-    expect(r.settings).toEqual({ ...DEFAULTS });
-    expect(r.apply).toBe(false);
-    expect(r.interactive).toBe(false);
-    expect(r.secretFile).toBe("./oidc-client.secret");
-    expect(r.publicUrl).toBe("https://rc.example.com");
+    const parsed = parseSettings(base, env);
+    expect(parsed.settings).toEqual({ ...DEFAULTS });
+    expect(parsed.apply).toBe(false);
+    expect(parsed.interactive).toBe(false);
+    expect(parsed.secretFile).toBe("./oidc-client.secret");
+    expect(parsed.publicUrl).toBe("https://rc.example.com");
   });
   test("a flag wins over an environment variable", () => {
-    const r = parseSettings([...base, "--claim", "from_flag"], { ...env, CLAUDERC_CLAIM: "from_env" });
-    expect(r.settings.claim).toBe("from_flag");
+    const parsed = parseSettings([...base, "--claim", "from_flag"], { ...env, CLAUDERC_CLAIM: "from_env" });
+    expect(parsed.settings.claim).toBe("from_flag");
     expect(parseSettings(base, { ...env, CLAUDERC_CLAIM: "from_env" }).settings.claim).toBe("from_env");
   });
   test("--group-prefix renames all three groups", () => {
-    const r = parseSettings([...base, "--group-prefix", "team"], env);
-    expect(r.settings.groups.map((g) => g.name)).toEqual(["team-admins", "team-writers", "team-ro"]);
-    expect(r.settings.adminGroup).toBe("team-admins");
+    const parsed = parseSettings([...base, "--group-prefix", "team"], env);
+    expect(parsed.settings.groups.map((group) => group.name)).toEqual(["team-admins", "team-writers", "team-ro"]);
+    expect(parsed.settings.adminGroup).toBe("team-admins");
   });
   test("public url must be https unless loopback", () => {
     expect(() => parseSettings(["--public-url", "http://rc.example.com"], env)).toThrow(/https/);
@@ -39,16 +39,32 @@ describe("parseSettings", () => {
     expect(parseSettings(["--interactive"], env).interactive).toBe(true);
   });
   test("flags: apply, force, secret file, hub config, admin user, remove old hub", () => {
-    const r = parseSettings([...base, "--apply", "--force", "--secret-file", "/tmp/s", "--write-hub-config", "/etc/x", "--admin-user", "kir", "--remove-old-hub"], env);
-    expect(r).toMatchObject({ apply: true, force: true, secretFile: "/tmp/s", writeHubConfig: "/etc/x" });
-    expect(r.settings.adminUser).toBe("kir");
-    expect(r.settings.removeOldHub).toBe(true);
+    const parsed = parseSettings(
+      [
+        ...base,
+        "--apply",
+        "--force",
+        "--secret-file",
+        "/tmp/s",
+        "--write-hub-config",
+        "/etc/x",
+        "--admin-user",
+        "kir",
+        "--remove-old-hub",
+      ],
+      env,
+    );
+    expect(parsed).toMatchObject({ apply: true, force: true, secretFile: "/tmp/s", writeHubConfig: "/etc/x" });
+    expect(parsed.settings.adminUser).toBe("kir");
+    expect(parsed.settings.removeOldHub).toBe(true);
   });
   test("an unknown flag and a missing token are errors", () => {
     expect(() => parseSettings([...base, "--nope"], env)).toThrow(/unknown flag/);
     expect(() => parseSettings(base, { AUTHENTIK_URL: "https://a" })).toThrow(/AUTHENTIK_TOKEN/);
   });
   test("the authentik url must be https unless loopback", () => {
-    expect(() => parseSettings(base, { AUTHENTIK_URL: "http://auth.example.com", AUTHENTIK_TOKEN: "t" })).toThrow(/https/);
+    expect(() => parseSettings(base, { AUTHENTIK_URL: "http://auth.example.com", AUTHENTIK_TOKEN: "t" })).toThrow(
+      /https/,
+    );
   });
 });

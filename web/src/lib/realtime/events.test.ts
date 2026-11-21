@@ -1,62 +1,75 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient } from "@tanstack/svelte-query";
 import { connectEvents } from "./events";
+import type { HostInfo } from "../features/hosts";
 import type { UpdateEntry } from "../features/updates";
 
 class FakeES {
   static all: FakeES[] = [];
   readyState = 1;
   closed = false;
-  listeners: Record<string, ((e: any) => void)[]> = {};
+  listeners: Record<string, ((value: object) => void)[]> = {};
   constructor(public url: string) {
     FakeES.all.push(this);
   }
-  addEventListener(t: string, f: (e: any) => void) {
-    (this.listeners[t] ??= []).push(f);
+  addEventListener(item: string, value: (value: object) => void) {
+    (this.listeners[item] ??= []).push(value);
   }
   close() {
     this.closed = true;
     this.readyState = 2;
   }
-  emit(t: string, e: any = {}) {
-    for (const f of this.listeners[t] ?? []) f(e);
+  emit(item: string, value: object = {}) {
+    for (const helper of this.listeners[item] ?? []) helper(value);
   }
 }
 
-const entry = (host: string, status: UpdateEntry["status"] = "running"): UpdateEntry => ({ host, startedAt: "t", startedBy: "u", from: "0.8.2", status });
-const open = (u: string) => new FakeES(u) as unknown as EventSource;
+const entry = (host: string, status: UpdateEntry["status"] = "running"): UpdateEntry => ({
+  host,
+  startedAt: "t",
+  startedBy: "u",
+  from: "0.8.2",
+  status,
+});
+const open = (path: string) => new FakeES(path) as unknown as EventSource;
 
-const realAdd = globalThis.addEventListener;
-const realRemove = globalThis.removeEventListener;
+type Timer = ReturnType<typeof setTimeout>;
+type FakeTimer = { callback: () => void; ms: number; cleared: boolean };
+// The code under test only passes a timer back to clearTimeout, so a fake one stands in for the real handle.
+const asTimer = (value: unknown) => value as Timer;
 let focusHandlers: (() => void)[] = [];
 let client: QueryClient;
-let invalidated: unknown[][];
+let invalidated: (readonly unknown[] | undefined)[];
 
 beforeEach(() => {
   FakeES.all = [];
   focusHandlers = [];
   invalidated = [];
-  (globalThis as any).addEventListener = (t: string, f: () => void) => {
-    if (t === "focus") focusHandlers.push(f);
-  };
-  (globalThis as any).removeEventListener = (t: string, f: () => void) => {
-    if (t === "focus") focusHandlers = focusHandlers.filter((x) => x !== f);
-  };
+
+  vi.stubGlobal("addEventListener", (item: string, value: () => void) => {
+    if (item === "focus") focusHandlers.push(value);
+  });
+
+  vi.stubGlobal("removeEventListener", (item: string, value: () => void) => {
+    if (item === "focus") focusHandlers = focusHandlers.filter((focusHandler) => focusHandler !== value);
+  });
+
   client = new QueryClient();
   const orig = client.invalidateQueries.bind(client);
-  client.invalidateQueries = ((f: any) => {
-    invalidated.push(f.queryKey);
-    return orig(f);
-  }) as any;
+  vi.spyOn(client, "invalidateQueries").mockImplementation((filters) => {
+    invalidated.push(filters?.queryKey);
+    return orig(filters);
+  });
 });
 afterEach(() => {
-  globalThis.addEventListener = realAdd;
-  globalThis.removeEventListener = realRemove;
+  vi.unstubAllGlobals();
 });
 
-const snap = (o: any = {}) => ({ data: JSON.stringify({ updates: [], logs: {}, presence: [], ...o }) });
-const host = (id: string, o: any = {}) => ({ id, name: id, status: "ok", version: "1.0.0", ...o });
-const hostsOf = () => client.getQueryData(["hosts"]) as any[];
+const snap = (item: Record<string, unknown> = {}) => ({
+  data: JSON.stringify({ updates: [], logs: {}, presence: [], ...item }),
+});
+const host = (id: string, item: Partial<HostInfo> = {}) => ({ id, name: id, status: "ok", version: "1.0.0", ...item });
+const hostsOf = () => client.getQueryData(["hosts"]) as HostInfo[];
 
 test("snapshot fills updates, logs and hosts", () => {
   connectEvents({ client, open });
@@ -64,10 +77,14 @@ test("snapshot fills updates, logs and hosts", () => {
   client.setQueryData(["hosts"], [host("a"), host("b")]);
   FakeES.all[0]!.emit(
     "snapshot",
-    snap({ updates: [entry("a"), entry("b")], logs: { a: [{ line: "x", at: "t" }] }, presence: [{ host: "a", status: "restarting", version: "1.0.0", at: "t" }] }),
+    snap({
+      updates: [entry("a"), entry("b")],
+      logs: { alpha: [{ line: "x", at: "t" }] },
+      presence: [{ host: "a", status: "restarting", version: "1.0.0", at: "t" }],
+    }),
   );
   expect(client.getQueryData(["updates"])).toEqual([entry("a"), entry("b")]);
-  expect(client.getQueryData(["logs"])).toEqual({ a: [{ line: "x", at: "t" }] });
+  expect(client.getQueryData(["logs"])).toEqual({ alpha: [{ line: "x", at: "t" }] });
   expect(hostsOf()[0].status).toBe("restarting");
   expect(hostsOf()[1].status).toBe("ok");
   expect(invalidated).toEqual([]);
@@ -80,7 +97,11 @@ test("update replaces the entry of the same host or appends", () => {
   es.emit("update", { data: JSON.stringify(entry("a", "updated")) });
   expect(client.getQueryData(["updates"])).toEqual([entry("a", "updated"), entry("b")]);
   es.emit("update", { data: JSON.stringify(entry("c")) });
-  expect((client.getQueryData(["updates"]) as UpdateEntry[]).map((e) => e.host)).toEqual(["a", "b", "c"]);
+  expect((client.getQueryData(["updates"]) as UpdateEntry[]).map((updateEntry) => updateEntry.host)).toEqual([
+    "a",
+    "b",
+    "c",
+  ]);
   expect(invalidated.length).toBe(3); // hosts for the status change of a, hosts for the new host c, history for the finished a
 });
 
@@ -124,7 +145,15 @@ test("a presence item for an unknown host refetches a loaded host list; a cold c
   client.setQueryData(["hosts"], [host("a")]);
   es.emit("presence", { data: JSON.stringify({ host: "new", status: "online", version: "1.0.0", at: "t" }) });
   expect(invalidated).toEqual([["hosts"]]);
-  es.emit("snapshot", snap({ presence: [{ host: "n1", status: "online", at: "t" }, { host: "n2", status: "online", at: "t" }] }));
+  es.emit(
+    "snapshot",
+    snap({
+      presence: [
+        { host: "n1", status: "online", at: "t" },
+        { host: "n2", status: "online", at: "t" },
+      ],
+    }),
+  );
   expect(invalidated).toEqual([["hosts"], ["hosts"]]);
 });
 
@@ -142,8 +171,12 @@ test("a snapshot with logs null or an array still applies the rest", () => {
   connectEvents({ client, open });
   const es = FakeES.all[0]!;
   client.setQueryData(["hosts"], [host("a")]);
+
   for (const logs of [null, [], "x"]) {
-    es.emit("snapshot", snap({ updates: [entry("a")], logs, presence: [{ host: "a", status: "restarting", at: "t" }] }));
+    es.emit(
+      "snapshot",
+      snap({ updates: [entry("a")], logs, presence: [{ host: "a", status: "restarting", at: "t" }] }),
+    );
     expect(client.getQueryData(["updates"])).toEqual([entry("a")]);
     expect(hostsOf()[0].status).toBe("restarting");
     expect(client.getQueryData(["logs"])).toBeUndefined();
@@ -154,7 +187,8 @@ test("a snapshot with logs null or an array still applies the rest", () => {
 test("a log event appends and keeps the last 200 lines of each host", () => {
   connectEvents({ client, open });
   const es = FakeES.all[0]!;
-  for (let i = 0; i < 205; i++) es.emit("log", { data: JSON.stringify({ host: "a", line: `l${i}`, at: "t" }) });
+  for (let index = 0; index < 205; index++)
+    es.emit("log", { data: JSON.stringify({ host: "a", line: `l${index}`, at: "t" }) });
   es.emit("log", { data: JSON.stringify({ host: "b", line: "x", at: "t" }) });
   const logs = client.getQueryData(["logs"]) as Record<string, { line: string }[]>;
   expect(logs.a!.length).toBe(200);
@@ -213,61 +247,67 @@ test("stop closes a reopened stream", () => {
 });
 
 describe("retries", () => {
-  let timers: { f: () => void; ms: number; cleared: boolean }[];
-  const o = () => ({
+  let timers: FakeTimer[];
+  const helper = () => ({
     client,
     open,
-    setTimeout: ((f: () => void, ms: number) => {
-      const t = { f, ms, cleared: false };
-      timers.push(t);
-      return t as any;
-    }) as any,
-    clearTimeout: ((t: any) => void (t.cleared = true)) as any,
+    setTimeout: (item: () => void, ms: number) => {
+      const value = { callback: item, ms, cleared: false };
+      timers.push(value);
+      return asTimer(value);
+    },
+    clearTimeout: (item: Timer) => {
+      (item as unknown as FakeTimer).cleared = true;
+    },
   });
-  const live = () => timers.filter((t) => !t.cleared);
+  const live = () => timers.filter((timer) => !timer.cleared);
+
   const close = () => {
     const es = FakeES.all[FakeES.all.length - 1]!;
     es.readyState = 2;
     es.emit("error");
   };
+
   beforeEach(() => {
     timers = [];
   });
 
   test("a closed stream reopens after 5 s, 15 s and 45 s, then waits for focus", () => {
-    connectEvents(o());
-    for (const [i, ms] of [5000, 15000, 45000].entries()) {
+    connectEvents(helper());
+
+    for (const [item, ms] of [5000, 15000, 45000].entries()) {
       close();
       expect(live().length).toBe(1);
       expect(live()[0]!.ms).toBe(ms);
-      timers.pop()!.f();
-      expect(FakeES.all.length).toBe(i + 2);
+      timers.pop()!.callback();
+      expect(FakeES.all.length).toBe(item + 2);
     }
+
     close();
     expect(live().length).toBe(0);
     expect(focusHandlers.length).toBe(1);
   });
 
   test("a message resets the retries", () => {
-    connectEvents(o());
+    connectEvents(helper());
     close();
-    timers.pop()!.f();
+    timers.pop()!.callback();
     FakeES.all[1]!.emit("snapshot", snap());
     close();
     expect(timers.pop()!.ms).toBe(5000);
   });
 
   test("the open event resets the retries", () => {
-    connectEvents(o());
+    connectEvents(helper());
     close();
-    timers.pop()!.f();
+    timers.pop()!.callback();
     FakeES.all[1]!.emit("open");
     close();
     expect(timers.pop()!.ms).toBe(5000);
   });
 
   test("stop clears a pending timer", () => {
-    const stop = connectEvents(o());
+    const stop = connectEvents(helper());
     close();
     stop();
     expect(live().length).toBe(0);
@@ -275,9 +315,9 @@ describe("retries", () => {
   });
 
   test("a focus after the retries are used up reopens once and resets the count", () => {
-    connectEvents({ ...o(), delays: [10] });
+    connectEvents({ ...helper(), delays: [10] });
     close();
-    timers.pop()!.f();
+    timers.pop()!.callback();
     close();
     expect(focusHandlers.length).toBe(1);
     focusHandlers[0]!();
@@ -291,12 +331,18 @@ describe("retries", () => {
 describe("console lines and re-sync", () => {
   const mkLog = () => {
     const lines: string[] = [];
-    return { lines, log: { info: (...a: unknown[]) => void lines.push(a.join(" ")), warn: (...a: unknown[]) => void lines.push(a.join(" ")) } };
+    return {
+      lines,
+      log: {
+        info: (...args: unknown[]) => void lines.push(args.join(" ")),
+        warn: (...args: unknown[]) => void lines.push(args.join(" ")),
+      },
+    };
   };
 
   test("logs open, snapshot, error and the reconnect, all with the prefix", () => {
     const { lines, log } = mkLog();
-    connectEvents({ client, open, log, delays: [5000], setTimeout: () => 1 as any });
+    connectEvents({ client, open, log, delays: [5000], setTimeout: () => asTimer(1) });
     const es = FakeES.all[0]!;
     es.emit("open");
     es.emit("snapshot", snap({ updates: [entry("a")], presence: [{ host: "a", status: "online", at: "t" }] }));
@@ -324,7 +370,7 @@ describe("console lines and re-sync", () => {
 
   test("the first open reads nothing again, a later open reads updates, hosts and history again", () => {
     const { log } = mkLog();
-    connectEvents({ client, open, log, delays: [0], setTimeout: (f) => (f(), 1 as any) });
+    connectEvents({ client, open, log, delays: [0], setTimeout: (callback) => (callback(), asTimer(1)) });
     const first = FakeES.all[0]!;
     first.emit("open");
     expect(invalidated).toEqual([]);
@@ -340,9 +386,9 @@ describe("console lines and re-sync", () => {
     const es = FakeES.all[0]!;
     es.emit("update", { data: JSON.stringify(entry("a")) });
     es.emit("update", { data: JSON.stringify({ ...entry("a"), step: "installing" }) });
-    expect(invalidated.filter((k) => k[0] === "history").length).toBe(0);
+    expect(invalidated.filter((item) => item[0] === "history").length).toBe(0);
     es.emit("update", { data: JSON.stringify(entry("a", "updated")) });
-    expect(invalidated.filter((k) => k[0] === "history").length).toBe(1);
+    expect(invalidated.filter((item) => item[0] === "history").length).toBe(1);
   });
 });
 
@@ -367,13 +413,25 @@ test("stop ends the watch of the update list", () => {
 test("after a hide and a visible state, the owned keys are invalidated", () => {
   let hidden = false;
   let fns: (() => void)[] = [];
-  const visibility = { hidden: () => hidden, onChange: (fn: () => void) => (fns.push(fn), () => void (fns = fns.filter((f) => f !== fn))) };
-  const set = (h: boolean) => {
-    hidden = h;
-    for (const f of [...fns]) f();
+  const visibility = {
+    hidden: () => hidden,
+    onChange: (fn: () => void) => (fns.push(fn), () => void (fns = fns.filter((file) => file !== fn))),
   };
+
+  const set = (isHidden: boolean) => {
+    hidden = isHidden;
+    for (const file of [...fns]) file();
+  };
+
   const timers: (() => void)[] = [];
-  const stop = connectEvents({ client, open, visibility, hiddenMs: 30_000, setTimeout: ((f: () => void) => (timers.push(f), timers.length)) as any, clearTimeout: () => {} });
+  const stop = connectEvents({
+    client,
+    open,
+    visibility,
+    hiddenMs: 30_000,
+    setTimeout: (file: () => void) => (timers.push(file), asTimer(timers.length)),
+    clearTimeout: () => {},
+  });
   FakeES.all[0]!.emit("open");
   set(true);
   timers.pop()!();

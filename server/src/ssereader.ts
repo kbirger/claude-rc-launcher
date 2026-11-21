@@ -9,7 +9,10 @@ export class SseProtocolError extends Error {
   }
 }
 
-export type SseEvent = { event: string; data: string };
+export interface SseEvent {
+  event: string;
+  data: string;
+}
 
 /**
  * Reads a Server-Sent Events body. Skips comment lines, joins `data:` lines with `\n`, and accepts `\n`, `\r\n`
@@ -17,7 +20,10 @@ export type SseEvent = { event: string; data: string };
  * cancelled so the connection closes. `onActivity` runs each time bytes arrive, even when they hold only comments,
  * so a caller can tell a silent connection from a quiet one. This file has no server-only imports: the CLI may reuse it.
  */
-export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity?: () => void } = {}): AsyncGenerator<SseEvent> {
+export async function* readSse(
+  body: ReadableStream<Uint8Array>,
+  options: { onActivity?: () => void } = {},
+): AsyncGenerator<SseEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -26,6 +32,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity
   let sawData = false;
   let dataLen = 0;
   let scan = 0;
+
   const take = (): SseEvent | null => {
     const out = sawData ? { event: event || "message", data: data.join("\n") } : null;
     event = "";
@@ -34,13 +41,15 @@ export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity
     dataLen = 0;
     return out;
   };
+
   const field = (line: string): SseEvent | null => {
     if (line === "") return take();
     if (line.startsWith(":")) return null;
-    const i = line.indexOf(":");
-    const name = i < 0 ? line : line.slice(0, i);
-    let value = i < 0 ? "" : line.slice(i + 1);
+    const position = line.indexOf(":");
+    const name = position < 0 ? line : line.slice(0, position);
+    let value = position < 0 ? "" : line.slice(position + 1);
     if (value.startsWith(" ")) value = value.slice(1);
+
     if (name === "event") event = value;
     else if (name === "data") {
       dataLen += value.length + 1;
@@ -48,32 +57,38 @@ export async function* readSse(body: ReadableStream<Uint8Array>, o: { onActivity
       data.push(value);
       sawData = true;
     }
+
     return null;
   };
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      o.onActivity?.();
+      options.onActivity?.();
       buf += decoder.decode(value, { stream: true });
       let start = 0;
-      let i = scan;
-      for (; i < buf.length; i++) {
-        const ch = buf[i];
+      let entry = scan;
+
+      for (; entry < buf.length; entry++) {
+        const ch = buf[entry];
         if (ch !== "\n" && ch !== "\r") continue;
-        let end = i + 1;
+        let end = entry + 1;
+
         if (ch === "\r") {
           // A lone trailing \r may be the first half of \r\n, so wait for the next chunk.
-          if (i + 1 >= buf.length) break;
-          if (buf[i + 1] === "\n") end++;
+          if (entry + 1 >= buf.length) break;
+          if (buf[entry + 1] === "\n") end++;
         }
-        const ev = field(buf.slice(start, i));
+
+        const ev = field(buf.slice(start, entry));
         start = end;
-        i = end - 1;
+        entry = end - 1;
         if (ev) yield ev;
       }
+
       buf = buf.slice(start);
-      scan = i - start;
+      scan = entry - start;
       if (buf.length > MAX_SSE_BYTES) throw new SseProtocolError("SSE line too large");
     }
   } finally {

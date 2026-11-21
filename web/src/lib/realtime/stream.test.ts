@@ -5,23 +5,23 @@ class FakeES {
   static all: FakeES[] = [];
   readyState = 1;
   closed = false;
-  listeners: Record<string, ((e: any) => void)[]> = {};
+  listeners: Record<string, ((value: object) => void)[]> = {};
   constructor(public url: string) {
     FakeES.all.push(this);
   }
-  addEventListener(t: string, f: (e: any) => void) {
-    (this.listeners[t] ??= []).push(f);
+  addEventListener(item: string, file: (value: object) => void) {
+    (this.listeners[item] ??= []).push(file);
   }
   close() {
     this.closed = true;
     this.readyState = 2;
   }
-  emit(t: string, e: any = {}) {
-    for (const f of this.listeners[t] ?? []) f(e);
+  emit(item: string, event: object = {}) {
+    for (const file of this.listeners[item] ?? []) file(event);
   }
 }
 
-const open = (u: string) => new FakeES(u) as unknown as EventSource;
+const open = (url: string) => new FakeES(url) as unknown as EventSource;
 const last = () => FakeES.all[FakeES.all.length - 1]!;
 
 class FakeVisibility implements Visibility {
@@ -32,39 +32,45 @@ class FakeVisibility implements Visibility {
   }
   onChange(fn: () => void) {
     this.fns.push(fn);
-    return () => void (this.fns = this.fns.filter((f) => f !== fn));
+    return () => void (this.fns = this.fns.filter((file) => file !== fn));
   }
   set(hidden: boolean) {
     this.isHidden = hidden;
-    for (const f of [...this.fns]) f();
+    for (const file of [...this.fns]) file();
   }
 }
 
-let timers: { f: () => void; ms: number; cleared: boolean; fired: boolean }[];
+type Timer = ReturnType<typeof globalThis.setTimeout>;
+type FakeTimer = { callback: () => void; ms: number; cleared: boolean; fired: boolean };
+let timers: FakeTimer[];
 let vis: FakeVisibility;
 let opens: number[];
-const live = () => timers.filter((t) => !t.cleared && !t.fired);
+const live = () => timers.filter((item) => !item.cleared && !item.fired);
+
 const fire = (ms: number) => {
-  const t = live().find((x) => x.ms === ms)!;
-  t.fired = true;
-  t.f();
+  const item = live().find((entry) => entry.ms === ms)!;
+  item.fired = true;
+  item.callback();
 };
+
 const quiet = { info() {}, warn() {} };
 const start = (more: Partial<Parameters<typeof keepStream>[0]> = {}) =>
   keepStream({
     url: "/api/x",
     name: "x stream",
     listeners: {},
-    onOpen: (n) => void opens.push(n),
+    onOpen: (count) => void opens.push(count),
     open,
     visibility: vis,
     log: quiet,
-    setTimeout: ((f: () => void, ms: number) => {
-      const t = { f, ms, cleared: false, fired: false };
-      timers.push(t);
-      return t as any;
-    }) as any,
-    clearTimeout: ((t: any) => void (t.cleared = true)) as any,
+    setTimeout: (callback: () => void, ms: number) => {
+      const item = { callback, ms, cleared: false, fired: false };
+      timers.push(item);
+      return item as unknown as Timer;
+    },
+    clearTimeout: (item: Timer) => {
+      (item as unknown as FakeTimer).cleared = true;
+    },
     ...more,
   });
 
@@ -83,7 +89,7 @@ test("the hidden close time is 30 s, and with no document the page is never hidd
 
 test("opens the url and passes the data of each listed event", () => {
   const got: string[] = [];
-  start({ listeners: { snapshot: (d) => void got.push(d) } });
+  start({ listeners: { snapshot: (entry) => void got.push(entry) } });
   expect(last().url).toBe("/api/x");
   last().emit("snapshot", { data: "abc" });
   expect(got).toEqual(["abc"]);
@@ -94,19 +100,19 @@ test("30 s hidden closes the stream and stops the retries", () => {
   const es = last();
   es.readyState = 2;
   es.emit("error");
-  expect(live().map((t) => t.ms)).toEqual([5000]);
+  expect(live().map((item) => item.ms)).toEqual([5000]);
   vis.set(true);
-  expect(live().map((t) => t.ms)).toEqual([5000, 30_000]);
+  expect(live().map((item) => item.ms)).toEqual([5000, 30_000]);
   fire(30_000);
   expect(live().length).toBe(0);
-  expect(FakeES.all.every((e) => e.closed)).toBe(true);
+  expect(FakeES.all.every((event) => event.closed)).toBe(true);
   expect(FakeES.all.length).toBe(1);
 });
 
 test("a hide of 29 s does not close it", () => {
   start();
   vis.set(true);
-  expect(live().map((t) => t.ms)).toEqual([HIDDEN_CLOSE_MS]);
+  expect(live().map((item) => item.ms)).toEqual([HIDDEN_CLOSE_MS]);
   vis.set(false);
   expect(live().length).toBe(0);
   expect(last().closed).toBe(false);
@@ -116,7 +122,7 @@ test("a hide of 29 s does not close it", () => {
 test("hiddenMs replaces the close time", () => {
   start({ hiddenMs: 10 });
   vis.set(true);
-  expect(live().map((t) => t.ms)).toEqual([10]);
+  expect(live().map((item) => item.ms)).toEqual([10]);
 });
 
 test("visible again opens the stream, and onOpen gets 2", () => {
@@ -137,7 +143,7 @@ test("a stream closed by the browser while hidden is not retried until visible",
   const es = last();
   es.readyState = 2;
   es.emit("error");
-  expect(live().filter((t) => t.ms !== 30_000).length).toBe(0);
+  expect(live().filter((item) => item.ms !== 30_000).length).toBe(0);
   expect(FakeES.all.length).toBe(1);
   vis.set(false);
   expect(FakeES.all.length).toBe(2);
@@ -165,7 +171,7 @@ test("visible again after the retries reset the count", () => {
   vis.set(false);
   last().readyState = 2;
   last().emit("error");
-  expect(live().map((t) => t.ms)).toEqual([5000]);
+  expect(live().map((item) => item.ms)).toEqual([5000]);
 });
 
 test("stop() removes the visibility listener", () => {
@@ -182,13 +188,16 @@ test("stop() removes the visibility listener", () => {
 
 test("the reconnect and the used-up lines name the stream", () => {
   const lines: string[] = [];
-  const log = { info: (m: string) => void lines.push(m), warn: (m: string) => void lines.push(m) };
+  const log = { info: (match: string) => void lines.push(match), warn: (match: string) => void lines.push(match) };
   const stop = start({ log, delays: [1000] });
   last().readyState = 2;
   last().emit("error");
   fire(1000);
   last().readyState = 2;
   last().emit("error");
-  expect(lines.filter((l) => l.includes("reconnect"))).toEqual(["[claude-rc] x stream reconnect in 1s", "[claude-rc] x stream retries used up, will reconnect on the next focus"]);
+  expect(lines.filter((line) => line.includes("reconnect"))).toEqual([
+    "[claude-rc] x stream reconnect in 1s",
+    "[claude-rc] x stream retries used up, will reconnect on the next focus",
+  ]);
   stop();
 });

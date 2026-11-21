@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import type { Config } from "./config";
-import { argsWith, settingsFromArgs, type InstanceSettings } from "./instancesettings";
-import { USER_NAME_RE, type SystemUser } from "./users";
+import { argsWith, settingsFromArgs } from "./instancesettings";
+import type { InstanceSettings } from "./instancesettings";
+import { USER_NAME_RE } from "./users";
+import type { SystemUser } from "./users";
 
 const MARKER = "# managed-by: claude-rc-launcher path=";
 const NAME_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/; // no leading "-": it would be parsed as a CLI flag
-// eslint-disable-next-line no-control-regex
-const CONTROL_RE = new RegExp("[\u0000-\u001f\u007f-\u009f\u2028\u2029]");
+
+const CONTROL_RE = /[\p{Cc}\u2028\u2029]/u;
 
 export function instanceId(absPath: string): string {
   return createHash("sha256").update(absPath).digest("hex").slice(0, 12);
@@ -24,14 +26,21 @@ export function defaultName(cfg: Pick<Config, "namePrefix">, absPath: string): s
   // A drive-letter or UNC path uses "\" as well as "/"; a POSIX path only "/".
   const windowsStyle = /^([A-Za-z]:|\\\\)/.test(absPath);
   const rest = windowsStyle ? absPath.replace(/^[A-Za-z]:/, "") : absPath;
-  const base = rest.split(windowsStyle ? /[\\/]/ : "/").filter(Boolean).pop() ?? "";
-  const raw = (cfg.namePrefix + base).replace(/[^A-Za-z0-9._-]/gu, "-").replace(/^-+/, "").slice(0, 64);
+  const base =
+    rest
+      .split(windowsStyle ? /[\\/]/ : "/")
+      .filter(Boolean)
+      .pop() ?? "";
+  const raw = (cfg.namePrefix + base)
+    .replace(/[^A-Za-z0-9._-]/gu, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64);
   return raw || "claude";
 }
 
-function safe(label: string, v: string): string {
-  if (CONTROL_RE.test(v)) throw new Error(`${label} contains control characters`);
-  return v;
+function safe(label: string, text: string): string {
+  if (CONTROL_RE.test(text)) throw new Error(`${label} contains control characters`);
+  return text;
 }
 
 /** Escape for unquoted-or-quoted ExecStart words: %, $, \ and ". */
@@ -47,28 +56,39 @@ function envLine(key: string, value: string): string {
   return `Environment="${key}=${esc}"`;
 }
 
-export type RunAs = { user: string; home: string; path: string; claudeBin: string };
+export interface RunAs {
+  user: string;
+  home: string;
+  path: string;
+  claudeBin: string;
+}
 
 export function defaultRunAs(cfg: Config): RunAs {
   return { user: cfg.serviceUser, home: cfg.serviceHome, path: cfg.servicePath, claudeBin: cfg.claudeBin };
 }
 
-export function runAsFor(_cfg: Config, u: SystemUser): RunAs {
-  if (!USER_NAME_RE.test(u.name)) throw new Error("invalid service user");
+export function runAsFor(_cfg: Config, systemUser: SystemUser): RunAs {
+  if (!USER_NAME_RE.test(systemUser.name)) throw new Error("invalid service user");
   return {
-    user: u.name,
-    home: u.home,
-    path: `${u.home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
-    claudeBin: `${u.home}/.local/bin/claude`,
+    user: systemUser.name,
+    home: systemUser.home,
+    path: `${systemUser.home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+    claudeBin: `${systemUser.home}/.local/bin/claude`,
   };
 }
 
 export function parseUnitUser(content: string): string | null {
-  const m = /^User=(.+)$/m.exec(content);
-  return m ? m[1] : null;
+  const match = /^User=(.+)$/m.exec(content);
+  return match ? match[1] : null;
 }
 
-export function renderUnit(cfg: Config, absPath: string, name: string, runAs: RunAs = defaultRunAs(cfg), settings?: InstanceSettings): string {
+export function renderUnit(
+  cfg: Config,
+  absPath: string,
+  name: string,
+  runAs: RunAs = defaultRunAs(cfg),
+  settings?: InstanceSettings,
+): string {
   if (!isValidName(name)) throw new Error("invalid instance name");
   safe("path", absPath);
   if (!absPath.startsWith("/")) throw new Error("path must be absolute");
@@ -93,7 +113,15 @@ export function renderUnit(cfg: Config, absPath: string, name: string, runAs: Ru
     envLine("PATH", runAs.path),
   ];
   if (cfg.sshAuthSock) lines.push(envLine("SSH_AUTH_SOCK", cfg.sshAuthSock));
-  const exec = [runAs.claudeBin, "remote-control", "--name", name, ...(settings ? argsWith(cfg.claudeRcArgs, settings) : cfg.claudeRcArgs)].map(execWord).join(" ");
+  const exec = [
+    runAs.claudeBin,
+    "remote-control",
+    "--name",
+    name,
+    ...(settings ? argsWith(cfg.claudeRcArgs, settings) : cfg.claudeRcArgs),
+  ]
+    .map(execWord)
+    .join(" ");
   lines.push(
     `ExecStart=${exec}`,
     "StandardOutput=null",
@@ -121,35 +149,38 @@ export function execWords(value: string): string[] {
   let cur = "";
   let has = false;
   let quoted = false;
-  for (let i = 0; i < value.length; i++) {
-    const c = value[i]!;
-    if (c === "\\" && i + 1 < value.length) {
-      cur += value[++i];
+
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+
+    if (char === "\\" && index + 1 < value.length) {
+      cur += value[++index];
       has = true;
-    } else if (c === '"') {
+    } else if (char === '"') {
       quoted = !quoted;
       has = true;
-    } else if ((c === "%" || c === "$") && value[i + 1] === c) {
-      cur += c;
-      i++;
+    } else if ((char === "%" || char === "$") && value[index + 1] === char) {
+      cur += char;
+      index++;
       has = true;
-    } else if (!quoted && /\s/.test(c)) {
+    } else if (!quoted && /\s/.test(char)) {
       if (has) words.push(cur);
       cur = "";
       has = false;
     } else {
-      cur += c;
+      cur += char;
       has = true;
     }
   }
+
   if (has) words.push(cur);
   return words;
 }
 
 /** Read the instance settings from the ExecStart line. The flags come after "--name <value>". */
 export function parseUnitSettings(content: string): InstanceSettings {
-  const m = /^ExecStart=(.*)$/m.exec(content);
-  const words = m ? execWords(m[1]!) : [];
-  const i = words.indexOf("--name");
-  return settingsFromArgs(i >= 0 ? words.slice(i + 2) : []);
+  const match = /^ExecStart=(.*)$/m.exec(content);
+  const words = match ? execWords(match[1]) : [];
+  const position = words.indexOf("--name");
+  return settingsFromArgs(position >= 0 ? words.slice(position + 2) : []);
 }

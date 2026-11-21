@@ -11,42 +11,67 @@
   import RuleSheet from "./RuleSheet.svelte";
 
   // `layers` are the permission files of the session (the page already loads them). Undefined means not loaded yet: Allow waits. The sheet is mounted only while it is open.
-  let { host, instance, session, now, layers, live }: { host: string; instance: string; session: string; now: number; layers?: Layer[]; live?: boolean } = $props();
+  let {
+    host,
+    instance,
+    session,
+    now,
+    layers,
+    live,
+  }: { host: string; instance: string; session: string; now: number; layers?: Layer[]; live?: boolean } = $props();
 
   let sheetCall = $state<BlockedCall | null>(null);
   // A deny rule or a safety check cannot be fixed with an allow rule, so those calls have no button.
-  const canAllow = (c: BlockedCall) => c.reason === "needs_approval" || c.reason === "user_rejected" || c.reason === "classifier";
+  const canAllow = (blockedCall: BlockedCall) =>
+    blockedCall.reason === "needs_approval" ||
+    blockedCall.reason === "user_rejected" ||
+    blockedCall.reason === "classifier";
 
-  const q = createQuery(() => blockedQuery(host, instance, session));
+  const query = createQuery(() => blockedQuery(host, instance, session));
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
 </script>
 
-{#if q.isPending}
+{#if query.isPending}
   <p class="text-muted-foreground">Loading blocked calls...</p>
-{:else if isUnsupported(q.error)}
+{:else if isUnsupported(query.error)}
   <p class="text-muted-foreground">This node does not support permissions. Update the node.</p>
-{:else if q.error}
-  <Alert.Root variant="destructive"><Alert.Description>Could not load the blocked calls: {q.error.message}</Alert.Description></Alert.Root>
-{:else if !q.data?.length}
+{:else if query.error}
+  <Alert.Root variant="destructive">
+    <Alert.Description>Could not load the blocked calls: {query.error.message}</Alert.Description>
+  </Alert.Root>
+{:else if !query.data?.length}
   <p class="text-muted-foreground">Nothing was blocked in this session.</p>
 {:else}
   <ul class="min-w-0 rounded-lg border bg-card">
-    {#each q.data as c (c.id)}
+    {#each query.data as denial (denial.id)}
       <li class="flex min-h-11 min-w-0 flex-col justify-center gap-1 border-b px-3 py-2 last:border-b-0">
-        <span class={cn(wrap, "font-mono text-xs")}>{summaryOf(c)}</span>
+        <span class={cn(wrap, "font-mono text-xs")}>{summaryOf(denial)}</span>
         <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <Badge variant={reasonVariant(c.reason)}>{reasonLabel(c.reason)}</Badge>
-          <span>{c.tool}</span>
+          <Badge variant={reasonVariant(denial.reason)}>{reasonLabel(denial.reason)}</Badge>
+          <span>{denial.tool}</span>
           <span aria-hidden="true">·</span>
-          <span>{ago(c.at, now)}</span>
-          {#if canAllow(c) && probablyFixed(c, layers ?? [])}<Badge variant="secondary">probably fixed</Badge>{/if}
+          <span>{ago(denial.at, now)}</span>
+          {#if canAllow(denial) && probablyFixed(denial, layers ?? [])}<Badge variant="secondary">
+              probably fixed
+            </Badge>{/if}
         </span>
-        {#if c.reason === "deny_rule"}
-          {@const d = deniedBy(c, layers ?? [])}
-          <span class={cn(wrap, "text-xs text-muted-foreground")}>{d ? `Denied by ${d.raw} in ${scopeLabel(d.scope)}` : "Denied by a deny rule"}</span>
+        {#if denial.reason === "deny_rule"}
+          {@const deniedRule = deniedBy(denial, layers ?? [])}
+          <span class={cn(wrap, "text-xs text-muted-foreground")}>
+            {deniedRule ? `Denied by ${deniedRule.raw} in ${scopeLabel(deniedRule.scope)}` : "Denied by a deny rule"}
+          </span>
         {/if}
-        {#if canAllow(c)}
-          <Button type="button" variant="outline" size="touch" class="mt-1 self-start" disabled={layers === undefined} onclick={() => (sheetCall = c)}>Allow...</Button>
+        {#if canAllow(denial)}
+          <Button
+            type="button"
+            variant="outline"
+            size="touch"
+            class="mt-1 self-start"
+            disabled={layers === undefined}
+            onclick={() => (sheetCall = denial)}
+          >
+            Allow...
+          </Button>
         {/if}
       </li>
     {/each}
@@ -55,6 +80,20 @@
 
 {#if sheetCall}
   {#key sheetCall.id}
-    <RuleSheet bind:open={() => true, (v) => { if (!v) sheetCall = null; }} {host} {instance} {session} layers={layers ?? []} mode="add" call={sheetCall} {live} />
+    <RuleSheet
+      bind:open={
+        () => true,
+        (value) => {
+          if (!value) sheetCall = null;
+        }
+      }
+      {host}
+      {instance}
+      {session}
+      layers={layers ?? []}
+      mode="add"
+      call={sheetCall}
+      {live}
+    />
   {/key}
 {/if}

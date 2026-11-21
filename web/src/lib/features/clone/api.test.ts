@@ -1,25 +1,8 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { cloneStart, cloneStatus, githubLoginStart, githubLoginStatus, listRepos } from "./api";
+import { useFetchStub } from "../../../../test/fetch-stub";
 
-const realFetch = globalThis.fetch;
-const realLoc = (globalThis as any).location;
-let calls: { url: string; init?: RequestInit }[] = [];
-
-function stub(status: number, body: unknown) {
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
-    calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  }) as any;
-}
-
-beforeEach(() => {
-  calls = [];
-  (globalThis as any).location = { href: "/" };
-});
-afterEach(() => {
-  globalThis.fetch = realFetch;
-  (globalThis as any).location = realLoc;
-});
+const { calls, stub } = useFetchStub();
 
 test("cloneStart POSTs repo and parent, user only when given", async () => {
   stub(202, { id: "j", path: "/p/r" });
@@ -64,7 +47,7 @@ test("githubLoginStatus GETs the login by id", async () => {
 
 test("listRepos keeps the error code of a 409", async () => {
   stub(409, { error: "login", code: "github-login-required" });
-  const err = await listRepos("local").catch((e) => e);
+  const err = await listRepos("local").catch((error) => error);
   expect(err.status).toBe(409);
   expect(err.body.code).toBe("github-login-required");
 });

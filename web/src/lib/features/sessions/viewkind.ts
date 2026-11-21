@@ -13,26 +13,62 @@ export const PLAIN_PRE_LIMIT = 8 * 1024;
 export const PLAIN_PRE_LINE_LIMIT = 2000;
 
 /** The 15 languages that a file name can pick, and "markdown", which only the Source view of a markdown file uses. */
-export const LANGUAGES = ["typescript", "javascript", "json", "python", "bash", "yaml", "xml", "css", "sql", "go", "rust", "ini", "diff", "dockerfile", "makefile", "markdown"] as const;
+export const LANGUAGES = [
+  "typescript",
+  "javascript",
+  "json",
+  "python",
+  "bash",
+  "yaml",
+  "xml",
+  "css",
+  "sql",
+  "go",
+  "rust",
+  "ini",
+  "diff",
+  "dockerfile",
+  "makefile",
+  "markdown",
+] as const;
 export type LanguageId = (typeof LANGUAGES)[number];
 
 /** Code has no size limit here. The server already cuts a preview at 512 KB, and CodeView handles that size. */
 export type ViewPlan = { kind: "markdown" } | { kind: "code"; language: LanguageId } | { kind: "plain"; note?: string };
 
 const BY_EXTENSION: Record<string, LanguageId> = {
-  ts: "typescript", mts: "typescript", cts: "typescript", tsx: "typescript",
-  js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
-  json: "json", jsonc: "json",
+  ts: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  jsx: "javascript",
+  json: "json",
+  jsonc: "json",
   py: "python",
-  sh: "bash", bash: "bash", zsh: "bash",
-  yml: "yaml", yaml: "yaml",
-  html: "xml", htm: "xml", xhtml: "xml", xml: "xml", svg: "xml", svelte: "xml", vue: "xml",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  yaml: "yaml",
+  html: "xml",
+  htm: "xml",
+  xhtml: "xml",
+  xml: "xml",
+  svg: "xml",
+  svelte: "xml",
+  vue: "xml",
   css: "css",
   sql: "sql",
   go: "go",
   rs: "rust",
-  ini: "ini", toml: "ini", cfg: "ini",
-  diff: "diff", patch: "diff",
+  ini: "ini",
+  toml: "ini",
+  cfg: "ini",
+  diff: "diff",
+  patch: "diff",
   dockerfile: "dockerfile",
   mk: "makefile",
 };
@@ -72,13 +108,16 @@ export function viewKind(name: string, length: number): ViewPlan {
 export function longestLine(text: string): number {
   let best = 0;
   let run = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    if (c === 10 || c === 13) run = 0;
+
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 10 || code === 13) run = 0;
     else if (++run > best) best = run;
   }
+
   return best;
 }
 
 /** True when a plain text shows in a pre box: it is short and has no long line. Any other text shows in CodeView, so a 512 KB file does not make a giant DOM and a long line does not make a slow layout. */
-export const showsInPre = (text: string): boolean => text.length <= PLAIN_PRE_LIMIT && longestLine(text) <= PLAIN_PRE_LINE_LIMIT;
+export const showsInPre = (text: string): boolean =>
+  text.length <= PLAIN_PRE_LIMIT && longestLine(text) <= PLAIN_PRE_LINE_LIMIT;

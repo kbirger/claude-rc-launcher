@@ -2,18 +2,25 @@ import { describe, expect, test } from "bun:test";
 import { journalText, updateJournal } from "../src/updatejournal";
 import type { UpdateEntry } from "../src/updaterecord";
 
-const e = (o: Partial<UpdateEntry> = {}): UpdateEntry => ({ host: "aihub", startedAt: "t1", startedBy: "kir", from: "0.10.0", status: "running", ...o });
+const helper = (item: Partial<UpdateEntry> = {}): UpdateEntry => ({
+  host: "aihub",
+  startedAt: "t1",
+  startedBy: "kir",
+  from: "0.10.0",
+  status: "running",
+  ...item,
+});
 
 describe("updateJournal", () => {
   test("logs the start, each new step and the result once", () => {
     const lines: string[] = [];
-    const j = updateJournal((l) => lines.push(l));
-    j(e());
-    j(e({ step: "downloading" }));
-    j(e({ step: "downloading" }));
-    j(e({ step: "installing-client", stepDetail: "/usr/local/bin/claude-rc" }));
-    j(e({ status: "updated", to: "0.10.1" }));
-    j(e({ status: "updated", to: "0.10.1" }));
+    const item = updateJournal((line) => lines.push(line));
+    item(helper());
+    item(helper({ step: "downloading" }));
+    item(helper({ step: "downloading" }));
+    item(helper({ step: "installing-client", stepDetail: "/usr/local/bin/claude-rc" }));
+    item(helper({ status: "updated", to: "0.10.1" }));
+    item(helper({ status: "updated", to: "0.10.1" }));
     expect(lines).toEqual([
       "[update] aihub started by kir from 0.10.0",
       "[update] aihub step downloading",
@@ -23,17 +30,17 @@ describe("updateJournal", () => {
   });
   test("a new run of the same host logs its start again", () => {
     const lines: string[] = [];
-    const j = updateJournal((l) => lines.push(l));
-    j(e({ status: "failed", error: "boom" }));
-    j(e({ startedAt: "t2" }));
+    const item = updateJournal((line) => lines.push(line));
+    item(helper({ status: "failed", error: "boom" }));
+    item(helper({ startedAt: "t2" }));
     expect(lines).toEqual(["[update] aihub failed: boom", "[update] aihub started by kir from 0.10.0"]);
   });
   test("levels follow the result", () => {
     const levels: string[] = [];
-    const j = updateJournal((_l, lv) => levels.push(lv));
-    j(e({ status: "failed", error: "x" }));
-    j(e({ host: "b", status: "rolled back" }));
-    j(e({ host: "c", status: "updated" }));
+    const item = updateJournal((_l, lv) => levels.push(lv));
+    item(helper({ status: "failed", error: "x" }));
+    item(helper({ host: "b", status: "rolled back" }));
+    item(helper({ host: "c", status: "updated" }));
     expect(levels).toEqual(["error", "warn", "log"]);
   });
   test("untrusted text loses control characters and is cut", () => {

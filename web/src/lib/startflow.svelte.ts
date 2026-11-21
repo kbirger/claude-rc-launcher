@@ -20,10 +20,18 @@ export function createStartFlow(initialHost: string) {
   }
 
   return {
-    get selected() { return selected; },
-    get showNew() { return showNew; },
-    get newInitial() { return newInitial; },
-    get startError() { return startError; },
+    get selected() {
+      return selected;
+    },
+    get showNew() {
+      return showNew;
+    },
+    get newInitial() {
+      return newInitial;
+    },
+    get startError() {
+      return startError;
+    },
 
     /** The user picked the host for a new instance. The dialog stays as it is (it restarts for the new host, see Shell). */
     pick(id: string) {
@@ -50,17 +58,29 @@ export function createStartFlow(initialHost: string) {
       clearOutcome();
     },
     /** A start on `host` failed. Say nothing once the user is on another host. */
-    startFailed(host: string, failure: StartFailure, a: StartArgs) {
+    startFailed(host: string, failure: StartFailure, startArgs: StartArgs) {
       if (host !== selected) return;
+
       if (failure.kind === "error") {
         startError = failure.message;
         return;
       }
+
       // This prompt replaces the one in the open dialog: say that the displaced folder still needs trust.
-      if (showNew && newInitial && newInitial.path !== a.path) startError = `Trust needed for ${newInitial.path}`;
+      if (showNew && newInitial && newInitial.path !== startArgs.path)
+        startError = `Trust needed for ${newInitial.path}`;
       // The settings go along, so the trust start sends the same settings as the start that got the 428.
-      const settings = { ...(a.createSession !== undefined ? { createSession: a.createSession } : {}), ...(a.spawnMode !== undefined ? { spawnMode: a.spawnMode } : {}) };
-      newInitial = { path: a.path, user: a.user, name: a.name, ...(Object.keys(settings).length > 0 ? { settings } : {}), trust: failure.prompt };
+      const settings = {
+        ...(startArgs.createSession !== undefined ? { createSession: startArgs.createSession } : {}),
+        ...(startArgs.spawnMode !== undefined ? { spawnMode: startArgs.spawnMode } : {}),
+      };
+      newInitial = {
+        path: startArgs.path,
+        user: startArgs.user,
+        name: startArgs.name,
+        ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        trust: failure.prompt,
+      };
       showNew = true;
     },
   };

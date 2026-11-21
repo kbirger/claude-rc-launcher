@@ -1,25 +1,8 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { getLatest, getReleaseNotes, getUpdates, updateHost } from "./api";
+import { useFetchStub } from "../../../../test/fetch-stub";
 
-const realFetch = globalThis.fetch;
-const realLoc = (globalThis as any).location;
-let calls: { url: string; init?: RequestInit }[] = [];
-
-function stub(status: number, body: unknown) {
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
-    calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  }) as any;
-}
-
-beforeEach(() => {
-  calls = [];
-  (globalThis as any).location = { href: "/" };
-});
-afterEach(() => {
-  globalThis.fetch = realFetch;
-  (globalThis as any).location = realLoc;
-});
+const { calls, stub } = useFetchStub();
 
 test("updateHost sends an empty body without a release and only release with one", async () => {
   stub(202, { status: "restarting", from: "0.8.2" });
@@ -36,7 +19,7 @@ test("getLatest and getUpdates GET their endpoints", async () => {
   await getLatest();
   stub(200, []);
   await getUpdates();
-  expect(calls.map((c) => c.url)).toEqual(["/api/latest", "/api/updates"]);
+  expect(calls.map((call) => call.url)).toEqual(["/api/latest", "/api/updates"]);
 });
 
 test("getReleaseNotes GETs the range with encoded versions", async () => {
