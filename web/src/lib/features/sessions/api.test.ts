@@ -109,3 +109,11 @@ test("getPreview and downloadUrl keep path by default", async () => {
   expect(new URL(calls[0]!.url, "http://x").searchParams.get("path")).toBe("a.txt");
   expect(downloadUrl("h", "i", SID, "a.txt", { abs: false })).toBe(`/api/hosts/h/instances/i/sessions/${SID}/download?path=a.txt`);
 });
+
+test("listAllSessions calls GET /api/sessions", async () => {
+  stub(200, { sessions: [], hosts: [] });
+  const { listAllSessions } = await import("./api");
+  expect(await listAllSessions()).toEqual({ sessions: [], hosts: [] });
+  expect(calls[0]!.url).toBe("/api/sessions");
+  expect(calls[0]!.init?.method).toBe("GET");
+});

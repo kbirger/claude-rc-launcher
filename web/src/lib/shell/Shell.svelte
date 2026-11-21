@@ -10,8 +10,8 @@
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
-  import { HostPicker, hostsQuery, selectionAfter, type HostInfo } from "../features/hosts";
-  import { UpdateBanner, UpdateOutput, busyReason, lastEntry, latestQuery, reloadDecision, showsFinishedPanel, updatesQuery } from "../features/updates";
+  import { hostsQuery, pruneNodes, readNodes, selectionAfter, toggleNode, writeNodes, type HostInfo } from "../features/hosts";
+  import { UpdateBanner, busyReason, lastEntry, latestQuery, reloadDecision, updatesQuery } from "../features/updates";
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
   import { createStartFlow } from "../startflow.svelte";
@@ -95,8 +95,21 @@
     flow.fallback(selectionAfter(hostsQ.data, flow.selected));
   });
 
-  function select(id: string) {
-    flow.select(id);
+  // The nodes that the views show: kept for the tab, and a node that is gone from the host list leaves the selection.
+  let nodes = $state<string[]>(readNodes());
+  function setNodes(ids: string[]) {
+    nodes = ids;
+    writeNodes(ids);
+  }
+  $effect(() => {
+    if (!hostsQ.data) return;
+    const pruned = pruneNodes(nodes, hostsQ.data);
+    if (pruned.length !== nodes.length) setNodes(pruned);
+  });
+
+  // The node of a new instance. The dialog restarts for the new node (it is keyed by it), so its node field comes first.
+  function pickHost(id: string) {
+    flow.pick(id);
     remember(id);
   }
 
@@ -111,7 +124,12 @@
     get logoutUrl() { return meQ.data?.logoutUrl ?? "/auth/logout"; },
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
-    select,
+    nodes: {
+      // Only nodes that exist count. While the host list loads, or if it fails, a saved choice of another node must not empty the views.
+      get selected() { return pruneNodes(nodes, hosts); },
+      toggle: (id) => setNodes(toggleNode(pruneNodes(nodes, hosts), id)),
+      clear: () => setNodes([]),
+    },
     get latestError() { return latestQ.isError; },
   });
 
@@ -125,11 +143,10 @@
   });
 </script>
 
-<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2">
-  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/instances" aria-label="Claude RC: home"><Logo /></a></h1>
-  {#if hosts.length > 1}
-    <HostPicker {hosts} selected={flow.selected} updates={updatesQ.data ?? []} {now} onselect={select} allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)} />
-  {/if}
+<!-- Up to 480px wide the header is hidden: the bottom bar has Sessions, and the menu sheet has the name and Log out. The refresh bar moves to the top of the screen. -->
+<div class="sticky top-0 z-40 h-0 min-[481px]:hidden"><div class="relative h-0.5"><RefreshBar /></div></div>
+<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2 max-[480px]:hidden">
+  <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch"><a class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg" href="/sessions" aria-label="Claude RC: home"><Logo /></a></h1>
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground" aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}>
       <Avatar name={meQ.data?.name ?? ""} email={meQ.data?.email} size={28} />
@@ -147,7 +164,7 @@
   </DropdownMenu.Root>
   <RefreshBar />
 </header>
-<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
   {#if reloadBar}
     <Alert.Root role="status" class="border-l-[3px] border-l-warning">
       <Alert.Description class="text-foreground">The hub was updated. Reload to get the new page.</Alert.Description>
@@ -161,11 +178,6 @@
   {#if page.url.pathname !== "/updates" && can(meQ.data?.role, "admin", meQ.data !== undefined)}
     <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
   {/if}
-  {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
-    {#key flow.selected}
-      <div><UpdateOutput host={flow.selected} open={false} /></div>
-    {/key}
-  {/if}
   <main>
     {@render children()}
   </main>
@@ -176,6 +188,8 @@
   {#key flow.selected}
     <NewDialog
       host={flow.selected}
+      {hosts}
+      onhost={pickHost}
       busyReason={selectedBusy}
       initial={flow.newInitial}
       onclose={() => flow.closeNew()}

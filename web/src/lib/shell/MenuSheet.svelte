@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
   import Home from "@tabler/icons-svelte/icons/home";
+  import Messages from "@tabler/icons-svelte/icons/messages";
   import Server from "@tabler/icons-svelte/icons/server";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Palette from "@tabler/icons-svelte/icons/palette";
@@ -16,6 +17,7 @@
   const shell = getShell();
   // The update history is part of Updates (the "All history" link there), so it is not a menu item. It lights up Updates.
   const items = [
+    { href: "/sessions", label: "Sessions", icon: Messages },
     { href: "/instances", label: "Instances", icon: Home },
     { href: "/nodes", label: "Nodes", icon: Server },
     { href: "/updates", label: "Updates", icon: ArrowUp, also: "/history" },

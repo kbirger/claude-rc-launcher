@@ -1,6 +1,6 @@
 // Small helpers for the session screens. They only use values the API gave.
 import { ago } from "../../shared/time";
-import type { Session, TouchedFile } from "./api";
+import type { GlobalSession, Session, TouchedFile } from "./api";
 
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 
@@ -93,6 +93,14 @@ export function sessionMatches(s: Session, query: string): boolean {
   if (!words.length) return true;
   const hay = [s.name, s.id, s.branch, s.root, worktreeName(s.root)].filter(Boolean).join("\n").toLowerCase();
   return words.every((w) => hay.includes(w));
+}
+
+/** `sessionMatches`, and also true when every word is in the node name or the instance name. */
+export function globalMatches(s: GlobalSession, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const own = [s.name, s.id, s.branch, s.root, worktreeName(s.root), s.host.name, s.instance.name].filter(Boolean).join("\n").toLowerCase();
+  return words.every((w) => own.includes(w));
 }
 
 /** Detail parts of a session row: short id, last active time (relative, then the date), and the branch unless it is unset or a detached "HEAD". */

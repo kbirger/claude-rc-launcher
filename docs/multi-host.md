@@ -8,8 +8,9 @@ One launcher, the hub, can manage instances on other machines, the nodes. A node
 Browser -> reverse proxy [+ Authentik outpost] -> HUB -- HTTPS, pinned cert, Hub-Proof --> NODE
 ```
 
-The hub serves the UI and proxies the instance API of each node. A host picker appears in the header when
-more than one host is configured; offline hosts are listed but not selectable. The hub's own host is the
+The hub serves the UI and proxies the instance API of each node. If more than one host is configured, a Nodes button appears above the
+Sessions and Instances lists. Its menu has a checkbox for each host. Each host has a status dot, and an offline host stays in the menu.
+The Sessions view needs the node to run the same release as the hub: an older node has no session list, and the view says so. The hub's own host is the
 implicit host `local`.
 
 ## Pairing a node

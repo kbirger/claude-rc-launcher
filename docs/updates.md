@@ -18,7 +18,7 @@ When a machine is out of date, a banner on every page of the web UI says so.
 
 ## Version check and updates in the web UI
 
-The web UI shows the service and client versions of the hub above the New button. The host drop-down shows the versions
+The web UI shows the service and client versions of the hub above the New button. The Nodes page shows the versions
 of each node. A stale machine carries a mark. A banner at the top of the page offers updates. The page checks when it
 loads and when you return to the tab after more than five minutes.
 
@@ -31,10 +31,10 @@ A machine is stale in these cases:
 - If a machine has two client copies, the older copy decides.
 
 The banner has two separate buttons. `Update hub` updates the hub to the latest release. `Update all nodes` updates the
-nodes to the version of the hub. The host picker also has an `Update` button for the selected node. The UI never
+nodes to the version of the hub. The card of each node on the Nodes page also has an `Update` button. The UI never
 updates anything by itself.
 
-While an update runs, the host picker and the banner show its step as text. The steps are `downloading`, `verifying`,
+While an update runs, the Nodes page and the banner show its step as text. The steps are `downloading`, `verifying`,
 `installing-client`, `installing`, `restarting`, `failed` and `up-to-date`. A client step adds the path of the client,
 for example `installing-client: /usr/local/bin/claude-rc`. The step `failed` shows in the error color. Below the step
 is an output panel with the lines of output of the update, newest at the bottom. The panel follows new lines while you
@@ -42,8 +42,8 @@ are at the bottom. It is open while the update runs. A finished update shows its
 gets the lines that the hub already holds. The hub keeps the last 200 lines of each machine in memory only, so a hub
 restart clears them.
 
-A node that stops during its update has the status `restarting`. The host picker shows `restarting`, and the entry
-stays selected but is greyed out. After 90 seconds without an answer, the status becomes `offline`. When the node
+A node that stops during its update has the status `restarting`. The Nodes page shows `restarting`, and the node
+stays in the Nodes menu with the status in its text. After 90 seconds without an answer, the status becomes `offline`. When the node
 answers again, the status returns to `ok`. A node that drops its connection without a `restarting` step is `offline`
 at once. The hub learns about these changes from an event stream that it holds open to each node, so the page does not
 wait for the next poll. The hub logs one line when the status or the reason of a node changes, and none for a repeat.

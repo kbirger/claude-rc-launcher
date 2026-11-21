@@ -10,13 +10,14 @@ The screenshots use the dark mode of the Claude theme.
 
 ![The instance list on a phone](images/screens/instances.png)
 
-The header has three parts:
+The header has two parts:
 
-- The logo. Tap it to go back to the instance list.
-- The host picker. It shows the selected host and its version. Read [Hosts and nodes](#hosts-and-nodes).
-- The logout button.
+- The logo. Tap it to go back to the session list.
+- The account menu. It shows your name and the Log out entry.
 
-The bar at the bottom has three buttons: Nodes, the Menu button in the middle, and Instances. The menu opens a sheet with these entries: Instances, Nodes, Updates, Appearance, a link to the GitHub repository, and Log out with your name.
+On a phone (480 px wide or less) the header is hidden to give the lists more room. The bottom bar has Sessions, and the menu sheet shows your name and has Log out. The thin line that shows a refresh moves to the top edge of the screen.
+
+The bar at the bottom has three buttons: Sessions, the Menu button in the middle, and Instances. The menu opens a sheet with these entries: Sessions, Instances, Nodes, Updates, Appearance, a link to the GitHub repository, and Log out with your name.
 
 <img src="images/screens/menu.png" alt="The menu sheet" width="300">
 
@@ -26,9 +27,17 @@ You can install the page as an app (a PWA, a web page that runs like an app). In
 
 What you see depends on your role. A `read` user sees the lists, logs and files, but no buttons that change something. Read [Roles](authentication.md#roles).
 
+## Sessions and the node filter
+
+The Sessions view is the first page. It lists the sessions of every instance on every host. Running sessions come first (busy before idle), and the other sessions follow, newest first. Each row shows the name of the session, its state, the host and the instance, and the details.
+
+If you have more than one host, a Nodes button shows above the list on the Sessions view and on the Instances view. It says "Nodes: all", the name of the one selected host, or a count such as "Nodes: 2 of 5". A tap opens a menu with a checkbox for each host. The menu stays open while you tick hosts, and it scrolls if the list is long. "All nodes" clears the selection. With no host ticked, the views show all hosts. The tab keeps the selection, and both views use it. Each host has a status dot: green for ok, yellow for restarting, and red for a host that does not answer. Such a host stays in the menu.
+
+If a host does not answer, or runs an older release that has no session list, a note above the list names it. This way a missing host is not mistaken for "no sessions". Read [Sessions and files](#sessions-and-files) for what you can do with one session.
+
 ## Instances
 
-The instance list shows the instances of the selected host. Each card shows:
+The Instances view has two modes. From the bottom bar it is global: the title is "Instances", the node filter shows, and the view lists the instances of the selected hosts. If more than one host shows, each host has a heading below the title. From the Nodes page it shows one host: the title is "Instances on <host>", there is no node filter, and "+ New" starts on that host. If you have more than one host, the New dialog starts with a Node field. If exactly one host is ticked, or you opened one host from the Nodes page, the dialog starts on that host. Each card shows:
 
 - The name of the instance. This is the `--name` that the Claude app shows.
 - The folder.
@@ -193,7 +202,7 @@ If the setting "Create a session at start" is off, the unit has `--no-create-ses
 
 ## Sessions and files
 
-Tap Sessions on an instance card. The page lists the sessions that Claude Code recorded for the folder of the instance.
+Open Sessions in the bottom bar. The page lists the sessions that Claude Code recorded for the folders of all instances. Tap Sessions on an instance card to see only the sessions of that instance. This list reads that one node only, so another node that is down does not slow it. The heading then reads, for example, "Sessions: blog on hub", and the node filter and the node and instance on each row are left out.
 
 <img src="images/screens/sessions.png" alt="The session list of an instance" width="300">
 
@@ -325,9 +334,9 @@ The node writes the rule into the JSON file. It keeps the indent, the key order 
 
 A host is a machine that runs instances. The hub is the host `local`. A node is another machine that the hub controls. Read [Multiple hosts](multi-host.md).
 
-The host picker in the header selects the host of the instance list. An offline host is in the list, but you cannot select it.
+The Nodes button above the Sessions and Instances lists selects the hosts that the views show. An offline host stays in its menu with a red status dot.
 
-<img src="images/screens/host-picker.png" alt="The host picker" width="300"> <img src="images/screens/nodes.png" alt="The Nodes page" width="300">
+<img src="images/screens/nodes.png" alt="The Nodes page" width="300">
 
 The Nodes page shows one card for each host:
 
@@ -336,7 +345,7 @@ The Nodes page shows one card for each host:
 - A status dot. If the host is offline, the card also shows the reason.
 - Rename changes the display name. The id stays.
 - Update updates that node. Read [Updates](updates.md).
-- Use selects the host for the instance list.
+- Show instances opens the Instances view for that host only. The title reads "Instances on <host>" and there is no node filter. The node filter of the other views does not change. A host that is not running shows a disabled Unavailable button.
 
 ## Updates
 

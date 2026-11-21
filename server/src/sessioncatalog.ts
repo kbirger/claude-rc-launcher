@@ -44,8 +44,15 @@ export type SessionCatalogOptions = {
 /** At most this many transcripts are read for names at once, so that a big folder stays under the open-file limit. */
 const NAME_READS = 8;
 
+/** The `live` field of a session summary, copied field by field: nothing else from the running-session file reaches the answer. */
+export function liveOf(info: LiveInfo): { status?: string; remoteControl: boolean } {
+  const live: { status?: string; remoteControl: boolean } = { remoteControl: info.remoteControl };
+  if (info.status !== undefined) live.status = info.status;
+  return live;
+}
+
 /** `fn` over `items` with at most `limit` running at once. Results keep the order of `items`. */
-async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const worker = async () => {
@@ -171,10 +178,7 @@ export class InstanceSessions {
       const name = (await this.catalog.nameMemory.resolve({ id: f.id, chain, candidate: cand, file: f.file }))?.name;
       if (name) s.name = name;
       // Field by field: nothing else from the running-session file reaches the answer.
-      if (liveInfo) {
-        s.live = { remoteControl: liveInfo.remoteControl };
-        if (liveInfo.status !== undefined) s.live.status = liveInfo.status;
-      }
+      if (liveInfo) s.live = liveOf(liveInfo);
       if (f.branch) s.branch = f.branch;
       if (earlier?.length) s.earlier = earlier.sort((a, b) => ((a.startedAt ?? "") < (b.startedAt ?? "") ? -1 : 1)).map((m) => m.id);
       return s;

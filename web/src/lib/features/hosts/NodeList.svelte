@@ -2,7 +2,7 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
-  import Circle from "@tabler/icons-svelte/icons/circle";
+  import Home from "@tabler/icons-svelte/icons/home";
   import Close from "@tabler/icons-svelte/icons/x";
   import Check from "@tabler/icons-svelte/icons/circle-check";
   import Pencil from "@tabler/icons-svelte/icons/pencil";
@@ -22,7 +22,7 @@
   // `latest` is the newest release; a component behind it (or a service behind the hub) gets the update badge.
   // `onrename` makes the name of a node (one that was paired with the CLI, not the hub) editable. It rejects with the error to show.
   // `onupdate` updates a node to the latest release. It rejects with the error to show.
-  let { hosts, selected, onselect, latest, onrename, onupdate }: { hosts: HostInfo[]; selected: string; onselect: (id: string) => void; latest?: string; onrename?: (id: string, name: string) => Promise<unknown>; onupdate?: (h: HostInfo) => Promise<unknown> } = $props();
+  let { hosts, onselect, latest, onrename, onupdate }: { hosts: HostInfo[]; onselect: (id: string) => void; latest?: string; onrename?: (id: string, name: string) => Promise<unknown>; onupdate?: (h: HostInfo) => Promise<unknown> } = $props();
 
   let editing = $state<string | null>(null);
   let draft = $state("");
@@ -121,9 +121,9 @@
             <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
           </Button>
         {/if}
-        <!-- One button for the state of the node in the app: Active (the node in use), Use (it can be used), or Unavailable (it is not running). -->
-        <Button variant="ghost" size="sm" class={cn("h-8 min-w-24 px-2", h.id === selected && "text-primary disabled:opacity-100")} disabled={h.id === selected || h.status !== "ok"} onclick={() => onselect(h.id)} aria-pressed={h.id === selected}>
-          {#if h.id === selected}<Check aria-hidden="true" />Active{:else if h.status === "ok"}<Circle aria-hidden="true" />Use{:else}<Circle aria-hidden="true" />Unavailable{/if}
+        <!-- Shows the instances of this node (the page sets the node filter to it). A node that is not running has nothing to show. -->
+        <Button variant="ghost" size="sm" class="h-8 px-2" disabled={h.status !== "ok"} onclick={() => onselect(h.id)}>
+          <Home aria-hidden="true" />{h.status === "ok" ? "Show instances" : "Unavailable"}
         </Button>
       {/if}
     {/snippet}
@@ -134,7 +134,6 @@
         titleEditor={editing === h.id ? titleEditor : undefined}
         {titleAside}
         {status}
-        selected={h.id === selected}
         children={hasContent(h) ? content : undefined}
         actions={editing === h.id || renamable(h) ? actions : undefined}
         {actionsEnd}

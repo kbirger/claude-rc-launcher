@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import Server from "@tabler/icons-svelte/icons/server";
+  import Messages from "@tabler/icons-svelte/icons/messages";
   import Home from "@tabler/icons-svelte/icons/home";
   import LayoutGrid from "@tabler/icons-svelte/icons/layout-grid";
   import { Button } from "#lib/components/ui/button/index.js";
@@ -8,15 +8,13 @@
   import MenuSheet from "./MenuSheet.svelte";
 
   let menuOpen = $state(false);
-  const left = [
-    { href: "/nodes", label: "Nodes", icon: Server },
-  ];
+  const left = [{ href: "/sessions", label: "Sessions", icon: Messages }];
   const right = [{ href: "/instances", label: "Instances", icon: Home }];
   const link = (active: boolean) =>
     cn("flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-xs transition-colors", active ? "text-primary" : "text-muted-foreground hover:text-foreground");
 </script>
 
-{#snippet item(it: { href: string; label: string; icon: typeof Server })}
+{#snippet item(it: { href: string; label: string; icon: typeof Messages })}
   <a href={it.href} class={link(page.url.pathname === it.href)} aria-current={page.url.pathname === it.href ? "page" : undefined}>
     <it.icon size={22} aria-hidden="true" />{it.label}
   </a>

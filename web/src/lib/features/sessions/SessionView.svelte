@@ -14,7 +14,6 @@
   import { isUnsupported } from "./api";
   import { ago, sessionsHref, sessionTitle, worktreeName } from "./format";
   import { sessionsQuery } from "./queries";
-  import { instancesQuery } from "../instances/queries";
 
   // `touched`, `changed` and `folder` are the tabs of the Files section. `permissions` and `blocked` are the tabs of the Permissions section.
   type View = "touched" | "changed" | "folder" | "permissions" | "blocked";
@@ -26,8 +25,6 @@
   const q = createQuery(() => sessionsQuery(host, instance));
   const s = $derived(q.data?.find((x) => x.id === session));
   // The name of the instance, for the way back. The instance list is cached by the page before this one.
-  const instances = createQuery(() => instancesQuery(host));
-  const instanceName = $derived(instances.data?.find((x) => x.id === instance)?.name);
   const href = (v: View, extra: { path?: string; file?: string } = {}) =>
     sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
   // The tab is state of this page, not a navigation: a click adds no history entry, so Back does not walk through the tabs.
@@ -51,8 +48,8 @@
 <div class="grid grid-cols-[minmax(0,1fr)] gap-3">
   <!-- A file preview needs the room: it has its own Back button, so the session header is left out while a file is open. -->
   {#if !abs && !file}
-    <Button variant="ghost" size="sm" class="-ml-2 h-8 w-fit px-2 text-muted-foreground" href={sessionsHref({ host, instance })}>
-      <ArrowLeft aria-hidden="true" />Back to {instanceName ? `${instanceName} sessions` : "sessions"}
+    <Button variant="ghost" size="sm" class="-ml-2 h-8 w-fit px-2 text-muted-foreground" href="/sessions">
+      <ArrowLeft aria-hidden="true" />Back to sessions
     </Button>
     {#if s}
       {@const wt = worktreeName(s.root)}

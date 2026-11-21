@@ -1,12 +1,12 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { SessionList, SessionView, showHidden } from "#lib/features/sessions";
+  import { GlobalSessionList, SessionView, showHidden } from "#lib/features/sessions";
   import { getShell } from "#lib/shell/context";
 
   const shell = getShell();
   const p = $derived(page.url.searchParams);
-  // The host in the address wins. Without one the selected host is used.
-  const host = $derived(p.get("host") || shell.flow.selected);
+  // The host and instance come from the address: a session is on one node, whatever the node chips show.
+  const host = $derived(p.get("host") ?? "");
   const instance = $derived(p.get("instance") ?? "");
   const session = $derived(p.get("session") ?? "");
   const VIEWS = ["touched", "changed", "folder", "permissions", "blocked"] as const;
@@ -16,15 +16,12 @@
   const now = $derived(shell.now.getTime());
 </script>
 
-{#if !session}<h2 class="font-heading mb-3 text-lg font-bold">Sessions</h2>{/if}
-{#if !instance}
-  <p class="text-muted-foreground">Pick an instance and tap Sessions.</p>
-{:else}
+{#if session && host && instance}
   {#key `${host}|${instance}`}
-    {#if session}
-      <SessionView {host} {instance} {session} {view} {path} {hidden} file={p.get("file") ?? ""} abs={p.get("abs") ?? ""} {now} />
-    {:else}
-      <SessionList {host} {instance} {now} />
-    {/if}
+    <SessionView {host} {instance} {session} {view} {path} {hidden} file={p.get("file") ?? ""} abs={p.get("abs") ?? ""} {now} />
   {/key}
+{:else if session}
+  <p class="text-muted-foreground">This address has no node or instance. Open the session from the list.</p>
+{:else}
+  <GlobalSessionList hosts={shell.hosts} nodes={shell.nodes.selected} {host} {instance} {now} ontoggle={shell.nodes.toggle} onclear={shell.nodes.clear} />
 {/if}

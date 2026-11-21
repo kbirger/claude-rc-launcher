@@ -30,6 +30,8 @@ import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
+import { SessionIndex } from "./sessionindex";
+import { allSessionsApi } from "./allsessions";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -63,7 +65,7 @@ function csrf(cfg: Config): MiddlewareHandler {
 }
 
 /** `adoptDir` replaces the owner change of a new folder (tests). */
-export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined; sessions?: SessionCatalog };
+export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined; sessions?: SessionCatalog; sessionIndex?: SessionIndex };
 
 /** The session catalog of one app. Each app factory builds one, so that all its session routes share one name cache. */
 function sessionCatalogFor(cfg: Config): SessionCatalog {
@@ -73,10 +75,26 @@ function sessionCatalogFor(cfg: Config): SessionCatalog {
   return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json"), nameFile: join(dir, "session-names.json") } : {}) });
 }
 
+/** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its timer. */
+function sessionIndexFor(instances: Instances, catalog: SessionCatalog): SessionIndex {
+  const index = new SessionIndex({ instances, catalog });
+  index.start();
+  return index;
+}
+
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
   const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
   const r = new Hono();
+  const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
+  const index = deps.sessionIndex ?? new SessionIndex({ instances, catalog: sessionCatalog });
+
+  // A start, stop, pause, resume, restart or settings change moves sessions in or out of the list: scan again at once.
+  r.use("/instances/*", async (c, next) => {
+    await next();
+    if (c.req.method !== "GET" && c.res.status < 400) index.invalidate();
+  });
+  r.get("/sessions", async (c) => c.json(await index.get()));
 
   r.get("/node", async (c) => {
     let clients: ClientVersion[] | undefined = [];
@@ -203,11 +221,12 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     });
   }
 
-  const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
   r.route("/instances/:id/sessions", sessionApi({ instances, sessions: sessionCatalog }));
   r.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
 
   r.all("*", (c) => c.json({ error: "not found" }, 404));
+  // A caller that serves these routes by `request()` (the hub list of all sessions) gets the JSON error, not Hono's plain 500.
+  r.onError(onError);
   return r;
 }
 
@@ -277,7 +296,8 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
     });
   }
   const sessions = sessionCatalogFor(cfg);
-  api.route("/", instanceApi({ cfg, instances, dirOwner, sessions, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
+  const sessionIndex = sessionIndexFor(instances, sessions);
+  api.route("/", instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
   return app;
@@ -331,10 +351,13 @@ export function createApp(deps: Deps): Hono {
     : undefined;
   // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
   const sessions = sessionCatalogFor(cfg);
+  const sessionIndex = sessionIndexFor(instances, sessions);
+  // The node API of this machine: the host `local` for the forwarding routes and the first part of the all-sessions list.
+  const localApi = instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) });
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, sessions, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) }),
+      local: localApi,
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
@@ -347,6 +370,8 @@ export function createApp(deps: Deps): Hono {
     const u = c.get("user" as never) as User | undefined;
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
+  const allSessions = allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.probeTimeoutMs, ...(deps.presence ? { presence: () => deps.presence!.list() } : {}) });
+  api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
   api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
@@ -405,6 +430,7 @@ export function createApp(deps: Deps): Hono {
     cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
     cliApi.get("/events", hubEvents);
     cliApi.route("/node-enrollment", enrollmentApi(cli.enrollment));
+    cliApi.route("/sessions", allSessions);
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());

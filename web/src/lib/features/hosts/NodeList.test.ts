@@ -16,7 +16,7 @@ afterEach(() => {
 function show(props: Record<string, unknown>) {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(NodeList, { target, props: { hosts: [host()], selected: "", onselect: () => {}, ...props } as any });
+  const c = mount(NodeList, { target, props: { hosts: [host()], onselect: () => {}, ...props } as any });
   open.push(() => unmount(c));
   flushSync();
   return target;
@@ -55,24 +55,24 @@ test("an agent role pill is not primary", () => {
   expect(first.className).not.toContain("text-primary");
 });
 
-test("the selected node has the selected style and Active", () => {
-  const t = show({ selected: "n1" });
-  expect(t.querySelector('[data-slot="entity-card"]')!.className).toContain("ring-primary");
-  const active = byText("Active")!;
-  expect(active.disabled).toBe(true);
-  expect(active.getAttribute("aria-pressed")).toBe("true");
-});
-
-test("Use selects a node that is ok", () => {
+test("Show instances opens the instances of a node that is ok", () => {
   const onselect = vi.fn();
   show({ onselect });
-  const use = byText("Use")!;
-  expect(use.getAttribute("aria-pressed")).toBe("false");
-  use.click();
+  const b = byText("Show instances")!;
+  expect(b.disabled).toBe(false);
+  expect(b.hasAttribute("aria-pressed")).toBe(false);
+  b.click();
   expect(onselect).toHaveBeenCalledWith("n1");
 });
 
-test("Use is disabled for a node that is not ok", () => {
+test("the cards have no active state: no Active or Use button and no selected style", () => {
+  const t = show({ hosts: [host(), host({ id: "n2", name: "node-two" })] });
+  expect(byText("Active")).toBeUndefined();
+  expect(byText("Use")).toBeUndefined();
+  expect(t.querySelector('[data-slot="entity-card"]')!.className).not.toContain("ring-primary");
+});
+
+test("Show instances is a disabled Unavailable for a node that is not ok", () => {
   const t = show({ hosts: [host({ status: "offline", error: "down" })] });
   const b = byText("Unavailable")!;
   expect(b.disabled).toBe(true);

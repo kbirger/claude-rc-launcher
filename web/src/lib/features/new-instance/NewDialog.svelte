@@ -18,10 +18,15 @@
   import FolderIcon from "../../shared/ui/FolderIcon.svelte";
   import { iconKind } from "../../shared/ui/foldericon";
   import type { StartArgs } from "../instances";
+  import type { HostInfo } from "../hosts";
   import { createNewDialogModel } from "./model.svelte";
 
-  let { host, onclose, onstart, busyReason, initial, canChooseUser = true, canSignInGitHub = true }: {
+  let { host, hosts = [], onhost, onclose, onstart, busyReason, initial, canChooseUser = true, canSignInGitHub = true }: {
     host: string;
+    /** The nodes to choose from. With more than one, the dialog starts with a node field. */
+    hosts?: HostInfo[];
+    /** The user chose another node: the page starts the dialog again for that node. */
+    onhost?: (id: string) => void;
     /** False hides Run as: the hub only lets an admin start an instance as another user. */
     canChooseUser?: boolean;
     /** False hides the GitHub sign-in: the hub only lets an admin start it. */
@@ -59,6 +64,17 @@
       <Button variant="outline" size="touch" onclick={onclose} disabled={model.cloneBusy}>Close</Button>
     </div>
     <Dialog.Description class="sr-only">Choose a folder, then start an instance in it.</Dialog.Description>
+    {#if hosts.length > 1}
+      <div class="my-1 flex items-center gap-2">
+        <Label id="node-label">Node</Label>
+        <Select.Root type="single" value={host} disabled={model.cloning} onValueChange={(v) => v !== host && onhost?.(v)}>
+          <Select.Trigger class="w-56 data-[size=default]:h-11" aria-label="Node">{hosts.find((h) => h.id === host)?.name ?? host}</Select.Trigger>
+          <Select.Content>
+            {#each hosts as h (h.id)}<Select.Item value={h.id} label={h.name} disabled={h.status !== "ok"}>{h.name}</Select.Item>{/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+    {/if}
     {#if busyReason}
       <Alert.Root class="my-2 border-l-[3px] border-l-warning">
         <Alert.Description>

@@ -131,3 +131,10 @@ test("the section buttons switch between Files and Permissions without a navigat
   flushSync();
   expect(replaceState).toHaveBeenLastCalledWith("/sessions?host=h&instance=i&session=s1&view=touched", {});
 });
+
+test("the Back link goes to the list of all sessions", async () => {
+  const t = await show("touched");
+  const back = [...t.querySelectorAll("a")].find((a) => a.textContent?.includes("Back to"))!;
+  expect(back.textContent!.trim()).toBe("Back to sessions");
+  expect(back.getAttribute("href")).toBe("/sessions");
+});
