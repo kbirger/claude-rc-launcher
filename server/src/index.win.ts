@@ -19,6 +19,7 @@ import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EX
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(0);
 }
 
@@ -28,6 +29,7 @@ if (process.argv[2] === "gen-secret") {
   console.log(`sha256: ${sha256}`);
   console.log("# Hub: put the secret in a file and reference it as hosts[].auth.secret_file.");
   console.log("# Node: add the sha256 as a [[node_auth.secret]] entry. Never put the secret on the node.");
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(0);
 }
 
@@ -40,6 +42,7 @@ try {
   checkServiceAccount(cfg.serviceUser, userInfo().username);
 } catch (caught) {
   console.error(caught instanceof Error ? caught.message : String(caught));
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(1);
 }
 
@@ -73,6 +76,7 @@ const shutdown = async (code = 0) => {
   closing = true;
   running?.stop();
   await instances.close();
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(code);
 };
 
@@ -113,6 +117,7 @@ try {
   });
 } catch (caught) {
   console.error(`startup failed: ${(caught as Error).message}`);
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(1);
 }
 

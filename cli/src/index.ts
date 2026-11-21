@@ -279,6 +279,7 @@ export async function main(
 }
 
 if (import.meta.main) {
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(
     await main(process.argv.slice(2), {
       out: (line) => {

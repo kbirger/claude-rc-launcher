@@ -198,6 +198,7 @@ if (import.meta.main) {
     }
   } catch (caught) {
     console.error(`error: ${(caught as Error).message}`);
+    // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
     process.exit(1);
   }
 }
