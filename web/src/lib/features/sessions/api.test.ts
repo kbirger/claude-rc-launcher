@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { ApiError } from "../../shared/http";
-import { downloadUrl, getPreview, getTouched, isUnsupported, listFiles, listSessions } from "./api";
+import * as api from "./api";
+import { downloadUrl, getPreview, getTouched, listFiles } from "./api";
 
 const realFetch = globalThis.fetch;
 const realLoc = (globalThis as any).location;
@@ -24,12 +24,10 @@ afterEach(() => {
 
 const SID = "11111111-2222-3333-4444-555555555555";
 
-test("listSessions and getTouched use encoded path segments", async () => {
+test("getTouched uses encoded path segments", async () => {
   stub(200, []);
-  await listSessions("a/b", "i d");
   await getTouched("a/b", "i d", SID);
-  expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/instances/i%20d/sessions");
-  expect(calls[1]!.url).toBe(`/api/hosts/a%2Fb/instances/i%20d/sessions/${SID}/touched`);
+  expect(calls[0]!.url).toBe(`/api/hosts/a%2Fb/instances/i%20d/sessions/${SID}/touched`);
 });
 
 test("listFiles sends hidden=1 only when true", async () => {
@@ -68,12 +66,9 @@ test("downloadUrl encodes a path with spaces, #, ? and %", () => {
   expect(new URL(u, "http://x").searchParams.get("path")).toBe(name);
 });
 
-test("isUnsupported is true for 404 and 501 api errors only", () => {
-  expect(isUnsupported(new ApiError(404, "x"))).toBe(true);
-  expect(isUnsupported(new ApiError(501, "x"))).toBe(true);
-  expect(isUnsupported(new ApiError(500, "x"))).toBe(false);
-  expect(isUnsupported(new Error("404"))).toBe(false);
-  expect(isUnsupported(null)).toBe(false);
+test("the per-instance list and the sessions isUnsupported are gone: every node lists sessions through the hub", () => {
+  expect("listSessions" in api).toBe(false);
+  expect("isUnsupported" in api).toBe(false);
 });
 
 test("a literal + in a name stays a + through listFiles, getPreview and downloadUrl", async () => {

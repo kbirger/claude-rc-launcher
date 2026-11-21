@@ -6,6 +6,10 @@ import type { HostInfo } from "../hosts";
 import type { AllSessions, GlobalSession } from "./api";
 import Harness from "./GlobalSessionListHarness.svelte";
 
+const release = vi.hoisted(() => vi.fn());
+const connect = vi.hoisted(() => vi.fn(() => release));
+vi.mock("../../realtime/sessions", () => ({ connectSessions: connect }));
+
 const hosts: HostInfo[] = [{ id: "local", name: "hub", status: "ok" }, { id: "nas", name: "Basement NAS", status: "ok" }];
 const row = (id: string, host: string, over: Partial<GlobalSession> = {}, inst = "0123456789ab"): GlobalSession => ({
   id,
@@ -23,10 +27,11 @@ const open: Array<() => void> = [];
 afterEach(() => {
   for (const u of open.splice(0)) u();
   document.body.innerHTML = "";
+  connect.mockClear();
+  release.mockClear();
 });
 
-function show(data: AllSessions | undefined, props: Record<string, unknown> = {}) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function show(data: AllSessions | undefined, props: Record<string, unknown> = {}, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   if (data) client.setQueryData(["all-sessions"], data);
   const target = document.createElement("div");
   document.body.append(target);
@@ -37,11 +42,10 @@ function show(data: AllSessions | undefined, props: Record<string, unknown> = {}
 }
 
 const INST = "bbbbbbbbbbbb";
-const plain = (id: string, over: object = {}) => ({ id, root: "/work/proj", name: `title-${id}`, startedAt: "2026-11-19T10:00:00.000Z", lastActiveAt: "2026-11-19T10:00:00.000Z", ...over });
-/** The list of one instance: it reads the per-instance sessions of that node, not the list of all nodes. */
-function showOne(sessions: unknown[] | undefined, props: Record<string, unknown> = {}, instances: unknown[] | undefined = [{ id: INST, path: "/p", name: "inst-bb", state: "active", startedAt: null }]) {
+/** The list of one instance: it reads the all-sessions cache and keeps the rows of that host and instance only. */
+function showOne(data: AllSessions | undefined, props: Record<string, unknown> = {}, instances: unknown[] | undefined = [{ id: INST, path: "/p", name: "inst-bb", state: "active", startedAt: null }]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  if (sessions) client.setQueryData(["sessions", "local", INST], sessions);
+  if (data) client.setQueryData(["all-sessions"], data);
   if (instances) client.setQueryData(["instances", "local"], instances);
   const target = document.createElement("div");
   document.body.append(target);
@@ -50,6 +54,12 @@ function showOne(sessions: unknown[] | undefined, props: Record<string, unknown>
   flushSync();
   return target;
 }
+/** Rows of the instance INST on "local", next to a row of another instance on "local" and a row of INST on "nas". */
+const mixed = (mine: GlobalSession[], over: Partial<AllSessions> = {}): AllSessions => ({
+  sessions: [...mine, row("other-inst", "local", {}, "cccccccccccc"), row("other-host", "nas", {}, INST)],
+  hosts: [status("local", "ok"), status("nas", "ok")],
+  ...over,
+});
 const titles = (t: HTMLElement) => [...t.querySelectorAll("[data-session-title]")].map((e) => e.textContent);
 
 test("shows sessions from all nodes with the running one first", () => {
@@ -99,15 +109,15 @@ test("two sessions with the same id on two nodes both show", () => {
   expect(titles(t)).toEqual(["title-same", "title-same"]);
 });
 
-test("an offline node and an unsupported node appear in a notice and the other rows still show", () => {
+test("an offline node and an unavailable node appear in a notice and the other rows still show", () => {
   const three: HostInfo[] = [...hosts, { id: "old", name: "Old box", status: "ok" }];
   const t = show(
-    { sessions: [row("a", "local")], hosts: [status("local", "ok"), { id: "nas", name: "Basement NAS", status: "offline", error: "unreachable" }, { id: "old", name: "Old box", status: "unsupported" }] },
+    { sessions: [row("a", "local")], hosts: [status("local", "ok"), { id: "nas", name: "Basement NAS", status: "offline", error: "unreachable" }, { id: "old", name: "Old box", status: "unavailable" }] },
     { hosts: three },
   );
   expect(titles(t)).toEqual(["title-a"]);
   expect(t.textContent).toContain("Basement NAS: not answering");
-  expect(t.textContent).toContain("Old box: update this node to list its sessions");
+  expect(t.textContent).toContain("Old box: no session files on this node");
 });
 
 test("a node that is not in the selection gives no notice", () => {
@@ -116,7 +126,7 @@ test("a node that is not in the selection gives no notice", () => {
 });
 
 test("for one instance the heading names the instance and the node, and there is no node filter and no chip", () => {
-  const t = showOne([plain("b")]);
+  const t = showOne(mixed([row("b", "local", {}, INST)]));
   expect(titles(t)).toEqual(["title-b"]);
   expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions: inst-bb on hub");
   expect(t.querySelector('button[aria-label="Filter by node"]')).toBeNull();
@@ -127,51 +137,79 @@ test("for one instance the heading names the instance and the node, and there is
 test("rows show the node and instance in the all-sessions list, but not for one instance", () => {
   const data = { sessions: [row("a", "local", {}, "aaaaaaaaaaaa")], hosts: [status("local", "ok")] };
   expect(show(data).querySelector("[data-session-where]")!.textContent).toContain("hub");
-  expect(showOne([plain("a")]).querySelector("[data-session-where]")).toBeNull();
+  expect(showOne(mixed([row("a", "local", {}, INST)])).querySelector("[data-session-where]")).toBeNull();
 });
 
 test("for one instance the node selection is ignored", () => {
-  const t = showOne([plain("a")], { nodes: ["nas"] });
+  const t = showOne(mixed([row("a", "local", {}, INST)]), { nodes: ["nas"] });
   expect(titles(t)).toEqual(["title-a"]);
 });
 
-test("for one instance only that node is asked: its own list, never the list of all nodes", async () => {
-  const urls: string[] = [];
+test("the Sessions page opens the stream at mount and releases it at unmount", () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  show({ sessions: [], hosts: [] }, {}, client);
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect).toHaveBeenCalledWith(client);
+  expect(release).not.toHaveBeenCalled();
+  for (const u of open.splice(0)) u();
+  expect(release).toHaveBeenCalledTimes(1);
+});
+
+test("the one-instance page shows only the rows of that host and instance from the cache", () => {
+  const t = showOne(mixed([row("mine1", "local", {}, INST), row("mine2", "local", { lastActiveAt: "2026-11-19T11:00:00.000Z" }, INST)]));
+  expect(titles(t)).toEqual(["title-mine2", "title-mine1"]);
+  expect(t.textContent).toContain("2 sessions");
+});
+
+test("the one-instance page shows the status notice of its host only", () => {
+  const t = showOne(mixed([], { hosts: [status("local", "offline", "unreachable"), status("nas", "error", "boom")] }));
+  expect(t.textContent).toContain("hub: not answering");
+  expect(t.textContent).not.toContain("boom");
+  expect(t.textContent).not.toContain("No sessions yet.");
+});
+
+test("notice texts: unavailable, loading, offline, error", () => {
+  const four: HostInfo[] = [{ id: "a", name: "A", status: "ok" }, { id: "b", name: "B", status: "ok" }, { id: "c", name: "C", status: "ok" }, { id: "d", name: "D", status: "ok" }];
+  const t = show(
+    { sessions: [], hosts: [{ id: "a", name: "A", status: "unavailable" }, { id: "b", name: "B", status: "loading" }, { id: "c", name: "C", status: "offline", error: "unreachable" }, { id: "d", name: "D", status: "error", error: "host d: timeout" }] },
+    { hosts: four },
+  );
+  expect(t.textContent).toContain("A: no session files on this node");
+  expect(t.textContent).toContain("B: loading");
+  expect(t.textContent).toContain("C: not answering");
+  expect(t.textContent).toContain("D: host d: timeout");
+  expect(t.textContent!.toLowerCase()).not.toContain("update");
+});
+
+test("a failed read of the list shows the error", async () => {
   const real = globalThis.fetch;
-  globalThis.fetch = (async (u: any) => (urls.push(String(u)), new Response(JSON.stringify([plain("b")]), { status: 200, headers: { "content-type": "application/json" } }))) as any;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "hub: store gone" }), { status: 500, headers: { "content-type": "application/json" } })) as any;
   try {
-    showOne(undefined);
-    await vi.waitFor(() => expect(urls).toContain(`/api/hosts/local/instances/${INST}/sessions`));
-    expect(urls).not.toContain("/api/sessions");
+    const t = showOne(undefined);
+    await vi.waitFor(() => expect(t.textContent).toContain("hub: store gone"));
   } finally {
     globalThis.fetch = real;
   }
 });
 
-test("for one instance a node without session files gets the update message", async () => {
+test("a failed refresh keeps the rows and shows no error", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const t = show({ sessions: [row("a", "local")], hosts: [status("local", "ok")] }, {}, client);
   const real = globalThis.fetch;
-  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { "content-type": "application/json" } })) as any;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "hub: store gone" }), { status: 500, headers: { "content-type": "application/json" } })) as any;
   try {
-    const t = showOne(undefined);
-    await vi.waitFor(() => expect(t.textContent).toContain("This node does not support session files. Update the node."));
-  } finally {
-    globalThis.fetch = real;
-  }
-});
-
-test("for one instance a node that fails shows the error", async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "host win: timeout" }), { status: 502, headers: { "content-type": "application/json" } })) as any;
-  try {
-    const t = showOne(undefined);
-    await vi.waitFor(() => expect(t.textContent).toContain("host win: timeout"));
+    await client.invalidateQueries({ queryKey: ["all-sessions"] });
+    flushSync();
+    expect(client.getQueryState(["all-sessions"])!.error).not.toBeNull();
+    expect(titles(t)).toEqual(["title-a"]);
+    expect(t.textContent).not.toContain("hub: store gone");
   } finally {
     globalThis.fetch = real;
   }
 });
 
 test("for one instance with no sessions the heading takes the instance name from the instance list", () => {
-  const t = showOne([]);
+  const t = showOne(mixed([]));
   expect(t.querySelector("h2")!.textContent!.trim()).toBe("Sessions: inst-bb on hub");
   expect(t.textContent).toContain("No sessions yet.");
 });

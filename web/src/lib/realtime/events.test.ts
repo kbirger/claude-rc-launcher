@@ -309,7 +309,7 @@ describe("console lines and re-sync", () => {
       "[claude-rc] snapshot: 1 updates, 1 hosts",
       "[claude-rc] event stream error (ready state 0), the browser retries",
       "[claude-rc] event stream closed",
-      "[claude-rc] reconnect in 5s",
+      "[claude-rc] event stream reconnect in 5s",
     ]);
   });
 
@@ -362,4 +362,27 @@ test("stop ends the watch of the update list", () => {
   stop();
   client.setQueryData(["updates"], [entry("a", "updated")]);
   expect(invalidated).toEqual([]);
+});
+
+test("after a hide and a visible state, the owned keys are invalidated", () => {
+  let hidden = false;
+  let fns: (() => void)[] = [];
+  const visibility = { hidden: () => hidden, onChange: (fn: () => void) => (fns.push(fn), () => void (fns = fns.filter((f) => f !== fn))) };
+  const set = (h: boolean) => {
+    hidden = h;
+    for (const f of [...fns]) f();
+  };
+  const timers: (() => void)[] = [];
+  const stop = connectEvents({ client, open, visibility, hiddenMs: 30_000, setTimeout: ((f: () => void) => (timers.push(f), timers.length)) as any, clearTimeout: () => {} });
+  FakeES.all[0]!.emit("open");
+  set(true);
+  timers.pop()!();
+  expect(FakeES.all[0]!.closed).toBe(true);
+  set(false);
+  expect(FakeES.all.length).toBe(2);
+  expect(invalidated).toEqual([]);
+  FakeES.all[1]!.emit("open");
+  expect(invalidated).toEqual([["updates"], ["hosts"], ["history"], ["latest"]]);
+  stop();
+  expect(fns.length).toBe(0);
 });

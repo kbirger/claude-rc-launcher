@@ -8,8 +8,8 @@ const cfg = { mode: "node", name: "n", port: 1, host: "x", roots: ["/tmp"], host
 const instances: any = { list: async () => [], stop: async () => {}, users: async () => ({ selectable: false, default: "u", users: [] }), trustFilter: async () => () => true, claudeHome: async () => ({ path: "/p", home: "/h" }) };
 
 function build() {
-  const calls = { get: 0, invalidate: 0 };
-  const sessionIndex: any = { get: async () => (calls.get++, { scannedAt: "2026-01-01T00:00:00.000Z", sessions: [] }), invalidate: () => void calls.invalidate++ };
+  const calls = { get: 0, triggers: [] as unknown[] };
+  const sessionIndex: any = { get: async () => (calls.get++, { scannedAt: "2026-01-01T00:00:00.000Z", sessions: [] }), trigger: (t: unknown) => void calls.triggers.push(t) };
   const app = new Hono();
   app.onError(onError);
   app.route("/", instanceApi({ cfg, instances, sessionIndex }));
@@ -25,22 +25,22 @@ describe("GET /sessions on the node API", () => {
     expect(calls.get).toBe(1);
   });
 
-  test("a successful write under /instances calls invalidate", async () => {
+  test("a successful write under /instances fires an all trigger", async () => {
     const { app, calls } = build();
     expect((await app.request(`/instances/${ID}`, { method: "DELETE" })).status).toBe(204);
-    expect(calls.invalidate).toBe(1);
+    expect(calls.triggers).toEqual([{ scope: "all" }]);
   });
 
-  test("a failed write under /instances does not call invalidate", async () => {
+  test("a failed write under /instances does not fire a trigger", async () => {
     const { app, calls } = build();
     const res = await app.request("/instances", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(res.status).toBe(400);
-    expect(calls.invalidate).toBe(0);
+    expect(calls.triggers).toEqual([]);
   });
 
-  test("a read under /instances does not call invalidate", async () => {
+  test("a read under /instances does not fire a trigger", async () => {
     const { app, calls } = build();
     await app.request("/instances");
-    expect(calls.invalidate).toBe(0);
+    expect(calls.triggers).toEqual([]);
   });
 });

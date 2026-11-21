@@ -1,4 +1,4 @@
-import { createApp, type CliDeps, type Updater } from "./app";
+import { createApp, sessionCatalogFor, type CliDeps, type Updater } from "./app";
 import { cliBearerAuth } from "./cliauth";
 import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
 import { serviceCloner } from "./cloner";
@@ -27,8 +27,15 @@ import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
+import { SessionIndex } from "./sessionindex";
+import { SessionsStore } from "./sessionsstore";
+import { createBeatLoop } from "./sessionbeat";
+import { WatchFlag } from "./sessionwatch";
+import type { Timers } from "./changesource";
 
-export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits; watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number } };
+export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits; watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number };
+  /** The timers of the local watch flag and of the beat loop. Default: real timers. */
+  watchTimers?: Timers };
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
@@ -142,6 +149,17 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   writeStep = stepWriter(record);
   const presenceSubs = new Set<(p: Presence) => void>();
   const logPresence = presenceLogger((line, level) => console[level](line));
+  // `list` reads `watchers` only when it is called, after the watchers exist.
+  const presence = {
+    list: () => watchers.presence(),
+    onChange: (fn: (p: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
+  };
+  // One catalog, one started index and one store for the whole hub. The index feeds the store before it starts.
+  const sessionCatalog = sessionCatalogFor(cfg);
+  const store = new SessionsStore({ localName: cfg.name, registry: hosts, presence });
+  const sessionIndex = new SessionIndex({ instances, catalog: sessionCatalog });
+  sessionIndex.subscribe((e) => store.set("local", e));
+  sessionIndex.start();
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,
@@ -156,18 +174,19 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
       }
     },
     onStep: writeStep,
+    onSessions: (h, e) => store.set(h, e),
     ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
     ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
   });
-  const presence = {
-    list: () => watchers.presence(),
-    onChange: (fn: (p: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
-  };
+  // One beat loop for the hub, built here so that stop() can end it: a stream still open at stop keeps it running.
+  const timerOpt = deps.watchTimers ? { timers: deps.watchTimers } : {};
+  const watch = new WatchFlag({ target: sessionIndex, ...timerOpt });
+  const beatLoop = createBeatLoop({ registry: hosts, presence, local: watch, ...timerOpt });
   // The restarting state of a node ends at once when its update entry settles without a new version.
   const offRecord = record.onChange((e) => {
     if (e.host !== "local" && (e.status === "unknown" || e.status === "rolled back")) watchers.endRestarting(e.host);
   });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, releaseList, clientVersions, updates: record, history, updateLog, presence, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
+  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, releaseList, clientVersions, updates: record, history, updateLog, presence, sessions: sessionCatalog, sessionIndex, sessionsStore: store, beatLoop, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
   const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);
@@ -179,6 +198,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     stop: () => {
       offRecord();
       watchers.stop();
+      beatLoop.stop();
+      watch.stop();
+      sessionIndex.stop();
+      store.stop();
       stopServer(server, app);
     },
   };

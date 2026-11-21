@@ -202,7 +202,9 @@ describe("node events route", () => {
     expect(r.headers.get("transfer-encoding")).toBeNull();
     expect(r.headers.get("connection")).toBeNull();
     const reader = r.body!.getReader();
-    expect(await readUntil(reader, /\n\n/)).toBe(`event: snapshot\ndata: ${JSON.stringify({ version: VERSION, update: null })}\n\n`);
+    const text = await readUntil(reader, /\n\n/);
+    expect(text.startsWith("event: snapshot\ndata: ")).toBe(true);
+    expect(JSON.parse(/data: (.*)/.exec(text)![1]!)).toMatchObject({ version: VERSION, update: null });
     await reader.cancel();
   });
 
@@ -269,6 +271,88 @@ describe("node events route", () => {
     expect(again!.status).toBe(200);
     await again!.body!.cancel();
     for (const reader of open.slice(1)) await reader.cancel();
+  });
+});
+
+describe("node sessions stream and heartbeat", () => {
+  const readUntil = async (reader: ReadableStreamDefaultReader<Uint8Array>, re: RegExp) => {
+    const dec = new TextDecoder();
+    let text = "";
+    while (!re.test(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += dec.decode(value);
+    }
+    return text;
+  };
+  const parse = (block: string) => ({ event: /event: (.*)/.exec(block)![1], data: JSON.parse(/data: (.*)/.exec(block)![1]!) });
+  // An instance list that waits, so that the first scan ends when the test says so.
+  const gated = () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const inst2: any = { ...instances, claudeHome: "/nonexistent-claude-home", list: async () => (await gate, []) };
+    return { inst2, release };
+  };
+  const fakeSource = () => {
+    const calls: string[] = [];
+    const source = { start: () => void calls.push("start"), stop: () => void calls.push("stop"), setActive: (a: boolean) => void calls.push(`active:${a}`) };
+    return { source, calls };
+  };
+
+  test("the snapshot holds sessions null before the first scan, then the latest list", async () => {
+    const { inst2, release } = gated();
+    const ev = new NodeEvents();
+    const a = createNodeApp({ cfg, instances: inst2, auth, events: ev, sessionSource: fakeSource().source });
+    const r1 = await a.request("/api/events", { headers: ok });
+    const reader1 = r1.body!.getReader();
+    expect(parse((await readUntil(reader1, /\n\n/)).trim()).data.sessions).toBeNull();
+    release();
+    const later = parse((await readUntil(reader1, /event: sessions[^]*\n\n/)).split("\n\n").filter((b) => b.includes("event: sessions"))[0]!);
+    expect(later.data).toMatchObject({ available: true, sessions: [] });
+    await reader1.cancel();
+    const r2 = await a.request("/api/events", { headers: ok });
+    const reader2 = r2.body!.getReader();
+    const snap = parse((await readUntil(reader2, /\n\n/)).trim());
+    expect(snap.data.sessions).toEqual(ev.latestSessions()!);
+    expect(snap.data.sessions).toMatchObject({ available: true, sessions: [] });
+    await reader2.cancel();
+  });
+
+  test("a later sessions event is written as event: sessions", async () => {
+    const ev = new NodeEvents();
+    const a = createNodeApp({ cfg, instances, auth, events: ev, sessionSource: fakeSource().source });
+    const r = await a.request("/api/events", { headers: ok });
+    const reader = r.body!.getReader();
+    await readUntil(reader, /\n\n/);
+    const payload = { scannedAt: "t", available: true, sessions: [] };
+    ev.emit({ type: "sessions", ...payload });
+    expect(await readUntil(reader, /\n\n/)).toBe(`event: sessions\ndata: ${JSON.stringify(payload)}\n\n`);
+    await reader.cancel();
+  });
+
+  test("POST /api/sessions/watch answers 204 and sets the index active", async () => {
+    const { source, calls } = fakeSource();
+    const a = createNodeApp({ cfg, instances: { ...instances, claudeHome: "/nonexistent-claude-home" } as any, auth, sessionSource: source });
+    const res = await a.request("/api/sessions/watch", { method: "POST", headers: json, body: "{}" });
+    expect(res.status).toBe(204);
+    expect(calls).toContain("active:true");
+  });
+
+  test("POST /api/sessions/watch writes no audit line, and another write still does", async () => {
+    const a = createNodeApp({ cfg, instances, auth, sessionSource: fakeSource().source });
+    logged.length = 0;
+    expect((await a.request("/api/sessions/watch", { method: "POST", headers: json, body: "{}" })).status).toBe(204);
+    expect(logged.filter((l) => l.startsWith("audit"))).toEqual([]);
+    await a.request("/api/instances", { method: "POST", headers: json, body: JSON.stringify({ path: "/srv/p" }) });
+    expect(logged.filter((l) => l.startsWith("audit")).map((l) => l.replace(/ \d+$/, ""))).toEqual(["audit caller=secret POST /api/instances"]);
+  });
+
+  test("POST /api/sessions/watch without JSON content type answers 415", async () => {
+    const { source, calls } = fakeSource();
+    const a = createNodeApp({ cfg, instances, auth, sessionSource: source });
+    const res = await a.request("/api/sessions/watch", { method: "POST", headers: ok, body: "{}" });
+    expect(res.status).toBe(415);
+    expect(calls).not.toContain("active:true");
   });
 });
 

@@ -8,9 +8,13 @@ import SessionViewHarness from "./SessionViewHarness.svelte";
 const goto = vi.hoisted(() => vi.fn(async () => {}));
 const replaceState = vi.hoisted(() => vi.fn());
 vi.mock("$app/navigation", () => ({ goto, replaceState }));
+vi.mock("../../realtime/sessions", () => ({ connectSessions: () => () => {} }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
-  listSessions: async () => [{ id: "s1", root: "/proj", startedAt: "2026-11-12T10:00:00Z", lastActiveAt: "2026-11-12T10:00:00Z" }],
+  listAllSessions: async () => ({
+    sessions: [{ id: "s1", root: "/proj", startedAt: "2026-11-12T10:00:00Z", lastActiveAt: "2026-11-12T10:00:00Z", instance: { id: "i", name: "i", path: "/proj", state: "active" }, host: { id: "h", name: "h" } }],
+    hosts: [{ id: "h", name: "h", status: "ok" }],
+  }),
   getTouched: async () => [{ path: "/proj/src/a.ts", inside: true, tool: "write", at: "2026-11-12T10:00:00Z", confirmed: true }],
   getChanged: async () => [{ path: "/proj/docs/b.md", inside: true, tool: "edit", at: "2026-11-12T10:00:00Z", confirmed: true, state: "uncommitted" }],
   listFiles: async () => ({ path: "", parent: null, entries: [{ name: "readme.md", kind: "file", size: 5, mtime: "2026-11-12T10:00:00Z" }] }),
