@@ -323,7 +323,9 @@ claude-rc node roots remove /srv/projects
 
 `add` and `remove` change the file and then restart the service. If you are not root, they use `sudo`, so sudo asks for
 your password. The command keeps the old file as `<file>.bak`. It reads the whole file and writes it again, so
-comments in the file are lost. Instances run as separate services and keep running while the node restarts.
+comments in the file are lost. After the restart, the command waits until the service is active, and it prints the
+log lines if the service is not. Instances run as separate services, so a restart of the node should not stop them.
+This was not tested on a real systemd host, so check your instances after the first restart.
 
 If the file has no `roots` key, the first `add` keeps the default home folder as the first root and prints a line
 about it. Without that, the node would lose its home folder as a root. `remove` can drop that folder later. `remove`

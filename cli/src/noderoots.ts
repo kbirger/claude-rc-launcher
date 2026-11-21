@@ -2,7 +2,7 @@ import path from "node:path";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import { DEFAULT_NODE_CONFIG } from "./nodecmd";
-import { realSys } from "./nodesetup";
+import { realSys, waitForActive } from "./nodesetup";
 import type { Sys } from "./nodesetup";
 
 const SERVICE = "claude-rc-launcher";
@@ -16,12 +16,17 @@ const instanceOf = (cfg: NodeConfig): Record<string, unknown> => {
   return i && typeof i === "object" && !Array.isArray(i) ? (i as Record<string, unknown>) : {};
 };
 
-/** An absolute path without a trailing slash. A relative path or a `..` segment is an error. */
+/** Folds `.`, `..`, repeated slashes and a trailing slash. It accepts any entry, so that a root already in the file never blocks a command. */
+export function lenientRoot(input: string): string {
+  const n = path.posix.normalize(input);
+  return n.length > 1 ? n.replace(/\/+$/, "") : n;
+}
+
+/** The folder that a user passes to `add`: an absolute path without a trailing slash. A relative path or a `..` segment is an error. */
 export function normalizeRoot(input: string): string {
   if (!input.startsWith("/")) throw new ExitError(`the folder must be an absolute path: ${JSON.stringify(input)}`, 1);
   if (input.split("/").includes("..")) throw new ExitError(`the folder must not contain "..": ${input}`, 1);
-  const n = path.posix.normalize(input);
-  return n.length > 1 ? n.replace(/\/+$/, "") : n;
+  return lenientRoot(input);
 }
 
 /** The roots that the node uses. With no `roots` key the server uses the home of the service user (`server/src/config.ts`). */
@@ -38,16 +43,17 @@ const withRoots = (cfg: NodeConfig, roots: string[]): NodeConfig => ({ ...cfg, i
 export function addRoot(cfg: NodeConfig, dir: string): { cfg: NodeConfig; roots: string[]; seeded?: string; changed: boolean } {
   const root = normalizeRoot(dir);
   const current = effectiveRoots(cfg);
-  if (current.roots.map(normalizeRoot).includes(root)) return { cfg, roots: current.roots, changed: false };
+  if (current.roots.map((r) => lenientRoot(String(r))).includes(root)) return { cfg, roots: current.roots, changed: false };
   const roots = [...current.roots, root];
   return { cfg: withRoots(cfg, roots), roots, ...(current.implicit ? { seeded: current.roots[0] } : {}), changed: true };
 }
 
 export function removeRoot(cfg: NodeConfig, dir: string): { cfg: NodeConfig; roots: string[] } {
-  const root = normalizeRoot(dir);
+  if (!dir.startsWith("/")) throw new ExitError(`the folder must be an absolute path: ${JSON.stringify(dir)}`, 1);
+  const root = lenientRoot(dir);
   const current = effectiveRoots(cfg).roots;
-  if (!current.map(normalizeRoot).includes(root)) throw new ExitError(`${root} is not a root of this node`, 1);
-  const roots = current.filter((r) => normalizeRoot(r) !== root);
+  if (!current.some((r) => lenientRoot(String(r)) === root)) throw new ExitError(`${root} is not a root of this node`, 1);
+  const roots = current.filter((r) => lenientRoot(String(r)) !== root);
   if (roots.length === 0) throw new ExitError(`${root} is the last root. The node needs at least one root`, 1);
   return { cfg: withRoots(cfg, roots), roots };
 }
@@ -94,7 +100,7 @@ export async function nodeRoots(o: { args: string[]; flags: Flags; out: (s: stri
     return;
   }
 
-  const root = normalizeRoot(dir!);
+  const root = sub === "add" ? normalizeRoot(dir!) : lenientRoot(dir!);
   let next: NodeConfig;
   if (sub === "add") {
     const added = addRoot(cfg, root);
@@ -115,5 +121,13 @@ export async function nodeRoots(o: { args: string[]; flags: Flags; out: (s: stri
   if (!restart) return out(`the service was not restarted. Run: ${hand}`);
   if (sys.sudo(["systemctl", "restart", SERVICE]).code !== 0) {
     throw new ExitError(`${file} was changed, but the service did not restart. Run: ${hand}`, 1);
+  }
+  if (!(await waitForActive(sys))) {
+    const log = sys.sudo(["journalctl", "-u", SERVICE, "-n", "15", "--no-pager"]).stdout.trim();
+    if (log) out(log);
+    throw new ExitError(
+      `${file} was changed, but ${SERVICE} did not become active and stay active within 30 seconds. The old file is at ${file}.bak. To restore it, run: sudo cp -p ${file}.bak ${file} && ${hand}`,
+      1,
+    );
   }
 }

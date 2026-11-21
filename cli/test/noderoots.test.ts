@@ -74,6 +74,14 @@ describe("pure functions", () => {
     expect(removeRoot(added.cfg, "/root").roots).toEqual(["/srv/p"]);
   });
 
+  test("a root in the file that holds .. does not block add or remove", () => {
+    const cfg = { instance: { roots: ["/srv/../opt", "/b"] } };
+    expect(addRoot(cfg, "/x").roots).toEqual(["/srv/../opt", "/b", "/x"]);
+    expect(removeRoot(cfg, "/b").roots).toEqual(["/srv/../opt"]);
+    expect(removeRoot(cfg, "/opt").roots).toEqual(["/b"]);
+    expect(addRoot(cfg, "/opt").changed).toBe(false);
+  });
+
   test("renderChecked keeps the other tables of the file", () => {
     const before = {
       mode: "node",
@@ -109,9 +117,10 @@ const BASE = [
 
 function fake(
   files: Record<string, string> = { [CONFIG]: BASE },
-  opts: { platform?: string; noSystemctl?: boolean; failRestart?: boolean } = {},
+  opts: { platform?: string; noSystemctl?: boolean; failRestart?: boolean; inactive?: boolean } = {},
 ) {
   const calls: string[] = [];
+  let clock = 0;
   const store = { ...files };
   const sys: Sys = {
     platform: opts.platform ?? "linux",
@@ -120,7 +129,10 @@ function fake(
     hasCommand: (n) => !(opts.noSystemctl && n === "systemctl"),
     localAddresses: () => [],
     exists: (p) => p in store,
-    run: () => ({ code: 0, stdout: "" }),
+    run(args) {
+      calls.push(`run ${args.join(" ")}`);
+      return { code: opts.inactive && args[1] === "is-active" ? 3 : 0, stdout: "" };
+    },
     sudo(args, input) {
       calls.push(args.join(" "));
       if (args[0] === "tee") store[args[1]!] = String(input);
@@ -135,7 +147,7 @@ function fake(
       throw new Error("no network");
     }) as unknown as typeof fetch,
     sleep: async () => {},
-    now: () => 0,
+    now: () => (clock += 1000),
   };
   const credsFile = path.join(mkdtempSync(path.join(os.tmpdir(), "rc-roots-")), "none.json");
   const env: Env = { credsFile, open: async () => {}, readLine: async () => "", sys };
@@ -174,7 +186,11 @@ describe("node roots command", () => {
     expect(rootsOf(t.store[CONFIG])).toEqual(["/home/dev", "/srv/p"]);
     expect((Bun.TOML.parse(t.store[CONFIG]!) as { tls: unknown }).tls).toEqual({ names: ["10.0.0.9"] });
     expect(t.store[`${CONFIG}.bak`]).toBe(BASE);
-    expect(t.calls).toEqual([`cp -p ${CONFIG} ${CONFIG}.bak`, `tee ${CONFIG}`, "systemctl restart claude-rc-launcher"]);
+    expect(t.calls.filter((c) => !c.startsWith("run "))).toEqual([
+      `cp -p ${CONFIG} ${CONFIG}.bak`,
+      `tee ${CONFIG}`,
+      "systemctl restart claude-rc-launcher",
+    ]);
   });
 
   test("add of an existing root changes nothing", async () => {
@@ -195,7 +211,7 @@ describe("node roots command", () => {
     expect((await t.run("node", "roots", "remove", "/a")).code).toBe(0);
     expect(t.out).toEqual([`removed /a from the roots of ${CONFIG}`]);
     expect(rootsOf(t.store[CONFIG])).toEqual(["/b"]);
-    expect(t.calls.at(-1)).toBe("systemctl restart claude-rc-launcher");
+    expect(t.calls).toContain("systemctl restart claude-rc-launcher");
   });
 
   test("--no-restart skips the restart and prints a reminder", async () => {
@@ -210,6 +226,20 @@ describe("node roots command", () => {
     expect((await t.run("node", "roots", "add", "/srv/p")).code).toBe(1);
     expect(t.err.join("\n")).toContain("was changed, but the service did not restart");
     expect(rootsOf(t.store[CONFIG])).toEqual(["/home/dev", "/srv/p"]);
+  });
+
+  test("a service that does not stay active after the restart exits 1 and points to the backup", async () => {
+    const t = fake(undefined, { inactive: true });
+    expect((await t.run("node", "roots", "add", "/srv/p")).code).toBe(1);
+    expect(t.err.join("\n")).toContain(`did not become active and stay active`);
+    expect(t.err.join("\n")).toContain(`${CONFIG}.bak`);
+    expect(t.calls).toContain("journalctl -u claude-rc-launcher -n 15 --no-pager");
+  });
+
+  test("a healthy restart checks that the service is active", async () => {
+    const t = fake();
+    expect((await t.run("node", "roots", "add", "/srv/p")).code).toBe(0);
+    expect(t.calls).toContain("run systemctl is-active claude-rc-launcher");
   });
 
   test("a missing file exits 1, and --config reads another file", async () => {

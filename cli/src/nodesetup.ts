@@ -31,6 +31,21 @@ interface Result {
   stderr: string;
 }
 
+/** Waits until the node service is active and stays active for a moment. `false` when that does not happen within 30 seconds. */
+export async function waitForActive(sys: Sys): Promise<boolean> {
+  const isActive = () => sys.run(["systemctl", "is-active", NAME]).code === 0;
+  const deadline = sys.now() + HEALTH_WAIT_MS;
+  while (sys.now() < deadline) {
+    if (isActive()) {
+      await sys.sleep(STAY_ACTIVE_MS);
+      if (isActive()) return true;
+    } else {
+      await sys.sleep(500);
+    }
+  }
+  return false;
+}
+
 /** Everything that touches the machine, so that tests can run the whole flow without root or systemd. */
 export interface Sys {
   platform: string;
@@ -387,21 +402,7 @@ export async function nodeUpdate(options: { flags: Flags; out: (line: string) =>
   }
 
   // 4. Restart and wait for the service to stay active
-  const isActive = () => sys.run(["systemctl", "is-active", NAME]).code === 0;
-  let healthy = false;
-
-  if (sys.sudo(["systemctl", "restart", NAME]).code === 0) {
-    const deadline = sys.now() + HEALTH_WAIT_MS;
-
-    while (!healthy && sys.now() < deadline) {
-      if (isActive()) {
-        await sys.sleep(STAY_ACTIVE_MS);
-        healthy = isActive();
-      } else {
-        await sys.sleep(500);
-      }
-    }
-  }
+  const healthy = sys.sudo(["systemctl", "restart", NAME]).code === 0 && (await waitForActive(sys));
 
   if (healthy) {
     out(`updated ${BIN} (the previous binary is kept as ${BIN}.prev) and restarted ${NAME}`);
