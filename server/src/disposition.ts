@@ -7,18 +7,18 @@ export function dispositionFor(name: string): string {
 
 /** The last name of a path (relative or absolute), split on `/` and `\`. "download" when there is none. */
 export function lastSegment(path: string): string {
-  const parts = path.split(/[\\/]/).filter((s) => s !== "" && s !== "." && s !== "..");
+  const parts = path.split(/[\\/]/).filter((part) => part !== "" && part !== "." && part !== "..");
   return parts[parts.length - 1] ?? "download";
 }
 
 /** The headers of every file download: never rendered, never sniffed, always saved. */
 export function downloadHeaders(name: string, size?: string | number | null): Headers {
-  const h = new Headers({
+  const headers = new Headers({
     "Content-Type": "application/octet-stream",
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "Content-Disposition": dispositionFor(name),
   });
-  if (size !== undefined && size !== null) h.set("Content-Length", String(size));
-  return h;
+  if (size !== undefined && size !== null) headers.set("Content-Length", String(size));
+  return headers;
 }

@@ -1,9 +1,10 @@
-import { ConfigError, type Config } from "./config";
+import { ConfigError } from "./config";
+import type { Config } from "./config";
 import { applyLocal, loadConfigFile, resolveConfigPath } from "./configfile";
 import { startHub } from "./hubmain";
 import { generateSecret } from "./nodeauth";
-import { runNudgeSend } from "./nudge";
 import { startNode } from "./nodemain";
+import { runNudgeSend } from "./nudge";
 import { VERSION } from "./version";
 
 if (process.argv.includes("--version")) {
@@ -25,21 +26,24 @@ if (process.argv[2] === "gen-secret") {
 }
 
 let cfg: Config;
+
 try {
   cfg = applyLocal(loadConfigFile(resolveConfigPath(process.argv, process.env)), process.argv);
-} catch (e) {
-  if (e instanceof ConfigError) {
-    console.error(e.message);
+} catch (caught) {
+  if (caught instanceof ConfigError) {
+    console.error(caught.message);
     process.exit(1);
   }
-  throw e;
+
+  throw caught;
 }
 
 let running: { stop(): void };
+
 try {
   running = cfg.mode === "node" ? await startNode(cfg) : await startHub(cfg);
-} catch (e) {
-  console.error(`startup failed: ${(e as Error).message}`);
+} catch (caught) {
+  console.error(`startup failed: ${(caught as Error).message}`);
   process.exit(1);
 }
 
@@ -48,5 +52,6 @@ const shutdown = () => {
   // Leave a moment for the open streams to end cleanly.
   setTimeout(() => process.exit(0), 300);
 };
+
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

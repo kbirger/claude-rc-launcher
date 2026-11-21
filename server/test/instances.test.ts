@@ -2,13 +2,15 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, readdir, readFile, writeFile, rm, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HttpError, InstanceService, type RunResult, type Runner } from "../src/instances";
-import { PathError } from "../src/paths";
-import { instanceId, renderUnit, unitName } from "../src/unit";
 import type { Config } from "../src/config";
+import { HttpError, InstanceService } from "../src/instances";
+import type { RunResult, Runner } from "../src/instances";
+import { PathError } from "../src/paths";
 import type { TrustStore } from "../src/trust";
+import { instanceId, renderUnit, unitName } from "../src/unit";
 import type { SystemUser, UserDirectory } from "../src/users";
 import { allTrusted } from "./helpers";
+import { defined } from "./support";
 
 let dir: string;
 let calls: { cmd: string; args: string[] }[];
@@ -22,11 +24,15 @@ let showOverride: string | null = null;
 let journalFail = false;
 /** A test can answer a call itself. Undefined falls through to the default answers. */
 let hook: ((cmd: string, args: string[]) => Promise<RunResult | undefined> | RunResult | undefined) | null = null;
+
 const fake: Runner = async (cmd, args) => {
   calls.push({ cmd, args });
-  const h = hook ? await hook(cmd, args) : undefined;
-  if (h) return h;
-  events.push(args.filter((a) => !a.startsWith("--user")).join(" ") + ((await readdir(dir).catch(() => [])).length ? " [file]" : " [nofile]"));
+  const runResult = hook ? await hook(cmd, args) : undefined;
+  if (runResult) return runResult;
+  events.push(
+    args.filter((arg) => !arg.startsWith("--user")).join(" ") +
+      ((await readdir(dir).catch(() => [])).length ? " [file]" : " [nofile]"),
+  );
   if (args.includes("enable") && gate) await gate;
   if (args.includes("disable") && failDisable) return { code: 1, stdout: "", stderr: "nope" };
   if (args.includes("enable") && failEnable) return { code: 1, stdout: "", stderr: "boom" };
@@ -38,17 +44,38 @@ const fake: Runner = async (cmd, args) => {
 
 function cfg(over: Partial<Config> = {}): Config {
   return {
-    mode: "hub", name: "t", hosts: [], stateDir: "/tmp", port: 1, host: "h", publicUrl: "http://x", roots: ["/srv"], scope: "system", unitDir: dir,
-    serviceUser: "root", serviceHome: "/root", servicePath: "/usr/bin", claudeBin: "/root/.local/bin/claude",
-    claudeRcArgs: ["--spawn", "same-dir"], namePrefix: "",
-    userAuth: { mode: "oidc", oidc: { issuer: "", clientId: "", clientSecret: "", allowInsecure: false }, sessionSecret: "x".repeat(32) }, ...over,
+    mode: "hub",
+    name: "t",
+    hosts: [],
+    stateDir: "/tmp",
+    port: 1,
+    host: "h",
+    publicUrl: "http://x",
+    roots: ["/srv"],
+    scope: "system",
+    unitDir: dir,
+    serviceUser: "root",
+    serviceHome: "/root",
+    servicePath: "/usr/bin",
+    claudeBin: "/root/.local/bin/claude",
+    claudeRcArgs: ["--spawn", "same-dir"],
+    namePrefix: "",
+    userAuth: {
+      mode: "oidc",
+      oidc: { issuer: "", clientId: "", clientSecret: "", allowInsecure: false },
+      sessionSecret: "x".repeat(32),
+    },
+    ...over,
   };
 }
+
 // Windows-safe: any path under /srv resolves to itself; otherwise mimic PathError.
-const fakeResolve = async (p: string, roots: string[]) => {
-  if (!roots.some((r) => p === r || p.startsWith(r + "/"))) throw new PathError(403, "path outside allowed roots");
-  return p;
+const fakeResolve = (item: string, roots: string[]) => {
+  if (!roots.some((root) => item === root || item.startsWith(root + "/")))
+    return Promise.reject(new PathError(403, "path outside allowed roots"));
+  return Promise.resolve(item);
 };
+
 const USERS: SystemUser[] = [
   { name: "root", uid: 0, gid: 0, home: "/root" },
   { name: "alice", uid: 1000, gid: 1001, home: "/home/alice" },
@@ -56,19 +83,22 @@ const USERS: SystemUser[] = [
 // `svc` is a service account: in passwd, but it fails the list rules (uid < 1000, nologin).
 const SERVICE_ACCOUNT: SystemUser = { name: "svc", uid: 999, gid: 998, home: "/var/lib/svc" };
 const users: UserDirectory = {
-  list: async () => USERS,
-  get: async (n) => USERS.find((u) => u.name === n),
-  lookup: async (n) => [...USERS, SERVICE_ACCOUNT].find((u) => u.name === n),
+  list: () => Promise.resolve(USERS),
+  get: (name) => Promise.resolve(USERS.find((systemUser) => systemUser.name === name)),
+  lookup: (name) => Promise.resolve([...USERS, SERVICE_ACCOUNT].find((systemUser) => systemUser.name === name)),
 };
 type Deps = ConstructorParameters<typeof InstanceService>[3];
 const svc = (over: Partial<Config> = {}, deps: Deps = {}) =>
   new InstanceService(cfg(over), fake, fakeResolve, { trust: allTrusted, users, canSwitchUser: true, ...deps });
-const sc = (...a: string[]) => ({ cmd: "systemctl", args: a });
+const sc = (...args: string[]) => ({ cmd: "systemctl", args: args });
 
-async function status(p: Promise<unknown>): Promise<number | string> {
-  try { await p; return "ok"; } catch (e) {
-    if (e instanceof HttpError || e instanceof PathError) return e.status;
-    throw e;
+async function status(promise: Promise<unknown>): Promise<number | string> {
+  try {
+    await promise;
+    return "ok";
+  } catch (error) {
+    if (error instanceof HttpError || error instanceof PathError) return error.status;
+    throw error;
   }
 }
 
@@ -83,13 +113,15 @@ beforeEach(async () => {
   gate = null;
   events = [];
 });
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
 
 describe("settings", () => {
   test("describe carries settings from the unit", async () => {
     const id = instanceId("/srv/proj");
-    const c = cfg({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir"] });
-    await writeFile(join(dir, unitName(id)), renderUnit(c, "/srv/proj", "my"));
+    const config = cfg({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir"] });
+    await writeFile(join(dir, unitName(id)), renderUnit(config, "/srv/proj", "my"));
     const [inst] = await svc({ claudeRcArgs: [] }).list();
     expect(inst).toMatchObject({ name: "my", settings: { createSession: false, spawnMode: "worktree" } });
   });
@@ -105,29 +137,39 @@ describe("start", () => {
     expect(calls.slice(0, 2)).toEqual([sc("daemon-reload"), sc("enable", "--now", unitName(id))]);
   });
   test("creates missing unitDir", async () => {
-    const d = join(dir, "a", "b");
-    await svc({ unitDir: d }).start({ path: "/srv/p" });
-    expect((await readdir(d)).length).toBe(1);
+    const file = join(dir, "a", "b");
+    await svc({ unitDir: file }).start({ path: "/srv/p" });
+    expect((await readdir(file)).length).toBe(1);
   });
   test("second start is 409 with existing instance, no second enable", async () => {
-    const s = svc();
-    await s.start({ path: "/srv/proj" });
-    const before = calls.filter((c) => c.args.includes("enable")).length;
-    try { await s.start({ path: "/srv/proj" }); throw new Error("no"); } catch (e) {
-      expect(e).toBeInstanceOf(HttpError);
-      expect((e as HttpError).status).toBe(409);
-      expect(((e as HttpError).extra as { instance: { id: string } }).instance.id).toBe(instanceId("/srv/proj"));
+    const instanceService = svc();
+    await instanceService.start({ path: "/srv/proj" });
+    const before = calls.filter((call) => call.args.includes("enable")).length;
+
+    try {
+      await instanceService.start({ path: "/srv/proj" });
+      throw new Error("no");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as HttpError).status).toBe(409);
+      expect(((error as HttpError).extra as { instance: { id: string } }).instance.id).toBe(instanceId("/srv/proj"));
     }
-    expect(calls.filter((c) => c.args.includes("enable")).length).toBe(before);
+
+    expect(calls.filter((call) => call.args.includes("enable")).length).toBe(before);
   });
   test("concurrent double start: one success, one 409", async () => {
-    const s = svc();
-    const r = await Promise.allSettled([s.start({ path: "/srv/proj" }), s.start({ path: "/srv/proj" })]);
-    expect(r.filter((x) => x.status === "fulfilled").length).toBe(1);
-    const rej = r.filter((x) => x.status === "rejected") as PromiseRejectedResult[];
+    const instanceService = svc();
+    const results = await Promise.allSettled([
+      instanceService.start({ path: "/srv/proj" }),
+      instanceService.start({ path: "/srv/proj" }),
+    ]);
+    expect(results.filter((promiseSettledResult) => promiseSettledResult.status === "fulfilled").length).toBe(1);
+    const rej = results.filter(
+      (promiseSettledResult) => promiseSettledResult.status === "rejected",
+    ) as PromiseRejectedResult[];
     expect(rej.length).toBe(1);
-    expect(rej[0]!.reason.status).toBe(409);
-    expect(calls.filter((c) => c.args.includes("enable")).length).toBe(1);
+    expect(rej[0].reason.status).toBe(409);
+    expect(calls.filter((call) => call.args.includes("enable")).length).toBe(1);
   });
   test("outside roots 403, bad name 400", async () => {
     expect(await status(svc().start({ path: "/etc" }))).toBe(403);
@@ -135,10 +177,15 @@ describe("start", () => {
   });
   test("enable failure removes unit file, reloads, and is 500", async () => {
     failEnable = true;
-    try { await svc().start({ path: "/srv/proj" }); throw new Error("no"); } catch (e) {
-      expect((e as HttpError).status).toBe(500);
-      expect((e as HttpError).message).toContain("boom");
+
+    try {
+      await svc().start({ path: "/srv/proj" });
+      throw new Error("no");
+    } catch (error) {
+      expect((error as HttpError).status).toBe(500);
+      expect((error as HttpError).message).toContain("boom");
     }
+
     expect(await readdir(dir)).toEqual([]);
     expect(calls[calls.length - 1]).toEqual(sc("daemon-reload"));
     const id = instanceId("/srv/proj");
@@ -150,10 +197,14 @@ describe("start", () => {
   });
   test("user scope prefixes --user", async () => {
     await svc({ scope: "user" }).start({ path: "/srv/proj" });
-    expect(calls.every((c) => c.args[0] === "--user")).toBe(true);
+    expect(calls.every((call) => call.args[0] === "--user")).toBe(true);
   });
   test.skipIf(process.platform === "win32")("real resolver works with temp dir", async () => {
-    const real = new InstanceService(cfg({ roots: [dir] }), fake, undefined, { trust: allTrusted, users, canSwitchUser: true });
+    const real = new InstanceService(cfg({ roots: [dir] }), fake, undefined, {
+      trust: allTrusted,
+      users,
+      canSwitchUser: true,
+    });
     const proj = join(dir, "proj");
     await mkdir(proj);
     expect((await real.start({ path: proj })).name).toBe("proj");
@@ -176,18 +227,32 @@ describe("list", () => {
     await writeFile(join(dir, "other.service"), renderUnit(cfg(), "/srv/b", "x"));
     await writeFile(join(dir, "claude-rc-abcdef012345.service"), "[Unit]\n");
     await writeFile(join(dir, `claude-rc-${id}.txt`), renderUnit(cfg(), "/srv/c", "x"));
-    const l = await svc().list();
-    expect(l).toEqual([{ id, path: "/srv/a", name: "alpha", user: "root", settings: { createSession: true, spawnMode: "same-dir" }, state: "active", startedAt: "2024-11-06T10:00:00.000Z" }]);
-    expect(calls).toEqual([sc("show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id))]);
+    const instances = await svc().list();
+    expect(instances).toEqual([
+      {
+        id,
+        path: "/srv/a",
+        name: "alpha",
+        user: "root",
+        settings: { createSession: true, spawnMode: "same-dir" },
+        state: "active",
+        startedAt: "2024-11-06T10:00:00.000Z",
+      },
+    ]);
+    expect(calls).toEqual([
+      sc("show", "--timestamp=unix", "-p", "ActiveState,SubState,ActiveEnterTimestamp", unitName(id)),
+    ]);
   });
   test("garbage or empty timestamp -> null", async () => {
-    const id = await seed("/srv/a", "alpha");
-    for (const v of ["Thu 2026-11-06 10:00:00 UTC", "", "@abc", "@"]) {
-      showOverride = `ActiveState=inactive\nActiveEnterTimestamp=${v}\n`;
-      expect((await svc().list())[0]!.startedAt).toBeNull();
+    const _id = await seed("/srv/a", "alpha");
+
+    for (const value of ["Thu 2026-11-06 10:00:00 UTC", "", "@abc", "@"]) {
+      showOverride = `ActiveState=inactive\nActiveEnterTimestamp=${value}\n`;
+      expect((await svc().list())[0].startedAt).toBeNull();
     }
+
     showOverride = "ActiveState=active\nActiveEnterTimestamp=@0\n";
-    expect((await svc().list())[0]!.startedAt).toBeNull();
+    expect((await svc().list())[0].startedAt).toBeNull();
   });
   test("missing unitDir is empty", async () => {
     expect(await svc({ unitDir: join(dir, "nope") }).list()).toEqual([]);
@@ -220,22 +285,29 @@ describe("stop", () => {
   test("failed disable is 500, keeps the unit file, no reload", async () => {
     const id = await seed("/srv/a");
     failDisable = true;
-    try { await svc().stop(id); throw new Error("no"); } catch (e) {
-      expect((e as HttpError).status).toBe(500);
-      expect((e as HttpError).message).toContain("nope");
+
+    try {
+      await svc().stop(id);
+      throw new Error("no");
+    } catch (error) {
+      expect((error as HttpError).status).toBe(500);
+      expect((error as HttpError).message).toContain("nope");
     }
+
     expect(await readdir(dir)).toEqual([unitName(id)]);
     expect(calls).toEqual([sc("disable", "--now", unitName(id))]);
   });
   test("stop during in-flight start is 409 and never disables", async () => {
     let release!: () => void;
-    gate = new Promise<void>((r) => { release = r; });
-    const s = svc();
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const instanceService = svc();
     const id = instanceId("/srv/proj");
-    const started = s.start({ path: "/srv/proj" });
-    while (!calls.some((c) => c.args.includes("enable"))) await new Promise((r) => setTimeout(r, 1));
-    expect(await status(s.stop(id))).toBe(409);
-    expect(calls.some((c) => c.args.includes("disable"))).toBe(false);
+    const started = instanceService.start({ path: "/srv/proj" });
+    while (!calls.some((call) => call.args.includes("enable"))) await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(await status(instanceService.stop(id))).toBe(409);
+    expect(calls.some((call) => call.args.includes("disable"))).toBe(false);
     release();
     await started;
     expect(await readdir(dir)).toEqual([unitName(id)]);
@@ -257,21 +329,25 @@ describe("logs", () => {
   test("journalctl failure -> 500 with stderr", async () => {
     const id = await seed("/srv/a");
     journalFail = true;
+
     try {
       await svc().logs(id, 10);
       throw new Error("no throw");
-    } catch (e) {
-      expect(e).toBeInstanceOf(HttpError);
-      expect((e as HttpError).status).toBe(500);
-      expect((e as HttpError).message).toContain("journal boom");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as HttpError).status).toBe(500);
+      expect((error as HttpError).message).toContain("journal boom");
     }
   });
   test("journalctl args, clamped lines, user scope", async () => {
     const id = await seed("/srv/a");
     expect(await svc({ scope: "user" }).logs(id, 9999)).toBe("log line\n");
     await svc().logs(id, 0);
-    expect(calls[0]).toEqual({ cmd: "journalctl", args: ["--user", "-u", unitName(id), "-n", "500", "--no-pager", "-o", "cat"] });
-    expect(calls[1]!.args).toEqual(["-u", unitName(id), "-n", "1", "--no-pager", "-o", "cat"]);
+    expect(calls[0]).toEqual({
+      cmd: "journalctl",
+      args: ["--user", "-u", unitName(id), "-n", "500", "--no-pager", "-o", "cat"],
+    });
+    expect(calls[1].args).toEqual(["-u", unitName(id), "-n", "1", "--no-pager", "-o", "cat"]);
   });
 });
 
@@ -280,25 +356,36 @@ let trustLog: string[] = [];
 let trusted = new Set<string>();
 let addFail: Error | null = null;
 const recTrust: TrustStore = {
-  checker: async (home) => {
+  checker: (home) => {
     trustLog.push(`check ${home}`);
-    return (p) => trusted.has(p);
+    return Promise.resolve((item) => trusted.has(item));
   },
-  add: async (u, p) => {
-    trustLog.push(`add ${u.home} ${u.uid} ${u.gid} ${p}`);
-    if (addFail) throw addFail;
-    trusted.add(p);
+  add: (trustOwner, absPath) => {
+    trustLog.push(`add ${trustOwner.home} ${trustOwner.uid} ${trustOwner.gid} ${absPath}`);
+    if (addFail) return Promise.reject(addFail);
+    trusted.add(absPath);
+    return Promise.resolve();
   },
 };
 const tsvc = (over: Partial<Config> = {}, deps: Deps = {}) => svc(over, { trust: recTrust, ...deps });
 
-async function caught(p: Promise<unknown>): Promise<HttpError> {
-  try { await p; } catch (e) { if (e instanceof HttpError) return e; throw e; }
+async function caught(promise: Promise<unknown>): Promise<HttpError> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpError) return error;
+    throw error;
+  }
+
   throw new Error("no throw");
 }
 
 describe("start as a user, with trust", () => {
-  beforeEach(() => { trustLog = []; trusted = new Set(); addFail = null; });
+  beforeEach(() => {
+    trustLog = [];
+    trusted = new Set();
+    addFail = null;
+  });
 
   test("start as alice writes User=alice and her HOME", async () => {
     trusted.add("/srv/proj");
@@ -314,9 +401,9 @@ describe("start as a user, with trust", () => {
   test("omitted user or the service user runs with the configured service values", async () => {
     trusted.add("/srv/a");
     trusted.add("/srv/b");
-    const s = tsvc({ serviceUser: "svc", serviceHome: "/var/lib/svc" });
-    expect((await s.start({ path: "/srv/a" })).user).toBe("svc");
-    expect((await s.start({ path: "/srv/b", user: "svc" })).user).toBe("svc");
+    const instanceService = tsvc({ serviceUser: "svc", serviceHome: "/var/lib/svc" });
+    expect((await instanceService.start({ path: "/srv/a" })).user).toBe("svc");
+    expect((await instanceService.start({ path: "/srv/b", user: "svc" })).user).toBe("svc");
     const content = await readFile(join(dir, unitName(instanceId("/srv/b"))), "utf8");
     expect(content).toContain('Environment="HOME=/var/lib/svc"');
     expect(content).toContain("ExecStart=/root/.local/bin/claude remote-control");
@@ -324,25 +411,25 @@ describe("start as a user, with trust", () => {
   });
 
   test("start rejects an unknown user with 400", async () => {
-    const e = await caught(tsvc().start({ path: "/srv/proj", user: "mallory" }));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("unknown user");
+    const httpError = await caught(tsvc().start({ path: "/srv/proj", user: "mallory" }));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("unknown user");
     expect(await readdir(dir)).toEqual([]);
     expect(trustLog).toEqual([]);
   });
 
   test("rejects another user when canSwitchUser is false", async () => {
-    const e = await caught(tsvc({}, { canSwitchUser: false }).start({ path: "/srv/proj", user: "alice" }));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("this host cannot run instances as another user");
+    const httpError = await caught(tsvc({}, { canSwitchUser: false }).start({ path: "/srv/proj", user: "alice" }));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("this host cannot run instances as another user");
     expect(await readdir(dir)).toEqual([]);
   });
 
   test("untrusted start throws 428 with code untrusted, user and path, and writes no unit file", async () => {
-    const e = await caught(tsvc().start({ path: "/srv/proj", user: "alice" }));
-    expect(e.status).toBe(428);
-    expect(e.message).toBe("folder is not trusted for alice");
-    expect(e.extra).toEqual({ code: "untrusted", user: "alice", path: "/srv/proj" });
+    const httpError = await caught(tsvc().start({ path: "/srv/proj", user: "alice" }));
+    expect(httpError.status).toBe(428);
+    expect(httpError.message).toBe("folder is not trusted for alice");
+    expect(httpError.extra).toEqual({ code: "untrusted", user: "alice", path: "/srv/proj" });
     expect(await readdir(dir)).toEqual([]);
     expect(calls).toEqual([]);
   });
@@ -383,30 +470,38 @@ describe("start as a user, with trust", () => {
     await tsvc().trustFolder("alice", "/srv/new");
     expect(trustLog).toEqual(["check /home/alice"]);
     trustLog = [];
-    const parentTrusted: TrustStore = { checker: async () => (p) => p.startsWith("/srv/parent"), add: async (u, p) => { trustLog.push(`add ${p}`); } };
+    const parentTrusted: TrustStore = {
+      checker: () => Promise.resolve((item) => item.startsWith("/srv/parent")),
+      add: (_trustOwner, absPath) => {
+        trustLog.push(`add ${absPath}`);
+        return Promise.resolve();
+      },
+    };
     await tsvc({}, { trust: parentTrusted }).trustFolder("alice", "/srv/parent/child");
     expect(trustLog).toEqual([]);
   });
 
   test("trustFolder rejects an unknown user with 400 and adds nothing", async () => {
-    const e = await caught(tsvc().trustFolder("mallory", "/srv/new"));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("unknown user");
+    const httpError = await caught(tsvc().trustFolder("mallory", "/srv/new"));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("unknown user");
     expect(trustLog).toEqual([]);
   });
 
   test("a concurrent start for the same folder is 409 and names the first user", async () => {
     trusted.add("/srv/proj");
     let release!: () => void;
-    gate = new Promise<void>((r) => { release = r; });
-    const s = tsvc();
-    const first = s.start({ path: "/srv/proj", user: "alice" });
-    while (!calls.some((c) => c.args.includes("enable"))) await new Promise((r) => setTimeout(r, 1));
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const instanceService = tsvc();
+    const first = instanceService.start({ path: "/srv/proj", user: "alice" });
+    while (!calls.some((call) => call.args.includes("enable"))) await new Promise((resolve) => setTimeout(resolve, 1));
     await unlink(join(dir, unitName(instanceId("/srv/proj")))); // force the in-flight path, not the file path
-    const e = await caught(s.start({ path: "/srv/proj", user: "root" }));
-    expect(e.status).toBe(409);
-    expect(e.message).toBe("already running in this directory as alice");
-    expect((e.extra as { instance: { user?: string } }).instance.user).toBe("alice");
+    const httpError = await caught(instanceService.start({ path: "/srv/proj", user: "root" }));
+    expect(httpError.status).toBe(409);
+    expect(httpError.message).toBe("already running in this directory as alice");
+    expect((httpError.extra as { instance: { user?: string } }).instance.user).toBe("alice");
     release();
     await first;
   });
@@ -414,21 +509,23 @@ describe("start as a user, with trust", () => {
   test("a concurrent start while the unit file exists is 409 and names the first user", async () => {
     trusted.add("/srv/proj");
     let release!: () => void;
-    gate = new Promise<void>((r) => { release = r; });
-    const s = tsvc();
-    const first = s.start({ path: "/srv/proj", user: "alice" });
-    while (!calls.some((c) => c.args.includes("enable"))) await new Promise((r) => setTimeout(r, 1));
-    const e = await caught(s.start({ path: "/srv/proj", user: "root" }));
-    expect(e.status).toBe(409);
-    expect(e.message).toBe("already running in this directory as alice");
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const instanceService = tsvc();
+    const first = instanceService.start({ path: "/srv/proj", user: "alice" });
+    while (!calls.some((call) => call.args.includes("enable"))) await new Promise((resolve) => setTimeout(resolve, 1));
+    const httpError = await caught(instanceService.start({ path: "/srv/proj", user: "root" }));
+    expect(httpError.status).toBe(409);
+    expect(httpError.message).toBe("already running in this directory as alice");
     release();
     await first;
   });
 
   test("enable failure after addTrust removes the unit file and keeps the trust", async () => {
     failEnable = true;
-    const e = await caught(tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true }));
-    expect(e.status).toBe(500);
+    const httpError = await caught(tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true }));
+    expect(httpError.status).toBe(500);
     expect(await readdir(dir)).toEqual([]);
     expect(trustLog).toEqual(["check /home/alice", "add /home/alice 1000 1001 /srv/proj"]);
     expect(trusted.has("/srv/proj")).toBe(true);
@@ -442,31 +539,31 @@ describe("start as a user, with trust", () => {
 
   test("a second start for the same folder by another user is 409, names the first user, and never calls add or check", async () => {
     trusted.add("/srv/proj");
-    const s = tsvc();
-    await s.start({ path: "/srv/proj", user: "alice" });
+    const instanceService = tsvc();
+    await instanceService.start({ path: "/srv/proj", user: "alice" });
     trustLog = [];
-    const e = await caught(s.start({ path: "/srv/proj", user: "root", addTrust: true }));
-    expect(e.status).toBe(409);
-    expect(e.message).toBe("already running in this directory as alice");
-    expect((e.extra as { instance: { user?: string } }).instance.user).toBe("alice");
+    const httpError = await caught(instanceService.start({ path: "/srv/proj", user: "root", addTrust: true }));
+    expect(httpError.status).toBe(409);
+    expect(httpError.message).toBe("already running in this directory as alice");
+    expect((httpError.extra as { instance: { user?: string } }).instance.user).toBe("alice");
     expect(trustLog).toEqual([]);
   });
 
   test("409 keeps the old text when the unit has no User= line", async () => {
-    const s = tsvc({ scope: "user" });
+    const instanceService = tsvc({ scope: "user" });
     trusted.add("/srv/proj");
-    await s.start({ path: "/srv/proj" });
+    await instanceService.start({ path: "/srv/proj" });
     trustLog = [];
-    const e = await caught(s.start({ path: "/srv/proj" }));
-    expect(e.status).toBe(409);
-    expect(e.message).toBe("instance already exists");
+    const httpError = await caught(instanceService.start({ path: "/srv/proj" }));
+    expect(httpError.status).toBe(409);
+    expect(httpError.message).toBe("instance already exists");
     expect(trustLog).toEqual([]);
   });
 
   test("trust failure leaves no unit file", async () => {
     addFail = new HttpError(500, "cannot read the user's .claude.json");
-    const e = await caught(tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true }));
-    expect(e.status).toBe(500);
+    const httpError = await caught(tsvc().start({ path: "/srv/proj", user: "alice", addTrust: true }));
+    expect(httpError.status).toBe(500);
     expect(await readdir(dir)).toEqual([]);
     expect(calls).toEqual([]);
   });
@@ -474,41 +571,56 @@ describe("start as a user, with trust", () => {
 
 describe("users", () => {
   test("users(): selectable is false in user scope", async () => {
-    const s = new InstanceService(cfg({ scope: "user", serviceUser: "me" }), fake, fakeResolve, { trust: allTrusted, users, canSwitchUser: true });
-    expect(await s.users()).toEqual({ selectable: false, default: "me", users: [{ name: "me" }] });
+    const instanceService = new InstanceService(cfg({ scope: "user", serviceUser: "me" }), fake, fakeResolve, {
+      trust: allTrusted,
+      users,
+      canSwitchUser: true,
+    });
+    expect(await instanceService.users()).toEqual({ selectable: false, default: "me", users: [{ name: "me" }] });
   });
   test("not selectable when canSwitchUser is false", async () => {
-    expect(await svc({}, { canSwitchUser: false }).users()).toEqual({ selectable: false, default: "root", users: [{ name: "root" }] });
+    expect(await svc({}, { canSwitchUser: false }).users()).toEqual({
+      selectable: false,
+      default: "root",
+      users: [{ name: "root" }],
+    });
   });
   test("lists the passwd users when selectable", async () => {
-    expect(await svc().users()).toEqual({ selectable: true, default: "root", users: [{ name: "root" }, { name: "alice" }] });
+    expect(await svc().users()).toEqual({
+      selectable: true,
+      default: "root",
+      users: [{ name: "root" }, { name: "alice" }],
+    });
   });
   test("lists the service user even when it fails the rules", async () => {
     // svc is in the directory (lookup finds it) but list() leaves it out, as passwdDirectory does.
     expect(await users.lookup("svc")).toBeDefined();
-    expect((await users.list()).map((u) => u.name)).not.toContain("svc");
-    const r = await svc({ serviceUser: "svc" }).users();
-    expect(r.default).toBe("svc");
-    expect(r.users.map((u) => u.name).sort()).toEqual(["alice", "root", "svc"]);
+    expect((await users.list()).map((systemUser) => systemUser.name)).not.toContain("svc");
+    const usersInfo = await svc({ serviceUser: "svc" }).users();
+    expect(usersInfo.default).toBe("svc");
+    expect(usersInfo.users.map((user) => user.name).sort()).toEqual(["alice", "root", "svc"]);
   });
 });
 
 describe("trustFilter", () => {
-  beforeEach(() => { trustLog = []; trusted = new Set(["/srv/a"]); });
+  beforeEach(() => {
+    trustLog = [];
+    trusted = new Set(["/srv/a"]);
+  });
   test("trustFilter uses the default user's home when user is omitted", async () => {
-    const f = await tsvc({ serviceHome: "/var/lib/svc" }).trustFilter();
+    const helper = await tsvc({ serviceHome: "/var/lib/svc" }).trustFilter();
     expect(trustLog).toEqual(["check /var/lib/svc"]);
-    expect(f("/srv/a")).toBe(true);
-    expect(f("/srv/b")).toBe(false);
+    expect(helper("/srv/a")).toBe(true);
+    expect(helper("/srv/b")).toBe(false);
   });
   test("uses the chosen user's home", async () => {
     await tsvc().trustFilter("alice");
     expect(trustLog).toEqual(["check /home/alice"]);
   });
   test("unknown user is 400", async () => {
-    const e = await caught(tsvc().trustFilter("mallory"));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("unknown user");
+    const httpError = await caught(tsvc().trustFilter("mallory"));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("unknown user");
   });
 });
 
@@ -522,14 +634,14 @@ describe("dirOwnerFor", () => {
     expect(await svc({ serviceUser: "svc" }).dirOwnerFor("root")).toEqual({ uid: 0, gid: 0 });
   });
   test("unknown user is 400", async () => {
-    const e = await caught(svc().dirOwnerFor("mallory"));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("unknown user");
+    const httpError = await caught(svc().dirOwnerFor("mallory"));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("unknown user");
   });
   test("another user is 400 when the host cannot switch users", async () => {
-    const e = await caught(svc({}, { canSwitchUser: false }).dirOwnerFor("alice"));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("this host cannot run instances as another user");
+    const httpError = await caught(svc({}, { canSwitchUser: false }).dirOwnerFor("alice"));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("this host cannot run instances as another user");
   });
 });
 
@@ -538,13 +650,13 @@ describe("identityFor", () => {
     expect(await svc().identityFor()).toEqual({ home: "/root", path: "/usr/bin" });
   });
   test("a host that cannot switch users rejects another user with 400", async () => {
-    const e = await caught(svc({}, { canSwitchUser: false }).identityFor("alice"));
-    expect(e.status).toBe(400);
+    const httpError = await caught(svc({}, { canSwitchUser: false }).identityFor("alice"));
+    expect(httpError.status).toBe(400);
   });
   test("an unknown user gives 400", async () => {
-    const e = await caught(svc().identityFor("mallory"));
-    expect(e.status).toBe(400);
-    expect(e.message).toBe("unknown user");
+    const httpError = await caught(svc().identityFor("mallory"));
+    expect(httpError.status).toBe(400);
+    expect(httpError.message).toBe("unknown user");
   });
   test("a known user passes uid, gid, home and path through", async () => {
     const id = await svc().identityFor("alice");
@@ -555,41 +667,46 @@ describe("identityFor", () => {
   });
 });
 
-
 describe("claudeHome", () => {
   test("returns the instance folder and the home of the default user", async () => {
     const id = await seed("/srv/a", "alpha");
-    const h = await svc().claudeHome(id);
-    expect(h.path).toBe("/srv/a");
-    expect(h.home).toBe("/root");
+    const claudeHome = await svc().claudeHome(id);
+    expect(claudeHome.path).toBe("/srv/a");
+    expect(claudeHome.home).toBe("/root");
   });
   test("returns the home of the run-as user from User=", async () => {
     await svc().start({ path: "/srv/a", user: "alice" });
     const [inst] = await svc().list();
-    const h = await svc().claudeHome(inst!.id);
-    expect({ path: h.path, home: h.home }).toEqual({ path: "/srv/a", home: "/home/alice" });
+    const claudeHome = await svc().claudeHome(inst.id);
+    expect({ path: claudeHome.path, home: claudeHome.home }).toEqual({ path: "/srv/a", home: "/home/alice" });
     // The identity is what git runs as for the Changed list.
-    expect(h.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
+    expect(claudeHome.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
   });
   test("as root the default user gets the uid and gid of the service user, so a write is owned by it", async () => {
     const as = { serviceUser: "alice", serviceHome: "/home/alice" };
     const id = instanceId("/srv/a");
     await writeFile(join(dir, unitName(id)), renderUnit(cfg(as), "/srv/a", "alpha"));
-    const h = await svc(as, { isRoot: () => true }).claudeHome(id);
-    expect(h.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
+    const claudeHome = await svc(as, { isRoot: () => true }).claudeHome(id);
+    expect(claudeHome.identity).toMatchObject({ home: "/home/alice", uid: 1000, gid: 1001 });
   });
   test("a node that is not root adds no uid for the default user", async () => {
     const as = { serviceUser: "alice", serviceHome: "/home/alice" };
     const id = instanceId("/srv/a");
     await writeFile(join(dir, unitName(id)), renderUnit(cfg(as), "/srv/a", "alpha"));
-    const h = await svc(as, { isRoot: () => false }).claudeHome(id);
-    expect(h.identity?.uid).toBeUndefined();
+    const claudeHome = await svc(as, { isRoot: () => false }).claudeHome(id);
+    expect(claudeHome.identity?.uid).toBeUndefined();
   });
   test("a unit whose user has vanished is 404 instance user not found", async () => {
     await svc().start({ path: "/srv/a", user: "alice" });
     const [inst] = await svc().list();
-    const gone: UserDirectory = { list: async () => [], get: async () => undefined, lookup: async () => undefined };
-    const err = await svc({}, { users: gone }).claudeHome(inst!.id).catch((e) => e);
+    const gone: UserDirectory = {
+      list: () => Promise.resolve([]),
+      get: () => Promise.resolve(undefined),
+      lookup: () => Promise.resolve(undefined),
+    };
+    const err = await svc({}, { users: gone })
+      .claudeHome(inst.id)
+      .catch((error) => error);
     expect(err).toBeInstanceOf(HttpError);
     expect([err.status, err.message]).toEqual([404, "instance user not found"]);
   });
@@ -602,22 +719,36 @@ describe("claudeHome", () => {
 describe("start with settings", () => {
   test("worktree in a folder that is not a git repository is 400 and writes nothing", async () => {
     let trustAdds = 0;
-    const trust: TrustStore = { checker: async () => () => false, add: async () => { trustAdds++; } };
-    const s = svc({}, { trust, repoKind: async () => undefined });
-    expect(await status(s.start({ path: "/srv/proj", addTrust: true, settings: { spawnMode: "worktree" } }))).toBe(400);
+    const trust: TrustStore = {
+      checker: () => Promise.resolve(() => false),
+      add: () => {
+        trustAdds++;
+        return Promise.resolve();
+      },
+    };
+    const instanceService = svc({}, { trust, repoKind: () => Promise.resolve(undefined) });
+    expect(
+      await status(instanceService.start({ path: "/srv/proj", addTrust: true, settings: { spawnMode: "worktree" } })),
+    ).toBe(400);
     expect(await readdir(dir)).toEqual([]);
     expect(trustAdds).toBe(0);
     expect(calls).toEqual([]);
   });
   test("an operator default of worktree in a folder that is not a git repository is 400 and writes nothing", async () => {
-    const s = svc({ claudeRcArgs: ["--spawn", "worktree"] }, { repoKind: async () => undefined });
-    expect(await status(s.start({ path: "/srv/proj" }))).toBe(400);
-    expect(await status(s.start({ path: "/srv/proj", settings: { createSession: false } }))).toBe(400);
+    const instanceService = svc(
+      { claudeRcArgs: ["--spawn", "worktree"] },
+      { repoKind: () => Promise.resolve(undefined) },
+    );
+    expect(await status(instanceService.start({ path: "/srv/proj" }))).toBe(400);
+    expect(await status(instanceService.start({ path: "/srv/proj", settings: { createSession: false } }))).toBe(400);
     expect(await readdir(dir)).toEqual([]);
     expect(calls).toEqual([]);
   });
   test("worktree in a git repository and createSession off go into the unit", async () => {
-    const inst = await svc({}, { repoKind: async () => "git" }).start({ path: "/srv/proj", settings: { spawnMode: "worktree", createSession: false } });
+    const inst = await svc({}, { repoKind: () => Promise.resolve("git") }).start({
+      path: "/srv/proj",
+      settings: { spawnMode: "worktree", createSession: false },
+    });
     expect(inst.settings).toEqual({ createSession: false, spawnMode: "worktree" });
     const content = await readFile(join(dir, unitName(inst.id)), "utf8");
     expect(content).toContain("--spawn worktree --no-create-session-in-dir");
@@ -642,35 +773,55 @@ describe("restart", () => {
   });
   test("restart on a paused instance is 409 and never restarts", async () => {
     const id = await seed("/srv/a");
-    hook = (_cmd, args) => (args[0] === "show" ? { code: 0, stdout: "ActiveState=inactive\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    hook = (_cmd, args) =>
+      args[0] === "show"
+        ? { code: 0, stdout: "ActiveState=inactive\nUnitFileState=disabled\n", stderr: "" }
+        : undefined;
     let err: HttpError | undefined;
-    try { await svc().restart(id); } catch (e) { err = e as HttpError; }
-    expect(err!.status).toBe(409);
-    expect(err!.message).toBe("instance is paused, resume it first");
-    expect(calls.some((c) => c.args[0] === "restart")).toBe(false);
+
+    try {
+      await svc().restart(id);
+    } catch (error) {
+      err = error as HttpError;
+    }
+
+    expect(defined(err).status).toBe(409);
+    expect(defined(err).message).toBe("instance is paused, resume it first");
+    expect(calls.some((call) => call.args[0] === "restart")).toBe(false);
   });
   test("restart on a unit that is active but not enabled (started by hand) restarts it", async () => {
     const id = await seed("/srv/a");
-    hook = (_cmd, args) => (args[0] === "show" ? { code: 0, stdout: "ActiveState=active\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    hook = (_cmd, args) =>
+      args[0] === "show" ? { code: 0, stdout: "ActiveState=active\nUnitFileState=disabled\n", stderr: "" } : undefined;
     await svc().restart(id);
-    expect(calls.some((c) => c.args[0] === "restart")).toBe(true);
+    expect(calls.some((call) => call.args[0] === "restart")).toBe(true);
   });
 });
 
 describe("update", () => {
   const noSleep = { sleep: async () => {} };
-  const isProbe = (args: string[]) => args[0] === "show" && args.some((a) => a.includes("ExecMainStatus"));
-  const restarts = () => calls.filter((c) => c.args[0] === "restart").length;
+  const isProbe = (args: string[]) => args[0] === "show" && args.some((arg) => arg.includes("ExecMainStatus"));
+  const restarts = () => calls.filter((call) => call.args[0] === "restart").length;
 
   test("a healthy change rewrites the unit, reloads, restarts and returns the old settings", async () => {
     const id = await seed("/srv/a", "alpha");
-    const r = await svc({}, noSleep).update(id, { createSession: false });
-    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(r.instance).toMatchObject({ id, name: "alpha", settings: { createSession: false, spawnMode: "same-dir" }, state: "active" });
-    expect(r.applied).toBe(true);
+    const updateResult = await svc({}, noSleep).update(id, { createSession: false });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.instance).toMatchObject({
+      id,
+      name: "alpha",
+      settings: { createSession: false, spawnMode: "same-dir" },
+      state: "active",
+    });
+    expect(updateResult.applied).toBe(true);
     const content = await readFile(join(dir, unitName(id)), "utf8");
-    expect(content).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
-    expect(calls.filter((c) => c.args[0] !== "show").slice(0, 2)).toEqual([sc("daemon-reload"), sc("restart", unitName(id))]);
+    expect(content).toBe(
+      renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }),
+    );
+    expect(calls.filter((call) => call.args[0] !== "show").slice(0, 2)).toEqual([
+      sc("daemon-reload"),
+      sc("restart", unitName(id)),
+    ]);
     expect(restarts()).toBe(1);
     expect(await readdir(dir)).toEqual([unitName(id)]); // no .tmp file left
   });
@@ -678,23 +829,46 @@ describe("update", () => {
   test("createSession off with a recoverable session: exit 69, the change is undone, 409 settings_refused", async () => {
     const id = await seed("/srv/a", "alpha");
     const before = await readFile(join(dir, unitName(id)), "utf8");
-    let n = 0;
+    let count = 0;
+
     hook = (_cmd, args) => {
-      if (args[0] === "restart") { n++; return undefined; }
-      if (isProbe(args)) {
-        return { code: 0, stdout: n === 1 ? "ActiveState=activating\nSubState=auto-restart\nExecMainStatus=69\n" : "ActiveState=active\nSubState=running\nExecMainStatus=0\n", stderr: "" };
+      if (args[0] === "restart") {
+        count++;
+        return undefined;
       }
+
+      if (isProbe(args)) {
+        return {
+          code: 0,
+          stdout:
+            count === 1
+              ? "ActiveState=activating\nSubState=auto-restart\nExecMainStatus=69\n"
+              : "ActiveState=active\nSubState=running\nExecMainStatus=0\n",
+          stderr: "",
+        };
+      }
+
       return undefined;
     };
+
     let err: HttpError | undefined;
-    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
+
+    try {
+      await svc({}, noSleep).update(id, { createSession: false });
+    } catch (error) {
+      err = error as HttpError;
+    }
+
     expect(err).toBeInstanceOf(HttpError);
-    expect(err!.status).toBe(409);
-    expect(err!.extra).toEqual({ code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } });
-    expect(err!.message).toContain("69");
+    expect(defined(err).status).toBe(409);
+    expect(defined(err).extra).toEqual({
+      code: "settings_refused",
+      settings: { createSession: true, spawnMode: "same-dir" },
+    });
+    expect(defined(err).message).toContain("69");
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
     expect(restarts()).toBe(2);
-    const verbs = calls.map((c) => c.args[0]).filter((v) => v !== "show");
+    const verbs = calls.map((call) => call.args[0]).filter((item) => item !== "show");
     expect(verbs).toEqual(["daemon-reload", "restart", "daemon-reload", "restart"]);
     expect(await readdir(dir)).toEqual([unitName(id)]);
   });
@@ -702,55 +876,93 @@ describe("update", () => {
   test("a unit that does not stay active is undone with 409 settings_failed", async () => {
     const id = await seed("/srv/a");
     const before = await readFile(join(dir, unitName(id)), "utf8");
-    hook = (_cmd, args) => (isProbe(args) ? { code: 0, stdout: "ActiveState=failed\nExecMainStatus=1\n", stderr: "" } : undefined);
+    hook = (_cmd, args) =>
+      isProbe(args) ? { code: 0, stdout: "ActiveState=failed\nExecMainStatus=1\n", stderr: "" } : undefined;
     let err: HttpError | undefined;
-    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
-    expect(err!.status).toBe(409);
-    expect((err!.extra as { code: string }).code).toBe("settings_failed");
+
+    try {
+      await svc({}, noSleep).update(id, { createSession: false });
+    } catch (error) {
+      err = error as HttpError;
+    }
+
+    expect(defined(err).status).toBe(409);
+    expect((defined(err).extra as { code: string }).code).toBe("settings_failed");
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
     expect(restarts()).toBe(2);
   });
 
   test("a failed first restart is undone with 409 settings_failed", async () => {
     const id = await seed("/srv/a");
-    let n = 0;
-    hook = (_cmd, args) => (args[0] === "restart" && ++n === 1 ? { code: 1, stdout: "", stderr: "no restart" } : undefined);
+    let count = 0;
+    hook = (_cmd, args) =>
+      args[0] === "restart" && ++count === 1 ? { code: 1, stdout: "", stderr: "no restart" } : undefined;
     let err: HttpError | undefined;
-    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
-    expect(err!.status).toBe(409);
-    expect(err!.message).toContain("no restart");
-    expect((err!.extra as { code: string }).code).toBe("settings_failed");
+
+    try {
+      await svc({}, noSleep).update(id, { createSession: false });
+    } catch (error) {
+      err = error as HttpError;
+    }
+
+    expect(defined(err).status).toBe(409);
+    expect(defined(err).message).toContain("no restart");
+    expect((defined(err).extra as { code: string }).code).toBe("settings_failed");
     expect(restarts()).toBe(2);
   });
 
   test("a failure while undoing is reported as 500 and names both failures", async () => {
     const id = await seed("/srv/a");
-    let n = 0;
+    let count = 0;
+
     hook = (_cmd, args) => {
-      if (args[0] === "restart" && ++n === 2) return { code: 1, stdout: "", stderr: "undo broke" };
+      if (args[0] === "restart" && ++count === 2) return { code: 1, stdout: "", stderr: "undo broke" };
       if (isProbe(args)) return { code: 0, stdout: "ActiveState=activating\nExecMainStatus=69\n", stderr: "" };
       return undefined;
     };
+
     let err: HttpError | undefined;
-    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
-    expect(err!.status).toBe(500);
-    expect(err!.message).toContain("69");
-    expect(err!.message).toContain("undo broke");
-    expect((err!.extra as { settings?: unknown }).settings).toBeUndefined();
+
+    try {
+      await svc({}, noSleep).update(id, { createSession: false });
+    } catch (error) {
+      err = error as HttpError;
+    }
+
+    expect(defined(err).status).toBe(500);
+    expect(defined(err).message).toContain("69");
+    expect(defined(err).message).toContain("undo broke");
+    expect((defined(err).extra as { settings?: unknown }).settings).toBeUndefined();
   });
 
   test("a paused instance gets the new unit and a daemon-reload, and is not restarted", async () => {
     const id = await seed("/srv/a", "alpha");
-    hook = (_cmd, args) => (args[0] === "show" && !isProbe(args) ? { code: 0, stdout: "ActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    hook = (_cmd, args) =>
+      args[0] === "show" && !isProbe(args)
+        ? { code: 0, stdout: "ActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n", stderr: "" }
+        : undefined;
     const slept: number[] = [];
-    const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
-    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(r.instance).toMatchObject({ settings: { createSession: false, spawnMode: "same-dir" }, state: "inactive" });
-    expect(r.applied).toBe(false);
-    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }));
-    expect(calls.some((c) => c.args[0] === "daemon-reload")).toBe(true);
+    const updateResult = await svc(
+      {},
+      {
+        sleep: (ms: number) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      },
+    ).update(id, { createSession: false });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.instance).toMatchObject({
+      settings: { createSession: false, spawnMode: "same-dir" },
+      state: "inactive",
+    });
+    expect(updateResult.applied).toBe(false);
+    expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(
+      renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }),
+    );
+    expect(calls.some((call) => call.args[0] === "daemon-reload")).toBe(true);
     expect(restarts()).toBe(0);
-    expect(calls.some((c) => isProbe(c.args))).toBe(false);
+    expect(calls.some((call) => isProbe(call.args))).toBe(false);
     expect(slept).toEqual([]);
   });
 
@@ -758,98 +970,158 @@ describe("update", () => {
     const id = await seed("/srv/a");
     const before = await readFile(join(dir, unitName(id)), "utf8");
     let reloads = 0;
+
     hook = (_cmd, args) => {
       if (args[0] === "show") return { code: 0, stdout: "ActiveState=inactive\nUnitFileState=disabled\n", stderr: "" };
       if (args[0] === "daemon-reload" && ++reloads === 1) return { code: 1, stdout: "", stderr: "reload broke" };
       return undefined;
     };
+
     let err: HttpError | undefined;
-    try { await svc({}, noSleep).update(id, { createSession: false }); } catch (e) { err = e as HttpError; }
-    expect(err!.status).toBe(409);
-    expect(err!.extra).toEqual({ code: "settings_failed", settings: { createSession: true, spawnMode: "same-dir" } });
+
+    try {
+      await svc({}, noSleep).update(id, { createSession: false });
+    } catch (error) {
+      err = error as HttpError;
+    }
+
+    expect(defined(err).status).toBe(409);
+    expect(defined(err).extra).toEqual({
+      code: "settings_failed",
+      settings: { createSession: true, spawnMode: "same-dir" },
+    });
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
     expect(restarts()).toBe(0);
   });
 
   test("a unit that is active but not enabled is not paused: it restarts, settles and answers applied true", async () => {
     const id = await seed("/srv/a");
-    hook = (_cmd, args) => (args[0] === "show" && !isProbe(args) ? { code: 0, stdout: "ActiveState=active\nSubState=running\nUnitFileState=disabled\n", stderr: "" } : undefined);
+    hook = (_cmd, args) =>
+      args[0] === "show" && !isProbe(args)
+        ? { code: 0, stdout: "ActiveState=active\nSubState=running\nUnitFileState=disabled\n", stderr: "" }
+        : undefined;
     const slept: number[] = [];
-    const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
-    expect(r.applied).toBe(true);
+    const updateResult = await svc(
+      {},
+      {
+        sleep: (ms: number) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      },
+    ).update(id, { createSession: false });
+    expect(updateResult.applied).toBe(true);
     expect(restarts()).toBe(1);
-    expect(slept.reduce((a, b) => a + b, 0)).toBe(20_000);
+    expect(slept.reduce((total, item) => total + item, 0)).toBe(20_000);
   });
 
   test("a change equal to the current settings answers applied true and does nothing", async () => {
     const id = await seed("/srv/a");
-    const r = await svc({}, noSleep).update(id, { createSession: true });
-    expect(r.applied).toBe(true);
+    const updateResult = await svc({}, noSleep).update(id, { createSession: true });
+    expect(updateResult.applied).toBe(true);
     expect(restarts()).toBe(0);
   });
 
   test("an enabled instance that is activating is still restarted and settles", async () => {
     const id = await seed("/srv/a");
-    hook = (_cmd, args) => (args[0] === "show" && !isProbe(args) ? { code: 0, stdout: "ActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\n", stderr: "" } : undefined);
+    hook = (_cmd, args) =>
+      args[0] === "show" && !isProbe(args)
+        ? { code: 0, stdout: "ActiveState=activating\nSubState=auto-restart\nUnitFileState=enabled\n", stderr: "" }
+        : undefined;
     const slept: number[] = [];
-    const r = await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
-    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    const updateResult = await svc(
+      {},
+      {
+        sleep: (ms: number) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      },
+    ).update(id, { createSession: false });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
     expect(restarts()).toBe(1);
-    expect(slept.reduce((a, b) => a + b, 0)).toBe(20_000);
+    expect(slept.reduce((total, item) => total + item, 0)).toBe(20_000);
   });
 
   test("the settle wait is 20 seconds of fake time", async () => {
     const id = await seed("/srv/a");
     const slept: number[] = [];
-    await svc({}, { sleep: async (ms: number) => { slept.push(ms); } }).update(id, { createSession: false });
-    expect(slept.reduce((a, b) => a + b, 0)).toBe(20_000);
+    await svc(
+      {},
+      {
+        sleep: (ms: number) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      },
+    ).update(id, { createSession: false });
+    expect(slept.reduce((total, item) => total + item, 0)).toBe(20_000);
   });
 
   test("two changes to one instance together: the second is 409 and the first finishes", async () => {
     const id = await seed("/srv/a");
     let release!: () => void;
-    const gateRestart = new Promise<void>((r) => { release = r; });
-    hook = async (_cmd, args) => { if (args[0] === "restart") await gateRestart; return undefined; };
-    const s = svc({}, noSleep);
-    const first = s.update(id, { createSession: false });
-    const second = s.update(id, { spawnMode: "same-dir", createSession: true });
+    const gateRestart = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    hook = async (_cmd, args) => {
+      if (args[0] === "restart") await gateRestart;
+      return undefined;
+    };
+
+    const instanceService = svc({}, noSleep);
+    const first = instanceService.update(id, { createSession: false });
+    const second = instanceService.update(id, { spawnMode: "same-dir", createSession: true });
     let err: HttpError | undefined;
-    try { await second; } catch (e) { err = e as HttpError; }
-    expect(err!.status).toBe(409);
-    expect(err!.message).toBe("change in progress");
+
+    try {
+      await second;
+    } catch (error) {
+      err = error as HttpError;
+    }
+
+    expect(defined(err).status).toBe(409);
+    expect(defined(err).message).toBe("change in progress");
     // stop and restart wait too while the change runs
-    expect(await status(s.stop(id))).toBe(409);
-    expect(await status(s.restart(id))).toBe(409);
+    expect(await status(instanceService.stop(id))).toBe(409);
+    expect(await status(instanceService.restart(id))).toBe(409);
     release();
-    const r = await first;
-    expect(r.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    const updateResult = await first;
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
     // the lock is free again
-    await s.update(id, { createSession: true });
+    await instanceService.update(id, { createSession: true });
   });
 
   test("a patch equal to the current settings does nothing", async () => {
     const id = await seed("/srv/a", "alpha");
     const before = await readFile(join(dir, unitName(id)), "utf8");
-    const r = await svc({}, noSleep).update(id, { createSession: true, spawnMode: "same-dir" });
-    expect(r.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(r.instance.settings).toEqual(r.previous);
+    const updateResult = await svc({}, noSleep).update(id, { createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual(updateResult.previous);
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
-    expect(calls.some((c) => c.args[0] === "restart" || c.args[0] === "daemon-reload")).toBe(false);
+    expect(calls.some((call) => call.args[0] === "restart" || call.args[0] === "daemon-reload")).toBe(false);
   });
 
   test("worktree in a folder that is not a git repository is 400 before any file changes", async () => {
     const id = await seed("/srv/a");
     const before = await readFile(join(dir, unitName(id)), "utf8");
-    expect(await status(svc({}, { ...noSleep, repoKind: async () => undefined }).update(id, { spawnMode: "worktree" }))).toBe(400);
+    expect(
+      await status(
+        svc({}, { ...noSleep, repoKind: () => Promise.resolve(undefined) }).update(id, { spawnMode: "worktree" }),
+      ),
+    ).toBe(400);
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
     expect(await readdir(dir)).toEqual([unitName(id)]);
-    expect(calls.some((c) => c.args[0] === "restart" || c.args[0] === "daemon-reload")).toBe(false);
+    expect(calls.some((call) => call.args[0] === "restart" || call.args[0] === "daemon-reload")).toBe(false);
   });
 
   test("worktree in a git repository is written", async () => {
     const id = await seed("/srv/a");
-    const r = await svc({}, { ...noSleep, repoKind: async () => "github" }).update(id, { spawnMode: "worktree" });
-    expect(r.instance.settings).toEqual({ createSession: true, spawnMode: "worktree" });
+    const updateResult = await svc({}, { ...noSleep, repoKind: () => Promise.resolve("github") }).update(id, {
+      spawnMode: "worktree",
+    });
+    expect(updateResult.instance.settings).toEqual({ createSession: true, spawnMode: "worktree" });
   });
 
   test("bad values are 400 and an unknown id is 404", async () => {
@@ -862,10 +1134,10 @@ describe("update", () => {
   });
 
   test("a unit of another user keeps its user", async () => {
-    const s = svc({}, noSleep);
-    const inst = await s.start({ path: "/srv/a", user: "alice", name: "al" });
-    const r = await s.update(inst.id, { createSession: false });
-    expect(r.instance).toMatchObject({ user: "alice", name: "al" });
+    const instanceService = svc({}, noSleep);
+    const inst = await instanceService.start({ path: "/srv/a", user: "alice", name: "al" });
+    const updateResult = await instanceService.update(inst.id, { createSession: false });
+    expect(updateResult.instance).toMatchObject({ user: "alice", name: "al" });
     expect(await readFile(join(dir, unitName(inst.id)), "utf8")).toContain("User=alice");
   });
 });

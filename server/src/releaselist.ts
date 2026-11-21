@@ -1,8 +1,17 @@
 import { RELEASE_REPO } from "./release";
 import { compareVersions, isKnownVersion, normalizeVersion, releaseOf } from "./versions";
 
-export type ReleaseNote = { version: string; name: string; body: string; url: string; publishedAt: string };
-export type ReleaseNotes = { releases: ReleaseNote[]; complete: boolean };
+export interface ReleaseNote {
+  version: string;
+  name: string;
+  body: string;
+  url: string;
+  publishedAt: string;
+}
+export interface ReleaseNotes {
+  releases: ReleaseNote[];
+  complete: boolean;
+}
 
 const DEFAULT_TTL_MS = 300_000;
 
@@ -11,10 +20,16 @@ const DEFAULT_TTL_MS = 300_000;
  * above `from` up to and including `to`. The list is cached for `ttlMs`, concurrent calls share one GitHub call, and a
  * failure serves the last good list and is not retried for `failBackoffMs`. `between` never throws.
  */
-export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; ttlMs?: number; failBackoffMs?: number; onError?: (message: string) => void }) {
-  const now = o.now ?? Date.now;
-  const ttlMs = o.ttlMs ?? DEFAULT_TTL_MS;
-  const failBackoffMs = o.failBackoffMs ?? 60_000;
+export function createReleaseList(options: {
+  fetch: typeof fetch;
+  now?: () => number;
+  ttlMs?: number;
+  failBackoffMs?: number;
+  onError?: (message: string) => void;
+}) {
+  const now = options.now ?? Date.now;
+  const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
+  const failBackoffMs = options.failBackoffMs ?? 60_000;
   let cached: { list: ReleaseNote[]; at: number } | undefined;
   let failedAt: number | undefined;
   let inflight: Promise<ReleaseNote[] | undefined> | undefined;
@@ -22,36 +37,49 @@ export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; 
 
   async function load(): Promise<ReleaseNote[]> {
     let res: Response;
+
     try {
-      res = await o.fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases?per_page=100`, {
+      res = await options.fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases?per_page=100`, {
         headers: { accept: "application/vnd.github+json" },
         signal: AbortSignal.timeout(10_000),
       });
-    } catch (e) {
-      throw new Error(`could not reach GitHub: ${e instanceof Error ? e.message : String(e)}`);
+    } catch (error) {
+      throw new Error(`could not reach GitHub: ${error instanceof Error ? error.message : String(error)}`);
     }
+
     if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
     let data: unknown;
+
     try {
       data = await res.json();
     } catch {
       throw new Error("GitHub sent an unreadable answer");
     }
+
     if (!Array.isArray(data)) throw new Error("GitHub sent no release list");
     const list: ReleaseNote[] = [];
-    for (const r of data as Record<string, unknown>[]) {
-      if (!r || typeof r !== "object" || r.draft === true || r.prerelease === true || typeof r.tag_name !== "string") continue;
-      const version = normalizeVersion(r.tag_name);
+
+    for (const record of data as Record<string, unknown>[]) {
+      if (
+        !record ||
+        typeof record !== "object" ||
+        record.draft === true ||
+        record.prerelease === true ||
+        typeof record.tag_name !== "string"
+      )
+        continue;
+      const version = normalizeVersion(record.tag_name);
       if (!isKnownVersion(version)) continue;
       list.push({
         version,
-        name: typeof r.name === "string" && r.name ? r.name : version,
-        body: typeof r.body === "string" ? r.body : "",
-        url: typeof r.html_url === "string" ? r.html_url : "",
-        publishedAt: typeof r.published_at === "string" ? r.published_at : "",
+        name: typeof record.name === "string" && record.name ? record.name : version,
+        body: typeof record.body === "string" ? record.body : "",
+        url: typeof record.html_url === "string" ? record.html_url : "",
+        publishedAt: typeof record.published_at === "string" ? record.published_at : "",
       });
     }
-    list.sort((a, b) => compareVersions(b.version, a.version));
+
+    list.sort((releaseNote, right) => compareVersions(right.version, releaseNote.version));
     cached = { list, at: now() };
     failedAt = undefined;
     return list;
@@ -60,13 +88,15 @@ export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; 
   async function refresh(): Promise<ReleaseNote[] | undefined> {
     try {
       return await load();
-    } catch (e) {
+    } catch (error) {
       failedAt = now();
+
       try {
-        o.onError?.(e instanceof Error ? e.message : String(e));
+        options.onError?.(error instanceof Error ? error.message : String(error));
       } catch {
         // a broken logger must not change the answer
       }
+
       return cached?.list;
     } finally {
       inflight = undefined;
@@ -83,23 +113,40 @@ export function createReleaseList(o: { fetch: typeof fetch; now?: () => number; 
   return {
     async between(from: string, to: string): Promise<ReleaseNotes> {
       try {
-        const f = releaseOf(normalizeVersion(from));
-        const t = releaseOf(normalizeVersion(to));
-        if (f === undefined || t === undefined || compareVersions(f, t) >= 0) return { releases: [], complete: true };
+        const fromRelease = releaseOf(normalizeVersion(from));
+        const toRelease = releaseOf(normalizeVersion(to));
+        if (fromRelease === undefined || toRelease === undefined || compareVersions(fromRelease, toRelease) >= 0)
+          return { releases: [], complete: true };
         const before = cached?.at;
         let all = await list();
         // A cached list can be older than the release `to` (a node updated right after a publish). Refresh once, but not
         // more often than the failure backoff, so a `to` that GitHub never lists cannot make a call to GitHub for every request.
-        const stale = all !== undefined && all[0] !== undefined && compareVersions(all[0].version, t) < 0;
-        if (stale && cached?.at === before && (forcedAt === undefined || now() - forcedAt >= failBackoffMs) && (failedAt === undefined || now() - failedAt >= failBackoffMs)) {
+        const stale = all?.[0] !== undefined && compareVersions(all[0].version, toRelease) < 0;
+
+        if (
+          stale &&
+          cached?.at === before &&
+          (forcedAt === undefined || now() - forcedAt >= failBackoffMs) &&
+          (failedAt === undefined || now() - failedAt >= failBackoffMs)
+        ) {
           forcedAt = now();
           all = await (inflight ?? (inflight = refresh()));
         }
+
         if (!all) return { releases: [], complete: false };
-        const releases = all.filter((r) => compareVersions(r.version, f) > 0 && compareVersions(r.version, t) <= 0);
+        const releases = all.filter(
+          (releaseNote) =>
+            compareVersions(releaseNote.version, fromRelease) > 0 &&
+            compareVersions(releaseNote.version, toRelease) <= 0,
+        );
         const newest = all[0];
         const oldest = all[all.length - 1];
-        const complete = newest !== undefined && oldest !== undefined && compareVersions(oldest.version, f) <= 0 && compareVersions(newest.version, f) >= 0 && compareVersions(newest.version, t) >= 0;
+        const complete =
+          newest !== undefined &&
+          oldest !== undefined &&
+          compareVersions(oldest.version, fromRelease) <= 0 &&
+          compareVersions(newest.version, fromRelease) >= 0 &&
+          compareVersions(newest.version, toRelease) >= 0;
         return { releases, complete };
       } catch {
         return { releases: [], complete: false };

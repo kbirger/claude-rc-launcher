@@ -11,18 +11,21 @@ export function cleanAt(at: unknown, fallback: string): string {
   return typeof at === "string" && at.length <= MAX_AT && !Number.isNaN(Date.parse(at)) ? at : fallback;
 }
 
-export type LogLine = { line: string; at: string };
+export interface LogLine {
+  line: string;
+  at: string;
+}
 
 /** The last lines of output of the node updates, for each host, in memory only. */
 export class UpdateLog {
   private readonly maxLines: number;
   private readonly now: () => Date;
   private readonly lines = new Map<string, LogLine[]>();
-  private readonly subs = new Set<(e: { host: string; line: string; at: string }) => void>();
+  private readonly subs = new Set<(event: { host: string; line: string; at: string }) => void>();
 
-  constructor(o: { maxLines?: number; now?: () => Date } = {}) {
-    this.maxLines = o.maxLines ?? 200;
-    this.now = o.now ?? (() => new Date());
+  constructor(options: { maxLines?: number; now?: () => Date } = {}) {
+    this.maxLines = options.maxLines ?? 200;
+    this.now = options.now ?? (() => new Date());
   }
 
   add(host: string, line: string, at?: string): void {
@@ -32,6 +35,7 @@ export class UpdateLog {
     list.push({ line, at });
     if (list.length > this.maxLines) list.splice(0, list.length - this.maxLines);
     this.lines.set(host, list);
+
     for (const fn of [...this.subs]) {
       try {
         fn({ host, line, at });
@@ -46,14 +50,16 @@ export class UpdateLog {
   }
 
   get(host: string): LogLine[] {
-    return (this.lines.get(host) ?? []).map((l) => ({ ...l }));
+    return (this.lines.get(host) ?? []).map((logLine) => ({ ...logLine }));
   }
 
   all(): Record<string, LogLine[]> {
-    return Object.fromEntries([...this.lines].map(([h, l]) => [h, l.map((x) => ({ ...x }))]));
+    return Object.fromEntries(
+      [...this.lines].map(([item, logLines]) => [item, logLines.map((logLine) => ({ ...logLine }))]),
+    );
   }
 
-  onLine(fn: (e: { host: string; line: string; at: string }) => void): () => void {
+  onLine(fn: (event: { host: string; line: string; at: string }) => void): () => void {
     this.subs.add(fn);
     return () => void this.subs.delete(fn);
   }

@@ -15,16 +15,23 @@ import { within } from "./paths";
  * name and two characters). A missing or unknown `nameSource` counts as a name that someone set.
  */
 /** `status` is set only for a known value ("busy" or "idle"). A future value keeps the session live, with no status. */
-export type LiveInfo = { status?: "busy" | "idle"; remoteControl: boolean; name?: string; nameIsDefault?: boolean; bridgeId?: string; firstSessionId?: string };
-export type LiveFs = {
+export interface LiveInfo {
+  status?: "busy" | "idle";
+  remoteControl: boolean;
+  name?: string;
+  nameIsDefault?: boolean;
+  bridgeId?: string;
+  firstSessionId?: string;
+}
+export interface LiveFs {
   /** The names in a folder, one at a time, so that the caller can stop early. */
   entries(dir: string): AsyncIterable<string>;
   /** At most `max` bytes from the start of the file. */
-  readHead(p: string, max: number): Promise<Uint8Array>;
-  realpath(p: string): Promise<string>;
-};
+  readHead(path: string, max: number): Promise<Uint8Array>;
+  realpath(path: string): Promise<string>;
+}
 /** Reads from /proc that tell a running process from a reused pid. Each gives undefined when it cannot be read. */
-export type ProcReads = {
+export interface ProcReads {
   /** Field 22 of /proc/<pid>/stat (start time in clock ticks). "gone" when /proc is readable and has no such pid. */
   startTime(pid: number): Promise<string | "gone" | undefined>;
   /** The content of /etc/machine-id. */
@@ -37,9 +44,10 @@ export type ProcReads = {
    * Claude Code internals: it can change with a version, and then this gives undefined.
    */
   firstSession(pid: number): Promise<string | undefined>;
-};
+}
 
-const TASKS_LINK = /^\/tmp\/claude-\d+\/[^/]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/tasks(?: \(deleted\))?$/;
+const TASKS_LINK =
+  /^\/tmp\/claude-\d+\/[^/]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/tasks(?: \(deleted\))?$/;
 const MAX_FDS = 512;
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -54,17 +62,20 @@ const MAX_BRIDGE = 256;
 const PID_DOMAIN = /^linux:([0-9a-f]+):pid:\[(\d+)\]$/;
 
 /** Opens without following a final link and without blocking (a FIFO named `x.json` must not hang the node). */
-async function readHead(p: string, max: number): Promise<Uint8Array> {
-  const fh = await open(p, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+async function readHead(path: string, max: number): Promise<Uint8Array> {
+  const fh = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+
   try {
     if (!(await fh.stat()).isFile()) throw new Error("not a file");
     const buf = Buffer.alloc(max);
     let got = 0;
+
     while (got < max) {
-      const r = await fh.read(buf, got, max - got, got);
-      if (r.bytesRead === 0) break;
-      got += r.bytesRead;
+      const fileReadResult = await fh.read(buf, got, max - got, got);
+      if (fileReadResult.bytesRead === 0) break;
+      got += fileReadResult.bytesRead;
     }
+
     return buf.subarray(0, got);
   } finally {
     await fh.close();
@@ -73,17 +84,20 @@ async function readHead(p: string, max: number): Promise<Uint8Array> {
 
 async function* entries(dir: string): AsyncIterable<string> {
   // opendir reads the folder in batches: breaking out of the loop closes it, and the rest is never read.
-  for await (const e of await opendir(dir)) yield e.name;
+  for await (const dirent of await opendir(dir)) yield dirent.name;
 }
 
-const defaultFs: LiveFs = { entries, readHead, realpath: (p) => realpath(p) };
+const defaultFs: LiveFs = { entries, readHead, realpath: (path) => realpath(path) };
 
 /** Field 22 of a /proc/<pid>/stat line. The name (field 2) can hold spaces and ")", so count after the LAST ")". */
 export function statStartTime(line: string): string | undefined {
-  const i = line.lastIndexOf(")");
-  if (i === -1) return undefined;
-  const v = line.slice(i + 1).trim().split(/\s+/)[19];
-  return v && /^\d+$/.test(v) ? v : undefined;
+  const position = line.lastIndexOf(")");
+  if (position === -1) return undefined;
+  const part = line
+    .slice(position + 1)
+    .trim()
+    .split(/\s+/)[19];
+  return part && /^\d+$/.test(part) ? part : undefined;
 }
 
 const linuxProc: ProcReads = {
@@ -111,10 +125,11 @@ const linuxProc: ProcReads = {
   async firstSession(pid) {
     try {
       const fds = (await readdir(`/proc/${pid}/fd`)).slice(0, MAX_FDS);
+
       for (const fd of fds) {
         try {
-          const m = TASKS_LINK.exec(await readlink(`/proc/${pid}/fd/${fd}`));
-          if (m) return m[1];
+          const match = TASKS_LINK.exec(await readlink(`/proc/${pid}/fd/${fd}`));
+          if (match) return match[1];
         } catch {
           // the descriptor closed
         }
@@ -122,6 +137,7 @@ const linuxProc: ProcReads = {
     } catch {
       // another user's process, or no /proc entry
     }
+
     return undefined;
   },
   async pidNamespace() {
@@ -132,24 +148,35 @@ const linuxProc: ProcReads = {
     }
   },
 };
-const noProc: ProcReads = { startTime: async () => undefined, machineId: async () => undefined, pidNamespace: async () => undefined, firstSession: async () => undefined };
+const noProc: ProcReads = {
+  startTime: () => Promise.resolve(undefined),
+  machineId: () => Promise.resolve(undefined),
+  pidNamespace: () => Promise.resolve(undefined),
+  firstSession: () => Promise.resolve(undefined),
+};
 
 /** True when the process exists. EPERM means it exists but belongs to another user. */
 export function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
-type Entry = { sessionId: string; info: LiveInfo; updatedAt: number; socketPath?: string };
+interface Entry {
+  sessionId: string;
+  info: LiveInfo;
+  updatedAt: number;
+  socketPath?: string;
+}
 
 /** The socket path of a session file, only when it is a usable absolute path (a string, under 1025 characters, no NUL). */
-function socketOf(v: unknown): string | undefined {
-  if (typeof v !== "string" || !v.startsWith("/") || v.length > 1024 || v.includes("\0")) return undefined;
-  return v;
+function socketOf(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.startsWith("/") || value.length > 1024 || value.includes("\0"))
+    return undefined;
+  return value;
 }
 
 /**
@@ -159,22 +186,31 @@ function socketOf(v: unknown): string | undefined {
  * and the file's `pidDomain` must name this machine and this pid namespace. A value that cannot be read is not a
  * reason to skip. Without /proc (and on Windows) `kill(pid, 0)` decides.
  */
-async function liveEntries(o: { home: string; fs?: LiveFs; alive?: (pid: number) => boolean; proc?: ProcReads }): Promise<Entry[]> {
-  const fs = o.fs ?? defaultFs;
-  const alive = o.alive ?? pidAlive;
-  const proc = o.proc ?? (process.platform === "linux" ? linuxProc : noProc);
+async function liveEntries(options: {
+  home: string;
+  fs?: LiveFs;
+  alive?: (pid: number) => boolean;
+  proc?: ProcReads;
+}): Promise<Entry[]> {
+  const fs = options.fs ?? defaultFs;
+  const alive = options.alive ?? pidAlive;
+  const proc = options.proc ?? (process.platform === "linux" ? linuxProc : noProc);
   let dir: string;
+
   try {
     // O_NOFOLLOW covers only the final name: a link at .claude or .claude/sessions is caught here.
-    const realHome = await fs.realpath(o.home);
-    dir = await fs.realpath(join(o.home, ".claude", "sessions"));
+    const realHome = await fs.realpath(options.home);
+    dir = await fs.realpath(join(options.home, ".claude", "sessions"));
     if (!within(dir, realHome)) return [];
   } catch {
     return [];
   }
+
   const names: string[] = [];
+
   try {
     let seen = 0;
+
     for await (const name of fs.entries(dir)) {
       // Filter before any open: a `.key` file is never touched.
       if (name.endsWith(".json")) names.push(name);
@@ -183,27 +219,46 @@ async function liveEntries(o: { home: string; fs?: LiveFs; alive?: (pid: number)
   } catch {
     return [];
   }
-  const [machine, ns] = names.length ? await Promise.all([proc.machineId(), proc.pidNamespace()]) : [undefined, undefined];
+
+  const [machine, ns] = names.length
+    ? await Promise.all([proc.machineId(), proc.pidNamespace()])
+    : [undefined, undefined];
   const out: Entry[] = [];
+
   for (const name of names) {
-    let r: Record<string, unknown>;
+    let record: Record<string, unknown>;
+
     try {
       const bytes = await fs.readHead(join(dir, name), MAX_BYTES + 1);
       if (bytes.length > MAX_BYTES) continue;
-      const v: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"));
-      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-      r = v as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      record = parsed as Record<string, unknown>;
     } catch {
       continue;
     }
-    const { pid, sessionId, status, name: appName, nameSource, bridgeSessionId, updatedAt, procStart, pidDomain, messagingSocketPath } = r;
+
+    const {
+      pid,
+      sessionId,
+      status,
+      name: appName,
+      nameSource,
+      bridgeSessionId,
+      updatedAt,
+      procStart,
+      pidDomain,
+      messagingSocketPath,
+    } = record;
     // pid 0 and negative pids name process groups, and kill(0) or kill(-1) would succeed.
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || name !== `${pid}.json`) continue;
     if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) continue;
+
     if (typeof pidDomain === "string") {
-      const d = PID_DOMAIN.exec(pidDomain);
-      if (d && ((machine !== undefined && d[1] !== machine) || (ns !== undefined && d[2] !== ns))) continue;
+      const match = PID_DOMAIN.exec(pidDomain);
+      if (match && ((machine !== undefined && match[1] !== machine) || (ns !== undefined && match[2] !== ns))) continue;
     }
+
     const start = await proc.startTime(pid);
     if (start === "gone") continue;
     if (start !== undefined) {
@@ -213,35 +268,39 @@ async function liveEntries(o: { home: string; fs?: LiveFs; alive?: (pid: number)
     const info: LiveInfo = { remoteControl: typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 };
     if (status === "busy" || status === "idle") info.status = status;
     if (typeof appName === "string" && appName.length > 0 && appName.length <= MAX_NAME) info.name = appName;
-    if (typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 && bridgeSessionId.length <= MAX_BRIDGE) info.bridgeId = bridgeSessionId;
+    if (typeof bridgeSessionId === "string" && bridgeSessionId.length > 0 && bridgeSessionId.length <= MAX_BRIDGE)
+      info.bridgeId = bridgeSessionId;
     // Only a different id says anything: the first session of the process, when this file names a later one.
     const first = await proc.firstSession(pid);
     if (first !== undefined && first !== sessionId) info.firstSessionId = first;
     if (info.name !== undefined && nameSource === "derived") info.nameIsDefault = true;
     out.push({ sessionId, info, updatedAt: at, socketPath: socketOf(messagingSocketPath) });
   }
+
   return out;
 }
 
 /** The newest entry per session id (a later file wins only with a strictly newer `updatedAt`). */
 function newest(list: Entry[]): Map<string, Entry> {
   const out = new Map<string, Entry>();
-  for (const e of list) {
-    const prev = out.get(e.sessionId);
-    if (!prev || e.updatedAt > prev.updatedAt) out.set(e.sessionId, e);
+
+  for (const entry of list) {
+    const prev = out.get(entry.sessionId);
+    if (!prev || entry.updatedAt > prev.updatedAt) out.set(entry.sessionId, entry);
   }
+
   return out;
 }
 
 /** The running sessions under `home`, by session id. The socket path never leaves this module through this function. */
-export async function readLiveSessions(o: {
+export async function readLiveSessions(options: {
   home: string;
   fs?: LiveFs;
   alive?: (pid: number) => boolean;
   proc?: ProcReads;
 }): Promise<Map<string, LiveInfo>> {
   const result = new Map<string, LiveInfo>();
-  for (const [id, e] of newest(await liveEntries(o))) result.set(id, e.info);
+  for (const [id, entry] of newest(await liveEntries(options))) result.set(id, entry.info);
   return result;
 }
 
@@ -250,6 +309,12 @@ export async function readLiveSessions(o: {
  * is not a string, not absolute, over 1024 characters, or holds a NUL). It applies the same checks as readLiveSessions.
  * The path stays inside the server: it is not part of LiveInfo.
  */
-export async function findSessionSocket(o: { home: string; sessionId: string; fs?: LiveFs; alive?: (pid: number) => boolean; proc?: ProcReads }): Promise<string | undefined> {
-  return newest(await liveEntries(o)).get(o.sessionId)?.socketPath;
+export async function findSessionSocket(options: {
+  home: string;
+  sessionId: string;
+  fs?: LiveFs;
+  alive?: (pid: number) => boolean;
+  proc?: ProcReads;
+}): Promise<string | undefined> {
+  return newest(await liveEntries(options)).get(options.sessionId)?.socketPath;
 }

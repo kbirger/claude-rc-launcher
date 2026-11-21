@@ -2,19 +2,27 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ExitError, credsPath, deleteCreds, loadCreds, saveCreds, type Credentials } from "../src/creds";
+import { ExitError, credsPath, deleteCreds, loadCreds, saveCreds } from "../src/creds";
+import type { Credentials } from "../src/creds";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-creds-"));
 const sample: Credentials = {
-  hub: "https://rc.example.com", issuer: "https://auth.example.com/o/cli/", clientId: "cli",
-  tokenEndpoint: "https://auth.example.com/o/token/", idToken: "a.b.c", refreshToken: "r", expiresAt: 1_700_000_000,
+  hub: "https://rc.example.com",
+  issuer: "https://auth.example.com/o/cli/",
+  clientId: "cli",
+  tokenEndpoint: "https://auth.example.com/o/token/",
+  idToken: "a.b.c",
+  refreshToken: "r",
+  expiresAt: 1_700_000_000,
 };
 
 describe("credsPath", () => {
   test("XDG_CONFIG_HOME wins, then ~/.config, and APPDATA on win32", () => {
     expect(credsPath({ XDG_CONFIG_HOME: "/x" }, "linux", "/home/a")).toBe("/x/claude-rc/credentials.json");
     expect(credsPath({}, "linux", "/home/a")).toBe("/home/a/.config/claude-rc/credentials.json");
-    expect(credsPath({ APPDATA: "C:\\Users\\a\\AppData\\Roaming" }, "win32", "C:\\Users\\a")).toBe(path.win32.join("C:\\Users\\a\\AppData\\Roaming", "claude-rc", "credentials.json"));
+    expect(credsPath({ APPDATA: "C:\\Users\\a\\AppData\\Roaming" }, "win32", "C:\\Users\\a")).toBe(
+      path.win32.join("C:\\Users\\a\\AppData\\Roaming", "claude-rc", "credentials.json"),
+    );
   });
 });
 
@@ -23,6 +31,7 @@ describe("credentials file", () => {
     const file = path.join(tmp(), "sub", "credentials.json");
     saveCreds(file, sample);
     expect(loadCreds(file)).toEqual(sample);
+
     if (process.platform !== "win32") {
       expect(statSync(file).mode & 0o777).toBe(0o600);
       expect(statSync(path.dirname(file)).mode & 0o777).toBe(0o700);

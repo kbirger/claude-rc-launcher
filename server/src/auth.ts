@@ -1,18 +1,21 @@
-import { timingSafeEqual } from "node:crypto";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
+import { timingSafeEqual } from "node:crypto";
 import type { Config, OidcUserAuth } from "./config";
-import { isRole, rolesFrom, type RoleSettings } from "./roles";
-import { isAllowed, userFromClaims, type User, type UserAuthStrategy } from "./userauth";
+import { isRole, rolesFrom } from "./roles";
+import type { RoleSettings } from "./roles";
+import { isAllowed, userFromClaims } from "./userauth";
+import type { User, UserAuthStrategy } from "./userauth";
 
 export type { User };
 
 export interface OidcClient {
-  authorizationUrl(p: { redirectUri: string; state: string; codeVerifier: string }): Promise<string>;
-  exchange(p: { redirectUri: string; callbackUrl: URL; state: string; codeVerifier: string }): Promise<User>;
+  authorizationUrl(options: { redirectUri: string; state: string; codeVerifier: string }): Promise<string>;
+  exchange(options: { redirectUri: string; callbackUrl: URL; state: string; codeVerifier: string }): Promise<User>;
   /** URL that ends the identity provider session. Throws if the provider has no end-session endpoint. */
-  endSessionUrl?(p: { postLogoutRedirectUri: string }): Promise<string>;
+  endSessionUrl?(options: { postLogoutRedirectUri: string }): Promise<string>;
 }
 
 function oidcOf(cfg: Config): OidcUserAuth {
@@ -29,7 +32,8 @@ const STATE_TTL_S = 10 * 60;
 const sessionTtlS = (cfg: Config) => (oidcOf(cfg).sessionTtlHours ?? DEFAULT_SESSION_TTL_HOURS) * 60 * 60;
 
 /** The scope that the hub asks the identity provider for. */
-export const scopeFor = (roles: RoleSettings): string => ["openid", "email", "profile", ...(roles.scope ? [roles.scope] : [])].join(" ");
+export const scopeFor = (roles: RoleSettings): string =>
+  ["openid", "email", "profile", ...(roles.scope ? [roles.scope] : [])].join(" ");
 
 const redirectUriOf = (cfg: Config) => `${cfg.publicUrl.replace(/\/+$/, "")}/auth/callback`;
 const isSecure = (cfg: Config) => cfg.publicUrl.startsWith("https:");
@@ -37,11 +41,12 @@ const isSecure = (cfg: Config) => cfg.publicUrl.startsWith("https:");
 /**
  * Thin openid-client v6 adapter. NOT unit-tested: needs a live IdP.
  */
-export async function createOidcClient(cfg: Config): Promise<OidcClient> {
+export function createOidcClient(cfg: Config): OidcClient {
   const issuer = new URL(oidcOf(cfg).oidc.issuer);
   // Discovery is lazy (first login) and cached on success, so the server starts without the IdP.
   // A failed discovery is not cached; the next login retries. Auth is never bypassed.
   let pending: Promise<client.Configuration> | undefined;
+
   const getConfig = () => {
     pending ??= client
       .discovery(
@@ -51,12 +56,13 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
         undefined,
         issuer.protocol === "http:" ? { execute: [client.allowInsecureRequests] } : undefined, // loadConfig only allows http: for loopback or OIDC_ALLOW_INSECURE
       )
-      .catch((e) => {
+      .catch((error) => {
         pending = undefined;
-        throw e;
+        throw error;
       });
     return pending;
   };
+
   return {
     async authorizationUrl({ redirectUri, state, codeVerifier }) {
       const config = await getConfig();
@@ -86,9 +92,9 @@ export async function createOidcClient(cfg: Config): Promise<OidcClient> {
   };
 }
 
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
+function safeEqual(left: string, right: string): boolean {
+  const ab = Buffer.from(left);
+  const bb = Buffer.from(right);
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
@@ -96,104 +102,117 @@ function authRoutes(cfg: Config, oidc: OidcClient, now: () => number = Date.now)
   const app = new Hono();
   const secure = isSecure(cfg);
   const redirectUri = redirectUriOf(cfg);
-  const clearState = (c: Parameters<typeof deleteCookie>[0]) =>
-    deleteCookie(c, STATE_COOKIE, { path: "/auth", secure });
+  const clearState = (context: Parameters<typeof deleteCookie>[0]) =>
+    deleteCookie(context, STATE_COOKIE, { path: "/auth", secure });
 
-  app.get("/login", async (c) => {
+  app.get("/login", async (context) => {
     const state = client.randomState();
     const codeVerifier = client.randomPKCECodeVerifier();
     let location: string;
+
     try {
       location = await oidc.authorizationUrl({ redirectUri, state, codeVerifier });
-    } catch (e) {
-      console.error("OIDC discovery/authorization setup failed:", e);
-      return c.html(
-        "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Login unavailable</title><h1>Identity provider unavailable</h1><p>The identity provider could not be reached. Try again in a moment.</p><p><a href=\"/auth/login\">Retry</a></p>",
+    } catch (caught) {
+      console.error("OIDC discovery/authorization setup failed:", caught);
+      return context.html(
+        '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Login unavailable</title><h1>Identity provider unavailable</h1><p>The identity provider could not be reached. Try again in a moment.</p><p><a href="/auth/login">Retry</a></p>',
         502,
       );
     }
-    await setSignedCookie(c, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), oidcOf(cfg).sessionSecret, {
+
+    await setSignedCookie(context, STATE_COOKIE, JSON.stringify({ state, codeVerifier }), oidcOf(cfg).sessionSecret, {
       path: "/auth",
       httpOnly: true,
       sameSite: "Lax",
       secure,
       maxAge: STATE_TTL_S,
     });
-    return c.redirect(location, 302);
+    return context.redirect(location, 302);
   });
 
-  app.get("/callback", async (c) => {
+  app.get("/callback", async (context) => {
     const fail = (msg: string) => {
-      clearState(c);
-      return c.json({ error: msg }, 400);
+      clearState(context);
+      return context.json({ error: msg }, 400);
     };
-    const raw = await getSignedCookie(c, oidcOf(cfg).sessionSecret, STATE_COOKIE);
+
+    const raw = await getSignedCookie(context, oidcOf(cfg).sessionSecret, STATE_COOKIE);
     let saved: { state?: unknown; codeVerifier?: unknown } = {};
+
     try {
       if (raw) saved = JSON.parse(raw);
     } catch {
       /* treated as missing */
     }
+
     if (typeof saved.state !== "string" || typeof saved.codeVerifier !== "string") return fail("invalid login state");
-    const given = c.req.query("state");
+    const given = context.req.query("state");
     if (!given || !safeEqual(given, saved.state)) return fail("state mismatch");
 
     // Rebuild the callback URL from the configured public URL so it is correct behind a proxy.
     const callbackUrl = new URL(redirectUri);
-    callbackUrl.search = new URL(c.req.url).search;
+    callbackUrl.search = new URL(context.req.url).search;
     let user: User;
+
     try {
       user = await oidc.exchange({ redirectUri, callbackUrl, state: saved.state, codeVerifier: saved.codeVerifier });
     } catch {
       return fail("login failed");
     }
-    clearState(c);
-    if (!isAllowed(user, oidcOf(cfg).allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
-    if (user.role === "none") return c.json({ error: "access refused" }, 403);
+
+    clearState(context);
+    if (!isAllowed(user, oidcOf(cfg).allowedUsers)) return context.json({ error: "user is not allowed" }, 403);
+    if (user.role === "none") return context.json({ error: "access refused" }, 403);
     const payload = { user, exp: now() + sessionTtlS(cfg) * 1000 };
-    await setSignedCookie(c, SESSION_COOKIE, JSON.stringify(payload), oidcOf(cfg).sessionSecret, {
+    await setSignedCookie(context, SESSION_COOKIE, JSON.stringify(payload), oidcOf(cfg).sessionSecret, {
       path: "/",
       httpOnly: true,
       sameSite: "Lax",
       secure,
       maxAge: sessionTtlS(cfg),
     });
-    return c.redirect("/", 302);
+    return context.redirect("/", 302);
   });
 
-  app.get("/logout", async (c) => {
-    deleteCookie(c, SESSION_COOKIE, { path: "/", secure });
+  app.get("/logout", async (context) => {
+    deleteCookie(context, SESSION_COOKIE, { path: "/", secure });
+
     // Clearing the hub cookie is not enough: the identity provider session stays alive, so the next page load
     // signs the user straight back in. End that session too, when the provider offers an end-session endpoint.
     if (oidc.endSessionUrl) {
       try {
         const postLogoutRedirectUri = `${cfg.publicUrl.replace(/\/+$/, "")}/`;
-        return c.redirect(await oidc.endSessionUrl({ postLogoutRedirectUri }), 302);
-      } catch (e) {
-        console.error("OIDC end-session unavailable, cleared the local session only:", e);
+        return context.redirect(await oidc.endSessionUrl({ postLogoutRedirectUri }), 302);
+      } catch (caught) {
+        console.error("OIDC end-session unavailable, cleared the local session only:", caught);
       }
     }
-    return c.redirect("/", 302);
+
+    return context.redirect("/", 302);
   });
 
   return app;
 }
 
 function requireUser(cfg: Config, now: () => number = Date.now): MiddlewareHandler {
-  return async (c, next) => {
-    const user = await readSession(c, cfg, now);
+  return async (context, next) => {
+    const user = await readSession(context, cfg, now);
+
     if (!user) {
-      const p = c.req.path;
-      if (p === "/api" || p.startsWith("/api/")) return c.json({ error: "unauthenticated" }, 401);
-      return c.redirect("/auth/login", 302);
+      const requestPath = context.req.path;
+      if (requestPath === "/api" || requestPath.startsWith("/api/"))
+        return context.json({ error: "unauthenticated" }, 401);
+      return context.redirect("/auth/login", 302);
     }
+
     // The list is checked on every request, not only at login. A user who is removed from `allowed_users` loses access
     // when the hub next reads its configuration, and does not keep it until the session cookie expires.
     if (!isAllowed(user, oidcOf(cfg).allowedUsers)) {
-      deleteCookie(c, SESSION_COOKIE, { path: "/", secure: isSecure(cfg) });
-      return c.json({ error: "user is not allowed" }, 403);
+      deleteCookie(context, SESSION_COOKIE, { path: "/", secure: isSecure(cfg) });
+      return context.json({ error: "user is not allowed" }, 403);
     }
-    c.set("user", user);
+
+    context.set("user", user);
     await next();
   };
 }
@@ -205,22 +224,29 @@ export function oidcUserAuth(cfg: Config, oidc: OidcClient, now: () => number = 
 /** Test helper: returns a `Cookie` header value carrying a validly signed session. */
 export async function mintSessionCookie(cfg: Config, user: User, exp: number): Promise<string> {
   const { serializeSigned } = await import("hono/utils/cookie");
-  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), oidcOf(cfg).sessionSecret, { path: "/" });
-  return sc.split(";")[0]!;
+  const sc = await serializeSigned(SESSION_COOKIE, JSON.stringify({ user, exp }), oidcOf(cfg).sessionSecret, {
+    path: "/",
+  });
+  return sc.split(";")[0];
 }
 
-async function readSession(c: Parameters<typeof getSignedCookie>[0], cfg: Config, now: () => number): Promise<User | null> {
-  const raw = await getSignedCookie(c, oidcOf(cfg).sessionSecret, SESSION_COOKIE);
+async function readSession(
+  context: Parameters<typeof getSignedCookie>[0],
+  cfg: Config,
+  now: () => number,
+): Promise<User | null> {
+  const raw = await getSignedCookie(context, oidcOf(cfg).sessionSecret, SESSION_COOKIE);
   if (!raw) return null;
+
   try {
-    const p = JSON.parse(raw);
-    if (typeof p?.exp !== "number" || p.exp <= now()) return null;
-    const u = p.user;
-    if (typeof u?.sub !== "string" || typeof u?.name !== "string") return null;
-    const out: User = { sub: u.sub, name: u.name };
-    if (typeof u.email === "string") out.email = u.email;
-    if (typeof u.username === "string") out.username = u.username;
-    if (isRole(u.role)) out.role = u.role; // a cookie from before roles, or an unknown value, has no role and acts as read
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.exp !== "number" || parsed.exp <= now()) return null;
+    const user = parsed.user;
+    if (typeof user?.sub !== "string" || typeof user?.name !== "string") return null;
+    const out: User = { sub: user.sub, name: user.name };
+    if (typeof user.email === "string") out.email = user.email;
+    if (typeof user.username === "string") out.username = user.username;
+    if (isRole(user.role)) out.role = user.role; // a cookie from before roles, or an unknown value, has no role and acts as read
     return out;
   } catch {
     return null;

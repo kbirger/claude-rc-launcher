@@ -8,7 +8,10 @@ let calls: { url: string; init?: RequestInit }[] = [];
 function stub(status: number, body: unknown) {
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   }) as any;
 }
 

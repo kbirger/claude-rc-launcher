@@ -4,15 +4,15 @@
   import { getShell } from "#lib/shell/context";
 
   const shell = getShell();
-  const p = $derived(page.url.searchParams);
+  const params = $derived(page.url.searchParams);
   // The host in the address wins. Without one the selected host is used.
-  const host = $derived(p.get("host") || shell.flow.selected);
-  const instance = $derived(p.get("instance") ?? "");
-  const session = $derived(p.get("session") ?? "");
+  const host = $derived(params.get("host") || shell.flow.selected);
+  const instance = $derived(params.get("instance") ?? "");
+  const session = $derived(params.get("session") ?? "");
   const VIEWS = ["touched", "changed", "folder", "permissions", "blocked"] as const;
-  const view = $derived(VIEWS.find((v) => v === p.get("view")) ?? "touched");
-  const path = $derived(p.get("path") ?? "");
-  const hidden = $derived(showHidden(p.get("hidden"), path));
+  const view = $derived(VIEWS.find((name) => name === params.get("view")) ?? "touched");
+  const path = $derived(params.get("path") ?? "");
+  const hidden = $derived(showHidden(params.get("hidden"), path));
   const now = $derived(shell.now.getTime());
 </script>
 
@@ -22,7 +22,17 @@
 {:else}
   {#key `${host}|${instance}`}
     {#if session}
-      <SessionView {host} {instance} {session} {view} {path} {hidden} file={p.get("file") ?? ""} abs={p.get("abs") ?? ""} {now} />
+      <SessionView
+        {host}
+        {instance}
+        {session}
+        {view}
+        {path}
+        {hidden}
+        file={params.get("file") ?? ""}
+        abs={params.get("abs") ?? ""}
+        {now}
+      />
     {:else}
       <SessionList {host} {instance} {now} />
     {/if}

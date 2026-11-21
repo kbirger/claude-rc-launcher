@@ -16,19 +16,40 @@ vi.mock("./api", async (orig) => ({
 }));
 vi.mock("../sessions/markdown", async (orig) => {
   const real = await orig<typeof import("../sessions/markdown")>();
-  return { ...real, renderMarkdown: (t: string) => { if (t.startsWith("BOOM")) throw new Error("render failed"); return real.renderMarkdown(t); } };
+  return {
+    ...real,
+    renderMarkdown: (item: string) => {
+      if (item.startsWith("BOOM")) throw new Error("render failed");
+      return real.renderMarkdown(item);
+    },
+  };
 });
 
 const open: Array<() => void> = [];
-afterEach(() => { for (const o of open.splice(0)) o(); });
+afterEach(() => {
+  for (const helper of open.splice(0)) helper();
+});
 
 test("a body that makes renderMarkdown throw shows plain text while another body still renders as markdown", async () => {
   const target = document.createElement("div");
   document.body.append(target);
-  const entry: UpdateEntry = { host: "local", startedAt: "2026-11-13T10:00:00Z", startedBy: "t", from: "0.22.0", to: "0.24.0", status: "updated" };
-  const c = mount(ReleaseNotesHarness, { target, props: { entry } });
-  open.push(() => { unmount(c); target.remove(); });
-  await vi.waitFor(() => { flushSync(); expect(target.querySelector("[data-release='0.23.0'] .formatted-md strong")?.textContent).toBe("bold"); });
+  const entry: UpdateEntry = {
+    host: "local",
+    startedAt: "2026-11-13T10:00:00Z",
+    startedBy: "t",
+    from: "0.22.0",
+    to: "0.24.0",
+    status: "updated",
+  };
+  const mounted = mount(ReleaseNotesHarness, { target, props: { entry } });
+  open.push(() => {
+    unmount(mounted);
+    target.remove();
+  });
+  await vi.waitFor(() => {
+    flushSync();
+    expect(target.querySelector("[data-release='0.23.0'] .formatted-md strong")?.textContent).toBe("bold");
+  });
   expect(target.querySelector("[data-release='0.24.0'] pre")?.textContent).toBe("BOOM body");
   expect(target.querySelector("[data-release='0.24.0'] .formatted-md")).toBeNull();
 });

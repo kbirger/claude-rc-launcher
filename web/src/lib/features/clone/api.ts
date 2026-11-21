@@ -5,9 +5,15 @@ export type RepoGroup = { owner: string; repos: { name: string; private: boolean
 export const cloneStart = (host: string, repo: string, parent: string, user?: string) =>
   request<{ id: string; path: string }>("POST", `${hostUrl(host)}/clone`, { repo, parent, ...(user ? { user } : {}) });
 export const cloneStatus = (host: string, id: string) =>
-  request<{ state: "running" | "done" | "failed"; path?: string; error?: string }>("GET", `${hostUrl(host)}/clone/${encodeURIComponent(id)}`);
+  request<{ state: "running" | "done" | "failed"; path?: string; error?: string }>(
+    "GET",
+    `${hostUrl(host)}/clone/${encodeURIComponent(id)}`,
+  );
 export const listRepos = (host: string, user?: string) =>
-  request<{ groups: RepoGroup[] }>("GET", `${hostUrl(host)}/github/repos${user ? `?user=${encodeURIComponent(user)}` : ""}`);
+  request<{ groups: RepoGroup[] }>(
+    "GET",
+    `${hostUrl(host)}/github/repos${user ? `?user=${encodeURIComponent(user)}` : ""}`,
+  );
 // The body is always sent: the server rejects an empty body.
 export const githubLoginStart = (host: string, user?: string) =>
   request<{ id: string; code: string; url: string }>("POST", `${hostUrl(host)}/github/login`, user ? { user } : {});

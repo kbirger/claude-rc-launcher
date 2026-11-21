@@ -8,8 +8,10 @@
 
 <div class="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-warning p-2 text-xs">
   <span class="text-muted-foreground">Mock (temporary):</span>
-  {#each MOCK_NAMES as m (m.name)}
-    <Button size="sm" variant={value === m.name ? "default" : "outline"} onclick={() => onpick(m.name)}>{m.label}</Button>
+  {#each MOCK_NAMES as mock (mock.name)}
+    <Button size="sm" variant={value === mock.name ? "default" : "outline"} onclick={() => onpick(mock.name)}>
+      {mock.label}
+    </Button>
   {/each}
   <Button size="sm" variant={value === null ? "default" : "outline"} onclick={() => onpick(null)}>Live data</Button>
 </div>

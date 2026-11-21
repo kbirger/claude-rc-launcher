@@ -23,9 +23,16 @@ export function trustStartArgs(
 export type StartErrorAction = { kind: "trust"; prompt: TrustPrompt } | { kind: "error"; message: string };
 
 // What to do when a start fails. A 428 "untrusted" asks the user about trust for the folder and user the server named.
-export function startErrorAction(e: unknown, fallback: { path: string; user: string }): StartErrorAction {
-  if (e instanceof ApiError && e.status === 428 && e.body?.code === "untrusted") {
-    return { kind: "trust", prompt: { path: e.body.path ?? fallback.path, user: e.body.user ?? fallback.user } };
+export function startErrorAction(response: unknown, fallback: { path: string; user: string }): StartErrorAction {
+  if (response instanceof ApiError && response.status === 428 && response.body?.code === "untrusted") {
+    return {
+      kind: "trust",
+      prompt: {
+        path: typeof response.body.path === "string" ? response.body.path : fallback.path,
+        user: typeof response.body.user === "string" ? response.body.user : fallback.user,
+      },
+    };
   }
-  return { kind: "error", message: e instanceof ApiError ? e.message : "Failed to start" };
+
+  return { kind: "error", message: response instanceof ApiError ? response.message : "Failed to start" };
 }

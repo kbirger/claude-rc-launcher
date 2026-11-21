@@ -1,269 +1,390 @@
+import { Hono } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { join } from "node:path";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { isPwaFile } from "./static";
-import { sseResponse, trackStreams } from "./sse";
-import type { DefinitionStatus } from "./win/definition";
-import type { UpdateHistory } from "./updatehistory";
-import type { NodeEvents } from "./updateevents";
-import type { User, UserAuthStrategy } from "./userauth";
-import type { Config } from "./config";
 import { cliConfigRoute } from "./cliauth";
-import { enforceRoles, logToken } from "./roles";
-import { listDirs, makeDir, resolveChecked, type DirOwner } from "./fsapi";
 import type { Cloner } from "./cloner";
+import type { Config } from "./config";
 import { enrollmentApi } from "./enrollment";
-import type { AdoptDir } from "./ownedir";
-import { hostAdminApi } from "./hostadmin";
-import { renameHandler } from "./hostadmin";
-import { hostsApi } from "./hosts";
-import type { UpdateRecord } from "./updaterecord";
-import type { UpdateLog } from "./updatelog";
-import type { Presence } from "./nodewatcher";
-import { createUpdateTracker } from "./updatetracker";
+import { listDirs, makeDir, resolveChecked } from "./fsapi";
+import type { DirOwner } from "./fsapi";
+import { hostAdminApi, renameHandler } from "./hostadmin";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
-import { LatestError, type createLatestRelease } from "./latest";
-import type { createReleaseList } from "./releaselist";
-import { HttpError, type Instances } from "./instances";
+import { hostsApi } from "./hosts";
+import { HttpError } from "./instances";
+import type { Instances } from "./instances";
 import { SETTINGS_HELP, settingsFromArgs } from "./instancesettings";
+import { LatestError } from "./latest";
+import type { createLatestRelease } from "./latest";
+import type { Presence } from "./nodewatcher";
+import type { AdoptDir } from "./ownedir";
 import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
+import type { createReleaseList } from "./releaselist";
+import {
+  isObject,
+  parseCloneRequest,
+  parseLoginRequest,
+  parseMkdirRequest,
+  parseSettingsPatch,
+  parseStartRequest,
+  parseUpdateRequest,
+  readJson,
+} from "./requests";
+import { enforceRoles, logToken } from "./roles";
+import { UpdateRefused } from "./serviceupdate";
+import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./serviceupdate";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
-import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
-import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
+import { sseResponse, trackStreams } from "./sse";
+import { isPwaFile } from "./static";
+import type { NodeEvents } from "./updateevents";
+import type { UpdateHistory } from "./updatehistory";
+import type { UpdateLog } from "./updatelog";
+import type { UpdateRecord } from "./updaterecord";
+import { createUpdateTracker } from "./updatetracker";
+import type { User, UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
+import type { DefinitionStatus } from "./win/definition";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
-export type CliDeps = { issuer: string; clientId: string; roleScope?: string; auth: MiddlewareHandler; makeClient: (h: HostConfig) => HostClient; enrollment: { hubKeys: string[] } };
+export interface CliDeps {
+  issuer: string;
+  clientId: string;
+  roleScope?: string;
+  auth: MiddlewareHandler;
+  makeClient: (hostConfig: HostConfig) => HostClient;
+  enrollment: { hubKeys: string[] };
+}
 
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
-export type Updater = { run(release?: string): Promise<UpdateReport> };
+export interface Updater {
+  run(release?: string): Promise<UpdateReport>;
+}
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
+export interface Deps {
+  cfg: Config;
+  instances: Instances;
+  userAuth: UserAuthStrategy;
+  staticHandler?: MiddlewareHandler;
+  dirOwner?: DirOwner;
+  hostClients?: Map<string, HostClient>;
+  hosts?: HostRegistry;
+  cli?: CliDeps;
+  probeTimeoutMs?: number;
+  requestTimeoutMs?: number;
+  update?: Updater;
+  cloner?: Cloner;
+  adoptDir?: AdoptDir;
+  clientVersions?: ClientVersionsLookup;
+  latest?: ReturnType<typeof createLatestRelease>;
+  releaseList?: ReturnType<typeof createReleaseList>;
+  updates?: UpdateRecord;
+  history?: UpdateHistory;
+  updateLog?: UpdateLog;
+  presence?: { list(): Presence[]; onChange(fn: (presence: Presence) => void): () => void };
+  keepaliveMs?: number;
+}
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
 
 function csrf(cfg: Config): MiddlewareHandler {
   let allowed: string;
+
   try {
     allowed = new URL(cfg.publicUrl).origin;
   } catch {
     allowed = cfg.publicUrl;
   }
-  return async (c, next) => {
-    if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return next();
-    const media = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-    if (media !== "application/json") return c.json({ error: "content-type must be application/json" }, 415);
-    const origin = c.req.header("origin");
-    if (origin !== undefined && origin !== allowed) return c.json({ error: "forbidden origin" }, 403);
+
+  return async (context, next) => {
+    if (context.req.method === "GET" || context.req.method === "HEAD" || context.req.method === "OPTIONS")
+      return next();
+    const media = (context.req.header("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (media !== "application/json") return context.json({ error: "content-type must be application/json" }, 415);
+    const origin = context.req.header("origin");
+    if (origin !== undefined && origin !== allowed) return context.json({ error: "forbidden origin" }, 403);
     return next();
   };
 }
 
 /** `adoptDir` replaces the owner change of a new folder (tests). */
-export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined; sessions?: SessionCatalog };
+export interface InstanceApiDeps {
+  cfg: Config;
+  instances: Instances;
+  clientVersions?: ClientVersionsLookup;
+  dirOwner?: DirOwner;
+  update?: Updater;
+  cloner?: Cloner;
+  adoptDir?: AdoptDir;
+  definition?: () => DefinitionStatus | undefined;
+  sessions?: SessionCatalog;
+}
 
 /** The session catalog of one app. Each app factory builds one, so that all its session routes share one name cache. */
 function sessionCatalogFor(cfg: Config): SessionCatalog {
   // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
-  const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
+  const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
   const dir = cfg.node?.tls.stateDir ?? cfg.stateDir;
-  return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json"), nameFile: join(dir, "session-names.json") } : {}) });
+  return new SessionCatalog({
+    refuseDirs,
+    ...(dir ? { chainFile: join(dir, "session-chains.json"), nameFile: join(dir, "session-names.json") } : {}),
+  });
 }
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
   const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
-  const r = new Hono();
+  const hono = new Hono();
 
-  r.get("/node", async (c) => {
+  hono.get("/node", async (context) => {
     let clients: ClientVersion[] | undefined = [];
+
     try {
       clients = (await clientVersions?.()) ?? [];
-    } catch (e) {
+    } catch (caught) {
       clients = undefined; // no `clients` field: the hub shows "client not reported", not "no client"
-      console.error(`client versions failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`client versions failed: ${caught instanceof Error ? caught.message : String(caught)}`);
     }
+
     const definition = deps.definition?.();
-    return c.json({ ok: true, name: cfg.name, version: VERSION, platform: process.platform, clone: cloner !== undefined, ...(clients ? { clients } : {}), ...(definition ? { definition } : {}) });
+    return context.json({
+      ok: true,
+      name: cfg.name,
+      version: VERSION,
+      platform: process.platform,
+      clone: cloner !== undefined,
+      ...(clients ? { clients } : {}),
+      ...(definition ? { definition } : {}),
+    });
   });
-  r.post("/update", async (c) => {
-    const { release } = parseUpdateRequest(await readJson(c));
+  hono.post("/update", async (context) => {
+    const { release } = parseUpdateRequest(await readJson(context));
     if (!update) throw new HttpError(501, "update is not available on this host");
     let report: UpdateReport;
+
     try {
       report = await update.run(release);
-    } catch (e) {
-      if (e instanceof UpdateRefused) throw new HttpError(e.status, e.message);
-      console.error(e);
+    } catch (caught) {
+      if (caught instanceof UpdateRefused) throw new HttpError(caught.status, caught.message);
+      console.error(caught);
       // On purpose the message goes back to the caller: an authenticated admin needs the reason in the update report.
-      throw new HttpError(500, e instanceof Error ? e.message : String(e));
+      throw new HttpError(500, caught instanceof Error ? caught.message : String(caught));
     }
+
     // Client files changed, so the cached client versions are old.
-    if (report.status === "clients-only" || report.status === "restarting" || report.clients.some((x) => x.status === "updated")) clientVersions?.reset?.();
+    if (
+      report.status === "clients-only" ||
+      report.status === "restarting" ||
+      report.clients.some((clientResult) => clientResult.status === "updated")
+    )
+      clientVersions?.reset?.();
     // 202: the watchdog restarts the service a moment after this answer is sent.
-    return c.json(report, report.status === "restarting" ? 202 : 200);
+    return context.json(report, report.status === "restarting" ? 202 : 200);
   });
 
-  r.get("/instances", async (c) => c.json(await instances.list()));
-  r.post("/instances", async (c) => {
-    const input = parseStartRequest(await readJson(c));
+  hono.get("/instances", async (context) => context.json(await instances.list()));
+  hono.post("/instances", async (context) => {
+    const input = parseStartRequest(await readJson(context));
     // A folder that git still writes to is not ready, and a failed clone removes it. This check comes before trust.
     const busy = cloner?.activeClones() ?? [];
+
     if (busy.length > 0) {
       // Resolved as `start` resolves it. A path that does not resolve goes on to `start`, which gives its own error.
       const real = await resolveChecked(input.path, cfg.roots).catch(() => undefined);
-      if (real !== undefined && busy.some((t) => within(real, t))) throw new HttpError(409, "a clone is still running in that folder");
+      if (real !== undefined && busy.some((item) => within(real, item)))
+        throw new HttpError(409, "a clone is still running in that folder");
     }
+
     const { createSession, spawnMode, ...rest } = input;
-    const settings = { ...(createSession === undefined ? {} : { createSession }), ...(spawnMode === undefined ? {} : { spawnMode }) };
-    return c.json(await instances.start({ ...rest, ...(Object.keys(settings).length > 0 ? { settings } : {}) }), 201);
+    const settings = {
+      ...(createSession === undefined ? {} : { createSession }),
+      ...(spawnMode === undefined ? {} : { spawnMode }),
+    };
+    return context.json(
+      await instances.start({ ...rest, ...(Object.keys(settings).length > 0 ? { settings } : {}) }),
+      201,
+    );
   });
-  r.delete("/instances/:id", async (c) => {
-    const id = c.req.param("id");
+  hono.delete("/instances/:id", async (context) => {
+    const id = context.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     await instances.stop(id);
-    return c.body(null, 204);
+    return context.body(null, 204);
   });
-  r.post("/instances/:id/pause", async (c) => {
-    const id = c.req.param("id");
+  hono.post("/instances/:id/pause", async (context) => {
+    const id = context.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.pause) throw new HttpError(501, "pause is not supported on this node");
     await instances.pause(id);
-    return c.body(null, 204);
+    return context.body(null, 204);
   });
-  r.post("/instances/:id/resume", async (c) => {
-    const id = c.req.param("id");
+  hono.post("/instances/:id/resume", async (context) => {
+    const id = context.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.resume) throw new HttpError(501, "resume is not supported on this node");
     await instances.resume(id);
-    return c.body(null, 204);
+    return context.body(null, 204);
   });
   // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
-  r.get("/instance-settings", (c) => c.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs ?? []) }));
-  r.patch("/instances/:id", async (c) => {
-    const id = c.req.param("id");
+  hono.get("/instance-settings", (context) =>
+    context.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs ?? []) }),
+  );
+  hono.patch("/instances/:id", async (context) => {
+    const id = context.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
-    const patch = parseSettingsPatch(await readJson(c));
+    const patch = parseSettingsPatch(await readJson(context));
     if (!instances.update) throw new HttpError(501, "settings are not supported on this node");
-    return c.json(await instances.update(id, patch));
+    return context.json(await instances.update(id, patch));
   });
-  r.post("/instances/:id/restart", async (c) => {
-    const id = c.req.param("id");
+  hono.post("/instances/:id/restart", async (context) => {
+    const id = context.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
     if (!instances.restart) throw new HttpError(501, "restart is not supported on this node");
     await instances.restart(id);
-    return c.body(null, 204);
+    return context.body(null, 204);
   });
-  r.get("/instances/:id/logs", async (c) => {
-    const id = c.req.param("id");
+  hono.get("/instances/:id/logs", async (context) => {
+    const id = context.req.param("id");
     if (!ID_RE.test(id)) throw new HttpError(400, "invalid instance id");
-    const raw = c.req.query("lines");
+    const raw = context.req.query("lines");
     let lines = 100;
+
     if (raw !== undefined) {
       if (!/^-?\d+$/.test(raw)) throw new HttpError(400, "lines must be an integer");
       lines = Number.parseInt(raw, 10);
     }
-    return c.json({ log: await instances.logs(id, lines) });
+
+    return context.json({ log: await instances.logs(id, lines) });
   });
 
-  r.get("/users", async (c) => c.json(await instances.users()));
-  r.get("/fs", async (c) => {
-    const user = c.req.query("user");
+  hono.get("/users", async (context) => context.json(await instances.users()));
+  hono.get("/fs", async (context) => {
+    const user = context.req.query("user");
     if (user === "") throw new HttpError(400, "user must not be empty");
     const trusted = await instances.trustFilter(user);
-    return c.json(await listDirs(c.req.query("path"), cfg.roots, false, trusted));
+    return context.json(await listDirs(context.req.query("path"), cfg.roots, false, trusted));
   });
-  r.post("/fs/mkdir", async (c) => {
-    const body = parseMkdirRequest(await readJson(c));
+  hono.post("/fs/mkdir", async (context) => {
+    const body = parseMkdirRequest(await readJson(context));
     // The owner is resolved first, so an unknown user makes no folder.
     const owner = body.user === undefined ? dirOwner : ((await instances.dirOwnerFor(body.user)) ?? dirOwner);
-    return c.json(await makeDir(body.parent, body.name, cfg.roots, owner, adoptDir), 201);
+    return context.json(await makeDir(body.parent, body.name, cfg.roots, owner, adoptDir), 201);
   });
 
   if (cloner) {
-    r.post("/clone", async (c) => c.json(await cloner.cloneStart(parseCloneRequest(await readJson(c))), 202));
-    r.get("/clone/:id", async (c) => {
-      const id = c.req.param("id");
+    hono.post("/clone", async (context) =>
+      context.json(await cloner.cloneStart(parseCloneRequest(await readJson(context))), 202),
+    );
+    hono.get("/clone/:id", async (context) => {
+      const id = context.req.param("id");
       if (!LOGIN_ID_RE.test(id)) throw new HttpError(400, "invalid clone id");
-      return c.json(await cloner.cloneStatus(id));
+      return context.json(await cloner.cloneStatus(id));
     });
-    r.get("/github/repos", async (c) => {
-      const user = c.req.query("user");
+    hono.get("/github/repos", async (context) => {
+      const user = context.req.query("user");
       if (user === "") throw new HttpError(400, "user must not be empty");
-      return c.json(await cloner.repos(user));
+      return context.json(await cloner.repos(user));
     });
-    r.post("/github/login", async (c) => c.json(await cloner.loginStart(parseLoginRequest(await readJson(c)).user), 202));
-    r.get("/github/login/:id", async (c) => {
-      const id = c.req.param("id");
+    hono.post("/github/login", async (context) =>
+      context.json(await cloner.loginStart(parseLoginRequest(await readJson(context)).user), 202),
+    );
+    hono.get("/github/login/:id", async (context) => {
+      const id = context.req.param("id");
       if (!LOGIN_ID_RE.test(id)) throw new HttpError(400, "invalid login id");
-      return c.json(await cloner.loginStatus(id));
+      return context.json(await cloner.loginStatus(id));
     });
   }
 
   const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
-  r.route("/instances/:id/sessions", sessionApi({ instances, sessions: sessionCatalog }));
-  r.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
+  hono.route("/instances/:id/sessions", sessionApi({ instances, sessions: sessionCatalog }));
+  hono.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
 
-  r.all("*", (c) => c.json({ error: "not found" }, 404));
-  return r;
+  hono.all("*", (context) => context.json({ error: "not found" }, 404));
+  return hono;
 }
 
-export function onError(err: Error, c: Context) {
+export function onError(err: Error, context: Context) {
   if (err instanceof HttpError || err instanceof PathError) {
     const extra = err instanceof HttpError ? err.extra : undefined;
-    return c.json({ ...(isObject(extra) ? extra : {}), error: err.message }, err.status as 400);
+    return context.json({ ...(isObject(extra) ? extra : {}), error: err.message }, err.status as 400);
   }
+
   console.error(err);
-  return c.json({ error: "internal error" }, 500);
+  return context.json({ error: "internal error" }, 500);
 }
 
-const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
+const isWrite = (method: string) => method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 
 /** A node accepts at most this many open event connections. */
 const MAX_EVENT_CONNECTIONS = 8;
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined }): Hono {
+export function createNodeApp(deps: {
+  cfg: Config;
+  instances: Instances;
+  auth: MiddlewareHandler;
+  dirOwner?: DirOwner;
+  update?: Updater;
+  cloner?: Cloner;
+  clientVersions?: ClientVersionsLookup;
+  events?: NodeEvents;
+  keepaliveMs?: number;
+  definition?: () => DefinitionStatus | undefined;
+}): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   trackStreams(app);
-  app.get("/healthz", (c) => c.json({ ok: true }));
+  app.get("/healthz", (context) => context.json({ ok: true }));
 
   const api = new Hono();
   api.use("*", auth);
-  api.use("*", async (c, next) => {
-    if (!isWrite(c.req.method)) return next();
-    const media = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-    if (media !== "application/json") return c.json({ error: "content-type must be application/json" }, 415);
+  api.use("*", async (context, next) => {
+    if (!isWrite(context.req.method)) return next();
+    const media = (context.req.header("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (media !== "application/json") return context.json({ error: "content-type must be application/json" }, 415);
     await next();
   });
-  api.use("*", async (c, next) => {
+  api.use("*", async (context, next) => {
     await next();
-    if (isWrite(c.req.method)) {
-      const act = c.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
+
+    if (isWrite(context.req.method)) {
+      const act = context.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
       const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
-      console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")}${actPart} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
+      console.log(
+        `audit caller=${String(context.get("caller" as never) ?? "unknown")}${actPart} ${context.req.method} ${new URL(context.req.url).pathname} ${context.res.status}`,
+      );
     }
   });
+
   if (events) {
     let open = 0;
-    api.get("/events", (c) => {
-      if (open >= MAX_EVENT_CONNECTIONS) return c.json({ error: "too many event connections" }, 429);
+    api.get("/events", (context) => {
+      if (open >= MAX_EVENT_CONNECTIONS) return context.json({ error: "too many event connections" }, 429);
       open++;
       const keepaliveMs = deps.keepaliveMs ?? 15_000;
-      return sseResponse(c, async (stream) => {
+      return sseResponse(context, async (stream) => {
         let unsubscribe = () => {};
+
         const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
-        const done = new Promise<void>((resolve) => stream.onAbort(resolve));
+        const done = new Promise<void>((resolve) => {
+          stream.onAbort(resolve);
+        });
+
         try {
           // Queue the snapshot and the kept lines, then listen, all without a gap. The stream keeps the order of the writes.
-          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }) })];
-          for (const l of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(l) }));
-          unsubscribe = events.subscribe((e) => {
-            const { type, ...data } = e;
+          const first = [
+            stream.writeSSE({
+              event: "snapshot",
+              data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }),
+            }),
+          ];
+          for (const line of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(line) }));
+          unsubscribe = events.subscribe((nodeEvent) => {
+            const { type, ...data } = nodeEvent;
             void stream.writeSSE({ event: type, data: JSON.stringify(data) }).catch(() => {});
           });
           await Promise.all(first);
@@ -276,8 +397,21 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       });
     });
   }
+
   const sessions = sessionCatalogFor(cfg);
-  api.route("/", instanceApi({ cfg, instances, dirOwner, sessions, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
+  api.route(
+    "/",
+    instanceApi({
+      cfg,
+      instances,
+      dirOwner,
+      sessions,
+      ...(deps.definition ? { definition: deps.definition } : {}),
+      ...(update ? { update } : {}),
+      ...(cloner ? { cloner } : {}),
+      ...(clientVersions ? { clientVersions } : {}),
+    }),
+  );
   app.route("/api", api);
   app.onError(onError);
   return app;
@@ -288,7 +422,7 @@ export function createApp(deps: Deps): Hono {
   const app = new Hono();
   trackStreams(app);
 
-  app.get("/healthz", (c) => c.json({ ok: true }));
+  app.get("/healthz", (context) => context.json({ ok: true }));
   if (userAuth.routes) app.route("/auth", userAuth.routes);
 
   const api = new Hono();
@@ -296,45 +430,73 @@ export function createApp(deps: Deps): Hono {
   api.use("*", enforceRoles("/api"));
   api.use("*", csrf(cfg));
 
-  api.get("/me", (c) => c.json({ ...(c.get("user" as never) as User), ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}) }));
+  api.get("/me", (context) =>
+    context.json({
+      ...(context.get("user" as never) as User),
+      ...(userAuth.logoutUrl ? { logoutUrl: userAuth.logoutUrl } : {}),
+    }),
+  );
 
-  api.get("/latest", async (c) => {
+  api.get("/latest", async (context) => {
     if (!deps.latest) throw new HttpError(501, "latest release is not available on this host");
+
     try {
-      return c.json(await deps.latest.get());
-    } catch (e) {
-      if (e instanceof LatestError) throw new HttpError(503, e.message);
-      throw e;
+      return context.json(await deps.latest.get());
+    } catch (error) {
+      if (error instanceof LatestError) throw new HttpError(503, error.message);
+      throw error;
     }
   });
 
-  api.get("/release-notes", async (c) => {
+  api.get("/release-notes", async (context) => {
     if (!deps.releaseList) throw new HttpError(501, "release notes are not available on this host");
-    const from = c.req.query("from");
-    const to = c.req.query("to");
+    const from = context.req.query("from");
+    const to = context.req.query("to");
     if (!from || !to) throw new HttpError(400, "from and to are required");
-    return c.json(await deps.releaseList.between(from, to));
+    return context.json(await deps.releaseList.between(from, to));
   });
 
   const registry = deps.hosts ?? HostRegistry.memory(cfg.hosts, deps.hostClients ?? new Map());
+
   const probeVersion = async (host: string): Promise<string | undefined> => {
     try {
-      const r = await registry.get(host)?.client.call("GET", "/api/node", { timeoutMs: deps.probeTimeoutMs ?? 3_000 });
-      const v = r && isObject(r.body) ? r.body.version : undefined;
-      return typeof v === "string" ? v : undefined;
+      const response = await registry
+        .get(host)
+        ?.client.call("GET", "/api/node", { timeoutMs: deps.probeTimeoutMs ?? 3_000 });
+      const value = response && isObject(response.body) ? response.body.version : undefined;
+      return typeof value === "string" ? value : undefined;
     } catch {
       return undefined;
     }
   };
+
   const updates = deps.updates
-    ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion, ...(deps.presence ? { presence: deps.presence } : {}) }), probe: probeVersion }
+    ? {
+        record: deps.updates,
+        tracker: createUpdateTracker({
+          record: deps.updates,
+          hubVersion: VERSION,
+          probe: probeVersion,
+          ...(deps.presence ? { presence: deps.presence } : {}),
+        }),
+        probe: probeVersion,
+      }
     : undefined;
   // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
   const sessions = sessionCatalogFor(cfg);
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({ cfg, instances, dirOwner, sessions, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) }),
+      local: instanceApi({
+        cfg,
+        instances,
+        dirOwner,
+        sessions,
+        ...(update ? { update } : {}),
+        ...(cloner ? { cloner } : {}),
+        ...(adoptDir ? { adoptDir } : {}),
+        ...(clientVersions ? { clientVersions } : {}),
+      }),
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
@@ -342,57 +504,88 @@ export function createApp(deps: Deps): Hono {
       ...(updates ? { updates } : {}),
     });
   // The web page renames a host. It cannot add or remove one: that stays with the CLI.
-  api.patch("/hosts/:id", async (c, next) => {
-    await renameHandler(registry)(c, next);
-    const u = c.get("user" as never) as User | undefined;
-    console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
+  api.patch("/hosts/:id", async (context, next) => {
+    await renameHandler(registry)(context, next);
+    const response = context.get("user" as never) as User | undefined;
+    console.log(
+      `audit user=${response?.username ?? response?.sub ?? "unknown"} role=${response?.role ?? "read"} host=${context.req.param("id")} PATCH ${new URL(context.req.url).pathname} ${context.res.status}`,
+    );
   });
   api.route("/hosts", forwarding());
-  api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));
-  api.get("/updates", (c) => (deps.updates ? c.json(deps.updates.list()) : c.json({ error: "update record not available" }, 501)));
+  api.get("/updates/history", (context) =>
+    deps.history ? context.json(deps.history.list()) : context.json({ error: "update history not available" }, 501),
+  );
+  api.get("/updates", (context) =>
+    deps.updates ? context.json(deps.updates.list()) : context.json({ error: "update record not available" }, 501),
+  );
   /** The hub stream: a snapshot, then `update`, `log` and `presence` events. Used by the browser route and the CLI route. */
   let openStreams = 0;
-  const hubEvents = (c: Context): Response => {
+
+  const hubEvents = (context: Context): Response => {
     const record = deps.updates;
-    if (!record) return c.json({ error: "update record not available" }, 501);
+    if (!record) return context.json({ error: "update record not available" }, 501);
     const keepaliveMs = deps.keepaliveMs ?? 15_000;
-    return sseResponse(c, async (stream) => {
+    return sseResponse(context, async (stream) => {
       const openedAt = Date.now();
       openStreams++;
       console.log(`[events] stream opened (${openStreams} open)`);
-      const send = (event: string, data: unknown) => void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
+      const send = (event: string, data: unknown) =>
+        void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
       // Listen before reading the state so a change in between is not lost (a duplicate is fine: the client replaces by host).
       const offs = [
-        record.onChange((e) => send("update", e)),
-        deps.updateLog ? deps.updateLog.onLine((l) => send("log", l)) : () => {},
-        deps.presence ? deps.presence.onChange((p) => send("presence", p)) : () => {},
+        record.onChange((updateEntry) => {
+          send("update", updateEntry);
+        }),
+        deps.updateLog
+          ? deps.updateLog.onLine((event) => {
+              send("log", event);
+            })
+          : () => {},
+        deps.presence
+          ? deps.presence.onChange((presence) => {
+              send("presence", presence);
+            })
+          : () => {},
       ];
       const timer = setInterval(() => void stream.write(": keepalive\n\n").catch(() => {}), keepaliveMs);
       let closed = false;
+
       const close = () => {
         if (closed) return;
         closed = true;
         clearInterval(timer);
         for (const off of offs) off();
         openStreams--;
-        console.log(`[events] stream closed after ${Math.round((Date.now() - openedAt) / 1000)}s (${openStreams} open)`);
+        console.log(
+          `[events] stream closed after ${Math.round((Date.now() - openedAt) / 1000)}s (${openStreams} open)`,
+        );
       };
-      const done = new Promise<void>((resolve) =>
+
+      const done = new Promise<void>((resolve) => {
         stream.onAbort(() => {
           close();
           resolve();
-        }),
-      );
+        });
+      });
+
       try {
-        await stream.writeSSE({ event: "snapshot", data: JSON.stringify({ updates: record.list(), logs: deps.updateLog?.all() ?? {}, presence: deps.presence?.list() ?? [] }) });
+        await stream.writeSSE({
+          event: "snapshot",
+          data: JSON.stringify({
+            updates: record.list(),
+            logs: deps.updateLog?.all() ?? {},
+            presence: deps.presence?.list() ?? [],
+          }),
+        });
         await done;
       } finally {
         close();
       }
     });
   };
+
   api.get("/events", hubEvents);
-  api.all("*", (c) => c.json({ error: "not found" }, 404));
+  api.all("*", (context) => context.json({ error: "not found" }, 404));
   app.route("/api", api);
 
   if (deps.cli) {
@@ -402,18 +595,23 @@ export function createApp(deps: Deps): Hono {
     cliApi.use("*", cli.auth);
     cliApi.use("*", enforceRoles("/cli/api"));
     cliApi.use("*", csrf(cfg));
-    cliApi.get("/me", (c) => c.json(c.get("user" as never) as User));
+    cliApi.get("/me", (context) => context.json(context.get("user" as never) as User));
     cliApi.get("/events", hubEvents);
     cliApi.route("/node-enrollment", enrollmentApi(cli.enrollment));
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());
-    cliApi.all("*", (c) => c.json({ error: "not found" }, 404));
+    cliApi.all("*", (context) => context.json({ error: "not found" }, 404));
     app.route("/cli/api", cliApi);
-    app.all("/cli/*", (c) => c.json({ error: "not found" }, 404));
+    app.all("/cli/*", (context) => context.json({ error: "not found" }, 404));
   }
 
-  if (staticHandler) app.get("*", (c, next) => (isPwaFile(new URL(c.req.url).pathname) ? next() : userAuth.middleware(c, next)), staticHandler);
+  if (staticHandler)
+    app.get(
+      "*",
+      (context, next) => (isPwaFile(new URL(context.req.url).pathname) ? next() : userAuth.middleware(context, next)),
+      staticHandler,
+    );
 
   app.onError(onError);
 

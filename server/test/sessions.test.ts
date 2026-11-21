@@ -4,33 +4,53 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LiveInfo } from "../src/livesessions";
 import { SessionCatalog } from "../src/sessioncatalog";
-import { newNameCache, type NameCache } from "../src/sessionnames";
+import { newNameCache } from "../src/sessionnames";
+import type { NameCache } from "../src/sessionnames";
 import { scan } from "../src/sessionscan";
 import { touchedIn } from "../src/touched";
 import { encodeProjectDir, SESSION_ID } from "../src/transcript";
-import { defaultTranscriptFs, type TranscriptFs } from "../src/transcriptfs";
+import { defaultTranscriptFs } from "../src/transcriptfs";
+import type { TranscriptFs } from "../src/transcriptfs";
+import { defined } from "./support";
 
-type Query = { home: string, path: string, sessionId: string, fs?: TranscriptFs };
+interface Query {
+  home: string;
+  path: string;
+  sessionId: string;
+  fs?: TranscriptFs;
+}
 
 // Test-local helpers: the old function names and parameters, built on the session classes, so that no call site changes.
-const listSessions = (o: { home: string, path: string, fs?: TranscriptFs, names?: NameCache, live?: ReadonlyMap<string, LiveInfo> }) =>
-  new SessionCatalog({ fs: o.fs, names: o.names, live: async () => o.live ?? new Map() }).instance(o).list();
+const listSessions = (options: {
+  home: string;
+  path: string;
+  fs?: TranscriptFs;
+  names?: NameCache;
+  live?: ReadonlyMap<string, LiveInfo>;
+}) =>
+  new SessionCatalog({ fs: options.fs, names: options.names, live: () => Promise.resolve(options.live ?? new Map()) })
+    .instance(options)
+    .list();
 
-const findSession = async (o: Query) => {
-  const s = await new SessionCatalog({ fs: o.fs }).instance(o).find(o.sessionId);
-  return s && { root: s.root, worktree: s.worktree, file: s.file };
+const findSession = async (query: Query) => {
+  const session = await new SessionCatalog({ fs: query.fs }).instance(query).find(query.sessionId);
+  return session && { root: session.root, worktree: session.worktree, file: session.file };
 };
 
-const sessionRootOf = async (o: Query) => (await new SessionCatalog({ fs: o.fs }).instance(o).find(o.sessionId))?.root;
+const sessionRootOf = async (query: Query) =>
+  (await new SessionCatalog({ fs: query.fs }).instance(query).find(query.sessionId))?.root;
 
 // The old touchedFiles wrapper, unchanged, on top of scan and touchedIn. It does not go through the Session class:
 // some tests pass a root that differs from the transcript cwd, or a transcript file to skip the scan.
-const touchedFiles = async (o: Query & { root: string, file?: string, platform?: NodeJS.Platform, dirs?: readonly string[] }) => {
-  if (!SESSION_ID.test(o.sessionId)) return [];
-  const fs = o.fs ?? defaultTranscriptFs;
-  const file = o.file ?? (await scan({ home: o.home, path: o.path, fs, only: o.sessionId }))[0]?.file;
+const touchedFiles = async (
+  options: Query & { root: string; file?: string; platform?: NodeJS.Platform; dirs?: readonly string[] },
+) => {
+  if (!SESSION_ID.test(options.sessionId)) return [];
+  const fs = options.fs ?? defaultTranscriptFs;
+  const file =
+    options.file ?? (await scan({ home: options.home, path: options.path, fs, only: options.sessionId }))[0]?.file;
   if (!file) return [];
-  return touchedIn({ fs, file, root: o.root, platform: o.platform, dirs: o.dirs });
+  return touchedIn({ fs, file, root: options.root, platform: options.platform, dirs: options.dirs });
 };
 
 const HOME = "/h";
@@ -43,32 +63,34 @@ type Files = Record<string, { mtimeMs?: number; size?: number; lines: string[]; 
 
 function fakeFs(files: Files, calls?: { lines: number; tail: number }): TranscriptFs {
   return {
-    async tail(p) {
+    tail(path) {
       if (calls) calls.tail++;
-      return files[p]?.tail ?? files[p]?.lines ?? [];
+      return Promise.resolve(files[path]?.tail ?? files[path]?.lines ?? []);
     },
-    async readdir(dir) {
+    readdir(dir) {
       const prefix = dir.endsWith("/") ? dir : dir + "/";
       const names = new Set<string>();
-      for (const f of Object.keys(files)) {
-        if (f.startsWith(prefix)) names.add(f.slice(prefix.length).split("/")[0]);
+
+      for (const key of Object.keys(files)) {
+        if (key.startsWith(prefix)) names.add(key.slice(prefix.length).split("/")[0]);
       }
-      if (names.size === 0 && dir !== "/h/.claude/projects") throw new Error("ENOENT");
-      return [...names];
+
+      if (names.size === 0 && dir !== "/h/.claude/projects") return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve([...names]);
     },
-    async stat(p) {
-      const f = files[p];
-      if (!f) throw new Error("ENOENT");
-      return { mtimeMs: f.mtimeMs ?? 1000, size: f.size };
+    stat(path) {
+      const file = files[path];
+      if (!file) return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve({ mtimeMs: file.mtimeMs ?? 1000, size: file.size });
     },
-    async *lines(p) {
+    async *lines(path) {
       if (calls) calls.lines++;
-      for (const l of files[p]?.lines ?? []) yield l;
+      for (const value of files[path]?.lines ?? []) yield value;
     },
   };
 }
 
-const rec = (o: object) => JSON.stringify(o);
+const rec = (entry: object) => JSON.stringify(entry);
 const user = (cwd: string, extra: object = {}) =>
   rec({ type: "user", cwd, timestamp: "2026-01-01T00:00:00.000Z", gitBranch: "main", ...extra });
 const tool = (name: string, input: object, at: string) =>
@@ -79,16 +101,30 @@ let nextId = 0;
 const use = (name: string, input: object, at: string, id = `toolu_${++nextId}`) =>
   rec({ type: "assistant", timestamp: at, message: { content: [{ type: "tool_use", id, name, input }] } });
 const result = (id: string, extra: object = {}, type = "user") =>
-  rec({ type, timestamp: "2026-01-01T00:00:59.000Z", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok", ...extra }] } });
+  rec({
+    type,
+    timestamp: "2026-01-01T00:00:59.000Z",
+    message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok", ...extra }] },
+  });
+
 /** A Write or Edit that succeeded: the use and its result. */
 const wrote = (name: string, input: object, at: string): string[] => {
   const id = `toolu_ok_${++nextId}`;
   return [use(name, input, at, id), result(id)];
 };
+
 const touched = (lines: string[], extra: object = {}) =>
-  touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs: fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...lines] } }), ...extra });
-const confirmedPaths = async (lines: string[]) => (await touched(lines)).filter((t) => t.confirmed).map((t) => t.path);
-const T = "2026-01-01T00:00:01.000Z";
+  touchedFiles({
+    home: HOME,
+    path: PATH,
+    sessionId: ID1,
+    root: PATH,
+    fs: fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...lines] } }),
+    ...extra,
+  });
+const confirmedPaths = async (lines: string[]) =>
+  (await touched(lines)).filter((touchedFile) => touchedFile.confirmed).map((touchedFile) => touchedFile.path);
+const item = "2026-01-01T00:00:01.000Z";
 
 describe("sessions", () => {
   test("encodeProjectDir turns every non-alphanumeric character into a dash", () => {
@@ -133,20 +169,29 @@ describe("sessions", () => {
     );
     // h = 31*h + unit over every UTF-16 unit, as a signed 32-bit integer, then abs and base 36: worked out with an
     // independent implementation.
-    const p = "/srv/" + "abcdefghij".repeat(25);
-    const e = encodeProjectDir(p);
-    expect(e.length).toBe(200 + 1 + "cd2rdw".length);
-    expect(e.endsWith("-cd2rdw")).toBe(true);
-    expect(e.slice(0, 200)).toBe(p.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 200));
+    const entry = "/srv/" + "abcdefghij".repeat(25);
+    const value = encodeProjectDir(entry);
+    expect(value.length).toBe(200 + 1 + "cd2rdw".length);
+    expect(value.endsWith("-cd2rdw")).toBe(true);
+    expect(value.slice(0, 200)).toBe(entry.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 200));
   });
 
   test("listSessions returns the first cwd as the root and ignores later cwd values", async () => {
     const fs = fakeFs({
-      [`${proj("-work-proj")}/${ID1}.jsonl`]: { mtimeMs: Date.UTC(2026, 0, 2), lines: [user(PATH), user("/work/proj/sub", { gitBranch: "x" })] },
+      [`${proj("-work-proj")}/${ID1}.jsonl`]: {
+        mtimeMs: Date.UTC(2026, 0, 2),
+        lines: [user(PATH), user("/work/proj/sub", { gitBranch: "x" })],
+      },
     });
     const out = await listSessions({ home: HOME, path: PATH, fs });
     expect(out).toEqual([
-      { id: ID1, root: PATH, branch: "main", startedAt: "2026-01-01T00:00:00.000Z", lastActiveAt: "2026-01-02T00:00:00.000Z" },
+      {
+        id: ID1,
+        root: PATH,
+        branch: "main",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-02T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -155,28 +200,31 @@ describe("sessions", () => {
       [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: ["not json", user(PATH), '{"type":"user","cw'] },
     });
     const out = await listSessions({ home: HOME, path: PATH, fs });
-    expect(out.map((s) => s.root)).toEqual([PATH]);
+    expect(out.map((sessionSummary) => sessionSummary.root)).toEqual([PATH]);
   });
 
   test("listSessions ignores files that are not a session id followed by .jsonl", async () => {
-    const d = proj("-work-proj");
+    const entry = proj("-work-proj");
     const fs = fakeFs({
-      [`${d}/${ID1}.jsonl`]: { lines: [user(PATH)] },
-      [`${d}/notes.jsonl`]: { lines: [user(PATH)] },
-      [`${d}/${ID2}.json`]: { lines: [user(PATH)] },
-      [`${d}/${ID2}/subagents/agent-1.jsonl`]: { lines: [user(PATH)] },
+      [`${entry}/${ID1}.jsonl`]: { lines: [user(PATH)] },
+      [`${entry}/notes.jsonl`]: { lines: [user(PATH)] },
+      [`${entry}/${ID2}.json`]: { lines: [user(PATH)] },
+      [`${entry}/${ID2}/subagents/agent-1.jsonl`]: { lines: [user(PATH)] },
     });
     const out = await listSessions({ home: HOME, path: PATH, fs });
-    expect(out.map((s) => s.id)).toEqual([ID1]);
+    expect(out.map((sessionSummary) => sessionSummary.id)).toEqual([ID1]);
   });
 
   test("listSessions sorts newest first", async () => {
-    const d = proj("-work-proj");
+    const entry = proj("-work-proj");
     const fs = fakeFs({
-      [`${d}/${ID1}.jsonl`]: { mtimeMs: 1000, lines: [user(PATH)] },
-      [`${d}/${ID2}.jsonl`]: { mtimeMs: 2000, lines: [user(PATH)] },
+      [`${entry}/${ID1}.jsonl`]: { mtimeMs: 1000, lines: [user(PATH)] },
+      [`${entry}/${ID2}.jsonl`]: { mtimeMs: 2000, lines: [user(PATH)] },
     });
-    expect((await listSessions({ home: HOME, path: PATH, fs })).map((s) => s.id)).toEqual([ID2, ID1]);
+    expect((await listSessions({ home: HOME, path: PATH, fs })).map((sessionSummary) => sessionSummary.id)).toEqual([
+      ID2,
+      ID1,
+    ]);
   });
 
   test("listSessions drops a main folder session whose first cwd is outside the path", async () => {
@@ -190,14 +238,22 @@ describe("sessions", () => {
       [`${proj("-work-proj--claude-worktrees-feat")}/${ID1}.jsonl`]: { lines: [user(wt)] },
     });
     const out = await listSessions({ home: HOME, path: PATH, fs });
-    expect(out.map((s) => s.root)).toEqual([wt]);
+    expect(out.map((sessionSummary) => sessionSummary.root)).toEqual([wt]);
     expect(await sessionRootOf({ home: HOME, path: PATH, sessionId: ID1, fs })).toBe(wt);
-    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: wt, worktree: true, file: `${proj("-work-proj--claude-worktrees-feat")}/${ID1}.jsonl` });
+    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({
+      root: wt,
+      worktree: true,
+      file: `${proj("-work-proj--claude-worktrees-feat")}/${ID1}.jsonl`,
+    });
   });
 
   test("findSession marks a main folder session as not a work tree", async () => {
     const fs = fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user("/work/proj/src")] } });
-    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({ root: "/work/proj/src", worktree: false, file: `${proj("-work-proj")}/${ID1}.jsonl` });
+    expect(await findSession({ home: HOME, path: PATH, sessionId: ID1, fs })).toEqual({
+      root: "/work/proj/src",
+      worktree: false,
+      file: `${proj("-work-proj")}/${ID1}.jsonl`,
+    });
   });
 
   test("listSessions drops a sibling folder session whose first cwd is outside the work trees folder", async () => {
@@ -208,9 +264,9 @@ describe("sessions", () => {
   });
 
   test("touchedFiles lists paths from write and edit tool calls once each", async () => {
-    const f = `${proj("-work-proj")}/${ID1}.jsonl`;
+    const entry = `${proj("-work-proj")}/${ID1}.jsonl`;
     const fs = fakeFs({
-      [f]: {
+      [entry]: {
         lines: [
           user(PATH),
           ...wrote("Write", { file_path: "/work/proj/a.txt" }, "2026-01-01T00:00:01.000Z"),
@@ -222,7 +278,7 @@ describe("sessions", () => {
       },
     });
     const out = await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs });
-    expect(out.map((t) => [t.path, t.tool, t.confirmed])).toEqual([
+    expect(out.map((touchedFile) => [touchedFile.path, touchedFile.tool, touchedFile.confirmed])).toEqual([
       ["/work/proj/a.txt", "edit", true],
       ["/work/proj/n.ipynb", "edit", true],
       ["/work/proj/b.txt", "edit", true],
@@ -231,9 +287,9 @@ describe("sessions", () => {
   });
 
   test("touchedFiles marks a path outside the root with inside false", async () => {
-    const f = `${proj("-work-proj")}/${ID1}.jsonl`;
+    const entry = `${proj("-work-proj")}/${ID1}.jsonl`;
     const fs = fakeFs({
-      [f]: {
+      [entry]: {
         lines: [
           user(PATH),
           ...wrote("Write", { file_path: "/etc/x" }, "2026-01-01T00:00:01.000Z"),
@@ -243,8 +299,8 @@ describe("sessions", () => {
       },
     });
     const out = await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs });
-    const m = Object.fromEntries(out.map((t) => [t.path, t.inside]));
-    expect(m).toEqual({ "/etc/x": false, "/work/proj/ok.txt": true, "/work/escape.txt": false });
+    const entries = Object.fromEntries(out.map((touchedFile) => [touchedFile.path, touchedFile.inside]));
+    expect(entries).toEqual({ "/etc/x": false, "/work/proj/ok.txt": true, "/work/escape.txt": false });
   });
 
   test("sessionRootOf returns undefined for an unknown or malformed session id", async () => {
@@ -264,7 +320,9 @@ describe("sessions", () => {
   test("listSessions drops a lookalike work tree folder whose cwd is inside the path but outside .claude/worktrees", async () => {
     // "/work/proj/.claude-worktrees-x" encodes to the same prefix as a work tree folder.
     expect(encodeProjectDir("/work/proj/.claude-worktrees-x")).toBe("-work-proj--claude-worktrees-x");
-    const fs = fakeFs({ [`${proj("-work-proj--claude-worktrees-x")}/${ID1}.jsonl`]: { lines: [user("/work/proj/.claude-worktrees-x")] } });
+    const fs = fakeFs({
+      [`${proj("-work-proj--claude-worktrees-x")}/${ID1}.jsonl`]: { lines: [user("/work/proj/.claude-worktrees-x")] },
+    });
     expect(await listSessions({ home: HOME, path: PATH, fs })).toEqual([]);
   });
 
@@ -281,8 +339,15 @@ describe("sessions", () => {
       [`${proj(wtDir)}/${ID2}.jsonl`]: { mtimeMs: 1000, lines: [user(wtPath)] },
     });
     const out = await listSessions({ home: HOME, path: long, fs });
-    expect(out.map((s) => [s.id, s.root])).toEqual([[ID1, long], [ID2, wtPath]]);
-    expect(await findSession({ home: HOME, path: long, sessionId: ID2, fs })).toEqual({ root: wtPath, worktree: true, file: `${proj(wtDir)}/${ID2}.jsonl` });
+    expect(out.map((sessionSummary) => [sessionSummary.id, sessionSummary.root])).toEqual([
+      [ID1, long],
+      [ID2, wtPath],
+    ]);
+    expect(await findSession({ home: HOME, path: long, sessionId: ID2, fs })).toEqual({
+      root: wtPath,
+      worktree: true,
+      file: `${proj(wtDir)}/${ID2}.jsonl`,
+    });
     expect((await findSession({ home: HOME, path: long, sessionId: ID1, fs }))?.worktree).toBe(false);
   });
 
@@ -292,7 +357,10 @@ describe("sessions", () => {
       [`${proj("-work-proj")}/${ID1}.jsonl`]: { mtimeMs: 2000, lines: [user(PATH)] },
       [`${proj("-work-proj--claude-worktrees-feat")}/${ID2}.jsonl`]: { mtimeMs: 1000, lines: [user(wt)] },
     });
-    expect((await listSessions({ home: HOME, path: PATH, fs })).map((s) => s.id)).toEqual([ID1, ID2]);
+    expect((await listSessions({ home: HOME, path: PATH, fs })).map((sessionSummary) => sessionSummary.id)).toEqual([
+      ID1,
+      ID2,
+    ]);
   });
 
   test("a work tree path of 200 or more encoded characters is found, and a lookalike with an outside cwd is dropped", async () => {
@@ -309,42 +377,59 @@ describe("sessions", () => {
 
   test("work tree candidates are chosen by the name alone: unrelated and sibling folders are never opened", async () => {
     const opened: string[] = [];
-    const watch = (fs: TranscriptFs): TranscriptFs => ({ ...fs, readdir: async (d) => (opened.push(d), fs.readdir(d)) });
+    const watch = (fs: TranscriptFs): TranscriptFs => ({
+      ...fs,
+      readdir: async (dir) => (opened.push(dir), fs.readdir(dir)),
+    });
     // An instance at /root: 50 other projects start with "-root" too.
     const files: Files = {};
-    for (let i = 0; i < 50; i++) files[`${proj(`-root-other${i}`)}/${ID1}.jsonl`] = { lines: [user(`/root/other${i}`)] };
+    for (let index = 0; index < 50; index++)
+      files[`${proj(`-root-other${index}`)}/${ID1}.jsonl`] = { lines: [user(`/root/other${index}`)] };
     files[`${proj("-root")}/${ID2}.jsonl`] = { lines: [user("/root")] };
     const out = await listSessions({ home: HOME, path: "/root", fs: watch(fakeFs(files)) });
-    expect(out.map((s) => s.id)).toEqual([ID2]);
-    expect(opened.filter((d) => d.includes("other"))).toEqual([]);
+    expect(out.map((sessionSummary) => sessionSummary.id)).toEqual([ID2]);
+    expect(opened.filter((file) => file.includes("other"))).toEqual([]);
     // A sibling whose name only starts with the project name.
     opened.length = 0;
-    const sib = fakeFs({ [`${proj("-work-proj2")}/${ID1}.jsonl`]: { lines: [user("/work/proj2")] }, [`${proj("-work-proj")}/${ID2}.jsonl`]: { lines: [user(PATH)] } });
-    expect((await listSessions({ home: HOME, path: PATH, fs: watch(sib) })).map((s) => s.id)).toEqual([ID2]);
-    expect(opened.some((d) => d.endsWith("-work-proj2"))).toBe(false);
+    const sib = fakeFs({
+      [`${proj("-work-proj2")}/${ID1}.jsonl`]: { lines: [user("/work/proj2")] },
+      [`${proj("-work-proj")}/${ID2}.jsonl`]: { lines: [user(PATH)] },
+    });
+    expect(
+      (await listSessions({ home: HOME, path: PATH, fs: watch(sib) })).map((sessionSummary) => sessionSummary.id),
+    ).toEqual([ID2]);
+    expect(opened.some((file) => file.endsWith("-work-proj2"))).toBe(false);
   });
 
   test("a work tree folder name cut at 200 characters is still found, with the marker whole, cut in the middle, or gone", async () => {
     // e is 150 (marker whole), 185 and 195 (marker cut in the middle) and 250 (more than 200, so cut and hashed).
-    for (const n of [150, 185, 195, 250]) {
-      const long = "/" + "a".repeat(n - 2) + "b";
-      expect(encodeProjectDir(long).length === n || n > 200).toBe(true);
+    for (const count of [150, 185, 195, 250]) {
+      const long = "/" + "a".repeat(count - 2) + "b";
+      expect(encodeProjectDir(long).length === count || count > 200).toBe(true);
       const wtPath = `${long}/.claude/worktrees/fix-the-bug-in-a-long-named-branch`;
       const wtDir = encodeProjectDir(wtPath);
-      expect(wtDir.includes("--claude-worktrees-")).toBe(n + 19 <= 200);
+      expect(wtDir.includes("--claude-worktrees-")).toBe(count + 19 <= 200);
       const main = encodeProjectDir(long);
       const fs = fakeFs({
         [`${proj(main)}/${ID1}.jsonl`]: { mtimeMs: 2000, lines: [user(long)] },
         [`${proj(wtDir)}/${ID2}.jsonl`]: { mtimeMs: 1000, lines: [user(wtPath)] },
       });
       const out = await listSessions({ home: HOME, path: long, fs });
-      expect(out.map((s) => [s.id, s.root])).toEqual([[ID1, long], [ID2, wtPath]]);
+      expect(out.map((sessionSummary) => [sessionSummary.id, sessionSummary.root])).toEqual([
+        [ID1, long],
+        [ID2, wtPath],
+      ]);
     }
   });
 
   test("touchedFiles counts a MultiEdit call", async () => {
     const fs = fakeFs({
-      [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...wrote("MultiEdit", { file_path: "/work/proj/m.ts", edits: [] }, "2026-01-01T00:00:01.000Z")] },
+      [`${proj("-work-proj")}/${ID1}.jsonl`]: {
+        lines: [
+          user(PATH),
+          ...wrote("MultiEdit", { file_path: "/work/proj/m.ts", edits: [] }, "2026-01-01T00:00:01.000Z"),
+        ],
+      },
     });
     expect(await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs })).toEqual([
       { path: "/work/proj/m.ts", inside: true, tool: "edit", at: "2026-01-01T00:00:01.000Z", confirmed: true },
@@ -353,8 +438,8 @@ describe("sessions", () => {
 
   test("touchedFiles keeps what it found when the transcript read fails half way", async () => {
     const fs: TranscriptFs = {
-      readdir: async (d) => (d.endsWith("projects") ? [] : [`${ID1}.jsonl`]),
-      stat: async () => ({ mtimeMs: 1 }),
+      readdir: (dir) => Promise.resolve(dir.endsWith("projects") ? [] : [`${ID1}.jsonl`]),
+      stat: () => Promise.resolve({ mtimeMs: 1 }),
       async *lines() {
         yield user(PATH);
         yield* wrote("Write", { file_path: "/work/proj/a.txt" }, "2026-01-01T00:00:01.000Z");
@@ -362,61 +447,85 @@ describe("sessions", () => {
       },
     };
     const out = await touchedFiles({ home: HOME, path: PATH, sessionId: ID1, root: PATH, fs });
-    expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/work/proj/a.txt", true]]);
+    expect(out.map((touchedFile) => [touchedFile.path, touchedFile.confirmed])).toEqual([["/work/proj/a.txt", true]]);
   });
 });
 
 const F1 = `${proj("-work-proj")}/${ID1}.jsonl`;
-const title = (k: string, v: string) => rec({ type: k === "customTitle" ? "custom-title" : k === "aiTitle" ? "ai-title" : "agent-name", [k]: v, sessionId: ID1 });
+const title = (key: string, value: string) =>
+  rec({
+    type: key === "customTitle" ? "custom-title" : key === "aiTitle" ? "ai-title" : "agent-name",
+    [key]: value,
+    sessionId: ID1,
+  });
 const prompt = (content: unknown, extra: object = {}) => rec({ type: "user", message: { content }, ...extra });
 const nameOf = async (lines: string[], tail?: string[], mtimeMs = 1000) =>
-  (await listSessions({ home: HOME, path: PATH, fs: fakeFs({ [F1]: { mtimeMs, lines: [user(PATH), ...lines], tail } }), names: newNameCache() }))[0].name;
+  (
+    await listSessions({
+      home: HOME,
+      path: PATH,
+      fs: fakeFs({ [F1]: { mtimeMs, lines: [user(PATH), ...lines], tail } }),
+      names: newNameCache(),
+    })
+  )[0].name;
 
 describe("live sessions", () => {
   const F2 = `${proj("-work-proj")}/${ID2}.jsonl`;
-  const two = () => fakeFs({ [F1]: { mtimeMs: 2000, lines: [user(PATH), title("customTitle", "custom")] }, [F2]: { mtimeMs: 1000, lines: [user(PATH), prompt("hello")] } });
+  const two = () =>
+    fakeFs({
+      [F1]: { mtimeMs: 2000, lines: [user(PATH), title("customTitle", "custom")] },
+      [F2]: { mtimeMs: 1000, lines: [user(PATH), prompt("hello")] },
+    });
   const list = (live?: Map<string, LiveInfo>) =>
     listSessions({ home: HOME, path: PATH, fs: two(), names: newNameCache(), ...(live ? { live } : {}) });
 
   test("a live session gets its status and Remote Control state, the others get no live field", async () => {
     const out = await list(new Map([[ID2, { status: "busy", remoteControl: true }]]));
-    expect(out.map((s) => [s.id, s.live])).toEqual([[ID1, undefined], [ID2, { status: "busy", remoteControl: true }]]);
-    expect("live" in out[0]!).toBe(false);
+    expect(out.map((sessionSummary) => [sessionSummary.id, sessionSummary.live])).toEqual([
+      [ID1, undefined],
+      [ID2, { status: "busy", remoteControl: true }],
+    ]);
+    expect("live" in out[0]).toBe(false);
   });
 
   test("the name from the live file beats every transcript name, and is tidied", async () => {
-    const out = await list(new Map([[ID1, { status: "idle", remoteControl: false, name: "  app   name  " }], [ID2, { status: "idle", remoteControl: false }]]));
-    expect(out.map((s) => s.name)).toEqual(["app name", "hello"]);
+    const out = await list(
+      new Map([
+        [ID1, { status: "idle", remoteControl: false, name: "  app   name  " }],
+        [ID2, { status: "idle", remoteControl: false }],
+      ]),
+    );
+    expect(out.map((sessionSummary) => sessionSummary.name)).toEqual(["app name", "hello"]);
     const long = await list(new Map([[ID1, { status: "idle", remoteControl: false, name: "n".repeat(100) }]]));
-    expect(long[0]!.name).toBe("n".repeat(80) + "...");
+    expect(long[0].name).toBe("n".repeat(80) + "...");
   });
 
   test("only status and remoteControl reach the Session, and the order stays newest first", async () => {
     const info = { status: "busy", remoteControl: false, name: "x", peerToken: "SECRET" } as never;
     const out = await list(new Map([[ID2, info]]));
-    expect(out.map((s) => s.id)).toEqual([ID1, ID2]);
-    expect(out[1]!.live).toEqual({ status: "busy", remoteControl: false });
+    expect(out.map((sessionSummary) => sessionSummary.id)).toEqual([ID1, ID2]);
+    expect(out[1].live).toEqual({ status: "busy", remoteControl: false });
     expect(JSON.stringify(out)).not.toContain("SECRET");
   });
 
   test("a live session without a known status gets live with no status field", async () => {
     const out = await list(new Map([[ID2, { remoteControl: false }]]));
-    expect(out[1]!.live).toEqual({ remoteControl: false });
-    expect("status" in out[1]!.live!).toBe(false);
+    expect(out[1].live).toEqual({ remoteControl: false });
+    expect("status" in defined(out[1].live)).toBe(false);
   });
 
   test("without the live option no session is live", async () => {
-    expect((await list()).every((s) => s.live === undefined)).toBe(true);
+    expect((await list()).every((sessionSummary) => sessionSummary.live === undefined)).toBe(true);
   });
 });
 
 describe("session names", () => {
   test("custom-title beats ai-title beats agent-name beats the first prompt", async () => {
-    const p = prompt("hello");
-    expect(await nameOf([p, title("agentName", "A"), title("aiTitle", "B"), title("customTitle", "C")])).toBe("C");
-    expect(await nameOf([p, title("agentName", "A"), title("aiTitle", "B")])).toBe("B");
-    expect(await nameOf([p, title("agentName", "A")])).toBe("A");
-    expect(await nameOf([p])).toBe("hello");
+    const entry = prompt("hello");
+    expect(await nameOf([entry, title("agentName", "A"), title("aiTitle", "B"), title("customTitle", "C")])).toBe("C");
+    expect(await nameOf([entry, title("agentName", "A"), title("aiTitle", "B")])).toBe("B");
+    expect(await nameOf([entry, title("agentName", "A")])).toBe("A");
+    expect(await nameOf([entry])).toBe("hello");
   });
 
   test("the last customTitle wins", async () => {
@@ -424,13 +533,23 @@ describe("session names", () => {
   });
 
   test("command, caveat and system-reminder messages are skipped", async () => {
-    const skipped = ["<command-name>/x</command-name>", "<local-command-stdout>x", "<system-reminder>x", "<command-message>x", "Caveat: x"].map((c) => prompt(c));
-    expect(await nameOf([...skipped, prompt("real one", { isMeta: true }), prompt("the real prompt")])).toBe("the real prompt");
+    const skipped = [
+      "<command-name>/x</command-name>",
+      "<local-command-stdout>x",
+      "<system-reminder>x",
+      "<command-message>x",
+      "Caveat: x",
+    ].map((entry) => prompt(entry));
+    expect(await nameOf([...skipped, prompt("real one", { isMeta: true }), prompt("the real prompt")])).toBe(
+      "the real prompt",
+    );
   });
 
   test("a compact summary is not the first prompt", async () => {
     // After /compact, Claude Code starts the transcript with its own summary, flagged as a user record.
-    const summary = prompt("This session is being continued from a previous conversation that ran out of context.", { isCompactSummary: true });
+    const summary = prompt("This session is being continued from a previous conversation that ran out of context.", {
+      isCompactSummary: true,
+    });
     expect(await nameOf([summary, prompt("the real prompt")])).toBe("the real prompt");
     expect(await nameOf([summary])).toBeUndefined();
     expect(await nameOf([summary, title("aiTitle", "ai name")])).toBe("ai name");
@@ -438,8 +557,13 @@ describe("session names", () => {
 
   describe("a compacted transcript", () => {
     // After /compact the transcript starts with the summary and often a long stretch of work before the first prompt.
-    const summary = prompt("This session is being continued from a previous conversation that ran out of context.", { isCompactSummary: true });
-    const filler = (kb: number) => Array.from({ length: kb }, () => rec({ type: "assistant", message: { content: [{ type: "text", text: "x".repeat(1000) }] } }));
+    const summary = prompt("This session is being continued from a previous conversation that ran out of context.", {
+      isCompactSummary: true,
+    });
+    const filler = (kb: number) =>
+      Array.from({ length: kb }, () =>
+        rec({ type: "assistant", message: { content: [{ type: "text", text: "x".repeat(1000) }] } }),
+      );
 
     test("the first prompt is found past the usual 256 KB window", async () => {
       expect(await nameOf([summary, ...filler(400), prompt("the real prompt")])).toBe("the real prompt");
@@ -450,13 +574,18 @@ describe("session names", () => {
     });
 
     test("the extra window has an end", async () => {
-      const huge = rec({ type: "assistant", message: { content: [{ type: "text", text: "x".repeat(5 * 1024 * 1024) }] } });
+      const huge = rec({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "x".repeat(5 * 1024 * 1024) }] },
+      });
       expect(await nameOf([summary, huge, prompt("too far")])).toBeUndefined();
     });
   });
 
   test("array content uses the first text block", async () => {
-    expect(await nameOf([prompt([{ type: "image" }, { type: "text", text: "from blocks" }, { type: "text", text: "no" }])])).toBe("from blocks");
+    expect(
+      await nameOf([prompt([{ type: "image" }, { type: "text", text: "from blocks" }, { type: "text", text: "no" }])]),
+    ).toBe("from blocks");
   });
 
   test("a long prompt is cut at 80 characters with dots and whitespace is collapsed", async () => {
@@ -479,7 +608,13 @@ describe("session names", () => {
   });
 
   test("an interrupted-request message is not the first prompt", async () => {
-    expect(await nameOf([prompt("[Request interrupted by user]"), prompt([{ type: "text", text: "[Request interrupted by user for tool use]" }]), prompt("the real one")])).toBe("the real one");
+    expect(
+      await nameOf([
+        prompt("[Request interrupted by user]"),
+        prompt([{ type: "text", text: "[Request interrupted by user for tool use]" }]),
+        prompt("the real one"),
+      ]),
+    ).toBe("the real one");
   });
 
   test("an empty customTitle is ignored, so the next kind of name is used", async () => {
@@ -487,45 +622,69 @@ describe("session names", () => {
   });
 
   test("the tail parses only the lines that can hold a title", async () => {
-    const tail = [...Array.from({ length: 200 }, () => tool("Bash", { command: "ls" }, T)), title("customTitle", "late")];
+    const tail = [
+      ...Array.from({ length: 200 }, () => tool("Bash", { command: "ls" }, item)),
+      title("customTitle", "late"),
+    ];
     const orig = JSON.parse;
     let calls = 0;
-    JSON.parse = ((...a: Parameters<typeof JSON.parse>) => (calls++, orig(...a))) as typeof JSON.parse;
+    JSON.parse = ((...parameters: Parameters<typeof JSON.parse>) => (
+      calls++,
+      orig(...parameters)
+    )) as typeof JSON.parse;
     let name: string | undefined;
+
     try {
       name = await nameOf([prompt("hi")], tail);
     } finally {
       JSON.parse = orig;
     }
+
     expect(name).toBe("late");
     expect(calls).toBeLessThan(20);
   });
 
   test("names are read at most 8 at a time and stay with their session", async () => {
     const files: Files = {};
-    const ids = Array.from({ length: 30 }, (_, i) => `${String(i).padStart(8, "0")}-1111-1111-1111-111111111111`);
-    ids.forEach((id, i) => (files[`${proj("-work-proj")}/${id}.jsonl`] = { mtimeMs: 1000 + i, lines: [user(PATH), prompt(`name ${i}`)] }));
+    const ids = Array.from(
+      { length: 30 },
+      (_unused, entry) => `${String(entry).padStart(8, "0")}-1111-1111-1111-111111111111`,
+    );
+    ids.forEach(
+      (id, index) =>
+        (files[`${proj("-work-proj")}/${id}.jsonl`] = {
+          mtimeMs: 1000 + index,
+          lines: [user(PATH), prompt(`name ${index}`)],
+        }),
+    );
     const base = fakeFs(files);
     let now = 0;
     let max = 0;
     const fs: TranscriptFs = {
       ...base,
-      async tail(p, b) {
+      async tail(path, value) {
         now++;
         max = Math.max(max, now);
-        await new Promise((r) => setTimeout(r, 2));
+        await new Promise((resolve) => setTimeout(resolve, 2));
         now--;
-        return base.tail!(p, b);
+        return defined(base.tail)(path, value);
       },
     };
     const out = await listSessions({ home: HOME, path: PATH, fs, names: newNameCache() });
     expect(max).toBeLessThanOrEqual(8);
     expect(max).toBeGreaterThan(1);
-    expect(out.map((s) => [s.id, s.name])).toEqual(ids.map((id, i) => [id, `name ${i}`]).reverse());
+    expect(out.map((sessionSummary) => [sessionSummary.id, sessionSummary.name])).toEqual(
+      ids.map((id, index) => [id, `name ${index}`]).reverse(),
+    );
   });
 
   test("no name when nothing usable", async () => {
-    const out = await listSessions({ home: HOME, path: PATH, fs: fakeFs({ [F1]: { lines: [user(PATH), prompt("<system-reminder>x"), prompt("   ")] } }), names: newNameCache() });
+    const out = await listSessions({
+      home: HOME,
+      path: PATH,
+      fs: fakeFs({ [F1]: { lines: [user(PATH), prompt("<system-reminder>x"), prompt("   ")] } }),
+      names: newNameCache(),
+    });
     expect("name" in out[0]).toBe(false);
   });
 
@@ -551,23 +710,24 @@ describe("session names", () => {
   });
 
   test("the cache is bounded", () => {
-    const c = newNameCache(2);
-    for (const k of ["a", "b", "c"]) c.set(k, { size: 1, mtimeMs: 1, name: k });
-    expect(c.get("a")).toBeUndefined();
-    expect(c.get("c")?.name).toBe("c");
+    const nameCache = newNameCache(2);
+    for (const key of ["a", "b", "c"]) nameCache.set(key, { size: 1, mtimeMs: 1, name: key });
+    expect(nameCache.get("a")).toBeUndefined();
+    expect(nameCache.get("c")?.name).toBe("c");
   });
 });
 
 describe("transcripts read from disk", () => {
   test("a transcript over 256 KB gets the title from its last bytes", async () => {
     const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+
     try {
       const path = "/work/proj";
       const dir = join(home, ".claude", "projects", encodeProjectDir(path));
       await mkdir(dir, { recursive: true });
       const pad = tool("Write", { file_path: "/work/proj/p.txt", pad: "x".repeat(1000) }, "2026-01-01T00:00:01.000Z");
       const lines = [user(path), prompt("early prompt")];
-      for (let i = 0; i < 600; i++) lines.push(pad);
+      for (let index = 0; index < 600; index++) lines.push(pad);
       lines.push(title("customTitle", "late title"));
       await writeFile(join(dir, `${ID1}.jsonl`), lines.join("\n") + "\n");
       expect((await listSessions({ home, path, names: newNameCache() }))[0].name).toBe("late title");
@@ -578,6 +738,7 @@ describe("transcripts read from disk", () => {
 
   test("an empty transcript is not listed", async () => {
     const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+
     try {
       const dir = join(home, ".claude", "projects", encodeProjectDir(PATH));
       await mkdir(dir, { recursive: true });
@@ -591,11 +752,13 @@ describe("transcripts read from disk", () => {
 
   test("a multi-byte character cut at the start of the last 256 KB does not spoil the title", async () => {
     const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+
     try {
       const dir = join(home, ".claude", "projects", encodeProjectDir(PATH));
       await mkdir(dir, { recursive: true });
       const head = [user(PATH), prompt("early")].join("\n") + "\n";
       const end = title("customTitle", "fin é😀") + "\n";
+
       // A line of 4-byte characters that crosses the tail start at every byte offset in turn.
       for (let shift = 0; shift < 4; shift++) {
         const filler = rec({ type: "x", pad: "😀".repeat(70 * 1024) + "a".repeat(shift) }) + "\n";
@@ -611,18 +774,35 @@ describe("transcripts read from disk", () => {
 
   test("a line over 1 MB is dropped and a line cut across read chunks is kept whole", async () => {
     const home = await mkdtemp(join(tmpdir(), "sessions-home-"));
+
     try {
       const path = "/work/proj";
       const dir = join(home, ".claude", "projects", encodeProjectDir(path));
       await mkdir(dir, { recursive: true });
       // 200 KB of padding makes the Edit line span several 64 KB read chunks.
-      const long = wrote("Edit", { file_path: "/work/proj/long.txt", pad: "x".repeat(200 * 1024) }, "2026-01-01T00:00:02.000Z");
-      const huge = wrote("Write", { file_path: "/work/proj/huge.txt", pad: "y".repeat(1024 * 1024 + 10) }, "2026-01-01T00:00:01.000Z");
-      const lines = [user(path), ...huge, ...long, ...wrote("Write", { file_path: "/work/proj/after.txt" }, "2026-01-01T00:00:03.000Z")];
+      const long = wrote(
+        "Edit",
+        { file_path: "/work/proj/long.txt", pad: "x".repeat(200 * 1024) },
+        "2026-01-01T00:00:02.000Z",
+      );
+      const huge = wrote(
+        "Write",
+        { file_path: "/work/proj/huge.txt", pad: "y".repeat(1024 * 1024 + 10) },
+        "2026-01-01T00:00:01.000Z",
+      );
+      const lines = [
+        user(path),
+        ...huge,
+        ...long,
+        ...wrote("Write", { file_path: "/work/proj/after.txt" }, "2026-01-01T00:00:03.000Z"),
+      ];
       await writeFile(join(dir, `${ID1}.jsonl`), lines.join("\n") + "\n");
-      expect((await listSessions({ home, path })).map((s) => s.root)).toEqual([path]);
+      expect((await listSessions({ home, path })).map((sessionSummary) => sessionSummary.root)).toEqual([path]);
       const out = await touchedFiles({ home, path, sessionId: ID1, root: path });
-      expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/work/proj/after.txt", true], ["/work/proj/long.txt", true]]);
+      expect(out.map((touchedFile) => [touchedFile.path, touchedFile.confirmed])).toEqual([
+        ["/work/proj/after.txt", true],
+        ["/work/proj/long.txt", true],
+      ]);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -632,29 +812,52 @@ describe("transcripts read from disk", () => {
 describe("touchedFiles inputs", () => {
   test("given the transcript file, touchedFiles reads it and does not scan the folders", async () => {
     let readdirs = 0;
-    const base = fakeFs({ [`${proj("-work-proj")}/${ID1}.jsonl`]: { lines: [user(PATH), ...wrote("Write", { file_path: "/work/proj/a" }, T)] } });
-    const fs = { ...base, readdir: async (d: string) => (readdirs++, base.readdir(d)) };
+    const base = fakeFs({
+      [`${proj("-work-proj")}/${ID1}.jsonl`]: {
+        lines: [user(PATH), ...wrote("Write", { file_path: "/work/proj/a" }, item)],
+      },
+    });
+    const fs = { ...base, readdir: async (path: string) => (readdirs++, base.readdir(path)) };
     const session = await new SessionCatalog({ fs }).instance({ home: HOME, path: PATH }).find(ID1);
     readdirs = 0;
-    const out = await session!.touched({ dirs: [] });
-    expect(out.map((t) => t.path)).toEqual(["/work/proj/a"]);
+    const out = await defined(session).touched({ dirs: [] });
+    expect(out.map((touchedFile) => touchedFile.path)).toEqual(["/work/proj/a"]);
     expect(readdirs).toBe(0);
   });
 
   test("on Windows a UNC or device path is left out of the list", async () => {
-    const raws = ["\\\\srv\\share\\a.txt", "//srv/share/b.txt", "\\\\?\\C:\\c.txt", "\\\\.\\pipe\\d", "C:\\Users\\u\\e.txt", "c:/Users/u/f.txt"];
-    const out = await touched(raws.flatMap((r) => wrote("Write", { file_path: r }, T)), { platform: "win32", root: "C:\\work\\proj" });
-    expect(out.map((t) => t.path)).toEqual(["c:\\Users\\u\\f.txt", "C:\\Users\\u\\e.txt"]);
+    const raws = [
+      "\\\\srv\\share\\a.txt",
+      "//srv/share/b.txt",
+      "\\\\?\\C:\\c.txt",
+      "\\\\.\\pipe\\d",
+      "C:\\Users\\u\\e.txt",
+      "c:/Users/u/f.txt",
+    ];
+    const out = await touched(
+      raws.flatMap((raw) => wrote("Write", { file_path: raw }, item)),
+      { platform: "win32", root: "C:\\work\\proj" },
+    );
+    expect(out.map((touchedFile) => touchedFile.path)).toEqual(["c:\\Users\\u\\f.txt", "C:\\Users\\u\\e.txt"]);
   });
 
   test("only lines that name a tool_use or a tool_result are parsed, and the answer is the same", async () => {
-    const plain = Array.from({ length: 50 }, (_, i) => rec({ type: i % 2 ? "assistant" : "user", message: { content: [{ type: "text", text: `line ${i}` }] } }));
-    const tools = [...wrote("Write", { file_path: "/work/proj/a" }, T), ...wrote("Edit", { file_path: "/etc/b" }, T)];
+    const plain = Array.from({ length: 50 }, (_unused, entry) =>
+      rec({ type: entry % 2 ? "assistant" : "user", message: { content: [{ type: "text", text: `line ${entry}` }] } }),
+    );
+    const tools = [
+      ...wrote("Write", { file_path: "/work/proj/a" }, item),
+      ...wrote("Edit", { file_path: "/etc/b" }, item),
+    ];
     const spy = spyOn(JSON, "parse");
+
     try {
       // The transcript is given, so no scan parses the cwd line: every parse is touchedFiles' own.
       const out = await touched([...plain, ...tools, ...plain], { file: `${proj("-work-proj")}/${ID1}.jsonl` });
-      expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/etc/b", true], ["/work/proj/a", true]]);
+      expect(out.map((touchedFile) => [touchedFile.path, touchedFile.confirmed])).toEqual([
+        ["/etc/b", true],
+        ["/work/proj/a", true],
+      ]);
       expect(spy.mock.calls.length).toBe(tools.length);
     } finally {
       spy.mockRestore();
@@ -662,11 +865,22 @@ describe("touchedFiles inputs", () => {
   });
 
   test("on every platform /proc, /sys, /dev and the refused folders are left out of the list", async () => {
-    const raws = ["/proc/self/environ", "/sys/kernel/x", "/dev/null", "/var/lib/state/key.pem", "/var/lib/state", "/var/lib/stateful/ok.txt", "/etc/ok"];
-    const out = await touched(raws.flatMap((r) => wrote("Write", { file_path: r }, T)), { platform: "linux", dirs: ["/var/lib/state"] });
-    expect(out.map((t) => t.path)).toEqual(["/etc/ok", "/var/lib/stateful/ok.txt"]);
+    const raws = [
+      "/proc/self/environ",
+      "/sys/kernel/x",
+      "/dev/null",
+      "/var/lib/state/key.pem",
+      "/var/lib/state",
+      "/var/lib/stateful/ok.txt",
+      "/etc/ok",
+    ];
+    const out = await touched(
+      raws.flatMap((raw) => wrote("Write", { file_path: raw }, item)),
+      { platform: "linux", dirs: ["/var/lib/state"] },
+    );
+    expect(out.map((touchedFile) => touchedFile.path)).toEqual(["/etc/ok", "/var/lib/stateful/ok.txt"]);
     // A refused path that was only tried is left out too.
-    const tried = await touched([use("Write", { file_path: "/proc/1/mem" }, T, "p1")], { platform: "linux" });
+    const tried = await touched([use("Write", { file_path: "/proc/1/mem" }, item, "p1")], { platform: "linux" });
     expect(tried).toEqual([]);
   });
 });
@@ -674,101 +888,212 @@ describe("touchedFiles inputs", () => {
 describe("touched means written", () => {
   // A path counts only when its Write or Edit has a result without is_error. Anything else is listed, unconfirmed.
   test("a successful Write is confirmed", async () => {
-    expect(await touched(wrote("Write", { file_path: "/etc/ok" }, T))).toEqual([{ path: "/etc/ok", inside: false, tool: "write", at: T, confirmed: true }]);
+    expect(await touched(wrote("Write", { file_path: "/etc/ok" }, item))).toEqual([
+      { path: "/etc/ok", inside: false, tool: "write", at: item, confirmed: true },
+    ]);
   });
 
   test("a denied Edit is not confirmed", async () => {
     const denied = "Permission for this action was denied by the Claude Code auto mode classifier";
-    const out = await touched([use("Edit", { file_path: "/root/.ssh/id_rsa" }, T, "d1"), result("d1", { is_error: true, content: denied })]);
-    expect(out).toEqual([{ path: "/root/.ssh/id_rsa", inside: false, tool: "edit", at: T, confirmed: false }]);
+    const out = await touched([
+      use("Edit", { file_path: "/root/.ssh/id_rsa" }, item, "d1"),
+      result("d1", { is_error: true, content: denied }),
+    ]);
+    expect(out).toEqual([{ path: "/root/.ssh/id_rsa", inside: false, tool: "edit", at: item, confirmed: false }]);
   });
 
   test("is_error true, or any value other than absent or false, does not confirm", async () => {
     for (const is_error of [true, "true", 1, null]) {
-      expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "e1"), result("e1", { is_error })])).toEqual([]);
+      expect(await confirmedPaths([use("Write", { file_path: "/x" }, item, "e1"), result("e1", { is_error })])).toEqual(
+        [],
+      );
     }
-    expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "e2"), result("e2", { is_error: false })])).toEqual(["/x"]);
+
+    expect(
+      await confirmedPaths([use("Write", { file_path: "/x" }, item, "e2"), result("e2", { is_error: false })]),
+    ).toEqual(["/x"]);
   });
 
   test("a use with no result (interrupted, crashed, still running) is not confirmed", async () => {
-    expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "n1")])).toEqual([]);
+    expect(await confirmedPaths([use("Write", { file_path: "/x" }, item, "n1")])).toEqual([]);
   });
 
   test("a result for another id does not confirm", async () => {
-    expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "a1"), result("a2"), result("A1"), result("a1 ")])).toEqual([]);
+    expect(
+      await confirmedPaths([use("Write", { file_path: "/x" }, item, "a1"), result("a2"), result("A1"), result("a1 ")]),
+    ).toEqual([]);
   });
 
   test("a result before its use does not confirm", async () => {
-    expect(await confirmedPaths([result("o1"), use("Write", { file_path: "/x" }, T, "o1")])).toEqual([]);
+    expect(await confirmedPaths([result("o1"), use("Write", { file_path: "/x" }, item, "o1")])).toEqual([]);
   });
 
   test("a use without a string id is never confirmed", async () => {
-    const noId = rec({ type: "assistant", timestamp: T, message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "/x" } }] } });
-    const numId = rec({ type: "assistant", timestamp: T, message: { content: [{ type: "tool_use", id: 7, name: "Write", input: { file_path: "/y" } }] } });
-    expect(await confirmedPaths([noId, result("undefined"), numId, rec({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: 7 }] } })])).toEqual([]);
+    const noId = rec({
+      type: "assistant",
+      timestamp: item,
+      message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "/x" } }] },
+    });
+    const numId = rec({
+      type: "assistant",
+      timestamp: item,
+      message: { content: [{ type: "tool_use", id: 7, name: "Write", input: { file_path: "/y" } }] },
+    });
+    expect(
+      await confirmedPaths([
+        noId,
+        result("undefined"),
+        numId,
+        rec({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: 7 }] } }),
+      ]),
+    ).toEqual([]);
   });
 
   test("a result only counts from a user record, a use only from an assistant record", async () => {
     // Claude Code also stores copies of requests (api-request-blob) that hold both kinds of block.
     for (const type of ["api-request-blob", "assistant", "system", "progress"]) {
-      expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "r1"), result("r1", {}, type)])).toEqual([]);
+      expect(await confirmedPaths([use("Write", { file_path: "/x" }, item, "r1"), result("r1", {}, type)])).toEqual([]);
     }
-    const userUse = rec({ type: "user", timestamp: T, message: { content: [{ type: "tool_use", id: "u1", name: "Write", input: { file_path: "/x" } }] } });
+
+    const userUse = rec({
+      type: "user",
+      timestamp: item,
+      message: { content: [{ type: "tool_use", id: "u1", name: "Write", input: { file_path: "/x" } }] },
+    });
     expect(await touched([userUse, result("u1")])).toEqual([]);
   });
 
   test("a result nested inside another result does not count", async () => {
-    const nested = rec({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "other", content: [{ type: "tool_result", tool_use_id: "z1" }] }] } });
-    expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "z1"), nested])).toEqual([]);
+    const nested = rec({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "other", content: [{ type: "tool_result", tool_use_id: "z1" }] }],
+      },
+    });
+    expect(await confirmedPaths([use("Write", { file_path: "/x" }, item, "z1"), nested])).toEqual([]);
   });
 
   test("two uses with the same id and a different path or a different tool fail closed: nothing is confirmed", async () => {
-    expect(await confirmedPaths([use("Write", { file_path: "/ok" }, T, "dup"), use("Write", { file_path: "/secret" }, T, "dup"), result("dup")])).toEqual([]);
-    expect(await confirmedPaths([use("Write", { file_path: "/ok" }, T, "dupn"), use("Edit", { file_path: "/ok" }, T, "dupn"), result("dupn")])).toEqual([]);
+    expect(
+      await confirmedPaths([
+        use("Write", { file_path: "/ok" }, item, "dup"),
+        use("Write", { file_path: "/secret" }, item, "dup"),
+        result("dup"),
+      ]),
+    ).toEqual([]);
+    expect(
+      await confirmedPaths([
+        use("Write", { file_path: "/ok" }, item, "dupn"),
+        use("Edit", { file_path: "/ok" }, item, "dupn"),
+        result("dupn"),
+      ]),
+    ).toEqual([]);
     // In one record, too.
-    const both = rec({ type: "assistant", timestamp: T, message: { content: [
-      { type: "tool_use", id: "dup2", name: "Write", input: { file_path: "/ok" } },
-      { type: "tool_use", id: "dup2", name: "Edit", input: { file_path: "/secret" } },
-    ] } });
+    const both = rec({
+      type: "assistant",
+      timestamp: item,
+      message: {
+        content: [
+          { type: "tool_use", id: "dup2", name: "Write", input: { file_path: "/ok" } },
+          { type: "tool_use", id: "dup2", name: "Edit", input: { file_path: "/secret" } },
+        ],
+      },
+    });
     expect(await confirmedPaths([both, result("dup2")])).toEqual([]);
     // Once poisoned, a third use that matches the first still does not rescue the id.
-    expect(await confirmedPaths([use("Write", { file_path: "/a" }, T, "dup3"), use("Write", { file_path: "/b" }, T, "dup3"), use("Write", { file_path: "/a" }, T, "dup3"), result("dup3")])).toEqual([]);
+    expect(
+      await confirmedPaths([
+        use("Write", { file_path: "/a" }, item, "dup3"),
+        use("Write", { file_path: "/b" }, item, "dup3"),
+        use("Write", { file_path: "/a" }, item, "dup3"),
+        result("dup3"),
+      ]),
+    ).toEqual([]);
     // NotebookEdit and Edit are different tools even though both are edits.
-    expect(await confirmedPaths([use("NotebookEdit", { notebook_path: "/n" }, T, "dup4"), use("Edit", { file_path: "/n" }, T, "dup4"), result("dup4")])).toEqual([]);
+    expect(
+      await confirmedPaths([
+        use("NotebookEdit", { notebook_path: "/n" }, item, "dup4"),
+        use("Edit", { file_path: "/n" }, item, "dup4"),
+        result("dup4"),
+      ]),
+    ).toEqual([]);
   });
 
   test("a repeat of the same id with the same tool and the same resolved path is one call: confirmed once, first use kept", async () => {
     const later = "2026-01-01T00:00:05.000Z";
-    const out = await touched([use("Write", { file_path: "/work/proj/a.txt" }, T, "rep"), use("Write", { file_path: "a.txt", content: "x" }, later, "rep"), result("rep")]);
-    expect(out).toEqual([{ path: "/work/proj/a.txt", inside: true, tool: "write", at: T, confirmed: true }]);
+    const out = await touched([
+      use("Write", { file_path: "/work/proj/a.txt" }, item, "rep"),
+      use("Write", { file_path: "a.txt", content: "x" }, later, "rep"),
+      result("rep"),
+    ]);
+    expect(out).toEqual([{ path: "/work/proj/a.txt", inside: true, tool: "write", at: item, confirmed: true }]);
     // In one record, too.
-    const both = rec({ type: "assistant", timestamp: T, message: { content: [
-      { type: "tool_use", id: "rep2", name: "Edit", input: { file_path: "/work/proj/b.txt", old_string: "a" } },
-      { type: "tool_use", id: "rep2", name: "Edit", input: { file_path: "/work/proj/b.txt", old_string: "a", new_string: "b" } },
-    ] } });
+    const both = rec({
+      type: "assistant",
+      timestamp: item,
+      message: {
+        content: [
+          { type: "tool_use", id: "rep2", name: "Edit", input: { file_path: "/work/proj/b.txt", old_string: "a" } },
+          {
+            type: "tool_use",
+            id: "rep2",
+            name: "Edit",
+            input: { file_path: "/work/proj/b.txt", old_string: "a", new_string: "b" },
+          },
+        ],
+      },
+    });
     expect(await confirmedPaths([both, result("rep2")])).toEqual(["/work/proj/b.txt"]);
     // A repeat that is not confirmed because the result is an error stays unconfirmed.
-    expect(await confirmedPaths([use("Write", { file_path: "/x" }, T, "rep3"), use("Write", { file_path: "/x" }, T, "rep3"), result("rep3", { is_error: true })])).toEqual([]);
+    expect(
+      await confirmedPaths([
+        use("Write", { file_path: "/x" }, item, "rep3"),
+        use("Write", { file_path: "/x" }, item, "rep3"),
+        result("rep3", { is_error: true }),
+      ]),
+    ).toEqual([]);
   });
 
   test("a repeat after the result does not un-confirm the path or make a new pending call", async () => {
-    const lines = [use("Write", { file_path: "/x" }, T, "aft"), result("aft"), use("Write", { file_path: "/x" }, T, "aft"), use("Write", { file_path: "/y" }, T, "aft"), result("aft")];
+    const lines = [
+      use("Write", { file_path: "/x" }, item, "aft"),
+      result("aft"),
+      use("Write", { file_path: "/x" }, item, "aft"),
+      use("Write", { file_path: "/y" }, item, "aft"),
+      result("aft"),
+    ];
     const out = await touched(lines);
-    expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/x", true], ["/y", false]]);
+    expect(out.map((touchedFile) => [touchedFile.path, touchedFile.confirmed])).toEqual([
+      ["/x", true],
+      ["/y", false],
+    ]);
   });
 
   test("a use that reuses an id whose result was already read is ignored", async () => {
-    expect(await confirmedPaths([use("Write", { file_path: "/ok" }, T, "re"), result("re"), use("Write", { file_path: "/secret" }, T, "re"), result("re")])).toEqual(["/ok"]);
+    expect(
+      await confirmedPaths([
+        use("Write", { file_path: "/ok" }, item, "re"),
+        result("re"),
+        use("Write", { file_path: "/secret" }, item, "re"),
+        result("re"),
+      ]),
+    ).toEqual(["/ok"]);
   });
 
   test("a second result for the same id confirms nothing more", async () => {
-    expect(await confirmedPaths([use("Write", { file_path: "/a" }, T, "s1"), result("s1", { is_error: true }), result("s1")])).toEqual([]);
+    expect(
+      await confirmedPaths([
+        use("Write", { file_path: "/a" }, item, "s1"),
+        result("s1", { is_error: true }),
+        result("s1"),
+      ]),
+    ).toEqual([]);
   });
 
   test("a later failed call to a confirmed path keeps it confirmed, with its first time and tool, once in the list", async () => {
     const later = "2026-01-01T00:00:09.000Z";
     const out = await touched([
-      ...wrote("Write", { file_path: "/work/proj/a.txt" }, T),
+      ...wrote("Write", { file_path: "/work/proj/a.txt" }, item),
       ...wrote("Write", { file_path: "/work/proj/b.txt" }, "2026-01-01T00:00:02.000Z"),
       use("Edit", { file_path: "/work/proj/a.txt" }, later, "f1"),
       result("f1", { is_error: true }),
@@ -776,54 +1101,77 @@ describe("touched means written", () => {
     ]);
     expect(out).toEqual([
       { path: "/work/proj/b.txt", inside: true, tool: "write", at: "2026-01-01T00:00:02.000Z", confirmed: true },
-      { path: "/work/proj/a.txt", inside: true, tool: "write", at: T, confirmed: true },
+      { path: "/work/proj/a.txt", inside: true, tool: "write", at: item, confirmed: true },
     ]);
   });
 
   test("a failed call and then a successful one list the path once, confirmed", async () => {
-    const out = await touched([use("Edit", { file_path: "/x" }, T, "g1"), result("g1", { is_error: true }), ...wrote("Edit", { file_path: "/x" }, "2026-01-01T00:00:03.000Z")]);
+    const out = await touched([
+      use("Edit", { file_path: "/x" }, item, "g1"),
+      result("g1", { is_error: true }),
+      ...wrote("Edit", { file_path: "/x" }, "2026-01-01T00:00:03.000Z"),
+    ]);
     expect(out).toEqual([{ path: "/x", inside: false, tool: "edit", at: "2026-01-01T00:00:03.000Z", confirmed: true }]);
   });
 
   test("confirmed paths come first, newest first, then the unconfirmed ones, newest first", async () => {
     const out = await touched([
-      use("Write", { file_path: "/u1" }, T, "h1"),
+      use("Write", { file_path: "/u1" }, item, "h1"),
       ...wrote("Write", { file_path: "/c1" }, "2026-01-01T00:00:02.000Z"),
       use("Write", { file_path: "/u2" }, "2026-01-01T00:00:03.000Z", "h2"),
       result("h2", { is_error: true }),
       ...wrote("Write", { file_path: "/c2" }, "2026-01-01T00:00:04.000Z"),
     ]);
-    expect(out.map((t) => [t.path, t.confirmed])).toEqual([["/c2", true], ["/c1", true], ["/u2", false], ["/u1", false]]);
+    expect(out.map((touchedFile) => [touchedFile.path, touchedFile.confirmed])).toEqual([
+      ["/c2", true],
+      ["/c1", true],
+      ["/u2", false],
+      ["/u1", false],
+    ]);
   });
 
   test("results confirm in any order once their use was read", async () => {
-    expect(new Set(await confirmedPaths([use("Write", { file_path: "/a" }, T, "p1"), use("Write", { file_path: "/b" }, T, "p2"), result("p2"), result("p1")]))).toEqual(new Set(["/a", "/b"]));
+    expect(
+      new Set(
+        await confirmedPaths([
+          use("Write", { file_path: "/a" }, item, "p1"),
+          use("Write", { file_path: "/b" }, item, "p2"),
+          result("p2"),
+          result("p1"),
+        ]),
+      ),
+    ).toEqual(new Set(["/a", "/b"]));
   });
 
   test("the pending list keeps 1000 uses: the oldest is dropped and fails closed", async () => {
     const lines: string[] = [];
-    for (let i = 0; i <= 1000; i++) lines.push(use("Write", { file_path: `/f${i}` }, T, `cap${i}`));
-    for (let i = 0; i <= 1000; i++) lines.push(result(`cap${i}`));
+    for (let index = 0; index <= 1000; index++)
+      lines.push(use("Write", { file_path: `/f${index}` }, item, `cap${index}`));
+    for (let index = 0; index <= 1000; index++) lines.push(result(`cap${index}`));
     const out = await touched(lines);
-    const conf = new Set(out.filter((t) => t.confirmed).map((t) => t.path));
+    const conf = new Set(out.filter((touchedFile) => touchedFile.confirmed).map((touchedFile) => touchedFile.path));
     expect(conf.has("/f0")).toBe(false);
     expect(conf.has("/f1")).toBe(true);
     expect(conf.has("/f1000")).toBe(true);
     expect(conf.size).toBe(1000);
-    expect(out.find((t) => t.path === "/f0")?.confirmed).toBe(false);
+    expect(out.find((touchedFile) => touchedFile.path === "/f0")?.confirmed).toBe(false);
   });
 
   test("the confirmed and unconfirmed lists are bounded", async () => {
     const lines: string[] = [];
-    for (let i = 0; i < 10005; i++) lines.push(...wrote("Write", { file_path: `/c${i}` }, T));
-    for (let i = 0; i < 10005; i++) lines.push(use("Write", { file_path: `/u${i}` }, T, `ub${i}`), result(`ub${i}`, { is_error: true }));
+    for (let index = 0; index < 10005; index++) lines.push(...wrote("Write", { file_path: `/c${index}` }, item));
+    for (let index = 0; index < 10005; index++)
+      lines.push(
+        use("Write", { file_path: `/u${index}` }, item, `ub${index}`),
+        result(`ub${index}`, { is_error: true }),
+      );
     const out = await touched(lines);
-    const conf = out.filter((t) => t.confirmed);
-    const unconf = out.filter((t) => !t.confirmed);
+    const conf = out.filter((touchedFile) => touchedFile.confirmed);
+    const unconf = out.filter((touchedFile) => !touchedFile.confirmed);
     expect(conf.length).toBe(10000);
     expect(conf[0].path).toBe("/c10004");
-    expect(conf.some((t) => t.path === "/c0")).toBe(false);
+    expect(conf.some((touchedFile) => touchedFile.path === "/c0")).toBe(false);
     expect(unconf.length).toBe(10000);
-    expect(unconf.some((t) => t.path === "/u0")).toBe(false);
+    expect(unconf.some((touchedFile) => touchedFile.path === "/u0")).toBe(false);
   });
 });

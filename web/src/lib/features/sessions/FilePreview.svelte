@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ResolvedPathname } from "$app/types";
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import Code from "@tabler/icons-svelte/icons/code";
@@ -18,10 +19,18 @@
   import { showsInPre, viewKind } from "./viewkind";
 
   // `abs`: `file` is the absolute path of a touched file outside the session folder.
-  type Props = { host: string; instance: string; session: string; file: string; abs?: boolean; back: string; backLabel?: string };
+  type Props = {
+    host: string;
+    instance: string;
+    session: string;
+    file: string;
+    abs?: boolean;
+    back: ResolvedPathname;
+    backLabel?: string;
+  };
   let { host, instance, session, file, abs = false, back, backLabel = "Back" }: Props = $props();
 
-  const q = createQuery(() => previewQuery(host, instance, session, file, abs));
+  const query = createQuery(() => previewQuery(host, instance, session, file, abs));
   const name = $derived(baseName(file));
   // Markdown opens rendered. Code and large plain text open wrapped, as the plain view always did.
   let rendered = $state(true);
@@ -35,23 +44,33 @@
   let paneTop = $state(0);
   function track(node: HTMLElement) {
     anchor = node;
-    return { destroy() { if (anchor === node) anchor = undefined; } };
+    return {
+      destroy() {
+        if (anchor === node) anchor = undefined;
+      },
+    };
   }
   $effect(() => {
     const node = anchor;
     if (!node) return;
     let frame = 0;
+
     const measure = () => {
       frame = 0;
       const top = Math.round(node.getBoundingClientRect().top + window.scrollY);
       if (top !== paneTop) paneTop = top;
     };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+
     measure();
     // The rows above the pane change height when a banner shows or the window turns. Measuring after the frame avoids a resize loop.
     const watcher = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(schedule);
     watcher?.observe(document.body);
     window.addEventListener("resize", schedule);
+
     return () => {
       watcher?.disconnect();
       window.removeEventListener("resize", schedule);
@@ -65,21 +84,45 @@
 {#snippet controls(markdown: boolean, showWrap: boolean)}
   <div class="flex flex-wrap items-center gap-2">
     {#if markdown}
-      <ToggleGroup.Root type="single" variant="outline" size="default" aria-label="Markdown view" value={rendered ? "rendered" : "source"} onValueChange={(v) => { if (v) rendered = v === "rendered"; }}>
+      <ToggleGroup.Root
+        type="single"
+        variant="outline"
+        size="default"
+        aria-label="Markdown view"
+        value={rendered ? "rendered" : "source"}
+        onValueChange={(value) => {
+          if (value) rendered = value === "rendered";
+        }}
+      >
         <ToggleGroup.Item value="rendered" class="h-8 px-2.5"><Eye aria-hidden="true" />Rendered</ToggleGroup.Item>
         <ToggleGroup.Item value="source" class="h-8 px-2.5"><Code aria-hidden="true" />Source</ToggleGroup.Item>
       </ToggleGroup.Root>
     {/if}
     {#if showWrap}
-      <Toggle variant="outline" class="h-8 px-2.5" bind:pressed={wrap} aria-label="Wrap long lines" title="Wrap long lines"><TextWrap aria-hidden="true" />Wrap</Toggle>
+      <Toggle
+        variant="outline"
+        class="h-8 px-2.5"
+        bind:pressed={wrap}
+        aria-label="Wrap long lines"
+        title="Wrap long lines"
+      >
+        <TextWrap aria-hidden="true" />Wrap
+      </Toggle>
     {/if}
     <div class="ml-auto">{@render download()}</div>
   </div>
 {/snippet}
 
 {#snippet download()}
-  {#if q.data}
-    <Button variant="outline" class="h-8 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary" href={downloadUrl(host, instance, session, file, { abs })} download={name}><Download aria-hidden="true" />Download</Button>
+  {#if query.data}
+    <Button
+      variant="outline"
+      class="h-8 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary"
+      externalHref={downloadUrl(host, instance, session, file, { abs })}
+      download={name}
+    >
+      <Download aria-hidden="true" />Download
+    </Button>
   {/if}
 {/snippet}
 
@@ -87,52 +130,64 @@
 {#snippet plain(text: string, code: boolean = false)}
   {#if !code && showsInPre(text)}
     {@render controls(false, false)}
-    <pre use:track data-preview="plain" class="{PANE} rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
+    <pre
+      use:track
+      data-preview="plain"
+      class="{PANE} rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
   {:else}
     {@render controls(false, true)}
     <div use:track data-preview="plain" class="min-w-0"><CodeView {text} {wrap} /></div>
   {/if}
 {/snippet}
 
-<div class="grid gap-3" style="--pane-max: max(150px, calc(100dvh - {paneTop}px - 6.5rem - env(safe-area-inset-bottom) - 1px))">
+<div
+  class="grid gap-3"
+  style="--pane-max: max(150px, calc(100dvh - {paneTop}px - 6.5rem - env(safe-area-inset-bottom) - 1px))"
+>
   <!-- Back on a row of its own, then the name and the size under it. -->
-  <Button class="-ml-2 h-8 w-fit px-2 text-muted-foreground" variant="ghost" size="sm" href={back}><ArrowLeft aria-hidden="true" />{backLabel}</Button>
-  {#if q.data}
-    {@const p = q.data}
+  <Button class="-ml-2 h-8 w-fit px-2 text-muted-foreground" variant="ghost" size="sm" href={back}>
+    <ArrowLeft aria-hidden="true" />{backLabel}
+  </Button>
+  {#if query.data}
+    {@const preview = query.data}
     <div class="grid min-w-0 gap-0.5">
-      <div class="font-semibold [overflow-wrap:anywhere]">{p.name}</div>
+      <div class="font-semibold [overflow-wrap:anywhere]">{preview.name}</div>
       {#if abs}
         <div class="text-sm text-muted-foreground [overflow-wrap:anywhere]">{file}</div>
         <div class="text-sm text-muted-foreground">outside the session folder</div>
       {/if}
-      <div class="text-sm text-muted-foreground">{humanSize(p.size)}</div>
+      <div class="text-sm text-muted-foreground">{humanSize(preview.size)}</div>
     </div>
   {/if}
-  {#if q.isPending}
+  {#if query.isPending}
     <p class="text-muted-foreground">Loading file...</p>
-  {:else if q.error}
-    <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
-  {:else if q.data}
-    {@const p = q.data}
-    {#if p.kind === "text"}
-      {#if p.truncated}
-        <p class="text-sm text-warning">Showing only the start of {humanSize(p.size)}. Download the file for the rest.</p>
+  {:else if query.error}
+    <Alert.Root variant="destructive"><Alert.Description>{query.error.message}</Alert.Description></Alert.Root>
+  {:else if query.data}
+    {@const preview = query.data}
+    {#if preview.kind === "text"}
+      {#if preview.truncated}
+        <p class="text-sm text-warning">
+          Showing only the start of {humanSize(preview.size)}. Download the file for the rest.
+        </p>
       {/if}
-      {@const text = p.text ?? ""}
-      {@const plan = viewKind(p.name, text.length)}
+      {@const text = preview.text ?? ""}
+      {@const plan = viewKind(preview.name, text.length)}
       {#if plan.kind === "markdown"}
-        {#await formatText(p.name, text)}
+        {#await formatText(preview.name, text)}
           <p class="text-muted-foreground">Rendering...</p>
-        {:then f}
-          {#if f.kind === "markdown"}
+        {:then result}
+          {#if result.kind === "markdown"}
             {@render controls(true, !rendered)}
             {#if rendered}
-              <div use:track data-preview="rendered" class="{PANE} rounded-lg border bg-card p-3"><FormattedText html={f.html} /></div>
+              <div use:track data-preview="rendered" class="{PANE} rounded-lg border bg-card p-3">
+                <FormattedText html={result.html} />
+              </div>
             {:else}
               <div use:track data-preview="source" class="min-w-0"><CodeView {text} language="markdown" {wrap} /></div>
             {/if}
           {:else}
-            {#if f.note}<p class="text-sm text-muted-foreground">{f.note}</p>{/if}
+            {#if result.note}<p class="text-sm text-muted-foreground">{result.note}</p>{/if}
             {@render plain(text, true)}
           {/if}
         {/await}

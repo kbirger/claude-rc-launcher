@@ -3,7 +3,11 @@ import { applyToDocument, resolveDark, loadChoice, saveMode, saveTheme, type Mod
 const dark = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : undefined;
 
 /** The palette and the light/dark/system choice. `dark` is the result: whether the page is dark now. */
-export const appearance = $state<{ theme: ThemeName; mode: Mode; dark: boolean }>({ theme: "claude", mode: "system", dark: false });
+export const appearance = $state<{ theme: ThemeName; mode: Mode; dark: boolean }>({
+  theme: "claude",
+  mode: "system",
+  dark: false,
+});
 
 function apply() {
   appearance.dark = resolveDark(appearance.mode, dark?.matches ?? false);

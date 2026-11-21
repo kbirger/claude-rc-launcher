@@ -1,12 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  compareVersions,
-  isKnownVersion,
-  isStale,
-  normalizeVersion,
-  releaseOf,
-  stalestVersion,
-} from "../src/versions";
+import { compareVersions, isKnownVersion, isStale, normalizeVersion, releaseOf, stalestVersion } from "../src/versions";
 
 describe("versions", () => {
   test("normalizeVersion strips one leading v", () => {

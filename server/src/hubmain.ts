@@ -1,93 +1,144 @@
-import { createApp, type CliDeps, type Updater } from "./app";
+import { createApp } from "./app";
+import type { CliDeps, Updater } from "./app";
+import { createOidcClient, oidcUserAuth } from "./auth";
+import type { OidcClient } from "./auth";
 import { cliBearerAuth } from "./cliauth";
-import { createOidcClient, oidcUserAuth, type OidcClient } from "./auth";
 import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
-import { rolesFrom } from "./roles";
-import { createHostClient, hubAuthorizer, secretAuthorizer, type Authorizer, type HostClient, type HostConfig } from "./hostclient";
-import { createLatestRelease } from "./latest";
-import { createReleaseList } from "./releaselist";
-import { loadOrCreateHubKey, type HubKey } from "./hubproof";
+import { createHostClient, hubAuthorizer, secretAuthorizer } from "./hostclient";
+import type { Authorizer, HostClient, HostConfig } from "./hostclient";
 import { HostRegistry } from "./hostregistry";
-import { bunRunner, InstanceService, type Instances } from "./instances";
-import { createJwtVerifier, remoteKeys, type JwtVerifier } from "./jwt";
+import { loadOrCreateHubKey } from "./hubproof";
+import type { HubKey } from "./hubproof";
+import { bunRunner, InstanceService } from "./instances";
+import type { Instances } from "./instances";
+import { createJwtVerifier, remoteKeys } from "./jwt";
+import type { JwtVerifier } from "./jwt";
+import { createLatestRelease } from "./latest";
+import { createNodeWatchers } from "./nodewatcher";
+import type { Presence } from "./nodewatcher";
 import { resolveDirOwner } from "./owner";
-import { proxyJwtUserAuth, type PeerResolver } from "./proxyauth";
+import { proxyJwtUserAuth } from "./proxyauth";
+import type { PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
-import { withLongUpdates, type ServeLimits } from "./serve";
+import { createReleaseList } from "./releaselist";
+import { rolesFrom } from "./roles";
+import { withLongUpdates } from "./serve";
+import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { stopServer } from "./sse";
 import { staticHandler } from "./static";
-import { createNodeWatchers, type Presence } from "./nodewatcher";
+import type { UpdateHooks } from "./updateevents";
 import { UpdateHistory } from "./updatehistory";
 import { updateJournal } from "./updatejournal";
 import { UpdateLog } from "./updatelog";
-import type { UpdateHooks } from "./updateevents";
 import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
 
-export type HubDeps = { instances?: Instances; oidc?: OidcClient; verify?: JwtVerifier; peer?: PeerResolver; cliVerify?: JwtVerifier; update?: Updater; limits?: ServeLimits; watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number } };
+export interface HubDeps {
+  instances?: Instances;
+  oidc?: OidcClient;
+  verify?: JwtVerifier;
+  peer?: PeerResolver;
+  cliVerify?: JwtVerifier;
+  update?: Updater;
+  limits?: ServeLimits;
+  watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number };
+}
 
 async function buildUserAuth(cfg: Config, deps: HubDeps): Promise<UserAuthStrategy> {
   const ua = cfg.userAuth;
   if (!ua) throw new Error("hub configuration has no user_auth");
-  if (ua.mode === "oidc") return oidcUserAuth(cfg, deps.oidc ?? (await createOidcClient(cfg)));
-  const verify = deps.verify ?? createJwtVerifier({ keys: remoteKeys(ua.jwksUrl), issuer: ua.issuer, audience: ua.audience });
+  if (ua.mode === "oidc") return oidcUserAuth(cfg, deps.oidc ?? createOidcClient(cfg));
+  const verify =
+    deps.verify ?? createJwtVerifier({ keys: remoteKeys(ua.jwksUrl), issuer: ua.issuer, audience: ua.audience });
   return proxyJwtUserAuth({ settings: ua, verify, ...(deps.peer ? { peer: deps.peer } : {}) });
 }
 
-function authorizerFor(h: HostConfig, key: HubKey): Authorizer {
-  return h.auth.type === "secret" ? secretAuthorizer(h.auth.secret) : hubAuthorizer(key, h);
+function authorizerFor(hostConfig: HostConfig, key: HubKey): Authorizer {
+  return hostConfig.auth.type === "secret" ? secretAuthorizer(hostConfig.auth.secret) : hubAuthorizer(key, hostConfig);
 }
 
 export function buildHostClients(cfg: Config, key: HubKey): Map<string, HostClient> {
   const clients = new Map<string, HostClient>();
-  for (const h of cfg.hosts) clients.set(h.id, createHostClient(h, authorizerFor(h, key)));
+  for (const hostConfig of cfg.hosts)
+    clients.set(hostConfig.id, createHostClient(hostConfig, authorizerFor(hostConfig, key)));
   return clients;
 }
 
-function buildCliDeps(cfg: Config, deps: HubDeps, makeClient: (h: HostConfig) => HostClient, hubKeys: string[]): CliDeps | undefined {
-  const c = cfg.cliAuth;
-  if (!c) return undefined;
-  const verify = deps.cliVerify ?? createJwtVerifier({ keys: remoteKeys(c.jwksUrl), issuer: c.issuer, audience: c.clientId });
+function buildCliDeps(
+  cfg: Config,
+  deps: HubDeps,
+  makeClient: (hostConfig: HostConfig) => HostClient,
+  hubKeys: string[],
+): CliDeps | undefined {
+  const cliAuthSettings = cfg.cliAuth;
+  if (!cliAuthSettings) return undefined;
+  const verify =
+    deps.cliVerify ??
+    createJwtVerifier({
+      keys: remoteKeys(cliAuthSettings.jwksUrl),
+      issuer: cliAuthSettings.issuer,
+      audience: cliAuthSettings.clientId,
+    });
   return {
-    issuer: c.issuer,
-    clientId: c.clientId,
+    issuer: cliAuthSettings.issuer,
+    clientId: cliAuthSettings.clientId,
     ...(rolesFrom(cfg.userAuth).scope ? { roleScope: rolesFrom(cfg.userAuth).scope } : {}),
-    auth: cliBearerAuth({ verify, roles: rolesFrom(cfg.userAuth), ...(cfg.userAuth?.allowedUsers ? { allowedUsers: cfg.userAuth.allowedUsers } : {}) }),
+    auth: cliBearerAuth({
+      verify,
+      roles: rolesFrom(cfg.userAuth),
+      ...(cfg.userAuth?.allowedUsers ? { allowedUsers: cfg.userAuth.allowedUsers } : {}),
+    }),
     makeClient,
     enrollment: { hubKeys },
   };
 }
 
-const PRESENCE_LEVEL: Record<Presence["status"], "log" | "warn" | "error"> = { online: "log", restarting: "log", offline: "warn", error: "error" };
+const PRESENCE_LEVEL: Record<Presence["status"], "log" | "warn" | "error"> = {
+  online: "log",
+  restarting: "log",
+  offline: "warn",
+  error: "error",
+};
 
 /** Returns a function that logs one line when the status or the reason of a host changes (never on a repeat or a version change). The level follows the status: online and restarting log, offline warns, error errors. */
-export function presenceLogger(log: (line: string, level: "log" | "warn" | "error") => void): (p: Presence) => void {
+export function presenceLogger(
+  log: (line: string, level: "log" | "warn" | "error") => void,
+): (presence: Presence) => void {
   const last = new Map<string, string>();
-  return (p) => {
-    const key = `${p.status}\u0000${p.reason ?? ""}`;
-    if (last.get(p.host) === key) return;
-    last.set(p.host, key);
-    log(`host ${p.host}: ${p.status}${p.reason ? ` (${p.reason})` : ""}`, PRESENCE_LEVEL[p.status]);
+
+  return (presence) => {
+    const key = `${presence.status}\u0000${presence.reason ?? ""}`;
+    if (last.get(presence.host) === key) return;
+    last.set(presence.host, key);
+    log(
+      `host ${presence.host}: ${presence.status}${presence.reason ? ` (${presence.reason})` : ""}`,
+      PRESENCE_LEVEL[presence.status],
+    );
   };
 }
 
 type StepEvent = Parameters<NonNullable<UpdateHooks["onStep"]>>[0];
 
 /** Writes a step into the entry of a host while that entry runs; a settled or missing entry is left alone. `stepDetail` is `client` or `detail`, cut to 200 characters. */
-export function stepWriter(record: UpdateRecord): (host: string, e: StepEvent) => void {
-  return (host, e) => {
-    const detail = (e.client ?? e.detail)?.slice(0, 200);
-    const base = record.list().find((x) => x.host === host);
+export function stepWriter(record: UpdateRecord): (host: string, value: StepEvent) => void {
+  return (host, event) => {
+    const detail = (event.client ?? event.detail)?.slice(0, 200);
+    const base = record.list().find((updateEntry) => updateEntry.host === host);
     if (base?.status !== "running") return;
-    if (base.step === e.step && base.stepDetail === detail) return; // nothing changed: no write, no broadcast
+    if (base.step === event.step && base.stepDetail === detail) return; // nothing changed: no write, no broadcast
     const { stepDetail: _drop, ...rest } = base;
     void record
-      .setIf({ ...rest, step: e.step, ...(detail !== undefined ? { stepDetail: detail } : {}) }, (cur) => cur?.status === "running" && cur.startedAt === base.startedAt)
-      .catch((err) => console.error(`cannot record the update step of ${host}: ${err instanceof Error ? err.message : String(err)}`));
+      .setIf(
+        { ...rest, step: event.step, ...(detail !== undefined ? { stepDetail: detail } : {}) },
+        (cur) => cur?.status === "running" && cur.startedAt === base.startedAt,
+      )
+      .catch((err) => {
+        console.error(`cannot record the update step of ${host}: ${err instanceof Error ? err.message : String(err)}`);
+      });
   };
 }
 
@@ -96,60 +147,92 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const hubKey = await loadOrCreateHubKey(cfg.stateDir);
   console.log(`hub key ${hubKey.kid} public_key=${hubKey.publicKey}`);
   const files = await loadWebFiles();
-  if (!files.has("/index.html")) console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
+  if (!files.has("/index.html"))
+    console.warn("warning: web UI not built (no embedded files and no web/dist); API only");
+
   if (cfg.userAuth?.mode === "oidc" && cfg.userAuth.oidc.issuer.startsWith("http:")) {
     console.warn(
       "warning: user_auth.oidc.issuer uses plain http; ID tokens are not signature-verified, so a network attacker could forge logins. Use https in production.",
     );
   }
+
   const dirOwner = await resolveDirOwner(cfg);
   const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
   const userAuth = await buildUserAuth(cfg, deps);
   // Forwarded headers are not consulted: the secure-cookie decision comes from public_url (https: => Secure).
-  const makeClient = (h: HostConfig): HostClient => createHostClient(h, authorizerFor(h, hubKey));
+  const makeClient = (hostConfig: HostConfig): HostClient =>
+    createHostClient(hostConfig, authorizerFor(hostConfig, hubKey));
   const cli = buildCliDeps(cfg, deps, makeClient, [hubKey.publicKey]);
-  const hosts = await HostRegistry.load({ stateDir: cfg.stateDir, hosts: cfg.hosts, clients: buildHostClients(cfg, hubKey), makeClient });
+  const hosts = await HostRegistry.load({
+    stateDir: cfg.stateDir,
+    hosts: cfg.hosts,
+    clients: buildHostClients(cfg, hubKey),
+    makeClient,
+  });
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const updateEnv = realUpdateEnv(cfg);
   const updateLog = new UpdateLog();
+
   // Written once the record is loaded; the hooks of the hub's own updater only run after the server starts.
-  let writeStep: (host: string, e: StepEvent) => void = () => {};
+  let writeStep: (host: string, value: StepEvent) => void = () => {};
+
   const localHooks: UpdateHooks = {
-    onStep: (e) => {
-      if (e.step === "downloading") updateLog.clear("local");
-      writeStep("local", e);
+    onStep: (event) => {
+      if (event.step === "downloading") updateLog.clear("local");
+      writeStep("local", event);
     },
-    onLog: (line) => updateLog.add("local", line),
+    onLog: (line) => {
+      updateLog.add("local", line);
+    },
   };
   const update = deps.update ?? createServiceUpdater(updateEnv, localHooks);
   const clientVersions = createClientVersions(updateEnv);
   const cloner = serviceCloner(cfg, instances, dirOwner);
-  const latest = createLatestRelease({ fetch: globalThis.fetch, onError: (m) => console.warn(`[latest] ${m}`) });
+  const latest = createLatestRelease({
+    fetch: globalThis.fetch,
+    onError: (item) => {
+      console.warn(`[latest] ${item}`);
+    },
+  });
   // Fill the cache now, so the first host list after a start already knows whether the hub is stale. Startup does not wait for it.
   void latest.get().catch(() => {});
-  const releaseList = createReleaseList({ fetch: globalThis.fetch, onError: (m) => console.warn(`[releases] ${m}`) });
+  const releaseList = createReleaseList({
+    fetch: globalThis.fetch,
+    onError: (item) => {
+      console.warn(`[releases] ${item}`);
+    },
+  });
   const record = await UpdateRecord.load({ stateDir: cfg.stateDir });
   const history = await UpdateHistory.load({ stateDir: cfg.stateDir });
   // Both listeners come before `reconcileHub`, so that the settle of a hub update after its restart is also journaled and kept.
-  record.onChange(updateJournal((line, level) => console[level](line)));
-  record.onChange((e) => {
-    if (e.status === "running") return;
-    history.add(e, updateLog.get(e.host)).catch((err) => console.error(`cannot write the update history: ${err instanceof Error ? err.message : String(err)}`));
+  record.onChange(
+    updateJournal((line, level) => {
+      console[level](line);
+    }),
+  );
+  record.onChange((updateEntry) => {
+    if (updateEntry.status === "running") return;
+    history.add(updateEntry, updateLog.get(updateEntry.host)).catch((err) => {
+      console.error(`cannot write the update history: ${err instanceof Error ? err.message : String(err)}`);
+    });
   });
   // A hub update that restarted this process is settled before the first request.
   await record.reconcileHub(VERSION);
   await record.markStaleRunning();
   writeStep = stepWriter(record);
-  const presenceSubs = new Set<(p: Presence) => void>();
-  const logPresence = presenceLogger((line, level) => console[level](line));
+  const presenceSubs = new Set<(presence: Presence) => void>();
+  const logPresence = presenceLogger((line, level) => {
+    console[level](line);
+  });
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,
-    onPresence: (p) => {
-      logPresence(p);
+    onPresence: (item) => {
+      logPresence(item);
+
       for (const fn of [...presenceSubs]) {
         try {
-          fn(p);
+          fn(item);
         } catch {
           // a broken subscriber must not stop the others
         }
@@ -161,18 +244,42 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   });
   const presence = {
     list: () => watchers.presence(),
-    onChange: (fn: (p: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
+    onChange: (fn: (presence: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
   };
   // The restarting state of a node ends at once when its update entry settles without a new version.
-  const offRecord = record.onChange((e) => {
-    if (e.host !== "local" && (e.status === "unknown" || e.status === "rolled back")) watchers.endRestarting(e.host);
+  const offRecord = record.onChange((updateEntry) => {
+    if (updateEntry.host !== "local" && (updateEntry.status === "unknown" || updateEntry.status === "rolled back"))
+      watchers.endRestarting(updateEntry.host);
   });
-  const app = createApp({ cfg, instances, userAuth, staticHandler: staticHandler(files), dirOwner, hosts, update, latest, releaseList, clientVersions, updates: record, history, updateLog, presence, ...(cloner ? { cloner } : {}), ...(cli ? { cli } : {}) });
-  const server = Bun.serve({ port: cfg.port, hostname: cfg.host, fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout), ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}) });
+  const app = createApp({
+    cfg,
+    instances,
+    userAuth,
+    staticHandler: staticHandler(files),
+    dirOwner,
+    hosts,
+    update,
+    latest,
+    releaseList,
+    clientVersions,
+    updates: record,
+    history,
+    updateLog,
+    presence,
+    ...(cloner ? { cloner } : {}),
+    ...(cli ? { cli } : {}),
+  });
+  const server = Bun.serve({
+    port: cfg.port,
+    hostname: cfg.host,
+    fetch: withLongUpdates(app, deps.limits?.updateIdleTimeout),
+    ...(deps.limits?.idleTimeout ? { idleTimeout: deps.limits.idleTimeout } : {}),
+  });
   console.log(`listening on ${cfg.host}:${server.port}`);
   console.log(`public URL: ${cfg.publicUrl}`);
   const listed = hosts.list();
-  if (listed.length) console.log(`hosts: ${listed.map((e) => `${e.host.id} (${e.host.url})`).join(", ")}`);
+  if (listed.length)
+    console.log(`hosts: ${listed.map((hostEntry) => `${hostEntry.host.id} (${hostEntry.host.url})`).join(", ")}`);
   if (cli) console.log("cli login: enabled");
   return {
     port: server.port!,

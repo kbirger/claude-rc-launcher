@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { detectIndent, formatRule, markShadowed, parseRule, rulesOf, withRule, withoutRule, type Rule } from "../src/permrules";
+import { detectIndent, formatRule, markShadowed, parseRule, rulesOf, withRule, withoutRule } from "../src/permrules";
+import type { Rule } from "../src/permrules";
+import { defined } from "./support";
 
 describe("parseRule", () => {
   test("a rule with a specifier", () => {
@@ -20,8 +22,14 @@ describe("parseRule", () => {
     expect(parseRule("(x)")).toBeUndefined();
   });
   test("formatRule gives back the text for each valid sample", () => {
-    for (const raw of ["Bash(git log *)", "Bash", "Bash(echo (a) *)", "mcp__srv__tool", "WebFetch(domain:example.com)"]) {
-      expect(formatRule(parseRule(raw)!)).toBe(raw);
+    for (const raw of [
+      "Bash(git log *)",
+      "Bash",
+      "Bash(echo (a) *)",
+      "mcp__srv__tool",
+      "WebFetch(domain:example.com)",
+    ]) {
+      expect(formatRule(defined(parseRule(raw)))).toBe(raw);
     }
   });
 });
@@ -34,7 +42,7 @@ describe("rulesOf", () => {
       { raw: "B(x)", list: "allow", tool: "B", specifier: "x" },
     ]);
     expect(warnings).toHaveLength(2);
-    expect(warnings.some((w) => w.includes("deny"))).toBe(true);
+    expect(warnings.some((warning) => warning.includes("deny"))).toBe(true);
   });
   test("a malformed rule string is skipped with a warning", () => {
     const { rules, warnings } = rulesOf({ permissions: { ask: ["Bash("] } });
@@ -45,61 +53,76 @@ describe("rulesOf", () => {
     expect(rulesOf({})).toEqual({ rules: [], warnings: [] });
   });
   test("permissions that is not an object gives a warning", () => {
-    const r = rulesOf({ permissions: [] });
-    expect(r.rules).toEqual([]);
-    expect(r.warnings).toHaveLength(1);
+    const result = rulesOf({ permissions: [] });
+    expect(result.rules).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
   });
 });
 
-const r = (list: Rule["list"], raw: string): Rule => {
-  const p = parseRule(raw)!;
-  return { raw, list, tool: p.tool, ...(p.specifier !== undefined ? { specifier: p.specifier } : {}) };
+const helper = (list: Rule["list"], raw: string): Rule => {
+  const parsedRule = defined(parseRule(raw));
+  return {
+    raw,
+    list,
+    tool: parsedRule.tool,
+    ...(parsedRule.specifier !== undefined ? { specifier: parsedRule.specifier } : {}),
+  };
 };
 
 describe("markShadowed", () => {
   test("an allow rule with an equal deny rule in another layer is shadowed by it", () => {
     const out = markShadowed([
-      { scope: "local", rules: [r("allow", "Bash(git log *)")] },
-      { scope: "user", rules: [r("deny", "Bash(git log *)")] },
+      { scope: "local", rules: [helper("allow", "Bash(git log *)")] },
+      { scope: "user", rules: [helper("deny", "Bash(git log *)")] },
     ]);
-    const allow = out.find((x) => x.list === "allow")!;
+    const allow = defined(out.find((markedRule) => markedRule.list === "allow"));
     expect(allow.scope).toBe("local");
     expect(allow.shadowedBy).toEqual({ scope: "user", list: "deny", raw: "Bash(git log *)" });
   });
   test("an allow rule with no equal deny or ask rule has no shadowedBy", () => {
-    const out = markShadowed([{ scope: "local", rules: [r("allow", "Bash(ls *)"), r("deny", "Bash(rm *)")] }]);
-    expect(out.every((x) => x.shadowedBy === undefined)).toBe(true);
+    const out = markShadowed([
+      { scope: "local", rules: [helper("allow", "Bash(ls *)"), helper("deny", "Bash(rm *)")] },
+    ]);
+    expect(out.every((markedRule) => markedRule.shadowedBy === undefined)).toBe(true);
   });
   test("a bare tool deny shadows every allow rule of that tool", () => {
     const out = markShadowed([
-      { scope: "project", rules: [r("deny", "WebFetch")] },
-      { scope: "user", rules: [r("allow", "WebFetch(domain:a.com)"), r("allow", "Read(x)")] },
+      { scope: "project", rules: [helper("deny", "WebFetch")] },
+      { scope: "user", rules: [helper("allow", "WebFetch(domain:a.com)"), helper("allow", "Read(x)")] },
     ]);
-    expect(out.find((x) => x.raw === "WebFetch(domain:a.com)")!.shadowedBy).toEqual({ scope: "project", list: "deny", raw: "WebFetch" });
-    expect(out.find((x) => x.raw === "Read(x)")!.shadowedBy).toBeUndefined();
+    expect(defined(out.find((markedRule) => markedRule.raw === "WebFetch(domain:a.com)")).shadowedBy).toEqual({
+      scope: "project",
+      list: "deny",
+      raw: "WebFetch",
+    });
+    expect(defined(out.find((markedRule) => markedRule.raw === "Read(x)")).shadowedBy).toBeUndefined();
   });
   test("an ask rule also shadows, and a deny rule wins over an ask rule", () => {
-    const ask = markShadowed([{ scope: "a", rules: [r("allow", "Bash(x)"), r("ask", "Bash(x)")] }]);
-    expect(ask.find((x) => x.list === "allow")!.shadowedBy?.list).toBe("ask");
-    const both = markShadowed([{ scope: "a", rules: [r("allow", "Bash(x)"), r("ask", "Bash(x)"), r("deny", "Bash(x)")] }]);
-    expect(both.find((x) => x.list === "allow")!.shadowedBy?.list).toBe("deny");
+    const ask = markShadowed([{ scope: "a", rules: [helper("allow", "Bash(x)"), helper("ask", "Bash(x)")] }]);
+    expect(defined(ask.find((markedRule) => markedRule.list === "allow")).shadowedBy?.list).toBe("ask");
+    const both = markShadowed([
+      { scope: "a", rules: [helper("allow", "Bash(x)"), helper("ask", "Bash(x)"), helper("deny", "Bash(x)")] },
+    ]);
+    expect(defined(both.find((markedRule) => markedRule.list === "allow")).shadowedBy?.list).toBe("deny");
   });
   test("deny and ask rules are never marked", () => {
-    const out = markShadowed([{ scope: "a", rules: [r("deny", "Bash(x)"), r("ask", "Bash(x)")] }]);
-    expect(out.every((x) => x.shadowedBy === undefined)).toBe(true);
+    const out = markShadowed([{ scope: "a", rules: [helper("deny", "Bash(x)"), helper("ask", "Bash(x)")] }]);
+    expect(out.every((markedRule) => markedRule.shadowedBy === undefined)).toBe(true);
   });
 });
 
 describe("withRule and withoutRule", () => {
   test("a 4-space file keeps 4 spaces after an add", () => {
-    const t = '{\n    "permissions": {\n        "allow": [\n            "Read"\n        ]\n    }\n}\n';
-    const r = withRule(t, "allow", "Bash(ls *)");
-    expect(r.changed).toBe(true);
-    expect(r.text).toBe('{\n    "permissions": {\n        "allow": [\n            "Read",\n            "Bash(ls *)"\n        ]\n    }\n}\n');
+    const item = '{\n    "permissions": {\n        "allow": [\n            "Read"\n        ]\n    }\n}\n';
+    const rule = withRule(item, "allow", "Bash(ls *)");
+    expect(rule.changed).toBe(true);
+    expect(rule.text).toBe(
+      '{\n    "permissions": {\n        "allow": [\n            "Read",\n            "Bash(ls *)"\n        ]\n    }\n}\n',
+    );
   });
   test("a tab-indented file keeps tabs", () => {
-    const r = withRule('{\n\t"permissions": {\n\t\t"allow": ["Read"]\n\t}\n}\n', "allow", "Edit");
-    expect(r.text).toContain('\n\t"permissions": {\n\t\t"allow": [\n\t\t\t"Read",');
+    const rule = withRule('{\n\t"permissions": {\n\t\t"allow": ["Read"]\n\t}\n}\n', "allow", "Edit");
+    expect(rule.text).toContain('\n\t"permissions": {\n\t\t"allow": [\n\t\t\t"Read",');
     expect(detectIndent('{\n\t"a": 1\n}')).toBe("\t");
   });
   test("indent defaults to 2", () => {
@@ -107,39 +130,45 @@ describe("withRule and withoutRule", () => {
     expect(detectIndent('{"a":1}')).toBe(2);
   });
   test("unknown keys and key order stay", () => {
-    const t = '{"z": 1, "permissions": {"deny": ["X"], "extra": true, "allow": []}, "a": {"b": 2}}';
-    const doc = JSON.parse(withRule(t, "allow", "Read").text);
-    expect(Object.keys(doc)).toEqual(["z", "permissions", "a"]);
+    const item = '{"z": 1, "permissions": {"deny": ["X"], "extra": true, "allow": []}, "last": {"inner": 2}}';
+    const doc = JSON.parse(withRule(item, "allow", "Read").text);
+    expect(Object.keys(doc)).toEqual(["z", "permissions", "last"]);
     expect(Object.keys(doc.permissions)).toEqual(["deny", "extra", "allow"]);
     expect(doc.permissions.deny).toEqual(["X"]);
     expect(doc.permissions.extra).toBe(true);
-    expect(doc.a).toEqual({ b: 2 });
+    expect(doc.last).toEqual({ inner: 2 });
   });
   test("a missing permissions key is created", () => {
     const doc = JSON.parse(withRule('{"model":"x"}', "ask", "Bash").text);
     expect(doc).toEqual({ model: "x", permissions: { ask: ["Bash"] } });
   });
   test("a missing list is created", () => {
-    expect(JSON.parse(withRule('{"permissions":{"allow":["A"]}}', "deny", "B").text).permissions).toEqual({ allow: ["A"], deny: ["B"] });
+    expect(JSON.parse(withRule('{"permissions":{"allow":["A"]}}', "deny", "B").text).permissions).toEqual({
+      allow: ["A"],
+      deny: ["B"],
+    });
   });
   test("a duplicate gives changed false and the same text", () => {
-    const t = '{"permissions":{"allow":["Read"]}}';
-    expect(withRule(t, "allow", "Read")).toEqual({ text: t, changed: false });
+    const item = '{"permissions":{"allow":["Read"]}}';
+    expect(withRule(item, "allow", "Read")).toEqual({ text: item, changed: false });
   });
   test("withRule(null) gives a two-space document with a trailing newline", () => {
-    expect(withRule(null, "allow", "Read")).toEqual({ text: '{\n  "permissions": {\n    "allow": [\n      "Read"\n    ]\n  }\n}\n', changed: true });
+    expect(withRule(null, "allow", "Read")).toEqual({
+      text: '{\n  "permissions": {\n    "allow": [\n      "Read"\n    ]\n  }\n}\n',
+      changed: true,
+    });
   });
   test("the text ends with a newline", () => {
     expect(withRule("{}", "allow", "Read").text.endsWith("}\n")).toBe(true);
   });
   test("removing the last rule leaves an empty list", () => {
-    const r = withoutRule('{"permissions":{"allow":["Read"]}}', "allow", "Read");
-    expect(r.changed).toBe(true);
-    expect(JSON.parse(r.text)).toEqual({ permissions: { allow: [] } });
+    const rule = withoutRule('{"permissions":{"allow":["Read"]}}', "allow", "Read");
+    expect(rule.changed).toBe(true);
+    expect(JSON.parse(rule.text)).toEqual({ permissions: { allow: [] } });
   });
   test("removing an absent rule gives changed false", () => {
-    const t = '{"permissions":{"allow":["Read"]}}';
-    expect(withoutRule(t, "allow", "Edit")).toEqual({ text: t, changed: false });
+    const item = '{"permissions":{"allow":["Read"]}}';
+    expect(withoutRule(item, "allow", "Edit")).toEqual({ text: item, changed: false });
     expect(withoutRule("{}", "allow", "Edit")).toEqual({ text: "{}", changed: false });
   });
   test("removal keeps the other rules and lists", () => {

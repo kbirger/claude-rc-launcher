@@ -1,7 +1,6 @@
 <script lang="ts">
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { replaceState } from "$app/navigation";
-  import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import ArrowLeft from "@tabler/icons-svelte/icons/arrow-left";
   import { Badge } from "#lib/components/ui/badge/index.js";
@@ -20,26 +19,40 @@
   type View = "touched" | "changed" | "folder" | "permissions" | "blocked";
   const VIEWS: readonly string[] = ["touched", "changed", "folder", "permissions", "blocked"];
   // `abs`: a touched file opened by its absolute path (it may be outside the session folder). It wins over `file`.
-  type Props = { host: string; instance: string; session: string; view: View; path: string; hidden: boolean; file: string; abs?: string; now: number };
+  type Props = {
+    host: string;
+    instance: string;
+    session: string;
+    view: View;
+    path: string;
+    hidden: boolean;
+    file: string;
+    abs?: string;
+    now: number;
+  };
   let { host, instance, session, view, path, hidden, file, abs = "", now }: Props = $props();
 
-  const q = createQuery(() => sessionsQuery(host, instance));
-  const s = $derived(q.data?.find((x) => x.id === session));
+  const query = createQuery(() => sessionsQuery(host, instance));
+  const sessionInfo = $derived(query.data?.find((summary) => summary.id === session));
   // The name of the instance, for the way back. The instance list is cached by the page before this one.
   const instances = createQuery(() => instancesQuery(host));
-  const instanceName = $derived(instances.data?.find((x) => x.id === instance)?.name);
-  const href = (v: View, extra: { path?: string; file?: string } = {}) =>
-    sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
+  const instanceName = $derived(instances.data?.find((instanceInfo) => instanceInfo.id === instance)?.name);
+  const href = (viewName: View, params: { path?: string; file?: string } = {}) =>
+    sessionsHref({ host, instance, session, view: viewName, ...(viewName === "folder" ? { hidden } : {}), ...params });
   // The tab is state of this page, not a navigation: a click adds no history entry, so Back does not walk through the tabs.
   // The address follows the tab (replaced, not added), so a reload or a Back from a file lands on the same tab.
   // A real navigation (a link, Back) changes `view`, and the tab follows it.
-  let current = $state(untrack(() => view));
-  $effect(() => { current = view; });
+  let current = $derived(view);
   // What each tab shows, in words. It sits under the tabs and follows the selected one.
-  const help = { touched: "Files that Claude wrote or edited in this session.", changed: "Files that git shows as changed in the folder since the session started. This includes files that commands made.", folder: "Every file in the folder of this session, also files that Claude did not touch." };
-  const pick = (v: string) => {
-    if (!VIEWS.includes(v)) return;
-    const next = v as View;
+  const help = {
+    touched: "Files that Claude wrote or edited in this session.",
+    changed:
+      "Files that git shows as changed in the folder since the session started. This includes files that commands made.",
+    folder: "Every file in the folder of this session, also files that Claude did not touch.",
+  };
+  const pick = (value: string) => {
+    if (!VIEWS.includes(value)) return;
+    const next = value as View;
     current = next;
     replaceState(href(next, next === "folder" ? { path } : {}), {});
   };
@@ -51,24 +64,40 @@
 <div class="grid grid-cols-[minmax(0,1fr)] gap-3">
   <!-- A file preview needs the room: it has its own Back button, so the session header is left out while a file is open. -->
   {#if !abs && !file}
-    <Button variant="ghost" size="sm" class="-ml-2 h-8 w-fit px-2 text-muted-foreground" href={sessionsHref({ host, instance })}>
+    <Button
+      variant="ghost"
+      size="sm"
+      class="-ml-2 h-8 w-fit px-2 text-muted-foreground"
+      href={sessionsHref({ host, instance })}
+    >
       <ArrowLeft aria-hidden="true" />Back to {instanceName ? `${instanceName} sessions` : "sessions"}
     </Button>
-    {#if s}
-      {@const wt = worktreeName(s.root)}
+    {#if sessionInfo}
+      {@const wt = worktreeName(sessionInfo.root)}
       <header class="grid gap-1">
-        <h2 class="font-heading text-xl leading-tight font-semibold [overflow-wrap:anywhere]">{sessionTitle(s) ?? "Untitled session"}</h2>
+        <h2 class="font-heading text-xl leading-tight font-semibold [overflow-wrap:anywhere]">
+          {sessionTitle(sessionInfo) ?? "Untitled session"}
+        </h2>
         <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-          {#if s.branch}<span class="min-w-0 [overflow-wrap:anywhere]">{s.branch}</span><span aria-hidden="true">·</span>{/if}
-          <span class="font-mono text-xs">{s.id.slice(0, 8)}</span>
+          {#if sessionInfo.branch}<span class="min-w-0 [overflow-wrap:anywhere]">{sessionInfo.branch}</span><span
+              aria-hidden="true"
+            >
+              ·
+            </span>{/if}
+          <span class="font-mono text-xs">{sessionInfo.id.slice(0, 8)}</span>
           <span aria-hidden="true">·</span>
-          <span>{ago(s.lastActiveAt, now)}</span>
-          {#if wt}<Badge variant="outline">work tree</Badge><span class="min-w-0 [overflow-wrap:anywhere]">{wt}</span>{/if}
+          <span>{ago(sessionInfo.lastActiveAt, now)}</span>
+          {#if wt}<Badge variant="outline">work tree</Badge><span class="min-w-0 [overflow-wrap:anywhere]">
+              {wt}
+            </span>{/if}
         </div>
       </header>
     {/if}
     <!-- The tabs are page state, and a pick replaces the address. -->
-    <Tabs.Root value={inPermissions ? "permissions" : "files"} onValueChange={(v) => pick(v === "permissions" ? "permissions" : "touched")}>
+    <Tabs.Root
+      value={inPermissions ? "permissions" : "files"}
+      onValueChange={(value) => pick(value === "permissions" ? "permissions" : "touched")}
+    >
       <Tabs.List aria-label="Session sections" class="group-data-horizontal/tabs:h-auto w-full">
         <Tabs.Trigger value="files" class="h-11 text-sm">Files</Tabs.Trigger>
         <Tabs.Trigger value="permissions" class="h-11 text-sm">Permissions</Tabs.Trigger>
@@ -79,9 +108,28 @@
   {#if abs}
     <FilePreview {host} {instance} {session} file={abs} abs back={href("touched")} backLabel="Back to touched files" />
   {:else if file}
-    <FilePreview {host} {instance} {session} {file} back={current === "folder" ? href("folder", { path }) : href(current)} backLabel={current === "folder" ? "Back to folder" : current === "changed" ? "Back to changed files" : "Back to touched files"} />
+    <FilePreview
+      {host}
+      {instance}
+      {session}
+      {file}
+      back={current === "folder" ? href("folder", { path }) : href(current)}
+      backLabel={current === "folder"
+        ? "Back to folder"
+        : current === "changed"
+          ? "Back to changed files"
+          : "Back to touched files"}
+    />
   {:else if inPermissions}
-    <SessionPermissions {host} {instance} {session} view={current === "blocked" ? "blocked" : "permissions"} {now} live={s?.live !== undefined} onpick={pick} />
+    <SessionPermissions
+      {host}
+      {instance}
+      {session}
+      view={current === "blocked" ? "blocked" : "permissions"}
+      {now}
+      live={sessionInfo?.live !== undefined}
+      onpick={pick}
+    />
   {:else}
     <h3 class="font-heading text-sm font-semibold">Files</h3>
     <Tabs.Root value={current} onValueChange={pick}>
@@ -92,18 +140,27 @@
       </Tabs.List>
       <p class="mt-2 mb-3 text-xs text-muted-foreground">{help[fileView]}</p>
       <Tabs.Content value={current} class="min-w-0">
-        {#if q.isPending}
+        {#if query.isPending}
           <p class="text-muted-foreground">Loading session...</p>
-        {:else if isUnsupported(q.error)}
+        {:else if isUnsupported(query.error)}
           <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
-        {:else if q.error}
-          <Alert.Root variant="destructive"><Alert.Description>Could not load the session: {q.error.message}</Alert.Description></Alert.Root>
-        {:else if !s}
+        {:else if query.error}
+          <Alert.Root variant="destructive">
+            <Alert.Description>Could not load the session: {query.error.message}</Alert.Description>
+          </Alert.Root>
+        {:else if !sessionInfo}
           <Alert.Root variant="destructive"><Alert.Description>Session not found.</Alert.Description></Alert.Root>
         {:else if current === "folder"}
           <FileBrowser {host} {instance} {session} {path} {hidden} {now} />
         {:else}
-          <TouchedList {host} {instance} {session} root={s.root} {now} kind={current === "changed" ? "changed" : "touched"} />
+          <TouchedList
+            {host}
+            {instance}
+            {session}
+            root={sessionInfo.root}
+            {now}
+            kind={current === "changed" ? "changed" : "touched"}
+          />
         {/if}
       </Tabs.Content>
     </Tabs.Root>

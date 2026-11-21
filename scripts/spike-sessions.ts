@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const [instance, home] = process.argv.slice(2);
+
 if (!instance || !home) {
   console.error("usage: bun scripts/spike-sessions.ts <instance-folder> <home-folder>");
   process.exit(2);
@@ -23,7 +24,9 @@ const WRITE_TOOLS: Record<string, string> = {
   NotebookEdit: "notebook_path",
 };
 
-for (const name of readdirSync(dir).filter((n) => n.endsWith(".jsonl")).sort()) {
+for (const name of readdirSync(dir)
+  .filter((item) => item.endsWith(".jsonl"))
+  .sort()) {
   let sessionId = "";
   let branch = "";
   let firstCwd = "";
@@ -32,31 +35,46 @@ for (const name of readdirSync(dir).filter((n) => n.endsWith(".jsonl")).sort()) 
   let bridge = false;
   const paths = new Set<string>();
   const toolNames = new Set<string>();
+
   for (const line of readFileSync(join(dir, name), "utf8").split("\n")) {
     if (!line) continue;
-    let r: any;
-    try { r = JSON.parse(line); } catch { continue; }
-    if (r.sessionId && !sessionId) sessionId = r.sessionId;
-    if (r.gitBranch) branch = r.gitBranch;
-    if (r.cwd) { if (!firstCwd) firstCwd = r.cwd; lastCwd = r.cwd; }
-    if (r.entrypoint && !entrypoint) entrypoint = r.entrypoint;
-    if (r.type === "bridge-session") bridge = true;
-    const content = r.message?.content;
-    if (r.type === "assistant" && Array.isArray(content)) {
-      for (const b of content) {
-        if (b.type !== "tool_use") continue;
-        const field = WRITE_TOOLS[b.name];
+    let item: any;
+
+    try {
+      item = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (item.sessionId && !sessionId) sessionId = item.sessionId;
+    if (item.gitBranch) branch = item.gitBranch;
+
+    if (item.cwd) {
+      if (!firstCwd) firstCwd = item.cwd;
+      lastCwd = item.cwd;
+    }
+
+    if (item.entrypoint && !entrypoint) entrypoint = item.entrypoint;
+    if (item.type === "bridge-session") bridge = true;
+    const content = item.message?.content;
+
+    if (item.type === "assistant" && Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type !== "tool_use") continue;
+        const field = WRITE_TOOLS[block.name];
+
         if (field) {
-          toolNames.add(b.name);
-          const p = b.input?.[field];
-          if (typeof p === "string") paths.add(p);
+          toolNames.add(block.name);
+          const value = block.input?.[field];
+          if (typeof value === "string") paths.add(value);
         }
       }
     }
   }
+
   console.log(`\n${name}`);
   console.log(`  sessionId=${sessionId} branch=${branch} entrypoint=${entrypoint} bridge=${bridge}`);
   console.log(`  firstCwd=${firstCwd} lastCwd=${lastCwd}`);
   console.log(`  tools=${[...toolNames].join(",")} paths=${paths.size}`);
-  for (const p of [...paths].slice(0, 5)) console.log(`    ${p}`);
+  for (const item of [...paths].slice(0, 5)) console.log(`    ${item}`);
 }

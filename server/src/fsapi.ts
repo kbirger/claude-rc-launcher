@@ -1,45 +1,60 @@
 import { mkdir, readdir, realpath, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
-import { adoptNewDir, type AdoptDir } from "./ownedir";
+import { adoptNewDir } from "./ownedir";
+import type { AdoptDir } from "./ownedir";
 import { PathError, resolveWithinRoots } from "./paths";
-import { repoKind, type RepoKind } from "./repokind";
+import { repoKind } from "./repokind";
+import type { RepoKind } from "./repokind";
 
-export type DirEntry = { name: string; path: string; trusted?: boolean; kind?: RepoKind };
-export type DirListing = { path: string; parent: string | null; dirs: DirEntry[] };
+export interface DirEntry {
+  name: string;
+  path: string;
+  trusted?: boolean;
+  kind?: RepoKind;
+}
+export interface DirListing {
+  path: string;
+  parent: string | null;
+  dirs: DirEntry[];
+}
 
 /** Runs fn over items with at most `limit` calls in flight. */
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function mapLimit<Value>(items: Value[], limit: number, fn: (value: Value) => Promise<void>): Promise<void> {
   let next = 0;
+
   const worker = async () => {
     while (next < items.length) await fn(items[next++]);
   };
+
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 export async function resolveChecked(input: string, roots: string[]): Promise<string> {
   try {
     return await resolveWithinRoots(input, roots);
-  } catch (e) {
-    if (e instanceof PathError) throw new HttpError(e.status, e.message);
-    throw e;
+  } catch (error) {
+    if (error instanceof PathError) throw new HttpError(error.status, error.message);
+    throw error;
   }
 }
 
 async function realRoots(roots: string[]): Promise<string[]> {
   const out: string[] = [];
-  for (const r of roots) {
+
+  for (const root of roots) {
     try {
-      out.push(await realpath(resolve(r)));
+      out.push(await realpath(resolve(root)));
     } catch {
       // missing root: skip
     }
   }
+
   return out;
 }
 
-function sameDir(a: string, b: string): boolean {
-  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+function sameDir(path: string, right: string): boolean {
+  return process.platform === "win32" ? path.toLowerCase() === right.toLowerCase() : path === right;
 }
 
 export async function listDirs(
@@ -50,58 +65,74 @@ export async function listDirs(
   classify: (absPath: string) => Promise<RepoKind | undefined> = repoKind,
 ): Promise<DirListing> {
   if (path === undefined) {
-    const dirs = (await realRoots(roots)).map((r) => (trusted ? { name: r, path: r, trusted: trusted(r) } : { name: r, path: r }));
+    const dirs = (await realRoots(roots)).map((realRoot) =>
+      trusted ? { name: realRoot, path: realRoot, trusted: trusted(realRoot) } : { name: realRoot, path: realRoot },
+    );
     return { path: "", parent: null, dirs };
   }
+
   const resolved = await resolveChecked(path, roots);
   let entries;
+
   try {
     entries = await readdir(resolved, { withFileTypes: true });
   } catch {
     throw new HttpError(400, "cannot read directory");
   }
+
   const dirs: DirEntry[] = [];
   const reals = new Map<DirEntry, string>();
+
   // Trust is judged on the real path, as `start` does, so a link shares its target's flag.
   const entry = (name: string, full: string, real: string): DirEntry => {
-    const d: DirEntry = trusted ? { name, path: full, trusted: trusted(real) } : { name, path: full };
-    reals.set(d, real);
-    return d;
+    const dirEntry: DirEntry = trusted ? { name, path: full, trusted: trusted(real) } : { name, path: full };
+    reals.set(dirEntry, real);
+    return dirEntry;
   };
-  for (const e of entries) {
-    if (!showHidden && e.name.startsWith(".")) continue;
-    const full = join(resolved, e.name);
-    if (e.isDirectory()) {
-      dirs.push(entry(e.name, full, full));
-    } else if (e.isSymbolicLink()) {
+
+  for (const dirent of entries) {
+    if (!showHidden && dirent.name.startsWith(".")) continue;
+    const full = join(resolved, dirent.name);
+
+    if (dirent.isDirectory()) {
+      dirs.push(entry(dirent.name, full, full));
+    } else if (dirent.isSymbolicLink()) {
       try {
         const real = await resolveWithinRoots(full, roots); // must be a dir inside the roots
-        dirs.push(entry(e.name, full, real));
+        dirs.push(entry(dirent.name, full, real));
       } catch {
         // omit links that escape the roots, dangle, or are not directories
       }
     }
   }
+
   // A failure for one entry leaves that entry without a kind. It never fails the listing.
-  await mapLimit(dirs, 16, async (d) => {
+  await mapLimit(dirs, 16, async (dirEntry) => {
     try {
-      const kind = await classify(reals.get(d) ?? d.path);
-      if (kind) d.kind = kind;
+      const kind = await classify(reals.get(dirEntry) ?? dirEntry.path);
+      if (kind) dirEntry.kind = kind;
     } catch {
       // no kind
     }
   });
-  dirs.sort((a, b) => {
-    const x = a.name.toLowerCase();
-    const y = b.name.toLowerCase();
-    return x < y ? -1 : x > y ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  dirs.sort((dirEntry, dir) => {
+    const lowered = dirEntry.name.toLowerCase();
+    const otherName = dir.name.toLowerCase();
+    return lowered < otherName
+      ? -1
+      : lowered > otherName
+        ? 1
+        : dirEntry.name < dir.name
+          ? -1
+          : dirEntry.name > dir.name
+            ? 1
+            : 0;
   });
-  const isRoot = (await realRoots(roots)).some((r) => sameDir(r, resolved));
+  const isRoot = (await realRoots(roots)).some((realRoot) => sameDir(realRoot, resolved));
   return { path: resolved, parent: isRoot ? null : dirname(resolved), dirs };
 }
 
-// eslint-disable-next-line no-control-regex
-const BAD_NAME = /[\u0000-\u001f\u007f/\\]/;
+const BAD_NAME = /[^\P{Cc}\u0080-\u009f]|[/\\]/u;
 
 export function isValidDirName(name: string): boolean {
   return (
@@ -115,7 +146,10 @@ export function isValidDirName(name: string): boolean {
   );
 }
 
-export type DirOwner = { uid: number; gid: number };
+export interface DirOwner {
+  uid: number;
+  gid: number;
+}
 
 export async function makeDir(
   parent: string,
@@ -129,27 +163,32 @@ export async function makeDir(
   if (!isValidDirName(name)) {
     throw new HttpError(400, "invalid directory name");
   }
+
   const resolved = await resolveChecked(parent, roots);
   const target = join(resolved, name);
+
   try {
     await mkdir(target);
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw new HttpError(409, "already exists");
     throw new HttpError(400, "cannot create directory");
   }
+
   const real = await realpath(target);
   await resolveChecked(real, roots);
+
   if (owner) {
     try {
       // The name itself, not its real path: the open must not follow a symlink put in its place.
       await adoptDir(target, owner);
-    } catch (e) {
-      console.error("owner change of new directory failed:", e);
+    } catch (caught) {
+      console.error("owner change of new directory failed:", caught);
       // Not recursive, and by the name: a symlink there makes rmdir fail instead of removing its target.
       await rmdir(target).catch(() => {});
       throw new HttpError(500, "cannot set directory owner");
     }
   }
+
   return { path: real };
 }

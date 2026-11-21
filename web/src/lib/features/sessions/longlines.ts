@@ -17,9 +17,10 @@ export const MAX_LINE_NON_ASCII = 20000;
 
 /** The number of characters above U+007F in the text, up to one past the limit. */
 function nonAscii(line: string): number {
-  let n = 0;
-  for (let i = 0; i < line.length; i++) if (line.charCodeAt(i) > 0x7f && ++n > MAX_LINE_NON_ASCII) break;
-  return n;
+  let count = 0;
+  for (let index = 0; index < line.length; index++)
+    if (line.charCodeAt(index) > 0x7f && ++count > MAX_LINE_NON_ASCII) break;
+  return count;
 }
 
 export type Collapsed = { from: number; to: number };
@@ -28,18 +29,27 @@ export type Collapsed = { from: number; to: number };
 export function collapsedRanges(text: string): Collapsed[] {
   const out: Collapsed[] = [];
   let start = 0;
+
   while (start <= text.length) {
     let end = text.indexOf("\n", start);
     if (end < 0) end = text.length;
     const long = end - start > LONG_LINE_KEEP;
     const line = long ? text.slice(start, end) : "";
-    if (long && (blockWeights(line).total > MAX_LINE_WEIGHT || runCost(line, MAX_LINE_RUN_COST) > MAX_LINE_RUN_COST || nonAscii(line) > MAX_LINE_NON_ASCII)) {
+
+    if (
+      long &&
+      (blockWeights(line).total > MAX_LINE_WEIGHT ||
+        runCost(line, MAX_LINE_RUN_COST) > MAX_LINE_RUN_COST ||
+        nonAscii(line) > MAX_LINE_NON_ASCII)
+    ) {
       let from = start + LONG_LINE_KEEP;
-      const c = text.charCodeAt(from - 1);
-      if (c >= 0xd800 && c <= 0xdbff) from++; // keep a surrogate pair whole
+      const code = text.charCodeAt(from - 1);
+      if (code >= 0xd800 && code <= 0xdbff) from++; // keep a surrogate pair whole
       out.push({ from, to: end });
     }
+
     start = end + 1;
   }
+
   return out;
 }

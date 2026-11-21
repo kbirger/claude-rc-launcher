@@ -4,7 +4,7 @@ import type { HostInfo } from "./api";
 // The components print a present version themselves, with their own "client " prefix and the local build
 // mapping. They call clientLabel only when the version is missing. The version branch exists so the
 // function has one complete contract.
-export function clientLabel(h: Pick<HostInfo, "clientVersion" | "noClient">): string {
-  if (h.clientVersion) return h.clientVersion;
-  return h.noClient ? "no client" : "client not reported";
+export function clientLabel(pick: Pick<HostInfo, "clientVersion" | "noClient">): string {
+  if (pick.clientVersion) return pick.clientVersion;
+  return pick.noClient ? "no client" : "client not reported";
 }

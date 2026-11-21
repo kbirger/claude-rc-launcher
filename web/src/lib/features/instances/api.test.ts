@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { getInstanceSettingsHelp, getLogs, listInstances, restartInstance, startInstance, stopInstance, updateInstanceSettings } from "./api";
+import {
+  getInstanceSettingsHelp,
+  getLogs,
+  listInstances,
+  restartInstance,
+  startInstance,
+  stopInstance,
+  updateInstanceSettings,
+} from "./api";
 
 const realFetch = globalThis.fetch;
 const realLoc = (globalThis as any).location;
@@ -8,7 +16,10 @@ let calls: { url: string; init?: RequestInit }[] = [];
 function stub(status: number, body: unknown) {
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   }) as any;
 }
 
@@ -24,11 +35,11 @@ afterEach(() => {
 test("startInstance POSTs JSON with content-type", async () => {
   stub(201, { id: "a" });
   await startInstance("local", "/p", "n");
-  const c = calls[0]!;
-  expect(c.url).toBe("/api/hosts/local/instances");
-  expect(c.init?.method).toBe("POST");
-  expect(new Headers(c.init?.headers).get("content-type")).toBe("application/json");
-  expect(JSON.parse(String(c.init?.body))).toEqual({ path: "/p", name: "n" });
+  const call = calls[0]!;
+  expect(call.url).toBe("/api/hosts/local/instances");
+  expect(call.init?.method).toBe("POST");
+  expect(new Headers(call.init?.headers).get("content-type")).toBe("application/json");
+  expect(JSON.parse(String(call.init?.body))).toEqual({ path: "/p", name: "n" });
 });
 
 test("stopInstance handles 204 and getLogs returns log", async () => {
@@ -47,7 +58,7 @@ test("host ids are URL-encoded in every instance path", async () => {
   await stopInstance("a/b", "abc");
   stub(200, { log: "" });
   await getLogs("a/b", "abc");
-  for (const c of calls) expect(c.url.startsWith("/api/hosts/a%2Fb/")).toBe(true);
+  for (const call of calls) expect(call.url.startsWith("/api/hosts/a%2Fb/")).toBe(true);
 });
 
 test("startInstance sends user and addTrust only when set", async () => {
@@ -75,7 +86,9 @@ test("startInstance sends createSession and spawnMode only when set", async () =
 });
 
 test("getInstanceSettingsHelp reads the help and gives null for an old node (404)", async () => {
-  const help = { settings: [{ key: "createSession", label: "L", values: [{ value: true, label: "On", explanation: "E" }] }] };
+  const help = {
+    settings: [{ key: "createSession", label: "L", values: [{ value: true, label: "On", explanation: "E" }] }],
+  };
   stub(200, help);
   expect(await getInstanceSettingsHelp("a/b")).toEqual(help);
   expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/instance-settings");

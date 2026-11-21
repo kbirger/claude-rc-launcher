@@ -9,4 +9,5 @@
   let { html }: Props = $props();
 </script>
 
+<!-- eslint-disable-next-line svelte/no-at-html-tags -- the type SafeHtml means that the text was already sanitized -->
 <div class="formatted-md">{@html html}</div>

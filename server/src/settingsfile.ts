@@ -15,14 +15,16 @@
  * The layers are listed with the highest precedence first: managed, local, legacy-local, project, user.
  */
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readlink, realpath, rmdir, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readlink, realpath, rmdir } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { markShadowed, parseRule, rulesOf, withRule, withoutRule, type MarkedRule, type RuleList } from "./permrules";
+import { markShadowed, parseRule, rulesOf, withRule, withoutRule } from "./permrules";
+import type { MarkedRule, RuleList } from "./permrules";
 import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
 
 export type LayerScope = "user" | "project" | "local" | "legacy-local" | "managed";
 
-export type Layer = {
+export interface Layer {
   scope: LayerScope;
   /** Null when the node cannot tell where Claude Code puts the file. */
   path: string | null;
@@ -37,15 +39,20 @@ export type Layer = {
   resolvedPath?: string;
   rules: MarkedRule[];
   warnings: string[];
-};
+}
 
-export type PermissionLayers = { layers: Layer[] };
+export interface PermissionLayers {
+  layers: Layer[];
+}
 
 export const MANAGED_PATH_LINUX = "/etc/claude-code/managed-settings.json";
 
 /** A failed edit. `status` is the HTTP status that a route maps it to. */
 export class SettingsError extends Error {
-  constructor(readonly status: 400 | 403 | 404 | 409 | 422, message: string) {
+  constructor(
+    readonly status: 400 | 403 | 404 | 409 | 422,
+    message: string,
+  ) {
     super(message);
     this.name = "SettingsError";
   }
@@ -59,8 +66,8 @@ export function checkRule(list: string, raw: unknown): asserts raw is string {
   if (!RULE_LISTS.includes(list)) throw new SettingsError(400, "the list must be allow, ask or deny");
   if (typeof raw !== "string" || raw.length === 0) throw new SettingsError(400, "the rule is empty");
   if (raw.length > MAX_RULE_CHARS) throw new SettingsError(400, `the rule is longer than ${MAX_RULE_CHARS} characters`);
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(raw)) throw new SettingsError(400, "the rule has a control character");
+
+  if (/[\p{Cc}\u2028\u2029]/u.test(raw)) throw new SettingsError(400, "the rule has a control character");
   if (!parseRule(raw)) throw new SettingsError(400, "the rule is malformed: use Tool or Tool(specifier)");
 }
 
@@ -89,34 +96,46 @@ export class SettingsFile {
   /** Never throws. A bad file gives state `invalid` with a reason. */
   async read(): Promise<Layer> {
     const path = this.path;
-    if (path === null) return this.layer("unknown-path", { reason: this.opts.unknownReason ?? "the path is not known" });
+    if (path === null)
+      return this.layer("unknown-path", { reason: this.opts.unknownReason ?? "the path is not known" });
     // Symlinks are followed (a settings file kept in a dotfiles repo is common). The real file must belong to the instance user.
-    const r = await readUserFile(path, { follow: true, ...(this.opts.ownerUid !== undefined ? { ownerUid: this.opts.ownerUid } : {}) });
-    if (r.kind === "missing") return this.layer("missing");
-    if (r.kind === "invalid") return this.layer("invalid", { reason: r.reason });
+    const fileRead = await readUserFile(path, {
+      follow: true,
+      ...(this.opts.ownerUid !== undefined ? { ownerUid: this.opts.ownerUid } : {}),
+    });
+    if (fileRead.kind === "missing") return this.layer("missing");
+    if (fileRead.kind === "invalid") return this.layer("invalid", { reason: fileRead.reason });
     let doc: unknown;
+
     try {
-      doc = JSON.parse(r.bytes.toString("utf8"));
+      doc = JSON.parse(fileRead.bytes.toString("utf8"));
     } catch {
       return this.layer("invalid", { reason: "it is not valid JSON" });
     }
-    if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return this.layer("invalid", { reason: "it is not a JSON object" });
+
+    if (typeof doc !== "object" || doc === null || Array.isArray(doc))
+      return this.layer("invalid", { reason: "it is not a JSON object" });
     const { rules, warnings } = rulesOf(doc as Record<string, unknown>);
-    return this.layer("ok", { hash: r.hash, ...(r.realPath !== undefined && r.realPath !== path ? { resolvedPath: r.realPath } : {}), warnings, rules: rules.map((rule) => ({ ...rule, scope: this.scope })) });
+    return this.layer("ok", {
+      hash: fileRead.hash,
+      ...(fileRead.realPath !== undefined && fileRead.realPath !== path ? { resolvedPath: fileRead.realPath } : {}),
+      warnings,
+      rules: rules.map((rule) => ({ ...rule, scope: this.scope })),
+    });
   }
 
-  async addRule(o: { list: RuleList; raw: string; expectedHash: string | null }): Promise<Layer> {
-    checkRule(o.list, o.raw);
-    return this.edit(o.expectedHash, (text) => withRule(text, o.list, o.raw));
+  async addRule(options: { list: RuleList; raw: string; expectedHash: string | null }): Promise<Layer> {
+    checkRule(options.list, options.raw);
+    return this.edit(options.expectedHash, (text) => withRule(text, options.list, options.raw));
   }
 
-  async removeRule(o: { list: RuleList; raw: string; expectedHash: string }): Promise<Layer> {
-    checkRule(o.list, o.raw);
-    return this.edit(o.expectedHash, (text) => {
+  async removeRule(options: { list: RuleList; raw: string; expectedHash: string }): Promise<Layer> {
+    checkRule(options.list, options.raw);
+    return this.edit(options.expectedHash, (text) => {
       if (text === null) throw new SettingsError(404, "the file does not exist");
-      const r = withoutRule(text, o.list, o.raw);
-      if (!r.changed) throw new SettingsError(404, "the rule is not in the file");
-      return r;
+      const rule = withoutRule(text, options.list, options.raw);
+      if (!rule.changed) throw new SettingsError(404, "the rule is not in the file");
+      return rule;
     });
   }
 
@@ -128,37 +147,57 @@ export class SettingsFile {
    * function did not create is removed or changed. A parent that is swapped after its check is a gap that we accept.
    */
   private async makeFolder(dir: string): Promise<void> {
-    if (await lstat(dir).then(() => true, () => false)) return; // the write checks an existing entry (a symlink is refused)
+    if (
+      await lstat(dir).then(
+        () => true,
+        () => false,
+      )
+    )
+      return; // the write checks an existing entry (a symlink is refused)
     const parent = await lstat(dirname(dir)).catch(() => null);
-    if (!parent || !parent.isDirectory()) throw new SettingsError(403, "its folder is not a real folder");
+    if (!parent?.isDirectory()) throw new SettingsError(403, "its folder is not a real folder");
     const isRoot = this.opts.isRoot ?? (() => process.getuid?.() === 0);
     // Fail closed: a root node that does not know the owner would leave a root-owned folder in the user's tree.
-    if (isRoot() && this.opts.ownerUid === undefined) throw new SettingsError(403, "the owner of the folder is not known");
-    if (this.opts.ownerUid !== undefined && parent.uid !== this.opts.ownerUid) throw new SettingsError(403, "its folder is owned by another user");
+    if (isRoot() && this.opts.ownerUid === undefined)
+      throw new SettingsError(403, "the owner of the folder is not known");
+    if (this.opts.ownerUid !== undefined && parent.uid !== this.opts.ownerUid)
+      throw new SettingsError(403, "its folder is owned by another user");
+
     try {
       await mkdir(dir, { mode: 0o700 });
     } catch {
       throw new SettingsError(403, "its folder cannot be made");
     }
+
     // What mkdir made, by device and inode. A failed check below removes this folder, and only if it is still this one.
     const made = await lstat(dir, { bigint: true }).catch(() => null);
     let fh: FileHandle | undefined;
+
     try {
       fh = await open(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       const st = await fh.stat();
       if (!st.isDirectory() || st.uid !== process.getuid?.()) throw new Error("not the folder that was made");
+
       if (process.platform === "linux") {
         const expected = join(await realpath(dirname(dir)), basename(dir));
-        const opened = await (this.opts.verifyPath ?? ((h: FileHandle) => readlink(`/proc/self/fd/${h.fd}`)))(fh);
+        const opened = await (
+          this.opts.verifyPath ?? ((fileHandle: FileHandle) => readlink(`/proc/self/fd/${fileHandle.fd}`))
+        )(fh);
         if (opened !== expected) throw new Error("not at the expected place");
       }
+
       if (isRoot() && this.opts.ownerUid !== undefined) {
-        await (this.opts.chown ?? ((h, uid, gid) => h.chown(uid, gid)))(fh, this.opts.ownerUid, parent.gid);
+        await (this.opts.chown ?? ((fileHandle, uid, gid) => fileHandle.chown(uid, gid)))(
+          fh,
+          this.opts.ownerUid,
+          parent.gid,
+        );
       }
     } catch {
       // rmdir only removes an empty folder and never follows a symlink. The identity check keeps it off anything else.
       const now = made ? await lstat(dir, { bigint: true }).catch(() => null) : null;
-      if (made && now && now.isDirectory() && now.dev === made.dev && now.ino === made.ino) await rmdir(dir).catch(() => {});
+      if (made && now && now.isDirectory() && now.dev === made.dev && now.ino === made.ino)
+        await rmdir(dir).catch(() => {});
       throw new SettingsError(403, "its folder is not safe to use");
     } finally {
       await fh?.close().catch(() => {});
@@ -170,50 +209,70 @@ export class SettingsFile {
    * `expectedHash` is what the caller saw. It is checked here for a clear error and again inside the write, which is
    * the check that cannot race. Returns the layer read back after the write.
    */
-  private async edit(expectedHash: string | null, change: (text: string | null) => { text: string; changed: boolean }): Promise<Layer> {
+  private async edit(
+    expectedHash: string | null,
+    change: (text: string | null) => { text: string; changed: boolean },
+  ): Promise<Layer> {
     const path = this.path;
     if (path === null) throw new SettingsError(403, this.opts.unknownReason ?? "the path is not known");
     if (!this.writable) throw new SettingsError(403, `the ${this.scope} settings file is read-only`);
     const ownerOpt = this.opts.ownerUid !== undefined ? { ownerUid: this.opts.ownerUid } : {};
-    const r = await readUserFile(path, { follow: true, ...ownerOpt });
-    if (r.kind === "invalid") throw new SettingsError(422, `the file cannot be edited: ${r.reason}`);
+    const fileRead = await readUserFile(path, { follow: true, ...ownerOpt });
+    if (fileRead.kind === "invalid") throw new SettingsError(422, `the file cannot be edited: ${fileRead.reason}`);
     let text: string | null = null;
-    if (r.kind === "ok") {
-      text = r.bytes.toString("utf8");
+
+    if (fileRead.kind === "ok") {
+      text = fileRead.bytes.toString("utf8");
       let doc: unknown;
+
       try {
         doc = JSON.parse(text);
       } catch {
         throw new SettingsError(422, "the file cannot be edited: it is not valid JSON");
       }
-      if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new SettingsError(422, "the file cannot be edited: it is not a JSON object");
+
+      if (typeof doc !== "object" || doc === null || Array.isArray(doc))
+        throw new SettingsError(422, "the file cannot be edited: it is not a JSON object");
     }
-    if ((r.kind === "ok" ? r.hash : null) !== expectedHash) throw new SettingsError(409, "the file changed since it was read");
+
+    if ((fileRead.kind === "ok" ? fileRead.hash : null) !== expectedHash)
+      throw new SettingsError(409, "the file changed since it was read");
     let next: { text: string; changed: boolean };
+
     try {
       next = change(text);
-    } catch (e) {
-      if (e instanceof SettingsError) throw e;
-      throw new SettingsError(422, `the file cannot be edited: ${(e as Error).message}`);
+    } catch (error) {
+      if (error instanceof SettingsError) throw error;
+      throw new SettingsError(422, `the file cannot be edited: ${(error as Error).message}`);
     }
+
     if (!next.changed) return this.read();
-    const target = r.kind === "ok" && r.realPath !== undefined ? r.realPath : path;
+    const target = fileRead.kind === "ok" && fileRead.realPath !== undefined ? fileRead.realPath : path;
     // A new file may need its `.claude` folder (one level only, never a path). As root the folder goes to the instance user.
-    if (r.kind === "missing") await this.makeFolder(dirname(target));
+    if (fileRead.kind === "missing") await this.makeFolder(dirname(target));
     // A new file gets the group of its folder. The folder is the instance user's (the write checks that).
     let gid: number | undefined;
+
     try {
       gid = (await lstat(dirname(target))).gid;
     } catch {
       gid = undefined;
     }
+
     try {
-      await writeUserFile(target, Buffer.from(next.text, "utf8"), { ...ownerOpt, ...(gid !== undefined ? { gid } : {}), expectedHash, follow: true, ...(this.opts.isRoot ? { isRoot: this.opts.isRoot } : {}) });
-    } catch (e) {
-      if (e instanceof FileConflict) throw new SettingsError(409, "the file changed since it was read");
-      if (e instanceof FileRefused) throw new SettingsError(403, e.reason);
-      throw e;
+      await writeUserFile(target, Buffer.from(next.text, "utf8"), {
+        ...ownerOpt,
+        ...(gid !== undefined ? { gid } : {}),
+        expectedHash,
+        follow: true,
+        ...(this.opts.isRoot ? { isRoot: this.opts.isRoot } : {}),
+      });
+    } catch (error) {
+      if (error instanceof FileConflict) throw new SettingsError(409, "the file changed since it was read");
+      if (error instanceof FileRefused) throw new SettingsError(403, error.reason);
+      throw error;
     }
+
     return this.read();
   }
 }
@@ -226,29 +285,37 @@ type GitRoot = { root: string } | { reason: string };
  */
 async function findGitRoot(root: string, home: string, ownerUid?: number): Promise<GitRoot> {
   let dir = root;
+
   for (;;) {
     if (dir === home) return { reason: "no git repository below the home folder" };
     let self;
+
     try {
       self = await lstat(dir);
     } catch {
       return { reason: "the session folder cannot be read" };
     }
+
     if (self.isSymbolicLink()) return { reason: "a folder on the way to the git root is a symlink" };
     let git;
+
     try {
       git = await lstat(join(dir, ".git"));
     } catch {
       git = undefined;
     }
+
     if (git) {
       if (git.isFile()) return { reason: "this is a git work tree" };
       if (git.isSymbolicLink()) return { reason: "the .git entry is a symlink" };
+
       if (git.isDirectory()) {
-        if (ownerUid !== undefined && (git.uid !== ownerUid || self.uid !== ownerUid)) return { reason: "the git root is owned by another user" };
+        if (ownerUid !== undefined && (git.uid !== ownerUid || self.uid !== ownerUid))
+          return { reason: "the git root is owned by another user" };
         return { root: dir };
       }
     }
+
     const parent = dirname(dir);
     if (parent === dir) return { reason: "no git repository found" };
     dir = parent;
@@ -262,33 +329,46 @@ export class ClaudeSettings {
   ) {}
 
   /** The user file of one home folder. */
-  static forHome(o: { home: string; ownerUid?: number; isRoot?: () => boolean }): ClaudeSettings {
-    return new ClaudeSettings([new SettingsFile("user", join(o.home, ".claude", "settings.json"), { ownerUid: o.ownerUid, ...(o.isRoot ? { isRoot: o.isRoot } : {}) })]);
+  static forHome(options: { home: string; ownerUid?: number; isRoot?: () => boolean }): ClaudeSettings {
+    return new ClaudeSettings([
+      new SettingsFile("user", join(options.home, ".claude", "settings.json"), {
+        ownerUid: options.ownerUid,
+        ...(options.isRoot ? { isRoot: options.isRoot } : {}),
+      }),
+    ]);
   }
 
   /** The file of one scope, if this set has one. */
   file(scope: LayerScope): SettingsFile | undefined {
-    return this.files.find((f) => f.scope === scope);
+    return this.files.find((settingsFile) => settingsFile.scope === scope);
   }
 
   /**
    * All the files that apply to a session. `root` is the checked real root of the session folder (Session.open).
    * `managedPath` replaces the Linux managed file path (tests).
    */
-  static async forSession(o: { home: string; root: string; ownerUid?: number; isRoot?: () => boolean; platform?: NodeJS.Platform; managedPath?: string }): Promise<ClaudeSettings> {
-    const { home, root, ownerUid } = o;
-    const platform = o.platform ?? process.platform;
+  static async forSession(options: {
+    home: string;
+    root: string;
+    ownerUid?: number;
+    isRoot?: () => boolean;
+    platform?: NodeJS.Platform;
+    managedPath?: string;
+  }): Promise<ClaudeSettings> {
+    const { home, root, ownerUid } = options;
+    const platform = options.platform ?? process.platform;
     const found = await findGitRoot(root, home, ownerUid);
     const files: SettingsFile[] = [];
-    const own = { ownerUid, ...(o.isRoot ? { isRoot: o.isRoot } : {}) };
-    if (platform === "linux") files.push(new SettingsFile("managed", o.managedPath ?? MANAGED_PATH_LINUX, {}));
+    const own = { ownerUid, ...(options.isRoot ? { isRoot: options.isRoot } : {}) };
+    if (platform === "linux") files.push(new SettingsFile("managed", options.managedPath ?? MANAGED_PATH_LINUX, {}));
     files.push(
       "root" in found
         ? new SettingsFile("local", join(found.root, ".claude", "settings.local.json"), own)
         : new SettingsFile("local", null, { unknownReason: found.reason }),
     );
     // The file in the session folder is also read when it is not the same file as the local file.
-    if (!("root" in found) || found.root !== root) files.push(new SettingsFile("legacy-local", join(root, ".claude", "settings.local.json"), own));
+    if (!("root" in found) || found.root !== root)
+      files.push(new SettingsFile("legacy-local", join(root, ".claude", "settings.local.json"), own));
     files.push(new SettingsFile("project", join(root, ".claude", "settings.json"), own));
     files.push(new SettingsFile("user", join(home, ".claude", "settings.json"), own));
     return new ClaudeSettings(files);
@@ -296,9 +376,9 @@ export class ClaudeSettings {
 
   /** Reads every file, then marks the allow rules that a deny or ask rule overrides. */
   async layers(): Promise<PermissionLayers> {
-    const layers = await Promise.all(this.files.map((f) => f.read()));
-    const marked = markShadowed(layers.map((l) => ({ scope: l.scope, rules: l.rules })));
-    for (const l of layers) l.rules = marked.filter((m) => m.scope === l.scope);
+    const layers = await Promise.all(this.files.map((settingsFile) => settingsFile.read()));
+    const marked = markShadowed(layers.map((layer) => ({ scope: layer.scope, rules: layer.rules })));
+    for (const layer of layers) layer.rules = marked.filter((markedRule) => markedRule.scope === layer.scope);
     return { layers };
   }
 }

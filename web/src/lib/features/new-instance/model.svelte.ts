@@ -1,7 +1,14 @@
 import { untrack } from "svelte";
 import { createMutation, createQuery, type QueryClient } from "@tanstack/svelte-query";
 import { ApiError } from "../../shared/http";
-import { DEFAULT_SETTINGS, settingsHelpQuery, type InstanceSettings, type SettingsHelp, type SettingsPatch, type StartArgs } from "../instances";
+import {
+  DEFAULT_SETTINGS,
+  settingsHelpQuery,
+  type InstanceSettings,
+  type SettingsHelp,
+  type SettingsPatch,
+  type StartArgs,
+} from "../instances";
 import type { DirListing } from "./api";
 import { breadcrumbs } from "./crumbs";
 import { browseQuery, mkdirMutation, nodeQuery, usersQuery } from "./queries";
@@ -18,7 +25,7 @@ export function createNewDialogModel(opts: {
   busyReason: () => string | undefined;
   /** False for a person who cannot start an instance as another user. The default is true. */
   canChooseUser?: () => boolean;
-  onstart: (a: StartArgs) => void;
+  onstart: (startArgs: StartArgs) => void;
 }) {
   const { host, client } = opts;
   // The dialog opens again after a 428 with the folder, user and name of that start, and its trust question.
@@ -40,11 +47,20 @@ export function createNewDialogModel(opts: {
   let cloneBusy = $state(false);
 
   // An older node without /users fails this query: then there is no selector.
-  const usersQ = createQuery(() => usersQuery(host), () => client);
+  const usersQ = createQuery(
+    () => usersQuery(host),
+    () => client,
+  );
   // An old node or an error: no clone button, no message.
-  const nodeQ = createQuery(() => nodeQuery(host), () => client);
+  const nodeQ = createQuery(
+    () => nodeQuery(host),
+    () => client,
+  );
   // An old node (no settings route) or an error: no settings part, no message, and the start sends no settings.
-  const helpQ = createQuery(() => settingsHelpQuery(host), () => client);
+  const helpQ = createQuery(
+    () => settingsHelpQuery(host),
+    () => client,
+  );
   const settingsHelp = $derived(helpQ.data ?? null);
   // The form starts at the node defaults, which the operator list decides. An older node sends none: then the built-in values.
   const seed = $derived(nodeDefaults(settingsHelp));
@@ -57,21 +73,33 @@ export function createNewDialogModel(opts: {
   // Only pass a user when the selector is shown.
   const chosenUser = $derived(usersInfo ? user : undefined);
   // Wait for the users answer, so the first listing is for the user that a start would use.
-  const browseQ = createQuery(() => ({ ...browseQuery(host, path, chosenUser), enabled: !usersQ.isPending }), () => client);
-  const mkdirM = createMutation(() => mkdirMutation(host, client), () => client);
+  const browseQ = createQuery(
+    () => ({ ...browseQuery(host, path, chosenUser), enabled: !usersQ.isPending }),
+    () => client,
+  );
+  const mkdirM = createMutation(
+    () => mkdirMutation(host, client),
+    () => client,
+  );
   const listing = $derived<DirListing | null>(browseQ.data ?? null);
   const canClone = $derived(nodeQ.data?.clone === true);
   const error = $derived(
     browseQ.isError
-      ? browseQ.error instanceof ApiError ? browseQ.error.message : "Failed to browse"
+      ? browseQ.error instanceof ApiError
+        ? browseQ.error.message
+        : "Failed to browse"
       : mkdirM.isError
-        ? mkdirM.error instanceof ApiError ? mkdirM.error.message : "Failed to create folder"
+        ? mkdirM.error instanceof ApiError
+          ? mkdirM.error.message
+          : "Failed to create folder"
         : "",
   );
 
   const atTop = $derived(!listing || listing.path === "");
   // The panel only makes sense inside a folder.
-  $effect(() => { if (atTop && cloning) cloning = false; });
+  $effect(() => {
+    if (atTop && cloning) cloning = false;
+  });
   const crumbs = $derived(listing ? breadcrumbs(listing.path) : []);
 
   // A new `initial` after creation is a late prompt: a 428 came while the dialog was open. It shows its trust question,
@@ -95,6 +123,7 @@ export function createNewDialogModel(opts: {
         go(next.path);
         userPick = next.user;
       }
+
       if (next.settings) picked = { ...next.settings };
       trustPrompt = next.trust;
       latePrompts++;
@@ -102,48 +131,104 @@ export function createNewDialogModel(opts: {
     });
   });
 
-  function go(p?: string) {
-    path = p;
+  function go(target?: string) {
+    path = target;
     trustPrompt = null;
     mkdirM.reset();
   }
 
   // Hands the start to App, which closes the dialog and shows a pending row. It does not wait.
   // A trust start uses the prompt's folder and user, so it works while the listing loads or after a browse error.
-  function startWith(addTrust: boolean, l: DirListing | null, u: string | undefined) {
+  function startWith(addTrust: boolean, dirListing: DirListing | null, entry: string | undefined) {
     if (needsAck) return;
-    const a = trustStartArgs(trustPrompt, l, u, addTrust);
-    if (!a) return;
-    opts.onstart({ path: a.path, name: name.trim() || undefined, user: a.user, addTrust: a.addTrust, ...(settingsHelp ? changes : {}) });
+    const args = trustStartArgs(trustPrompt, dirListing, entry, addTrust);
+    if (!args) return;
+    opts.onstart({
+      path: args.path,
+      name: name.trim() || undefined,
+      user: args.user,
+      addTrust: args.addTrust,
+      ...(settingsHelp ? changes : {}),
+    });
   }
 
   return {
-    get name() { return name; },
-    set name(v: string) { name = v; },
-    get ack() { return ack; },
-    set ack(v: boolean) { ack = v; },
-    get creating() { return creating; },
-    set creating(v: boolean) { creating = v; },
-    get folderName() { return folderName; },
-    set folderName(v: string) { folderName = v; },
-    get path() { return path; },
-    get user() { return user; },
-    get usersInfo() { return usersInfo; },
-    get chosenUser() { return chosenUser; },
-    get listing() { return listing; },
-    get canClone() { return canClone; },
-    get error() { return error; },
-    get atTop() { return atTop; },
-    get crumbs() { return crumbs; },
-    get trustPrompt() { return trustPrompt; },
-    get needsAck() { return needsAck; },
-    get mkdirPending() { return mkdirM.isPending; },
-    get cloning() { return cloning; },
-    get cloneBusy() { return cloneBusy; },
+    get name() {
+      return name;
+    },
+    set name(value: string) {
+      name = value;
+    },
+    get ack() {
+      return ack;
+    },
+    set ack(value: boolean) {
+      ack = value;
+    },
+    get creating() {
+      return creating;
+    },
+    set creating(value: boolean) {
+      creating = value;
+    },
+    get folderName() {
+      return folderName;
+    },
+    set folderName(value: string) {
+      folderName = value;
+    },
+    get path() {
+      return path;
+    },
+    get user() {
+      return user;
+    },
+    get usersInfo() {
+      return usersInfo;
+    },
+    get chosenUser() {
+      return chosenUser;
+    },
+    get listing() {
+      return listing;
+    },
+    get canClone() {
+      return canClone;
+    },
+    get error() {
+      return error;
+    },
+    get atTop() {
+      return atTop;
+    },
+    get crumbs() {
+      return crumbs;
+    },
+    get trustPrompt() {
+      return trustPrompt;
+    },
+    get needsAck() {
+      return needsAck;
+    },
+    get mkdirPending() {
+      return mkdirM.isPending;
+    },
+    get cloning() {
+      return cloning;
+    },
+    get cloneBusy() {
+      return cloneBusy;
+    },
     /** The settings help of the node, or null: then the dialog shows no settings part. */
-    get settingsHelp() { return settingsHelp; },
-    get settings() { return settings; },
-    set settings(v: InstanceSettings) { picked = diff(v, seed); },
+    get settingsHelp() {
+      return settingsHelp;
+    },
+    get settings() {
+      return settings;
+    },
+    set settings(instanceSettings: InstanceSettings) {
+      picked = diff(instanceSettings, seed);
+    },
 
     go,
 
@@ -157,31 +242,33 @@ export function createNewDialogModel(opts: {
       mkdirM.mutate(
         { parent: listing.path, name: folderName.trim(), user: chosenUser },
         {
-          onSuccess: (r) => {
+          onSuccess: (data) => {
             creating = false;
             folderName = "";
-            go(r.path);
+            go(data.path);
           },
         },
       );
     },
 
     /** The clone panel finished a clone into `p`: browse it and start there. */
-    async cloned(p: string) {
+    async cloned(item: string) {
       // The user of the clone. A change of the selector while the listing loads must not change the start.
-      const u = chosenUser;
+      const cloneUser = chosenUser;
       // A late prompt that came while the clone view was open stays: the dialog enters `p` but does not start it, and
       // the user picks "Trust and start" or "Start here".
       const late = latePrompts !== promptsAtCloneOpen ? trustPrompt : null;
       cloning = false;
-      go(p);
+      go(item);
       if (late) trustPrompt = late;
       loadingCloned = true;
+
       try {
-        const l = await client.fetchQuery(browseQuery(host, p, u));
+        const dirListing = await client.fetchQuery(browseQuery(host, item, cloneUser));
         // Start only when the listing is the new folder, the dialog is still there, and no late prompt came;
         // a trust question then comes back for `p`.
-        if (l.path === p && path === p && latePrompts === promptsAtCloneOpen) startWith(false, l, u);
+        if (dirListing.path === item && path === item && latePrompts === promptsAtCloneOpen)
+          startWith(false, dirListing, cloneUser);
       } catch {
         // The browse error shows from the query.
       } finally {
@@ -208,22 +295,26 @@ export function createNewDialogModel(opts: {
     },
 
     /** The clone panel says whether a clone runs. */
-    setCloneBusy(b: boolean) {
-      cloneBusy = b;
+    setCloneBusy(busy: boolean) {
+      cloneBusy = busy;
     },
   };
 }
 
-const isSettings = (v: unknown): v is InstanceSettings =>
-  !!v && typeof (v as InstanceSettings).createSession === "boolean" && ((v as InstanceSettings).spawnMode === "same-dir" || (v as InstanceSettings).spawnMode === "worktree");
+const isSettings = (value: unknown): value is InstanceSettings =>
+  !!value &&
+  typeof (value as InstanceSettings).createSession === "boolean" &&
+  ((value as InstanceSettings).spawnMode === "same-dir" || (value as InstanceSettings).spawnMode === "worktree");
 
 function nodeDefaults(help: SettingsHelp | null): InstanceSettings {
-  return isSettings(help?.defaults) ? { createSession: help.defaults.createSession, spawnMode: help.defaults.spawnMode } : DEFAULT_SETTINGS;
+  return isSettings(help?.defaults)
+    ? { createSession: help.defaults.createSession, spawnMode: help.defaults.spawnMode }
+    : DEFAULT_SETTINGS;
 }
 
-function diff(v: InstanceSettings, base: InstanceSettings): SettingsPatch {
+function diff(instanceSettings: InstanceSettings, base: InstanceSettings): SettingsPatch {
   return {
-    ...(v.createSession !== base.createSession ? { createSession: v.createSession } : {}),
-    ...(v.spawnMode !== base.spawnMode ? { spawnMode: v.spawnMode } : {}),
+    ...(instanceSettings.createSession !== base.createSession ? { createSession: instanceSettings.createSession } : {}),
+    ...(instanceSettings.spawnMode !== base.spawnMode ? { spawnMode: instanceSettings.spawnMode } : {}),
   };
 }

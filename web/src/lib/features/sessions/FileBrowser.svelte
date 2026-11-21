@@ -14,9 +14,10 @@
   type Props = { host: string; instance: string; session: string; path: string; hidden: boolean; now: number };
   let { host, instance, session, path, hidden, now }: Props = $props();
 
-  const q = createQuery(() => filesQuery(host, instance, session, path, hidden));
+  const query = createQuery(() => filesQuery(host, instance, session, path, hidden));
   // `hidden` lives in the address, so it survives opening a folder or a file and going back.
-  const link = (p: string, file?: string, h = hidden) => sessionsHref({ host, instance, session, view: "folder", path: p, hidden: h, file });
+  const link = (target: string, file?: string, showHidden = hidden) =>
+    sessionsHref({ host, instance, session, view: "folder", path: target, hidden: showHidden, file });
   // A path through a dot name can only be listed with hidden names shown.
   const forced = $derived(inHiddenPath(path));
   // The last crumb is the folder on screen; its path is the cleaned form of `path`.
@@ -30,12 +31,22 @@
 <div class="mb-3 flex min-w-0 flex-wrap items-center gap-x-3 rounded-lg border bg-muted/40 px-2">
   <nav class="flex min-w-0 flex-1 flex-wrap items-center" aria-label="Folder">
     <FolderOpen size={18} class="mx-1 shrink-0 text-muted-foreground" aria-hidden="true" />
-    {#each crumbs(path) as c, i (c.path)}
-      {#if i > 0}<ChevronRight size={14} class="shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
-      {#if c.path === crumbPath}
-        <span class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 font-semibold [overflow-wrap:anywhere]" aria-current="page">{i === 0 ? "Session folder" : c.name}</span>
+    {#each crumbs(path) as crumb, index (crumb.path)}
+      {#if index > 0}<ChevronRight size={14} class="shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
+      {#if crumb.path === crumbPath}
+        <span
+          class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 font-semibold [overflow-wrap:anywhere]"
+          aria-current="page"
+        >
+          {index === 0 ? "Session folder" : crumb.name}
+        </span>
       {:else}
-        <a href={link(c.path)} class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 [overflow-wrap:anywhere]">{i === 0 ? "Session folder" : c.name}</a>
+        <a
+          href={link(crumb.path)}
+          class="inline-flex min-h-11 max-w-full min-w-0 items-center px-1.5 [overflow-wrap:anywhere]"
+        >
+          {index === 0 ? "Session folder" : crumb.name}
+        </a>
       {/if}
     {/each}
   </nav>
@@ -43,30 +54,38 @@
     <Checkbox
       checked={hidden}
       disabled={forced}
-      onCheckedChange={(v) => goto(link(path, undefined, v), { replace: true, reset: false })}
+      onCheckedChange={(value) => goto(link(path, undefined, value), { replace: true, reset: false })}
     />Show hidden
   </Label>
 </div>
 
-{#if q.isPending}
+{#if query.isPending}
   <p class="text-muted-foreground">Loading folder...</p>
-{:else if q.error}
-  <Alert.Root variant="destructive"><Alert.Description>{q.error.message}</Alert.Description></Alert.Root>
-{:else if !q.data?.entries.length}
+{:else if query.error}
+  <Alert.Root variant="destructive"><Alert.Description>{query.error.message}</Alert.Description></Alert.Root>
+{:else if !query.data?.entries.length}
   <p class="text-muted-foreground">This folder is empty.</p>
 {:else}
   <ul class="min-w-0 rounded-lg border bg-card">
-    {#each q.data.entries as e (e.name)}
+    {#each query.data.entries as entry (entry.name)}
       <li class="min-w-0">
-        {#if e.kind === "other"}
+        {#if entry.kind === "other"}
           <div class={cn(row, "opacity-50")} role="link" aria-disabled="true">
-            <span class={wrap}>{e.name}</span>
+            <span class={wrap}>{entry.name}</span>
             <span class={cn(wrap, "text-xs text-muted-foreground")}>not a regular file</span>
           </div>
         {:else}
-          <a class={cn(row, "no-underline")} href={e.kind === "dir" ? link(joinPath(path, e.name)) : link(path, joinPath(path, e.name))}>
-            <span class={wrap}>{e.kind === "dir" ? `${e.name}/` : e.name}</span>
-            <span class={cn(wrap, "text-xs text-muted-foreground")}>{e.kind === "file" && e.size !== undefined ? `${humanSize(e.size)} · ` : ""}{ago(e.mtime, now)}</span>
+          <a
+            class={cn(row, "no-underline")}
+            href={entry.kind === "dir" ? link(joinPath(path, entry.name)) : link(path, joinPath(path, entry.name))}
+          >
+            <span class={wrap}>{entry.kind === "dir" ? `${entry.name}/` : entry.name}</span>
+            <span class={cn(wrap, "text-xs text-muted-foreground")}>
+              {entry.kind === "file" && entry.size !== undefined ? `${humanSize(entry.size)} · ` : ""}{ago(
+                entry.mtime,
+                now,
+              )}
+            </span>
           </a>
         {/if}
       </li>

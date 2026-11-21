@@ -7,22 +7,30 @@ import { reactiveProps } from "./reactiveprops.svelte";
 
 // jsdom has no layout. It can test mounting, text, classes and destroy. It cannot test heights, scrolling, wrapping on
 // screen, selection, colors as painted, or theme switches. The real browser check (Playwright) covers those.
-const mounted: { target: HTMLElement; c: ReturnType<typeof mount> }[] = [];
+const mounted: { target: HTMLElement; component: ReturnType<typeof mount> }[] = [];
+
 function show(props: Record<string, unknown>) {
   const target = document.createElement("div");
   document.body.append(target);
-  const c = mount(CodeView, { target, props: props as never });
-  mounted.push({ target, c });
-  return { target, c };
+  const harness = mount(CodeView, { target, props: props as never });
+  mounted.push({ target, component: harness });
+  return { target, component: harness };
 }
+
 afterEach(() => {
-  for (const { target, c } of mounted.splice(0)) {
-    try { unmount(c); } catch { /* already unmounted */ }
+  for (const { target, component: record } of mounted.splice(0)) {
+    try {
+      unmount(record);
+    } catch {
+      /* already unmounted */
+    }
+
     target.remove();
   }
 });
 const ready = (target: HTMLElement) => vi.waitFor(() => expect(target.querySelector(".cm-content")).not.toBeNull());
-const lines = (target: HTMLElement) => Array.from(target.querySelectorAll(".cm-line")).map((l) => l.textContent);
+const lines = (target: HTMLElement) =>
+  Array.from(target.querySelectorAll(".cm-line")).map((element) => element.textContent);
 
 test("mounts and shows the first lines as text", async () => {
   const { target } = show({ text: "line one\nline two\nline three", language: "typescript" });
@@ -81,7 +89,7 @@ test("a language adds colored spans, and a change of language changes them", asy
 });
 
 test("hostile text is shown as text and creates no element", async () => {
-  const src = "<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n<a href=\"javascript:alert(1)\">x</a>";
+  const src = '<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n<a href="javascript:alert(1)">x</a>';
   const { target } = show({ text: src, language: "xml" });
   await ready(target);
   await vi.waitFor(() => expect(target.querySelectorAll(".cm-line span").length).toBeGreaterThan(0));
@@ -90,7 +98,7 @@ test("hostile text is shown as text and creates no element", async () => {
 });
 
 test("a long file builds only the lines in view", async () => {
-  const text = Array.from({ length: 100000 }, (_, i) => `line ${i}`).join("\n");
+  const text = Array.from({ length: 100000 }, (_unused, item) => `line ${item}`).join("\n");
   const { target } = show({ text });
   await ready(target);
   expect(target.querySelectorAll(".cm-line").length).toBeLessThan(500);
@@ -99,12 +107,14 @@ test("a long file builds only the lines in view", async () => {
 
 test("unmount calls destroy once for each editor, so opening many previews leaks nothing", async () => {
   const destroy = vi.spyOn(EditorView.prototype, "destroy");
-  for (let i = 0; i < 20; i++) {
-    const { target, c } = show({ text: `file ${i}` });
+
+  for (let index = 0; index < 20; index++) {
+    const { target, component: item } = show({ text: `file ${index}` });
     await ready(target);
-    unmount(c);
+    unmount(item);
     expect(target.querySelector(".cm-editor")).toBeNull();
   }
+
   expect(destroy).toHaveBeenCalledTimes(20);
   expect(document.querySelector(".cm-editor")).toBeNull();
   destroy.mockRestore();
@@ -112,34 +122,35 @@ test("unmount calls destroy once for each editor, so opening many previews leaks
 
 test("unmount before the editor has loaded builds no editor at all", async () => {
   const destroy = vi.spyOn(EditorView.prototype, "destroy");
-  const { target, c } = show({ text: "a" });
-  unmount(c);
-  await new Promise((r) => setTimeout(r, 100));
+  const { target, component: item } = show({ text: "a" });
+  unmount(item);
+  await new Promise((resolve) => setTimeout(resolve, 100));
   expect(destroy).not.toHaveBeenCalled();
   destroy.mockRestore();
   expect(target.querySelector(".cm-editor")).toBeNull();
   expect(document.querySelector(".cm-editor")).toBeNull();
 });
 
-const marked = (target: HTMLElement) => Array.from(target.querySelectorAll(".cm-specialChar")).map((e) => e.getAttribute("title"));
+const marked = (target: HTMLElement) =>
+  Array.from(target.querySelectorAll(".cm-specialChar")).map((element) => element.getAttribute("title"));
 
 test("control, zero-width and bidirectional characters are marked, with the code point in the title", async () => {
   const bad = ["\u0000", "‮", "​", "﻿", "⁦", "‏"];
   const { target } = show({ text: `a${bad.join("b")}c` });
   await ready(target);
   expect(target.querySelectorAll(".cm-specialChar").length).toBe(bad.length);
-  expect(marked(target).every((t) => t && t.length > 0)).toBe(true);
+  expect(marked(target).every((item) => item && item.length > 0)).toBe(true);
   expect(new Set(marked(target)).size).toBe(bad.length); // each title names its own character
 });
 
 test("normal text is not marked: tabs, CRLF, accents, CJK and emoji", async () => {
-  const { target } = show({ text: "\tfunction é() {\r\n\treturn \"日本語 😀 👨‍👩‍👧\";\r\n}\n" });
+  const { target } = show({ text: '\tfunction é() {\r\n\treturn "日本語 😀 👨‍👩‍👧";\r\n}\n' });
   await ready(target);
   expect(target.querySelectorAll(".cm-specialChar").length).toBe(0);
 });
 
 test("changing the wrap asks the view to scroll the line at the top of the scroll box back to the top", async () => {
-  const text = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");
+  const text = Array.from({ length: 3000 }, (_unused, item) => `line ${item}`).join("\n");
   const props = reactiveProps({ text, wrap: true });
   // The view binds dispatch in its constructor, so the spy must exist before the view is built.
   const dispatch = vi.spyOn(EditorView.prototype, "dispatch");
@@ -151,13 +162,13 @@ test("changing the wrap asks the view to scroll the line at the top of the scrol
   dispatch.mockClear();
   props.wrap = false;
   flushSync();
-  const call = dispatch.mock.calls.find((c) => Array.isArray((c[0] as { effects?: unknown[] }).effects));
+  const call = dispatch.mock.calls.find((item) => Array.isArray((item[0] as { effects?: unknown[] }).effects));
   expect((call![0] as { effects: unknown[] }).effects.length).toBe(2); // the reconfigure and the scrollIntoView
   scroller.scrollTop = 0; // the box is at its start: nothing to keep
   dispatch.mockClear();
   props.wrap = true;
   flushSync();
-  const call2 = dispatch.mock.calls.find((c) => Array.isArray((c[0] as { effects?: unknown[] }).effects));
+  const call2 = dispatch.mock.calls.find((item) => Array.isArray((item[0] as { effects?: unknown[] }).effects));
   expect((call2![0] as { effects: unknown[] }).effects.length).toBe(1);
   dispatch.mockRestore();
 });
@@ -165,7 +176,9 @@ test("changing the wrap asks the view to scroll the line at the top of the scrol
 test("a text with more than the limit of hidden characters shows a note and marks none of them", async () => {
   const { target } = show({ text: "a\u200bb\n".repeat(1600) });
   await ready(target);
-  expect(target.querySelector("[data-special-note]")?.textContent).toBe("This file has more than 1,500 hidden or control characters. They are not marked.");
+  expect(target.querySelector("[data-special-note]")?.textContent).toBe(
+    "This file has more than 1,500 hidden or control characters. They are not marked.",
+  );
   expect(target.querySelectorAll(".cm-specialChar").length).toBe(0);
 });
 
@@ -178,7 +191,10 @@ test("a text with a few hidden characters keeps its marks and shows no note", as
 
 test("the end of a long line of mixed scripts is hidden behind a note, and the text is not changed", async () => {
   const cp = String.fromCodePoint;
-  const line = Array.from({ length: 5000 }, (_, j) => cp(0xe000 + ((j * 7) % 6000)) + cp(0x4e00 + ((j * 13) % 20000)) + " ").join("");
+  const line = Array.from(
+    { length: 5000 },
+    (_unused, item) => cp(0xe000 + ((item * 7) % 6000)) + cp(0x4e00 + ((item * 13) % 20000)) + " ",
+  ).join("");
   const { target } = show({ text: line + "\nnext" });
   await ready(target);
   expect(target.querySelector(".cm-hidden-rest")?.textContent).toMatch(/more characters not shown$/);

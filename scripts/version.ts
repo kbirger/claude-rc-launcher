@@ -2,7 +2,10 @@
 // A release sets RELEASE_VERSION to the tag. A local build uses the last tag plus the branch and short commit.
 import { execFileSync } from "node:child_process";
 
-type Inputs = { env: Record<string, string | undefined>; git: (args: string[]) => string | null };
+interface Inputs {
+  env: Record<string, string | undefined>;
+  git: (args: string[]) => string | null;
+}
 
 export function computeVersion({ env, git }: Inputs): string {
   if (env.RELEASE_VERSION) return env.RELEASE_VERSION.replace(/^v/, "");

@@ -1,15 +1,16 @@
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { windowsDataDir, type Config } from "./config";
+import { windowsDataDir } from "./config";
+import type { Config } from "./config";
 import { loadConfigFile, resolveConfigPath } from "./configfile";
 import { bunRunner } from "./instances";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
-import { definitionStatus } from "./win/definition";
 import { NodeEvents } from "./updateevents";
 import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
+import { definitionStatus } from "./win/definition";
 import { taskkillTree, WinInstances } from "./win/instances";
 import { planSessions, serviceAdminState } from "./win/token";
 import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
@@ -31,11 +32,14 @@ if (process.argv[2] === "gen-secret") {
 }
 
 let cfg: Config;
+
 try {
-  cfg = loadConfigFile(resolveConfigPath(process.argv, process.env, join(windowsDataDir(), "config.toml")), { windows: true });
+  cfg = loadConfigFile(resolveConfigPath(process.argv, process.env, join(windowsDataDir(), "config.toml")), {
+    windows: true,
+  });
   checkServiceAccount(cfg.serviceUser, userInfo().username);
-} catch (e) {
-  console.error(e instanceof Error ? e.message : String(e));
+} catch (caught) {
+  console.error(caught instanceof Error ? caught.message : String(caught));
   process.exit(1);
 }
 
@@ -60,6 +64,7 @@ const instances = new WinInstances(
 
 let running: { stop(): void };
 let closing = false;
+
 const shutdown = async (code = 0) => {
   if (closing) return;
   closing = true;
@@ -82,20 +87,29 @@ const update = createWindowsUpdater(
 );
 
 try {
-  running = await startNode(cfg, { instances, update, events, definition: () => definitionStatus({ exePath: process.execPath, readFile: (p) => readFileSync(p, "utf8") }) });
-  const n = await instances.restore();
-  if (n > 0) console.log(`started ${n} instance${n === 1 ? "" : "s"} from the saved list`);
+  running = await startNode(cfg, {
+    instances,
+    update,
+    events,
+    definition: () => definitionStatus({ exePath: process.execPath, readFile: (path) => readFileSync(path, "utf8") }),
+  });
+  const restored = await instances.restore();
+  if (restored > 0) console.log(`started ${restored} instance${restored === 1 ? "" : "s"} from the saved list`);
   confirmPendingUpdate({
     dataDir,
     version: VERSION,
     exists: existsSync,
-    readFile: (p) => readFileSync(p),
-    remove: (p) => rmSync(p, { force: true }),
+    readFile: (path) => readFileSync(path),
+    remove: (path) => {
+      rmSync(path, { force: true });
+    },
     after: (ms, fn) => void setTimeout(fn, ms),
-    log: (line) => console.log(line),
+    log: (line) => {
+      console.log(line);
+    },
   });
-} catch (e) {
-  console.error(`startup failed: ${(e as Error).message}`);
+} catch (caught) {
+  console.error(`startup failed: ${(caught as Error).message}`);
   process.exit(1);
 }
 

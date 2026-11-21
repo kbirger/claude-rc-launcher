@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { definitionStatus, parseInstalledDefinition, REQUIRED_DEFINITION } from "../src/win/definition";
 
 const DEPLOY = resolve(import.meta.dir, "../../deploy/windows");
-const text = (f: string) => readFileSync(resolve(DEPLOY, f), "utf8").replaceAll("\r\n", "\n");
+const text = (item: string) => readFileSync(resolve(DEPLOY, item), "utf8").replaceAll("\r\n", "\n");
 
 // The hash of the files that make up the service definition. When it no longer matches, a file of the definition
 // changed. If an installation that exists must get the change, raise REQUIRED_DEFINITION in src/win/definition.ts
@@ -20,7 +20,11 @@ describe("service definition version", () => {
   });
 
   test("the XML and the launcher script did not change without a decision about the version", () => {
-    const hash = createHash("sha256").update(text("claude-rc-launcher.xml")).update("\n--\n").update(text("claude-rc-launcher-run.ps1")).digest("hex");
+    const hash = createHash("sha256")
+      .update(text("claude-rc-launcher.xml"))
+      .update("\n--\n")
+      .update(text("claude-rc-launcher-run.ps1"))
+      .digest("hex");
     expect(hash).toBe(DEFINITION_FILES_SHA256);
   });
 
@@ -32,16 +36,23 @@ describe("service definition version", () => {
 
   test("the status reads the XML next to the agent and reports installed and required", () => {
     const seen: string[] = [];
-    const s = definitionStatus({
+    const item = definitionStatus({
       exePath: "C:\\Program Files\\claude-rc\\service\\claude-rc-launcher.exe",
-      readFile: (p) => (seen.push(p), "<!-- claude-rc-service-definition: 1 -->"),
+      readFile: (path) => (seen.push(path), "<!-- claude-rc-service-definition: 1 -->"),
       required: 2,
     });
-    expect(s).toEqual({ installed: 1, required: 2 });
+    expect(item).toEqual({ installed: 1, required: 2 });
     expect(seen).toEqual(["C:\\Program Files\\claude-rc\\service\\claude-rc-launcher-svc.xml"]);
   });
 
   test("an unreadable XML gives no status", () => {
-    expect(definitionStatus({ exePath: "C:\\x\\a.exe", readFile: () => { throw new Error("nope"); } })).toBeUndefined();
+    expect(
+      definitionStatus({
+        exePath: "C:\\x\\a.exe",
+        readFile: () => {
+          throw new Error("nope");
+        },
+      }),
+    ).toBeUndefined();
   });
 });

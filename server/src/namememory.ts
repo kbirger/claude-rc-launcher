@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { NAME_RANK, tidy, type NameInfo, type NameSource } from "./sessionnames";
+import { NAME_RANK, tidy } from "./sessionnames";
+import type { NameInfo, NameSource } from "./sessionnames";
 import { SESSION_ID } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 
@@ -22,12 +23,19 @@ const SWEEP_EVERY_MS = 24 * 60 * 60 * 1000;
 const SEEN_GRANULARITY_MS = 60 * 60 * 1000;
 const SWEEP_PARALLEL = 16;
 
-type Entry = { name: string; source: NameSource; seen: number; file?: string };
+interface Entry {
+  name: string;
+  source: NameSource;
+  seen: number;
+  file?: string;
+}
 type Data = Record<string, Entry>;
 
-function missing(e: unknown): boolean {
-  const x = e as { code?: unknown; message?: unknown } | null;
-  return x?.code === "ENOENT" || (typeof x?.message === "string" && x.message.includes("ENOENT"));
+function missing(error: unknown): boolean {
+  const errorLike = error as { code?: unknown; message?: unknown } | null;
+  return (
+    errorLike?.code === "ENOENT" || (typeof errorLike?.message === "string" && errorLike.message.includes("ENOENT"))
+  );
 }
 
 export class NameMemory {
@@ -46,18 +54,27 @@ export class NameMemory {
   private load(): Promise<void> {
     this.loaded ??= (async () => {
       if (!this.file) return;
+
       try {
         const text = await readFile(this.file, "utf8");
         if (text.length > MAX_BYTES) return;
-        const v: unknown = JSON.parse(text);
-        if (!v || typeof v !== "object" || Array.isArray(v)) return;
-        for (const [id, e] of Object.entries(v as Record<string, any>)) {
-          if (!SESSION_ID.test(id) || !e || typeof e !== "object") continue;
-          const name = typeof e.name === "string" ? tidy(e.name)?.slice(0, MAX_NAME_LEN) : undefined;
-          const source = e.source as NameSource;
-          if (!name || !(source in NAME_RANK) || NAME_RANK[source] === 0 || typeof e.seen !== "number" || !Number.isFinite(e.seen)) continue;
-          const file = typeof e.file === "string" && e.file.length <= MAX_FILE_LEN ? e.file : undefined;
-          this.data[id] = { name, source, seen: e.seen, ...(file ? { file } : {}) };
+        const parsed: unknown = JSON.parse(text);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+
+        for (const [id, entry] of Object.entries(parsed as Record<string, any>)) {
+          if (!SESSION_ID.test(id) || !entry || typeof entry !== "object") continue;
+          const name = typeof entry.name === "string" ? tidy(entry.name)?.slice(0, MAX_NAME_LEN) : undefined;
+          const source = entry.source as NameSource;
+          if (
+            !name ||
+            !(source in NAME_RANK) ||
+            NAME_RANK[source] === 0 ||
+            typeof entry.seen !== "number" ||
+            !Number.isFinite(entry.seen)
+          )
+            continue;
+          const file = typeof entry.file === "string" && entry.file.length <= MAX_FILE_LEN ? entry.file : undefined;
+          this.data[id] = { name, source, seen: entry.seen, ...(file ? { file } : {}) };
         }
       } catch {
         // missing or not valid: start empty
@@ -71,43 +88,63 @@ export class NameMemory {
    * the launcher reads now. The best of the candidate and the remembered names is returned, and it is remembered for `id`.
    * `file` is the transcript of `id`: when it is gone, the name is deleted by the sweep.
    */
-  async resolve(o: { id: string; chain: readonly string[]; candidate?: NameInfo; file?: string }): Promise<NameInfo | undefined> {
+  async resolve(options: {
+    id: string;
+    chain: readonly string[];
+    candidate?: NameInfo;
+    file?: string;
+  }): Promise<NameInfo | undefined> {
     await this.load();
     await this.sweepIfDue();
     const now = this.now();
-    const ids = new Set([o.id, ...o.chain].filter((i) => SESSION_ID.test(i)));
+    const ids = new Set([options.id, ...options.chain].filter((id) => SESSION_ID.test(id)));
     // The best remembered name of the chain. At equal trust the earlier member wins: the chain is named from its start.
     let best: Entry | undefined;
-    for (const i of o.chain) {
-      const e = this.data[i];
-      if (e && (!best || NAME_RANK[e.source] > NAME_RANK[best.source])) best = e;
+
+    for (const chainId of options.chain) {
+      const entry = this.data[chainId];
+      if (entry && (!best || NAME_RANK[entry.source] > NAME_RANK[best.source])) best = entry;
     }
-    const cand = o.candidate && tidy(o.candidate.name) ? { name: tidy(o.candidate.name)!.slice(0, MAX_NAME_LEN), source: o.candidate.source } : undefined;
+
+    const cand =
+      options.candidate && tidy(options.candidate.name)
+        ? { name: tidy(options.candidate.name)!.slice(0, MAX_NAME_LEN), source: options.candidate.source }
+        : undefined;
     let chosen: NameInfo | undefined = best;
+
     if (cand) {
-      const better = !best || NAME_RANK[cand.source] > NAME_RANK[best.source] || (NAME_RANK[cand.source] === NAME_RANK[best.source] && cand.source !== "prompt");
+      const better =
+        !best ||
+        NAME_RANK[cand.source] > NAME_RANK[best.source] ||
+        (NAME_RANK[cand.source] === NAME_RANK[best.source] && cand.source !== "prompt");
       if (better) chosen = cand;
     }
+
     let dirty = false;
-    for (const i of ids) {
-      const e = this.data[i];
-      if (e && now - e.seen >= SEEN_GRANULARITY_MS) {
-        e.seen = now;
+
+    for (const id of ids) {
+      const entry = this.data[id];
+
+      if (entry && now - entry.seen >= SEEN_GRANULARITY_MS) {
+        entry.seen = now;
         dirty = true;
-      } else if (e) {
-        e.seen = Math.max(e.seen, now);
+      } else if (entry) {
+        entry.seen = Math.max(entry.seen, now);
       }
     }
-    if (chosen && NAME_RANK[chosen.source] > 0 && SESSION_ID.test(o.id)) {
-      const old = this.data[o.id];
-      const file = o.file && o.file.length <= MAX_FILE_LEN ? o.file : old?.file;
+
+    if (chosen && NAME_RANK[chosen.source] > 0 && SESSION_ID.test(options.id)) {
+      const old = this.data[options.id];
+      const file = options.file && options.file.length <= MAX_FILE_LEN ? options.file : old?.file;
+
       if (!old || old.name !== chosen.name || old.source !== chosen.source || old.file !== file) {
         // Delete first, so that the entry becomes the newest in the object order.
-        delete this.data[o.id];
-        this.data[o.id] = { name: chosen.name, source: chosen.source, seen: now, ...(file ? { file } : {}) };
+        delete this.data[options.id];
+        this.data[options.id] = { name: chosen.name, source: chosen.source, seen: now, ...(file ? { file } : {}) };
         dirty = true;
       }
     }
+
     if (dirty) await this.save();
     return chosen;
   }
@@ -117,7 +154,9 @@ export class NameMemory {
     if (this.sweeping) return this.sweeping;
     if (this.now() - this.lastSweep < SWEEP_EVERY_MS) return Promise.resolve();
     this.lastSweep = this.now();
-    this.sweeping = this.exists ? this.sweep(this.exists).finally(() => (this.sweeping = undefined)) : Promise.resolve();
+    this.sweeping = this.exists
+      ? this.sweep(this.exists).finally(() => (this.sweeping = undefined))
+      : Promise.resolve();
     return this.sweeping;
   }
 
@@ -129,23 +168,27 @@ export class NameMemory {
       try {
         await fs.stat(file);
         return true;
-      } catch (e) {
+      } catch (error) {
         // Only a missing file counts. Any other error (no access, a full disk) keeps the name.
-        return !missing(e);
+        return !missing(error);
       }
     };
   }
 
   private async sweep(exists: (file: string) => Promise<boolean>): Promise<void> {
-    const todo = Object.entries(this.data).filter((e): e is [string, Entry & { file: string }] => e[1].file !== undefined);
+    const todo = Object.entries(this.data).filter(
+      (pair): pair is [string, Entry & { file: string }] => pair[1].file !== undefined,
+    );
     const gone: string[] = [];
     let next = 0;
+
     const worker = async () => {
       while (next < todo.length) {
-        const [id, e] = todo[next++];
-        if (!(await exists(e.file))) gone.push(id);
+        const [id, entry] = todo[next++];
+        if (!(await exists(entry.file))) gone.push(id);
       }
     };
+
     await Promise.all(Array.from({ length: Math.min(SWEEP_PARALLEL, todo.length) }, worker));
     if (gone.length === 0) return;
     for (const id of gone) delete this.data[id];
@@ -154,11 +197,13 @@ export class NameMemory {
 
   private save(): Promise<void> {
     const ids = Object.keys(this.data);
+
     if (ids.length > MAX_NAMES) {
       // The oldest `seen` go first.
-      ids.sort((a, b) => this.data[a].seen - this.data[b].seen);
+      ids.sort((left, right) => this.data[left].seen - this.data[right].seen);
       for (const id of ids.slice(0, ids.length - MAX_NAMES)) delete this.data[id];
     }
+
     const file = this.file;
     if (!file) return Promise.resolve();
     const text = JSON.stringify(this.data);

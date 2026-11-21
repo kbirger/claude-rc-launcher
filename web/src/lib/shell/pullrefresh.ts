@@ -21,9 +21,11 @@ type PullNode = { scrollTop: number; getAttribute(name: string): string | null; 
  */
 export function canStartPull(target: unknown, pageScrollY: number): boolean {
   if (pageScrollY > 0) return false;
+
   for (let el = target as PullNode | null; el; el = el.parentElement) {
     if (el.scrollTop > 0) return false;
     if (el.getAttribute("role") === "dialog") return false;
   }
+
   return true;
 }

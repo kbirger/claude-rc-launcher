@@ -8,7 +8,10 @@ let calls: { url: string; init?: RequestInit }[] = [];
 function stub(status: number, body: unknown) {
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   }) as any;
 }
 
@@ -64,7 +67,7 @@ test("githubLoginStatus GETs the login by id", async () => {
 
 test("listRepos keeps the error code of a 409", async () => {
   stub(409, { error: "login", code: "github-login-required" });
-  const err = await listRepos("local").catch((e) => e);
+  const err = await listRepos("local").catch((error) => error);
   expect(err.status).toBe(409);
   expect(err.body.code).toBe("github-login-required");
 });

@@ -8,24 +8,30 @@ const read = (file: string) => readFileSync(join(process.cwd(), "src/lib/feature
 const importLines = (file: string) =>
   read(file)
     .split("\n")
-    .filter((l) => /^\s*(import|export)\b.*\bfrom\b|\bimport\s*\(/.test(l) || /^\s*import\s+["']/.test(l));
-const isStatic = (l: string) => !/\bimport\s*\(/.test(l) && !/^\s*import\s+type\b/.test(l) && !/^\s*export\s+type\b/.test(l);
+    .filter((part) => /^\s*(import|export)\b.*\bfrom\b|\bimport\s*\(/.test(part) || /^\s*import\s+["']/.test(part));
+const isStatic = (item: string) =>
+  !/\bimport\s*\(/.test(item) && !/^\s*import\s+type\b/.test(item) && !/^\s*export\s+type\b/.test(item);
 
 describe("the main thread files do not import markdown-it or dompurify statically", () => {
   for (const file of ["formatted.ts", "viewkind.ts"]) {
     test(file, () => {
-      for (const l of importLines(file).filter(isStatic)) {
-        expect(l, `${file}: ${l}`).not.toMatch(/["'](markdown-it|dompurify)(\/[^"']*)?["']/);
-        expect(l, `${file}: ${l}`).not.toMatch(/\.\/(markdown|sanitize)["']/);
+      for (const importLine of importLines(file).filter(isStatic)) {
+        expect(importLine, `${file}: ${importLine}`).not.toMatch(/["'](markdown-it|dompurify)(\/[^"']*)?["']/);
+        expect(importLine, `${file}: ${importLine}`).not.toMatch(/\.\/(markdown|sanitize)["']/);
       }
     });
   }
+
   test("formatted.ts reaches the markdown module through one dynamic import", () => {
     expect(read("formatted.ts").match(/import\("\.\/markdown"\)/g)).toHaveLength(1);
   });
   test("only markdown.ts imports markdown-it, and only sanitize.ts imports dompurify", () => {
     const files = ["formatted.ts", "viewkind.ts", "markdown.ts", "sanitize.ts"];
-    expect(files.filter((f) => importLines(f).some((l) => /["']markdown-it/.test(l)))).toEqual(["markdown.ts"]);
-    expect(files.filter((f) => importLines(f).some((l) => /["']dompurify/.test(l)))).toEqual(["sanitize.ts"]);
+    expect(files.filter((file) => importLines(file).some((importLine) => /["']markdown-it/.test(importLine)))).toEqual([
+      "markdown.ts",
+    ]);
+    expect(files.filter((file) => importLines(file).some((importLine) => /["']dompurify/.test(importLine)))).toEqual([
+      "sanitize.ts",
+    ]);
   });
 });

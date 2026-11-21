@@ -40,11 +40,22 @@ export function withLongUpdates(
     const { pathname } = new URL(req.url);
     if (req.method === "GET" && EVENTS_PATH_RE.test(pathname)) server.timeout(req, 0);
     else if (req.method === "POST" && UPDATE_PATH_RE.test(pathname)) server.timeout(req, seconds);
-    else if (INSTANCE_CHANGE_RE.test(pathname) && (pathname.endsWith("/restart") ? req.method === "POST" : req.method === "PATCH")) server.timeout(req, seconds);
-    else if (GITHUB_PATH_RE.test(pathname) && ((req.method === "GET" && pathname.endsWith("/repos")) || (req.method === "POST" && pathname.endsWith("/login")))) server.timeout(req, githubSeconds);
+    else if (
+      INSTANCE_CHANGE_RE.test(pathname) &&
+      (pathname.endsWith("/restart") ? req.method === "POST" : req.method === "PATCH")
+    )
+      server.timeout(req, seconds);
+    else if (
+      GITHUB_PATH_RE.test(pathname) &&
+      ((req.method === "GET" && pathname.endsWith("/repos")) || (req.method === "POST" && pathname.endsWith("/login")))
+    )
+      server.timeout(req, githubSeconds);
     return app.fetch(req, server);
   };
 }
 
 /** Test settings for the mains: a shorter server-wide idle limit and update limit. */
-export type ServeLimits = { idleTimeout?: number; updateIdleTimeout?: number };
+export interface ServeLimits {
+  idleTimeout?: number;
+  updateIdleTimeout?: number;
+}

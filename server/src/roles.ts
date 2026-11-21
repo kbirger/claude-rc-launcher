@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { Context, MiddlewareHandler } from "hono";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { User } from "./userauth";
 
 /**
@@ -11,7 +11,7 @@ export type Role = "read" | "write" | "admin";
 /** `none` is a claim value that refuses the person. It is never a role of a signed-in user. */
 export type RoleValue = Role | "none";
 
-export type RoleSettings = {
+export interface RoleSettings {
   /** Name of the claim that carries the role. */
   claim: string;
   /** Extra scope that the hub asks for, or `undefined` for none. */
@@ -20,7 +20,7 @@ export type RoleSettings = {
   defaultRole: Role;
   /** Turns claim values of the identity provider into roles. */
   map: Record<string, RoleValue>;
-};
+}
 
 export const DEFAULT_ROLES: RoleSettings = { claim: "clauderc_role", scope: "clauderc", defaultRole: "read", map: {} };
 
@@ -31,12 +31,13 @@ export const rolesFrom = (ua?: { roles?: RoleSettings }): RoleSettings => ua?.ro
 export const actStore = new AsyncLocalStorage<{ sub: string; role: string }>();
 
 /** A value for a log line: plain names stay as they are. Anything else is quoted and cut, so it cannot add a line or a field. */
-export const logToken = (v: string): string => (/^[\w.@:-]{1,128}$/.test(v) ? v : JSON.stringify(v.slice(0, 128)));
+export const logToken = (value: string): string =>
+  /^[\w.@:-]{1,128}$/.test(value) ? value : JSON.stringify(value.slice(0, 128));
 
 const RANK: Record<Role, number> = { read: 1, write: 2, admin: 3 };
 
-export const isRole = (v: unknown): v is Role => v === "read" || v === "write" || v === "admin";
-export const isRoleValue = (v: unknown): v is RoleValue => isRole(v) || v === "none";
+export const isRole = (value: unknown): value is Role => value === "read" || value === "write" || value === "admin";
+export const isRoleValue = (value: unknown): value is RoleValue => isRole(value) || value === "none";
 
 export const atLeast = (have: Role, need: Role): boolean => RANK[have] >= RANK[need];
 
@@ -45,26 +46,36 @@ export const atLeast = (have: Role, need: Role): boolean => RANK[have] >= RANK[n
  * gives `read`: a malformed claim never gives more than the lowest role. A list gives its highest role, and `none` wins
  * only when it is the only value that maps to something.
  */
-export function resolveRole(claims: Record<string, unknown>, s: RoleSettings): RoleValue {
-  const raw = claims[s.claim];
+export function resolveRole(claims: Record<string, unknown>, roleSettings: RoleSettings): RoleValue {
+  const raw = claims[roleSettings.claim];
   // No value means no role information: the default role applies. An empty list is the same as a missing claim.
-  const values = (Array.isArray(raw) ? raw : [raw]).filter((v) => v !== undefined && v !== null && v !== "");
-  if (values.length === 0) return s.defaultRole;
+  const values = (Array.isArray(raw) ? raw : [raw]).filter(
+    (value) => value !== undefined && value !== null && value !== "",
+  );
+  if (values.length === 0) return roleSettings.defaultRole;
   let best: Role | undefined;
   let none = false;
-  for (const v of values) {
-    if (typeof v !== "string") continue;
-    const mapped = Object.hasOwn(s.map, v) ? s.map[v] : v;
+
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const mapped = Object.hasOwn(roleSettings.map, value) ? roleSettings.map[value] : value;
     if (mapped === "none") none = true;
     else if (isRole(mapped) && (best === undefined || RANK[mapped] > RANK[best])) best = mapped;
   }
+
   if (best !== undefined) return best;
   return none ? "none" : "read";
 }
 
-type Rule = { method: string; pattern: string; role: Role; user?: true };
+interface Rule {
+  method: string;
+  pattern: string;
+  role: Role;
+  user?: true;
+}
 
-const rows = (role: Role, method: string, patterns: string[], user?: true): Rule[] => patterns.map((pattern) => ({ method, pattern, role, ...(user ? { user } : {}) }));
+const rows = (role: Role, method: string, patterns: string[], user?: true): Rule[] =>
+  patterns.map((pattern) => ({ method, pattern, role, ...(user ? { user } : {}) }));
 
 const SESSION = "/hosts/:host/instances/:id/sessions/:sid";
 
@@ -87,7 +98,11 @@ const RULES: Rule[] = [
     "/hosts/:host/instances/:id/permissions/rules",
     `${SESSION}/permissions/rules`,
   ]),
-  ...rows("write", "DELETE", ["/hosts/:host/instances/:id", "/hosts/:host/instances/:id/permissions/rules", `${SESSION}/permissions/rules`]),
+  ...rows("write", "DELETE", [
+    "/hosts/:host/instances/:id",
+    "/hosts/:host/instances/:id/permissions/rules",
+    `${SESSION}/permissions/rules`,
+  ]),
   ...rows("write", "GET", ["/hosts/:host/github/repos"], true),
   // read
   ...rows("read", "GET", ["/hosts/:host/fs"], true),
@@ -108,18 +123,20 @@ const RULES: Rule[] = [
     "/hosts/:host/instances/:id/sessions",
     "/hosts/:host/users",
     "/hosts/:host/clone/:id",
-    ...["blocked", "changed", "download", "file", "files", "permissions", "touched"].map((leaf) => `${SESSION}/${leaf}`),
+    ...["blocked", "changed", "download", "file", "files", "permissions", "touched"].map(
+      (leaf) => `${SESSION}/${leaf}`,
+    ),
   ]),
 ];
 
-const compiled = RULES.map((r) => ({ ...r, re: new RegExp(`^${r.pattern.replace(/:[a-z]+/g, "[^/]+")}$`) }));
+const compiled = RULES.map((rule) => ({ ...rule, re: new RegExp(`^${rule.pattern.replace(/:[a-z]+/g, "[^/]+")}$`) }));
 
 const clean = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);
 
 function matchRule(method: string, path: string) {
-  const m = method.toUpperCase() === "HEAD" ? "GET" : method.toUpperCase();
-  const p = clean(path);
-  return compiled.find((r) => r.method === m && r.re.test(p));
+  const effectiveMethod = method.toUpperCase() === "HEAD" ? "GET" : method.toUpperCase();
+  const cleanPath = clean(path);
+  return compiled.find((rule) => rule.method === effectiveMethod && rule.re.test(cleanPath));
 }
 
 /** The minimum role of a route, or `undefined` for a route that has no row. */
@@ -129,11 +146,17 @@ export const requiredRole = (method: string, path: string): Role | undefined => 
 export const namesUser = (method: string, path: string): boolean => matchRule(method, path)?.user === true;
 
 /** True when the request names a `user`: in the query of a GET, or in the JSON body of a write. A body that is not JSON does not. */
-async function requestNamesUser(c: Context): Promise<boolean> {
-  if (c.req.method === "GET" || c.req.method === "HEAD") return c.req.query("user") !== undefined;
+async function requestNamesUser(context: Context): Promise<boolean> {
+  if (context.req.method === "GET" || context.req.method === "HEAD") return context.req.query("user") !== undefined;
+
   try {
-    const body: unknown = await c.req.raw.clone().json();
-    return typeof body === "object" && body !== null && !Array.isArray(body) && (body as Record<string, unknown>).user !== undefined;
+    const body: unknown = await context.req.raw.clone().json();
+    return (
+      typeof body === "object" &&
+      body !== null &&
+      !Array.isArray(body) &&
+      (body as Record<string, unknown>).user !== undefined
+    );
   } catch {
     return false;
   }
@@ -145,20 +168,23 @@ async function requestNamesUser(c: Context): Promise<boolean> {
  * writes one audit line with the user and the role. The host routes audit their own writes.
  */
 export function enforceRoles(prefix: string): MiddlewareHandler {
-  return async (c, next) => {
-    const user = c.get("user" as never) as User | undefined;
+  return async (context, next) => {
+    const user = context.get("user" as never) as User | undefined;
     const role: RoleValue = user?.role ?? "read";
     const who = user?.username ?? user?.sub ?? "unknown";
-    const path = new URL(c.req.url).pathname;
+    const path = new URL(context.req.url).pathname;
     const sub = path.slice(prefix.length) || "/";
+
     const refuse = (error: string) => {
-      console.log(`audit user=${who} role=${role} ${c.req.method} ${path} 403 refused (${error})`);
-      return c.json({ error }, 403);
+      console.log(`audit user=${who} role=${role} ${context.req.method} ${path} 403 refused (${error})`);
+      return context.json({ error }, 403);
     };
+
     if (role === "none") return refuse("access refused");
-    const need = requiredRole(c.req.method, sub) ?? "admin";
+    const need = requiredRole(context.req.method, sub) ?? "admin";
     if (!atLeast(role, need)) return refuse(`needs role ${need}`);
-    if (!atLeast(role, "admin") && namesUser(c.req.method, sub) && (await requestNamesUser(c))) return refuse("needs role admin to name a user");
+    if (!atLeast(role, "admin") && namesUser(context.req.method, sub) && (await requestNamesUser(context)))
+      return refuse("needs role admin to name a user");
     await actStore.run({ sub: who, role }, () => next());
   };
 }

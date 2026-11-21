@@ -20,12 +20,48 @@ export function mockState(name: MockName, now = new Date()): { hosts: HostInfo[]
   const version = behind ? OLD : NEW;
   const hosts: HostInfo[] = [
     { id: "local", name: "hub", status: "ok", version, clientVersion: version, target: NEW, stale: behind },
-    { id: "node-1", name: "node-1", status: "ok", version, clientVersion: version, target: NEW, stale: behind, platform: "linux" },
+    {
+      id: "node-1",
+      name: "node-1",
+      status: "ok",
+      version,
+      clientVersion: version,
+      target: NEW,
+      stale: behind,
+      platform: "linux",
+    },
   ];
   const started = now.toISOString();
   const updates: UpdateEntry[] = [];
-  if (name === "started") updates.push({ host: "local", startedAt: started, startedBy: "mock", from: OLD, status: "running", step: "downloading" });
-  if (name === "complete") updates.push({ host: "local", startedAt: new Date(now.getTime() - 20_000).toISOString(), finishedAt: started, startedBy: "mock", from: OLD, to: NEW, status: "updated" });
-  if (name === "failed") updates.push({ host: "local", startedAt: new Date(now.getTime() - 8_000).toISOString(), finishedAt: started, startedBy: "mock", from: OLD, status: "failed", error: "the download failed: connection reset", step: "failed" });
+  if (name === "started")
+    updates.push({
+      host: "local",
+      startedAt: started,
+      startedBy: "mock",
+      from: OLD,
+      status: "running",
+      step: "downloading",
+    });
+  if (name === "complete")
+    updates.push({
+      host: "local",
+      startedAt: new Date(now.getTime() - 20_000).toISOString(),
+      finishedAt: started,
+      startedBy: "mock",
+      from: OLD,
+      to: NEW,
+      status: "updated",
+    });
+  if (name === "failed")
+    updates.push({
+      host: "local",
+      startedAt: new Date(now.getTime() - 8_000).toISOString(),
+      finishedAt: started,
+      startedBy: "mock",
+      from: OLD,
+      status: "failed",
+      error: "the download failed: connection reset",
+      step: "failed",
+    });
   return { hosts, updates };
 }

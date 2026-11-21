@@ -9,16 +9,25 @@
   const rename = createMutation(() => renameHostMutation(useQueryClient()));
   const update = createMutation(() => updateHostMutation(useQueryClient()));
   // The hub answers 202 and then restarts, so a lost connection right after the hub call is expected and is not an error.
-  async function updateNode(h: { id: string; target?: string }) {
+  async function updateNode(node: { id: string; target?: string }) {
     try {
-      await update.mutateAsync({ host: h.id, release: h.id === "local" ? undefined : h.target ?? latest });
-    } catch (e) {
-      if (!(h.id === "local" && !(e instanceof ApiError))) throw e;
+      await update.mutateAsync({ host: node.id, release: node.id === "local" ? undefined : (node.target ?? latest) });
+    } catch (error) {
+      if (!(node.id === "local" && !(error instanceof ApiError))) throw error;
     }
   }
   // The latest release is the same for every machine: the hub reports it as the target.
-  const latest = $derived(shell.hosts.find((h) => h.id === "local")?.target ?? shell.hosts.find((h) => h.target)?.target);
+  const latest = $derived(
+    shell.hosts.find((host) => host.id === "local")?.target ?? shell.hosts.find((host) => host.target)?.target,
+  );
 </script>
 
 <h2 class="font-heading mb-3 text-lg font-bold">Nodes</h2>
-<NodeList hosts={shell.hosts} selected={shell.flow.selected} onselect={shell.select} {latest} onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined} onupdate={shell.can("admin") ? updateNode : undefined} />
+<NodeList
+  hosts={shell.hosts}
+  selected={shell.flow.selected}
+  onselect={shell.select}
+  {latest}
+  onrename={shell.can("write") ? (id, name) => rename.mutateAsync({ id, name }) : undefined}
+  onupdate={shell.can("admin") ? updateNode : undefined}
+/>

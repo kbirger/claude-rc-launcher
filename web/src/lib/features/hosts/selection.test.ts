@@ -8,7 +8,8 @@ const hosts = (status: HostInfo["status"]): HostInfo[] => [
 ];
 
 test("the selected host stays for every status", () => {
-  for (const status of ["ok", "restarting", "offline", "error"] as const) expect(selectionAfter(hosts(status), "nas")).toBe("nas");
+  for (const status of ["ok", "restarting", "offline", "error"] as const)
+    expect(selectionAfter(hosts(status), "nas")).toBe("nas");
 });
 
 test("a selected host that is gone from the list falls back to local", () => {

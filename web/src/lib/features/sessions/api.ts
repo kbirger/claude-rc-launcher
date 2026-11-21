@@ -1,7 +1,16 @@
 import { ApiError, hostUrl, request } from "../../shared/http";
 
 /** `live`: set only while the session runs. `status` is "busy" or "idle", or absent for a status the node does not know. `remoteControl`: attached to Remote Control. */
-export type Session = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean }; earlier?: string[] };
+export type Session = {
+  id: string;
+  root: string;
+  name?: string;
+  branch?: string;
+  startedAt: string;
+  lastActiveAt: string;
+  live?: { status?: string; remoteControl: boolean };
+  earlier?: string[];
+};
 /** `confirmed`: the write succeeded. A denied, failed or unanswered call is false. A node older than this field sends none. */
 export type TouchedFile = { path: string; inside: boolean; tool: "write" | "edit"; at: string; confirmed?: boolean };
 export type Entry = { name: string; kind: "dir" | "file" | "other"; size?: number; mtime: string };
@@ -9,7 +18,8 @@ export type Listing = { path: string; parent: string | null; entries: Entry[] };
 export type Preview = { name: string; size: number; kind: "text" | "binary"; text?: string; truncated?: boolean };
 
 const base = (host: string, instance: string) => `${hostUrl(host)}/instances/${encodeURIComponent(instance)}/sessions`;
-const sessionBase = (host: string, instance: string, session: string) => `${base(host, instance)}/${encodeURIComponent(session)}`;
+const sessionBase = (host: string, instance: string, session: string) =>
+  `${base(host, instance)}/${encodeURIComponent(session)}`;
 
 export const listSessions = (host: string, instance: string) => request<Session[]>("GET", base(host, instance));
 
@@ -23,23 +33,27 @@ export const getChanged = (host: string, instance: string, session: string) =>
   request<ChangedFile[]>("GET", `${sessionBase(host, instance, session)}/changed`);
 
 export const listFiles = (host: string, instance: string, session: string, path: string, hidden: boolean) => {
-  const q = new URLSearchParams();
-  if (path) q.set("path", path);
-  if (hidden) q.set("hidden", "1");
-  const qs = q.toString();
+  const searchParams = new URLSearchParams();
+  if (path) searchParams.set("path", path);
+  if (hidden) searchParams.set("hidden", "1");
+  const qs = searchParams.toString();
   return request<Listing>("GET", `${sessionBase(host, instance, session)}/files${qs ? `?${qs}` : ""}`);
 };
 
 /** `abs: true`: `path` is the absolute path of a touched file (it may be outside the session folder). */
 export type FileOpts = { abs?: boolean };
-const fileKey = (o: FileOpts) => (o.abs ? "abs" : "path");
+const fileKey = (fileOpts: FileOpts) => (fileOpts.abs ? "abs" : "path");
 
-export const getPreview = (host: string, instance: string, session: string, path: string, o: FileOpts = {}) =>
-  request<Preview>("GET", `${sessionBase(host, instance, session)}/file?${new URLSearchParams({ [fileKey(o)]: path })}`);
+export const getPreview = (host: string, instance: string, session: string, path: string, fileOpts: FileOpts = {}) =>
+  request<Preview>(
+    "GET",
+    `${sessionBase(host, instance, session)}/file?${new URLSearchParams({ [fileKey(fileOpts)]: path })}`,
+  );
 
 /** A plain link: the browser sends its login cookie with it. */
-export const downloadUrl = (host: string, instance: string, session: string, path: string, o: FileOpts = {}) =>
-  `${sessionBase(host, instance, session)}/download?${fileKey(o)}=${encodeURIComponent(path)}`;
+export const downloadUrl = (host: string, instance: string, session: string, path: string, fileOpts: FileOpts = {}) =>
+  `${sessionBase(host, instance, session)}/download?${fileKey(fileOpts)}=${encodeURIComponent(path)}`;
 
 /** True when the node has no session files feature (404 or 501). */
-export const isUnsupported = (e: unknown): boolean => e instanceof ApiError && (e.status === 404 || e.status === 501);
+export const isUnsupported = (response: unknown): boolean =>
+  response instanceof ApiError && (response.status === 404 || response.status === 501);

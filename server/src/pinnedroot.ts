@@ -8,13 +8,16 @@
  * touched list.
  */
 import { realpath, stat } from "node:fs/promises";
-import { changedIn, type ChangedFile, type GitDeps } from "./gitchanges";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
+import { changedIn } from "./gitchanges";
+import type { ChangedFile, GitDeps } from "./gitchanges";
 import { HttpError } from "./instances";
 import { absRefused, PathError, within } from "./paths";
-import { ClaudeSettings, type PermissionLayers } from "./settingsfile";
 import type { Session, SessionCatalog } from "./sessioncatalog";
-import { listIn, type Download, type Listing, type Preview } from "./sessionfs";
+import { listIn } from "./sessionfs";
+import type { Download, Listing, Preview } from "./sessionfs";
+import { ClaudeSettings } from "./settingsfile";
+import type { PermissionLayers } from "./settingsfile";
 
 /** The root handed over is the real path that PinnedRoot.pin checked. A change after the check is refused. */
 const EXACT = { exactRoot: true } as const;
@@ -22,21 +25,22 @@ const EXACT = { exactRoot: true } as const;
 const EXACT_FILE = { exactRoot: true, exactPath: true } as const;
 
 /** Real path of `p`. A missing or unreadable folder (ENOENT, ENOTDIR, EACCES, ELOOP) is 404. */
-async function realOrMissing(p: string): Promise<string> {
+async function realOrMissing(path: string): Promise<string> {
   try {
-    return await realpath(p);
+    return await realpath(path);
   } catch {
     throw new HttpError(404, "session folder not found");
   }
 }
 
 /** A session folder that is gone is a 404, not a server error. */
-async function inRoot<T>(root: string, fn: () => Promise<T>): Promise<T> {
+async function inRoot<Value>(root: string, fn: () => Promise<Value>): Promise<Value> {
   try {
     if (!(await stat(root)).isDirectory()) throw new Error("not a folder");
   } catch {
     throw new PathError(404, "session folder not found");
   }
+
   return fn();
 }
 
@@ -60,9 +64,11 @@ export class PinnedRoot {
     // The instance path was stored as a real path, so a different real path means the folder or a parent became a link.
     const instance = resolve(session.instance.path);
     const realInstance = await realOrMissing(instance);
-    if (!(within(realInstance, instance) && within(instance, realInstance))) throw new HttpError(404, "session folder not found");
+    if (!(within(realInstance, instance) && within(instance, realInstance)))
+      throw new HttpError(404, "session folder not found");
     if (!within(real, realInstance)) throw new HttpError(404, "session folder not found");
-    if (worktree && !within(real, await realOrMissing(join(instance, ".claude", "worktrees")))) throw new HttpError(404, "session folder not found");
+    if (worktree && !within(real, await realOrMissing(join(instance, ".claude", "worktrees"))))
+      throw new HttpError(404, "session folder not found");
     if (dirname(real) === real) throw new HttpError(404, "session not found");
     return new PinnedRoot(session, real);
   }
@@ -72,14 +78,20 @@ export class PinnedRoot {
    * folder (the home folder, the git root above it), so they are not read through the file opener of this class.
    * Only the checked real root comes from here.
    */
-  async permissions(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
-    return (await this.settings(o)).layers();
+  async permissions(options: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
+    return (await this.settings(options)).layers();
   }
 
   /** The settings files that apply to this session (see settingsfile.ts). A route edits a rule through one of them. */
-  settings(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
+  settings(options: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
     const catalog = this.session.instance.catalog;
-    return ClaudeSettings.forSession({ home: this.session.instance.home, root: this.real, platform: catalog.platform, ...(o.ownerUid !== undefined ? { ownerUid: o.ownerUid } : {}), ...(o.isRoot ? { isRoot: o.isRoot } : {}) });
+    return ClaudeSettings.forSession({
+      home: this.session.instance.home,
+      root: this.real,
+      platform: catalog.platform,
+      ...(options.ownerUid !== undefined ? { ownerUid: options.ownerUid } : {}),
+      ...(options.isRoot ? { isRoot: options.isRoot } : {}),
+    });
   }
 
   /** One folder of the session folder. */
@@ -89,8 +101,8 @@ export class PinnedRoot {
   }
 
   /** The files that git shows as changed in the session folder since `since`. See gitchanges.ts. */
-  changed(d: GitDeps, since: string): Promise<ChangedFile[]> {
-    return changedIn({ ...d, real: this.real, label: this.session.root, since });
+  changed(gitDeps: GitDeps, since: string): Promise<ChangedFile[]> {
+    return changedIn({ ...gitDeps, real: this.real, label: this.session.root, since });
   }
 
   /** A preview of a file inside the session folder. */
@@ -117,20 +129,24 @@ export class PinnedRoot {
     const catalog = session.instance.catalog;
     const platform = catalog.platform;
     const win = platform === "win32";
-    const P = win ? win32Path : posix;
-    const want = P.resolve(abs);
-    const key = (p: string) => (win ? p.toLowerCase() : p);
+    const path = win ? win32Path : posix;
+    const want = path.resolve(abs);
+    const key = (item: string) => (win ? item.toLowerCase() : item);
     const dirs = await catalog.refusedDirs();
     // Never served, even when written: UNC and device paths on Windows, /proc, /sys, /dev, the node's state folders.
-    if (absRefused(abs, { platform, dirs }) || absRefused(want, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
+    if (absRefused(abs, { platform, dirs }) || absRefused(want, { platform, dirs }))
+      throw new HttpError(404, "file was not touched by this session");
     // The same lexical root, transcript and refused folders as /touched, so the list matches what the browser was shown.
     const touched = await session.touched({ dirs });
     // Only a confirmed write counts: a denied or failed call to a path wrote nothing there.
-    const hit = touched.filter((f) => f.confirmed === true).find((f) => key(f.path) === key(want));
-    if (!hit || absRefused(hit.path, { platform, dirs })) throw new HttpError(404, "file was not touched by this session");
+    const hit = touched
+      .filter((touchedFile) => touchedFile.confirmed)
+      .find((touchedFile) => key(touchedFile.path) === key(want));
+    if (!hit || absRefused(hit.path, { platform, dirs }))
+      throw new HttpError(404, "file was not touched by this session");
     // The list entry, never the request text.
-    const entry = P.resolve(hit.path);
-    return new PinnedFile(catalog, P.dirname(entry), P.basename(entry));
+    const file = path.resolve(hit.path);
+    return new PinnedFile(catalog, path.dirname(file), path.basename(file));
   }
 }
 

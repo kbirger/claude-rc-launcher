@@ -5,7 +5,13 @@
   import { Badge } from "#lib/components/ui/badge/index.js";
 
   type Slot = "subtitle" | "status" | "content" | "actions" | "actionsEnd" | "footer" | "titleAside" | "titleEditor";
-  let { slots = [], ...rest }: { slots?: Slot[] } & Omit<ComponentProps<typeof EntityCard>, "title" | Slot | "children" | "footer" | "actionsEnd"> = $props();
+  let {
+    slots = [],
+    ...rest
+  }: { slots?: Slot[] } & Omit<
+    ComponentProps<typeof EntityCard>,
+    "title" | Slot | "children" | "footer" | "actionsEnd"
+  > = $props();
 </script>
 
 {#snippet title()}Card name{/snippet}

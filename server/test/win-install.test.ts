@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { defined } from "./support";
 
 // Each test starts PowerShell, which can take longer than the default 5 seconds on a busy runner.
 if (process.platform === "win32") setDefaultTimeout(60_000);
@@ -24,25 +25,52 @@ beforeEach(async () => {
   await writeFile(bin, "MZ fake node binary");
   await writeFile(winsw, "MZ fake winsw");
 });
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
 
 async function install(extra: string[] = [], over: { binary?: string } = {}) {
-  const p = Bun.spawn(
-    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-NoClient", "-ClientRegistryKey", "HKCU:\\Software\\claude-rc-unused", "-Binary", over.binary ?? bin, "-WinSW", winsw,
-      "-InstallDir", join(dir, "app"), "-DataDir", join(dir, "data"), ...extra],
+  const subprocess = Bun.spawn(
+    [
+      "powershell.exe",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      SCRIPT,
+      "-NoService",
+      "-NoClient",
+      "-ClientRegistryKey",
+      "HKCU:\\Software\\claude-rc-unused",
+      "-Binary",
+      over.binary ?? bin,
+      "-WinSW",
+      winsw,
+      "-InstallDir",
+      join(dir, "app"),
+      "-DataDir",
+      join(dir, "data"),
+      ...extra,
+    ],
     { stdout: "pipe", stderr: "pipe" },
   );
-  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  const [out, err, code] = await Promise.all([
+    new Response(subprocess.stdout).text(),
+    new Response(subprocess.stderr).text(),
+    subprocess.exited,
+  ]);
   return { out, err, code };
 }
 
 describe.skipIf(!windows)("install.ps1 -NoService", () => {
   test("puts the binary, WinSW, the definition and a new config in place", async () => {
-    const r = await install(["-Account", "TESTPC\\svcuser"].slice(0, 0));
-    expect(r.code).toBe(0);
+    const result = await install(["-Account", "TESTPC\\svcuser"].slice(0, 0));
+    expect(result.code).toBe(0);
     expect(await readFile(join(dir, "app", "service", "claude-rc-launcher.exe"), "utf8")).toBe("MZ fake node binary");
     expect(await readFile(join(dir, "app", "service", "claude-rc-launcher-svc.exe"), "utf8")).toBe("MZ fake winsw");
-    expect(await readFile(join(dir, "app", "service", "claude-rc-launcher-run.ps1"), "utf8")).toContain("update-pending.json");
+    expect(await readFile(join(dir, "app", "service", "claude-rc-launcher-run.ps1"), "utf8")).toContain(
+      "update-pending.json",
+    );
     const xml = await readFile(join(dir, "app", "service", "claude-rc-launcher-svc.xml"), "utf8");
     expect(xml).toContain("<id>claude-rc-launcher</id>");
     expect(xml).toContain("<executable>powershell.exe</executable>");
@@ -61,9 +89,9 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
     const conf = join(dir, "data", "config.toml");
     await writeFile(conf, 'mode = "node"\n# MY EDIT\n');
     await writeFile(bin, "MZ newer binary");
-    const r = await install();
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Keeping existing");
+    const result = await install();
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Keeping existing");
     expect(await readFile(conf, "utf8")).toBe('mode = "node"\n# MY EDIT\n');
     expect(await readFile(join(dir, "app", "service", "claude-rc-launcher.exe"), "utf8")).toBe("MZ newer binary");
   });
@@ -71,25 +99,40 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
   test("a file that is not a Windows executable is refused and nothing is installed", async () => {
     const html = join(dir, "error-page.exe");
     await writeFile(html, "<html>404</html>");
-    const r = await install([], { binary: html });
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("is not a Windows executable");
+    const result = await install([], { binary: html });
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain("is not a Windows executable");
     expect(await Bun.file(join(dir, "app", "service", "claude-rc-launcher.exe")).exists()).toBe(false);
   });
 
   test("a built-in service account is refused", async () => {
-    const r = await install(["-Account", "NT AUTHORITY\\SYSTEM"]);
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("must run as a user account");
+    const result = await install(["-Account", "NT AUTHORITY\\SYSTEM"]);
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain("must run as a user account");
   });
 
   test("a bad release tag is refused before any download", async () => {
-    const p = Bun.spawn(
-      ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Release", "not-a-tag", "-WinSW", winsw,
-        "-InstallDir", join(dir, "app"), "-DataDir", join(dir, "data")],
+    const subprocess = Bun.spawn(
+      [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        SCRIPT,
+        "-NoService",
+        "-Release",
+        "not-a-tag",
+        "-WinSW",
+        winsw,
+        "-InstallDir",
+        join(dir, "app"),
+        "-DataDir",
+        join(dir, "data"),
+      ],
       { stdout: "pipe", stderr: "pipe" },
     );
-    const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+    const [err, code] = await Promise.all([new Response(subprocess.stderr).text(), subprocess.exited]);
     expect(code).not.toBe(0);
     expect(err).toContain("invalid release tag");
   });
@@ -98,7 +141,9 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
 // PowerShell is not available on every machine that runs these tests, so the layout and the registry value are also checked by text.
 describe("install.ps1: the layout and the client registry value (text checks)", () => {
   let script: string;
-  beforeEach(async () => { script = await readFile(SCRIPT, "utf8"); });
+  beforeEach(async () => {
+    script = await readFile(SCRIPT, "utf8");
+  });
 
   test("the registry file is gone: no -RegistryDir, no -ClientDir parameter, no claude-rc-registry", () => {
     expect(script).not.toContain("$RegistryDir");
@@ -124,16 +169,19 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
   });
 
   test("a failed registry write is a warning, and the step lives in the client branch that -NoClient skips", () => {
-    const fn = script.slice(script.indexOf("function Register-Client"), script.indexOf("function Install-ClientAndPath"));
+    const fn = script.slice(
+      script.indexOf("function Register-Client"),
+      script.indexOf("function Install-ClientAndPath"),
+    );
     expect(fn).toContain("try {");
-    expect(fn).toContain("Write-Warning \"cannot write the client registry value");
+    expect(fn).toContain('Write-Warning "cannot write the client registry value');
     expect(script).toMatch(/Write-Host "Installed \$clientDest"\r?\n[\s\S]{0,400}Register-Client \$clientDest/);
     expect(script).toContain("if (-not $NoClient) { Install-ClientAndPath $clientSource }");
-    expect(script.match(/Register-Client \$clientDest/g)!.length).toBe(1);
+    expect(defined(script.match(/Register-Client \$clientDest/g)).length).toBe(1);
   });
 
   test("the Modify grant goes to the service folder only", () => {
-    const grants = script.split(/\r?\n/).filter((l) => l.includes("icacls.exe") && l.includes("/grant "));
+    const grants = script.split(/\r?\n/).filter((part) => part.includes("icacls.exe") && part.includes("/grant "));
     expect(grants).toHaveLength(1);
     expect(grants[0]).toContain("icacls.exe $ServiceDir /grant");
     expect(script).not.toMatch(/icacls\.exe \$InstallDir/);
@@ -167,7 +215,9 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
   });
 
   test("bin gets its own ACL: no inheritance, SYSTEM and Administrators full, Users read and execute", () => {
-    expect(script).toContain("& icacls.exe $ClientDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX'");
+    expect(script).toContain(
+      "& icacls.exe $ClientDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX'",
+    );
     expect(script).toContain('throw "icacls failed on $ClientDir"');
   });
 
@@ -178,7 +228,9 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
 
   test("a service that runs from another folder stops the install", () => {
     expect(script).toContain("$runsFrom.TrimEnd('\\') -ine $ServiceDir.TrimEnd('\\')");
-    expect(script).toContain("the service runs from $runsFrom, not from $ServiceDir. Give that folder as -InstallDir, or run -Uninstall first and delete it");
+    expect(script).toContain(
+      "the service runs from $runsFrom, not from $ServiceDir. Give that folder as -InstallDir, or run -Uninstall first and delete it",
+    );
   });
 
   test("only the default parent folder, or one that holds the old client, leaves the PATH", () => {
@@ -204,39 +256,87 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
   let clientKey: string;
   let pathKey: string;
   let client: string;
+
   const ps = async (command: string) => {
-    const p = Bun.spawn(["powershell.exe", "-NoProfile", "-Command", command], { stdout: "pipe", stderr: "pipe" });
-    const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    const subprocess = Bun.spawn(["powershell.exe", "-NoProfile", "-Command", command], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, code] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
     return { out: out.trim(), code };
   };
-  const clientValue = async () => (await ps(`(Get-ItemProperty -LiteralPath '${clientKey}' -ErrorAction SilentlyContinue).Client`)).out;
-  const pathValue = async () => (await ps(`(Get-Item -LiteralPath '${pathKey}').GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)`)).out;
+
+  const clientValue = async () =>
+    (await ps(`(Get-ItemProperty -LiteralPath '${clientKey}' -ErrorAction SilentlyContinue).Client`)).out;
+  const pathValue = async () =>
+    (
+      await ps(
+        `(Get-Item -LiteralPath '${pathKey}').GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)`,
+      )
+    ).out;
+
   // Every run names -InstallDir. A run without it would use the REAL Program Files (an env override did not take effect on Windows).
   const run = async (extra: string[], opts: { env?: Record<string, string> } = {}) => {
-    const args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-NoService", "-Binary", bin, "-WinSW", winsw, "-ClientBinary", client,
-      "-DataDir", join(dir, "data"), "-ClientRegistryKey", clientKey, "-PathRegistryKey", pathKey, ...extra];
+    const args = [
+      "powershell.exe",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      SCRIPT,
+      "-NoService",
+      "-Binary",
+      bin,
+      "-WinSW",
+      winsw,
+      "-ClientBinary",
+      client,
+      "-DataDir",
+      join(dir, "data"),
+      "-ClientRegistryKey",
+      clientKey,
+      "-PathRegistryKey",
+      pathKey,
+      ...extra,
+    ];
     if (!extra.includes("-InstallDir")) args.push("-InstallDir", join(dir, "app"));
-    const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...opts.env } });
-    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    const subprocess = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...opts.env } });
+    const [out, err, code] = await Promise.all([
+      new Response(subprocess.stdout).text(),
+      new Response(subprocess.stderr).text(),
+      subprocess.exited,
+    ]);
     return { out, err, code };
   };
-  const snapshot = async () => JSON.stringify([await clientValue(), await pathValue(), await readFile(join(dir, "app", "bin", "claude-rc.exe"), "utf8")]);
+
+  const snapshot = async () =>
+    JSON.stringify([
+      await clientValue(),
+      await pathValue(),
+      await readFile(join(dir, "app", "bin", "claude-rc.exe"), "utf8"),
+    ]);
 
   beforeEach(async () => {
-    const n = keyName();
-    clientKey = `HKCU:\\Software\\${n}`;
-    pathKey = `HKCU:\\Software\\${n}-path`;
+    const count = keyName();
+    clientKey = `HKCU:\\Software\\${count}`;
+    pathKey = `HKCU:\\Software\\${count}-path`;
     client = join(dir, "claude-rc-windows-x64.exe");
     await writeFile(client, "MZ client");
-    await ps(`New-Item -Path '${pathKey}' -Force | Out-Null; Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows' -Type ExpandString`);
+    await ps(
+      `New-Item -Path '${pathKey}' -Force | Out-Null; Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows' -Type ExpandString`,
+    );
   });
-  afterEach(async () => { await ps(`Remove-Item -LiteralPath '${clientKey}','${pathKey}' -Recurse -Force -ErrorAction SilentlyContinue`); });
+  afterEach(async () => {
+    await ps(`Remove-Item -LiteralPath '${clientKey}','${pathKey}' -Recurse -Force -ErrorAction SilentlyContinue`);
+  });
 
   test("puts service and bin under the install folder, records the client, and a second run changes nothing", async () => {
-    const r = await run([]);
-    expect(r.code).toBe(0);
+    const outcome = await run([]);
+    expect(outcome.code).toBe(0);
     expect(await readFile(join(dir, "app", "service", "claude-rc-launcher.exe"), "utf8")).toBe("MZ fake node binary");
-    expect(await readFile(join(dir, "app", "service", "claude-rc-launcher-svc.xml"), "utf8")).toContain("<id>claude-rc-launcher</id>");
+    expect(await readFile(join(dir, "app", "service", "claude-rc-launcher-svc.xml"), "utf8")).toContain(
+      "<id>claude-rc-launcher</id>",
+    );
     expect(await readFile(join(dir, "app", "bin", "claude-rc.exe"), "utf8")).toBe("MZ client");
     expect(await clientValue()).toBe(join(dir, "app", "bin", "claude-rc.exe"));
     const first = await snapshot();
@@ -247,9 +347,11 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
   test("the old client is deleted and the PATH entry moves from the install folder to bin", async () => {
     await mkdir(join(dir, "app"), { recursive: true });
     await writeFile(join(dir, "app", "claude-rc.exe"), "MZ old client");
-    await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")}' -Type ExpandString`);
-    const r = await run(["-ClientOnly"]);
-    expect(r.code).toBe(0);
+    await ps(
+      `Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")}' -Type ExpandString`,
+    );
+    const outcome = await run(["-ClientOnly"]);
+    expect(outcome.code).toBe(0);
     expect(existsSync(join(dir, "app", "claude-rc.exe"))).toBe(false);
     expect(await pathValue()).toBe(`C:\\Windows;${join(dir, "app", "bin")}`);
   });
@@ -260,8 +362,8 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
   });
 
   test("-ClientOnly writes bin, the PATH entry and the value, and no service folder", async () => {
-    const r = await run(["-ClientOnly"]);
-    expect(r.code).toBe(0);
+    const outcome = await run(["-ClientOnly"]);
+    expect(outcome.code).toBe(0);
     expect(existsSync(join(dir, "app", "bin", "claude-rc.exe"))).toBe(true);
     expect(existsSync(join(dir, "app", "service"))).toBe(false);
     expect(await clientValue()).toBe(join(dir, "app", "bin", "claude-rc.exe"));
@@ -269,15 +371,17 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
   });
 
   test("a custom -InstallDir stays on the PATH when there is no old client", async () => {
-    await ps(`Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")}' -Type ExpandString`);
+    await ps(
+      `Set-ItemProperty -LiteralPath '${pathKey}' -Name Path -Value 'C:\\Windows;${join(dir, "app")}' -Type ExpandString`,
+    );
     expect((await run(["-ClientOnly"])).code).toBe(0);
     expect(await pathValue()).toBe(`C:\\Windows;${join(dir, "app")};${join(dir, "app", "bin")}`);
   });
 
   test("bin never gets the Modify grant of the service account, even inside the old service folder", async () => {
     const old = join(dir, "claude-rc-launcher");
-    const r = await run(["-InstallDir", old]);
-    expect(r.code).toBe(0);
+    const outcome = await run(["-InstallDir", old]);
+    expect(outcome.code).toBe(0);
     // The service account here is the account that runs the test, and it can be an administrator or the owner (a CI
     // runner is both), so it can show full control on bin too. What must hold: bin has no Modify entry, and the service
     // folder has an entry for the account.
@@ -291,8 +395,8 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
 
   test("a client path with a space is stored whole", async () => {
     const spaced = join(dir, "my apps", "claude rc");
-    const r = await run(["-ClientOnly", "-InstallDir", spaced]);
-    expect(r.code).toBe(0);
+    const outcome = await run(["-ClientOnly", "-InstallDir", spaced]);
+    expect(outcome.code).toBe(0);
     expect(await clientValue()).toBe(join(spaced, "bin", "claude-rc.exe"));
   });
 });

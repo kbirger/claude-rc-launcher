@@ -1,17 +1,19 @@
-#!/usr/bin/env bun
 import { spawn } from "node:child_process";
 import readline from "node:readline/promises";
+import { VERSION } from "../../server/src/version";
 import { parseCli } from "./args";
-import { runCommand, type CommandName } from "./commands";
+import { runCommand } from "./commands";
+import type { CommandName } from "./commands";
 import { ExitError, LOGIN_MESSAGE, credsPath, deleteCreds, loadCreds, saveCreds } from "./creds";
 import { hostAdd, hostRemove, hostRename } from "./hostcmd";
 import { hubClient } from "./hub";
-import { nodeConfig, type NodeFs } from "./nodecmd";
-import { nodeSetup, nodeUpdate, type Sys } from "./nodesetup";
+import { nodeConfig } from "./nodecmd";
+import type { NodeFs } from "./nodecmd";
+import { nodeSetup, nodeUpdate } from "./nodesetup";
+import type { Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, updateAll } from "./updateall";
-import { VERSION } from "../../server/src/version";
 
 export const USAGE = `claude-rc: manage claude-rc-launcher from the terminal
 
@@ -50,7 +52,7 @@ Commands:
 Flags for every command: --host <id> (default local), --json, --help
   --version                          print the version`;
 
-export type Env = {
+export interface Env {
   credsFile: string;
   fetch?: typeof fetch;
   open: (url: string) => Promise<void>;
@@ -59,7 +61,7 @@ export type Env = {
   sys?: Sys;
   /** Waits between polls. Tests replace it so that they do not wait in real time. */
   sleep?: (ms: number) => Promise<void>;
-};
+}
 
 /**
  * The program that opens `url` in the default browser. On Windows it is not `cmd /c start`: cmd reads every `&`
@@ -75,10 +77,10 @@ export function browserCommand(platform: NodeJS.Platform, url: string): [string,
 function openBrowser(url: string): Promise<void> {
   const [cmd, args] = browserCommand(process.platform, url);
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: "ignore", detached: true });
-    p.once("error", reject);
-    p.once("spawn", () => {
-      p.unref();
+    const childProcess = spawn(cmd, args, { stdio: "ignore", detached: true });
+    childProcess.once("error", reject);
+    childProcess.once("spawn", () => {
+      childProcess.unref();
       resolve();
     });
   });
@@ -90,6 +92,7 @@ export function defaultEnv(): Env {
     open: openBrowser,
     async readLine(prompt, signal) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+
       try {
         return await rl.question(prompt, signal ? { signal } : {});
       } finally {
@@ -99,46 +102,77 @@ export function defaultEnv(): Env {
   };
 }
 
-const INSTANCE_COMMANDS = new Set<string>(["whoami", "hosts", "ls", "mkdir", "list", "start", "stop", "logs", "clone", "repos", "gh-login", "settings"]);
+const INSTANCE_COMMANDS = new Set<string>([
+  "whoami",
+  "hosts",
+  "ls",
+  "mkdir",
+  "list",
+  "start",
+  "stop",
+  "logs",
+  "clone",
+  "repos",
+  "gh-login",
+  "settings",
+]);
 
-export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void }, env: Env = defaultEnv()): Promise<number> {
+export async function main(
+  argv: string[],
+  io: { out: (line: string) => void; err: (line: string) => void },
+  env: Env = defaultEnv(),
+): Promise<number> {
   try {
     const { command, flags } = parseCli(argv);
+
     if (flags.version) {
       io.out(`claude-rc ${VERSION}`);
       return 0;
     }
+
     if (flags.help || command.length === 0) {
       io.out(USAGE);
       return 0;
     }
+
     const [name, ...args] = command as [string, ...string[]];
 
     if (name === "login") {
       const hub = flags.hub ?? loadCreds(env.credsFile)?.hub;
       if (!hub) throw new ExitError("--hub <url> is required for the first login", 1);
-      const c = await login({ hub, noBrowser: !!flags["no-browser"], open: env.open, readLine: env.readLine, log: io.out, ...(env.fetch ? { fetch: env.fetch } : {}) });
-      saveCreds(env.credsFile, c);
-      io.out(`signed in to ${c.hub}`);
+      const credentials = await login({
+        hub,
+        noBrowser: !!flags["no-browser"],
+        open: env.open,
+        readLine: env.readLine,
+        log: io.out,
+        ...(env.fetch ? { fetch: env.fetch } : {}),
+      });
+      saveCreds(env.credsFile, credentials);
+      io.out(`signed in to ${credentials.hub}`);
       return 0;
     }
+
     if (name === "logout") {
-      const c = loadCreds(env.credsFile);
-      if (c) await logout(c, env.fetch);
+      const credentials = loadCreds(env.credsFile);
+      if (credentials) await logout(credentials, env.fetch);
       deleteCreds(env.credsFile);
       io.out("signed out");
       return 0;
     }
 
-    if (name !== "host" && name !== "node" && name !== "update" && !INSTANCE_COMMANDS.has(name)) throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+    if (name !== "host" && name !== "node" && name !== "update" && !INSTANCE_COMMANDS.has(name))
+      throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
 
     if (name === "update") {
       const updateUsage = "usage: claude-rc update [--release <tag>] [--all-nodes]";
-      if (args.length > 0) throw new ExitError(`unexpected argument${args.length > 1 ? "s" : ""}: ${args.join(" ")}. ${updateUsage}`, 1);
+      if (args.length > 0)
+        throw new ExitError(`unexpected argument${args.length > 1 ? "s" : ""}: ${args.join(" ")}. ${updateUsage}`, 1);
       if (flags["all-nodes"]) checkAllNodesFlags(flags);
       const allowed = ["release", "json", "help", "version", ...(flags["all-nodes"] ? ["all-nodes", "hub"] : [])];
-      const stray = Object.keys(flags).find((f) => !allowed.includes(f));
+      const stray = Object.keys(flags).find((key) => !allowed.includes(key));
       if (stray) throw new ExitError(`--${stray} does not apply to update. ${updateUsage}`, 1);
+
       if (!flags["all-nodes"]) {
         // Works on any machine with the compiled binary and talks to no hub, so no login is needed.
         await selfUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
@@ -150,61 +184,109 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     if (name === "node" && args[0] === "update") {
       // Works on the node machine only and talks to no hub, so no login is needed.
       const updateUsage = "usage: claude-rc node update [--binary <file>] [--release <tag>]";
-      if (args.length > 1) throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. ${updateUsage}`, 1);
-      const stray = Object.keys(flags).find((f) => !["binary", "release", "json", "help"].includes(f));
+      if (args.length > 1)
+        throw new ExitError(
+          `unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. ${updateUsage}`,
+          1,
+        );
+      const stray = Object.keys(flags).find((key) => !["binary", "release", "json", "help"].includes(key));
       if (stray) throw new ExitError(`--${stray} does not apply to node update. ${updateUsage}`, 1);
       await nodeUpdate({ flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
       return 0;
     }
 
     let creds = loadCreds(env.credsFile);
+
     if (!creds && name === "node" && args[0] === "setup" && flags.hub) {
       // A new node has no login yet: sign in first, then continue with the setup.
-      const c = await login({ hub: flags.hub, noBrowser: !!flags["no-browser"], open: env.open, readLine: env.readLine, log: io.out, ...(env.fetch ? { fetch: env.fetch } : {}) });
-      saveCreds(env.credsFile, c);
-      creds = c;
+      const credentials = await login({
+        hub: flags.hub,
+        noBrowser: !!flags["no-browser"],
+        open: env.open,
+        readLine: env.readLine,
+        log: io.out,
+        ...(env.fetch ? { fetch: env.fetch } : {}),
+      });
+      saveCreds(env.credsFile, credentials);
+      creds = credentials;
     }
+
     if (!creds) throw new ExitError(LOGIN_MESSAGE, 2);
+
     if (flags.hub && flags.hub.replace(/\/+$/, "") !== creds.hub) {
       throw new ExitError(`the saved login is for ${creds.hub}. Run "claude-rc login --hub ${flags.hub}" first`, 1);
     }
-    const hub = hubClient({ creds, save: (c) => saveCreds(env.credsFile, c), renew: (c) => renew(c, env.fetch), ...(env.fetch ? { fetch: env.fetch } : {}) });
+
+    const hub = hubClient({
+      creds,
+      save: (credentials) => {
+        saveCreds(env.credsFile, credentials);
+      },
+      renew: (credentials) => renew(credentials, env.fetch),
+      ...(env.fetch ? { fetch: env.fetch } : {}),
+    });
 
     if (name === "update") {
       await updateAll({ flags, hub, out: io.out, err: io.err, ...(env.sys ? { sys: env.sys } : {}) });
       return 0;
     }
+
     if (name === "node") {
       if (args.length > 1) {
-        throw new ExitError(`unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. A space after a comma in --names splits it into a separate argument: write the names without spaces, like --names a,b`, 1);
+        throw new ExitError(
+          `unexpected argument${args.length > 2 ? "s" : ""}: ${args.slice(1).join(" ")}. A space after a comma in --names splits it into a separate argument: write the names without spaces, like --names a,b`,
+          1,
+        );
       }
+
       if (args[0] === "setup") {
         await nodeSetup({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
         return 0;
       }
-      if (args[0] !== "config") throw new ExitError("usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>]", 1);
+
+      if (args[0] !== "config")
+        throw new ExitError(
+          "usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>]",
+          1,
+        );
       await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.nodeFs ? { fs: env.nodeFs } : {}) });
       return 0;
     }
+
     if (name === "host") {
       const [sub, id, newName] = args;
-      if ((sub !== "add" && sub !== "remove" && sub !== "rename") || !id || (sub === "rename" && !newName)) throw new ExitError("usage: claude-rc host add <id> --url <https-url> ... | claude-rc host rename <id> <name> | claude-rc host remove <id>", 1);
-      if (sub === "rename") await hostRename(id, newName!, hub, io.out);
+      if ((sub !== "add" && sub !== "remove" && sub !== "rename") || !id || (sub === "rename" && !newName))
+        throw new ExitError(
+          "usage: claude-rc host add <id> --url <https-url> ... | claude-rc host rename <id> <name> | claude-rc host remove <id>",
+          1,
+        );
+      if (sub === "rename") await hostRename(id, newName, hub, io.out);
       else if (sub === "add") await hostAdd({ id, flags, hub, readLine: env.readLine, out: io.out });
       else await hostRemove(id, hub, io.out);
       return 0;
     }
+
     await runCommand(name as CommandName, args, flags, hub, io.out, env.sleep, env.readLine);
     return 0;
-  } catch (e) {
-    if (e instanceof ExitError) {
-      io.err(e.message);
-      return e.code;
+  } catch (error) {
+    if (error instanceof ExitError) {
+      io.err(error.message);
+      return error.code;
     }
-    throw e;
+
+    throw error;
   }
 }
 
 if (import.meta.main) {
-  process.exit(await main(process.argv.slice(2), { out: (s) => console.log(s), err: (s) => console.error(s) }));
+  process.exit(
+    await main(process.argv.slice(2), {
+      out: (line) => {
+        console.log(line);
+      },
+      err: (line) => {
+        console.error(line);
+      },
+    }),
+  );
 }

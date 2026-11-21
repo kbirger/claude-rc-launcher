@@ -9,5 +9,5 @@ test("the DOM environment has a real HTML parser and DOMPurify works in it", () 
   const purify = createDOMPurify(window);
   expect(purify.isSupported).toBe(true);
   expect(purify.sanitize("x<script>1</script>")).toBe("x");
-  expect(purify.sanitize("<b onclick=\"1\">y</b>")).toBe("<b>y</b>");
+  expect(purify.sanitize('<b onclick="1">y</b>')).toBe("<b>y</b>");
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from "$app/paths";
   import { tick } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -23,16 +24,24 @@
   const hosts = $derived(mock?.hosts ?? shell.hosts);
   const updates = $derived(mock?.updates ?? shell.updates);
 
-  const names = $derived(Object.fromEntries(shell.hosts.map((h) => [h.id, h.name])));
+  const names = $derived(Object.fromEntries(shell.hosts.map((host) => [host.id, host.name])));
   const items = $derived(bannerModel({ hosts, updates, latestError: shell.latestError, now: shell.now }));
   // The update record only shows a run after the hub has written it. A call that is on its way already counts, so the crab starts
   // the moment the button is pressed. The mock never makes a real call, so it uses the record alone.
   const calling = useIsMutating({ mutationKey: ["update-host"] });
-  const updating = $derived(items.some((i) => i.kind === "updating") || (!mock && calling.current > 0));
+  const updating = $derived(items.some((item) => item.kind === "updating") || (!mock && calling.current > 0));
   // The crab gives up for as long as the banner reports a failed update.
-  const failed = $derived(!updating && items.some((i) => i.kind === "failed"));
+  const failed = $derived(!updating && items.some((item) => item.kind === "failed"));
   // An update that finished well in the last 30 seconds is worth a celebration.
-  const celebrating = $derived(!updating && updates.some((e) => e.status === "updated" && e.finishedAt !== undefined && shell.now.getTime() - Date.parse(e.finishedAt) <= 30_000));
+  const celebrating = $derived(
+    !updating &&
+      updates.some(
+        (update) =>
+          update.status === "updated" &&
+          update.finishedAt !== undefined &&
+          shell.now.getTime() - Date.parse(update.finishedAt) <= 30_000,
+      ),
+  );
   // The notice on the other pages sends `?start=hub` or `?start=nodes`. Read it once. After the update has started,
   // the address loses it, so a reload does not start the update again.
   const asked = page.url.searchParams.get("start");
@@ -50,13 +59,13 @@
   latestError={shell.latestError}
   canRun={shell.can("admin")}
   start={mock ? undefined : start}
-  onstarted={() => goto(mockable ? "/updates?mock" : "/updates", { replaceState: true })}
+  onstarted={() => goto(resolve(mockable ? "/updates?mock" : "/updates"), { replaceState: true })}
   onrun={mock ? () => pick("started") : undefined}
 />
 
 <!-- A finished update leaves the panel above, so its output stays here. -->
 <div class="mt-4 flex items-baseline justify-between">
   <h2 class="font-heading text-sm font-semibold">Recent updates</h2>
-  <a class="text-sm text-primary underline-offset-4 hover:underline" href="/history">All history</a>
+  <a class="text-sm text-primary underline-offset-4 hover:underline" href={resolve("/history")}>All history</a>
 </div>
 <div class="mt-2"><UpdateHistory {names} limit={3} /></div>

@@ -17,133 +17,179 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeHubConfig, writeSecret } from "../../scripts/authentik/hubconfig";
 import { fakeAuthentik } from "./authentik-fake";
+import { rejection, defined } from "./support";
 
 const base = (fake: ReturnType<typeof fakeAuthentik>, over: Partial<Parameters<typeof run>[0]> = {}) => {
   const log: string[] = [];
-  return { log, o: { url: "https://auth.example.com/", token: "sekret-token", apply: true, removeOldHub: false, fetch: fake.fetch, log: (l: string) => log.push(l), ...over } };
+  return {
+    log,
+    options: {
+      url: "https://auth.example.com/",
+      token: "sekret-token",
+      apply: true,
+      removeOldHub: false,
+      fetch: fake.fetch,
+      log: (line: string) => log.push(line),
+      ...over,
+    },
+  };
 };
 
 describe("authentik-setup", () => {
   test("a plan makes no write call and says what it would do", async () => {
-    const a = fakeAuthentik();
-    const { o, log } = base(a, { apply: false, adminUser: "kir" });
-    const r = await run(o);
-    expect(a.writes()).toEqual([]);
-    expect(r.changes).toBeGreaterThan(0);
-    expect(log.some((l) => l.startsWith("would create the scope mapping"))).toBe(true);
-    expect(log.some((l) => l.startsWith("would add kir to"))).toBe(true);
+    const authentik = fakeAuthentik();
+    const { options: entry, log } = base(authentik, { apply: false, adminUser: "kir" });
+    const outcome = await run(entry);
+    expect(authentik.writes()).toEqual([]);
+    expect(outcome.changes).toBeGreaterThan(0);
+    expect(log.some((item) => item.startsWith("would create the scope mapping"))).toBe(true);
+    expect(log.some((item) => item.startsWith("would add kir to"))).toBe(true);
     expect(log.at(-1)).toContain("--apply");
   });
 
   test("apply creates the mapping, adds it to both providers, makes the groups and adds the user", async () => {
-    const a = fakeAuthentik();
-    await run(base(a, { adminUser: "kir" }).o);
-    expect(a.mappings).toHaveLength(1);
-    expect(a.mappings[0]).toMatchObject({ name: MAPPING_NAME, scope_name: SCOPE_NAME, expression: MAPPING_EXPRESSION });
-    const pk = a.mappings[0]!.pk;
-    for (const name of PROVIDERS) expect(a.providers.find((p) => p.name === name)!.property_mappings).toEqual(["existing-mapping", pk]);
-    expect(a.providers.find((p) => p.name === OLD_HUB.provider)!.property_mappings).toEqual(["existing-mapping"]);
-    expect(a.groups.map((g) => [g.name, g.attributes.clauderc_role])).toEqual(GROUPS.map((g) => [g.name, g.role]));
-    expect(a.groups.find((g) => g.name === ADMIN_GROUP)!.users).toEqual([7]);
+    const authentik = fakeAuthentik();
+    await run(base(authentik, { adminUser: "kir" }).options);
+    expect(authentik.mappings).toHaveLength(1);
+    expect(authentik.mappings[0]).toMatchObject({
+      name: MAPPING_NAME,
+      scope_name: SCOPE_NAME,
+      expression: MAPPING_EXPRESSION,
+    });
+    const pk = authentik.mappings[0].pk;
+    for (const name of PROVIDERS)
+      expect(defined(authentik.providers.find((json) => json.name === name)).property_mappings).toEqual([
+        "existing-mapping",
+        pk,
+      ]);
+    expect(defined(authentik.providers.find((json) => json.name === OLD_HUB.provider)).property_mappings).toEqual([
+      "existing-mapping",
+    ]);
+    expect(authentik.groups.map((json) => [json.name, json.attributes.clauderc_role])).toEqual(
+      GROUPS.map((item) => [item.name, item.role]),
+    );
+    expect(defined(authentik.groups.find((json) => json.name === ADMIN_GROUP)).users).toEqual([7]);
   });
 
   test("every role group is bound to both applications, once", async () => {
-    const a = fakeAuthentik();
-    await run(base(a).o);
-    expect(a.bindings).toHaveLength(APPLICATIONS.length * GROUPS.length);
+    const authentik = fakeAuthentik();
+    await run(base(authentik).options);
+    expect(authentik.bindings).toHaveLength(APPLICATIONS.length * GROUPS.length);
+
     for (const slug of APPLICATIONS) {
-      const app = a.apps.find((x) => x.slug === slug)!;
-      const groupsBound = a.bindings.filter((b) => b.target === app.pk).map((b) => a.groups.find((g) => g.pk === b.group)?.name);
-      expect(groupsBound.sort()).toEqual(GROUPS.map((g) => g.name).sort());
+      const app = defined(authentik.apps.find((json) => json.slug === slug));
+      const groupsBound = authentik.bindings
+        .filter((json) => json.target === app.pk)
+        .map((json) => authentik.groups.find((group) => group.pk === json.group)?.name);
+      expect(groupsBound.sort()).toEqual(GROUPS.map((item) => item.name).sort());
     }
+
     // the old hub application gets none
-    expect(a.bindings.some((b) => b.target === a.apps.find((x) => x.slug === OLD_HUB.application)!.pk)).toBe(false);
+    expect(
+      authentik.bindings.some(
+        (json) => json.target === defined(authentik.apps.find((app) => app.slug === OLD_HUB.application)).pk,
+      ),
+    ).toBe(false);
   });
 
   test("an application in the all mode is set to any", async () => {
-    const a = fakeAuthentik();
-    a.apps.find((x) => x.slug === APPLICATIONS[0])!.policy_engine_mode = "all";
-    await run(base(a).o);
-    for (const slug of APPLICATIONS) expect(a.apps.find((x) => x.slug === slug)!.policy_engine_mode).toBe("any");
-    expect(a.writes().filter((c) => c.method === "PATCH" && c.path === `/api/v3/core/applications/${APPLICATIONS[0]}/`)).toHaveLength(1);
+    const authentik = fakeAuthentik();
+    defined(authentik.apps.find((json) => json.slug === APPLICATIONS[0])).policy_engine_mode = "all";
+    await run(base(authentik).options);
+    for (const slug of APPLICATIONS)
+      expect(defined(authentik.apps.find((json) => json.slug === slug)).policy_engine_mode).toBe("any");
+    expect(
+      authentik
+        .writes()
+        .filter((write) => write.method === "PATCH" && write.path === `/api/v3/core/applications/${APPLICATIONS[0]}/`),
+    ).toHaveLength(1);
   });
 
   test("a binding that is not a role group is reported and not deleted", async () => {
-    const a = fakeAuthentik();
-    await run(base(a).o);
-    const app = a.apps.find((x) => x.slug === APPLICATIONS[0])!;
-    a.bindings.push({ pk: "stray", target: app.pk, user: 7, user_obj: { username: "kir" }, order: 0 });
-    await expect(run(base(a).o)).rejects.toThrow(/"claude-rc-launcher" has a binding for the user kir/);
-    expect(a.bindings.some((b) => b.pk === "stray")).toBe(true);
-    expect(a.writes().some((c) => c.method === "DELETE" && c.path.includes("bindings"))).toBe(false);
+    const authentik = fakeAuthentik();
+    await run(base(authentik).options);
+    const app = defined(authentik.apps.find((json) => json.slug === APPLICATIONS[0]));
+    authentik.bindings.push({ pk: "stray", target: app.pk, user: 7, user_obj: { username: "kir" }, order: 0 });
+    expect((await rejection(run(base(authentik).options))).message).toMatch(
+      /"claude-rc-launcher" has a binding for the user kir/,
+    );
+    expect(authentik.bindings.some((json) => json.pk === "stray")).toBe(true);
+    expect(authentik.writes().some((write) => write.method === "DELETE" && write.path.includes("bindings"))).toBe(
+      false,
+    );
   });
 
   test("a missing application is reported", async () => {
-    const a = fakeAuthentik();
-    a.apps.splice(a.apps.findIndex((x) => x.slug === APPLICATIONS[1]), 1);
-    await expect(run(base(a).o)).rejects.toThrow(/application not found: claude-rc-cli/);
+    const authentik = fakeAuthentik();
+    authentik.apps.splice(
+      authentik.apps.findIndex((json) => json.slug === APPLICATIONS[1]),
+      1,
+    );
+    expect((await rejection(run(base(authentik).options))).message).toMatch(/application not found: claude-rc-cli/);
   });
 
   test("a second run changes nothing", async () => {
-    const a = fakeAuthentik();
-    await run(base(a, { adminUser: "kir" }).o);
-    const before = a.writes().length;
-    const again = await run(base(a, { adminUser: "kir" }).o);
+    const authentik = fakeAuthentik();
+    await run(base(authentik, { adminUser: "kir" }).options);
+    const before = authentik.writes().length;
+    const again = await run(base(authentik, { adminUser: "kir" }).options);
     expect(again.changes).toBe(0);
-    expect(a.writes()).toHaveLength(before);
+    expect(authentik.writes()).toHaveLength(before);
   });
 
   test("a changed expression and a wrong group attribute are repaired", async () => {
-    const a = fakeAuthentik();
-    await run(base(a).o);
-    a.mappings[0]!.expression = "return {}";
-    a.groups[0]!.attributes = { clauderc_role: "read", keep: "me" };
-    const r = await run(base(a).o);
-    expect(r.changes).toBe(2);
-    expect(a.mappings[0]!.expression).toBe(MAPPING_EXPRESSION);
-    expect(a.groups[0]!.attributes).toEqual({ clauderc_role: "admin", keep: "me" });
+    const authentik = fakeAuthentik();
+    await run(base(authentik).options);
+    authentik.mappings[0].expression = "return {}";
+    authentik.groups[0].attributes = { clauderc_role: "read", keep: "me" };
+    const outcome = await run(base(authentik).options);
+    expect(outcome.changes).toBe(2);
+    expect(authentik.mappings[0].expression).toBe(MAPPING_EXPRESSION);
+    expect(authentik.groups[0].attributes).toEqual({ clauderc_role: "admin", keep: "me" });
   });
 
   test("an older authentik with the mapping under the old path works", async () => {
-    const a = fakeAuthentik({ newMappingPath: false });
-    await run(base(a).o);
-    expect(a.mappings).toHaveLength(1);
+    const authentik = fakeAuthentik({ newMappingPath: false });
+    await run(base(authentik).options);
+    expect(authentik.mappings).toHaveLength(1);
   });
 
   test("a missing provider or user is reported after the rest is done", async () => {
-    const a = fakeAuthentik({ providers: [PROVIDERS[0]!] });
-    const err = await run(base(a, { adminUser: "nobody" }).o).catch((e) => String(e));
+    const authentik = fakeAuthentik({ providers: [PROVIDERS[0]] });
+    const err = await run(base(authentik, { adminUser: "nobody" }).options).catch((error) => String(error));
     expect(err).toContain("provider not found: Provider for Claude RC CLI");
     expect(err).toContain("user not found: nobody");
-    expect(a.groups).toHaveLength(GROUPS.length);
+    expect(authentik.groups).toHaveLength(GROUPS.length);
   });
 
   test("the old hub application and provider go only with the flag and with apply", async () => {
-    const a = fakeAuthentik();
-    await run(base(a).o);
-    expect(a.apps).toHaveLength(APPLICATIONS.length + 1);
-    expect(a.providers.some((p) => p.name === OLD_HUB.provider)).toBe(true);
-    await run(base(a, { removeOldHub: true, apply: false }).o);
-    expect(a.apps).toHaveLength(APPLICATIONS.length + 1);
-    await run(base(a, { removeOldHub: true }).o);
-    expect(a.apps).toHaveLength(APPLICATIONS.length);
-    expect(a.providers.some((p) => p.name === OLD_HUB.provider)).toBe(false);
+    const authentik = fakeAuthentik();
+    await run(base(authentik).options);
+    expect(authentik.apps).toHaveLength(APPLICATIONS.length + 1);
+    expect(authentik.providers.some((json) => json.name === OLD_HUB.provider)).toBe(true);
+    await run(base(authentik, { removeOldHub: true, apply: false }).options);
+    expect(authentik.apps).toHaveLength(APPLICATIONS.length + 1);
+    await run(base(authentik, { removeOldHub: true }).options);
+    expect(authentik.apps).toHaveLength(APPLICATIONS.length);
+    expect(authentik.providers.some((json) => json.name === OLD_HUB.provider)).toBe(false);
     // already gone: a second run is quiet
-    expect((await run(base(a, { removeOldHub: true }).o)).changes).toBe(0);
+    expect((await run(base(authentik, { removeOldHub: true }).options)).changes).toBe(0);
   });
 
   test("the token is sent as a bearer and never logged", async () => {
-    const a = fakeAuthentik();
-    const { o, log } = base(a);
-    await run(o);
-    expect(new Set(a.calls.map((c) => c.auth))).toEqual(new Set(["Bearer sekret-token"]));
+    const authentik = fakeAuthentik();
+    const { options: entry, log } = base(authentik);
+    await run(entry);
+    expect(new Set(authentik.calls.map((call) => call.auth))).toEqual(new Set(["Bearer sekret-token"]));
     expect(log.join("\n")).not.toContain("sekret-token");
   });
 
   test("an API error names the call and not the token", async () => {
-    const a = fakeAuthentik();
-    const failing = (async () => new Response("denied", { status: 403 })) as unknown as typeof fetch;
-    await expect(run({ ...base(a).o, fetch: failing })).rejects.toThrow(/GET .* failed: HTTP 403 denied/);
+    const authentik = fakeAuthentik();
+    const failing = (() => Promise.resolve(new Response("denied", { status: 403 }))) as unknown as typeof fetch;
+    expect((await rejection(run({ ...base(authentik).options, fetch: failing }))).message).toMatch(
+      /GET .* failed: HTTP 403 denied/,
+    );
   });
 });
 
@@ -152,50 +198,56 @@ describe("authentik-setup from an empty authentik", () => {
   const withUrl = { publicUrl: "https://rc.example.com" };
 
   test("ends with both applications, the mapping, three groups, six bindings and the admin in the admin group", async () => {
-    const a = empty();
-    const r = await run(base(a, { adminUser: "kir", ...withUrl }).o);
-    expect(a.apps.map((x) => x.slug)).toEqual(APPLICATIONS);
-    expect(a.mappings).toHaveLength(1);
-    expect(a.groups).toHaveLength(3);
-    expect(a.bindings).toHaveLength(6);
-    expect(a.groups.find((g) => g.name === ADMIN_GROUP)!.users).toEqual([7]);
-    expect(r.apps?.webClientSecret).toBeDefined();
-    for (const p of a.providers) expect(p.property_mappings).toContain(a.mappings[0]!.pk);
+    const harness = empty();
+    const outcome = await run(base(harness, { adminUser: "kir", ...withUrl }).options);
+    expect(harness.apps.map((json) => json.slug)).toEqual(APPLICATIONS);
+    expect(harness.mappings).toHaveLength(1);
+    expect(harness.groups).toHaveLength(3);
+    expect(harness.bindings).toHaveLength(6);
+    expect(defined(harness.groups.find((json) => json.name === ADMIN_GROUP)).users).toEqual([7]);
+    expect(outcome.apps?.webClientSecret).toBeDefined();
+    for (const json of harness.providers) expect(json.property_mappings).toContain(harness.mappings[0].pk);
   });
   test("a plan from an empty authentik makes no write and does not fail on the missing applications", async () => {
-    const a = empty();
-    const { o, log } = base(a, { apply: false, ...withUrl });
-    await run(o);
-    expect(a.writes()).toEqual([]);
-    expect(log.some((l) => l.includes("after the application exists"))).toBe(true);
+    const harness = empty();
+    const { options: entry, log } = base(harness, { apply: false, ...withUrl });
+    await run(entry);
+    expect(harness.writes()).toEqual([]);
+    expect(log.some((item) => item.includes("after the application exists"))).toBe(true);
   });
   test("no log line contains the client secret or the token", async () => {
-    const a = empty();
-    const { o, log } = base(a, withUrl);
-    const r = await run(o);
-    expect(log.join("\n")).not.toContain(r.apps!.webClientSecret!);
+    const harness = empty();
+    const { options: entry, log } = base(harness, withUrl);
+    const outcome = await run(entry);
+    expect(log.join("\n")).not.toContain(defined(defined(outcome.apps).webClientSecret));
     expect(log.join("\n")).not.toContain("sekret-token");
   });
   test("the secret file and the hub settings are written, and a second run keeps them", async () => {
-    const a = empty();
-    const r = await run(base(a, withUrl).o);
-    const d = mkdtempSync(join(tmpdir(), "setup-"));
-    writeFileSync(join(d, "config.toml"), 'mode = "hub"\n');
-    expect(writeSecret(join(d, "oidc-client.secret"), r.apps!.webClientSecret!, false)).toBe("written");
-    writeHubConfig(d, r.apps!, DEFAULTS, false);
-    const again = await run(base(a, withUrl).o);
+    const harness = empty();
+    const outcome = await run(base(harness, withUrl).options);
+    const file = mkdtempSync(join(tmpdir(), "setup-"));
+    writeFileSync(join(file, "config.toml"), 'mode = "hub"\n');
+    expect(writeSecret(join(file, "oidc-client.secret"), defined(defined(outcome.apps).webClientSecret), false)).toBe(
+      "written",
+    );
+    writeHubConfig(file, defined(outcome.apps), DEFAULTS, false);
+    const again = await run(base(harness, withUrl).options);
     expect(again.changes).toBe(0);
-    expect(writeSecret(join(d, "oidc-client.secret"), again.apps!.webClientSecret!, false)).toBe("kept");
-    expect(writeHubConfig(d, again.apps!, DEFAULTS, false).changed).toEqual([]);
-    expect(readFileSync(join(d, "config.toml"), "utf8")).toContain(`client_id = "${r.apps!.webClientId}"`);
+    expect(writeSecret(join(file, "oidc-client.secret"), defined(defined(again.apps).webClientSecret), false)).toBe(
+      "kept",
+    );
+    expect(writeHubConfig(file, defined(again.apps), DEFAULTS, false).changed).toEqual([]);
+    expect(readFileSync(join(file, "config.toml"), "utf8")).toContain(
+      `client_id = "${defined(outcome.apps).webClientId}"`,
+    );
   });
   test("a renamed claim shows up in the mapping expression, the group attribute and the snippet", async () => {
-    const a = empty();
+    const harness = empty();
     const settings = { ...DEFAULTS, claim: "my_role" };
-    const r = await run(base(a, { ...withUrl, settings }).o);
-    expect(a.mappings[0]!.expression).toContain('"my_role"');
-    expect(a.groups[0]!.attributes).toEqual({ my_role: "admin" });
+    const outcome = await run(base(harness, { ...withUrl, settings }).options);
+    expect(harness.mappings[0].expression).toContain('"my_role"');
+    expect(harness.groups[0].attributes).toEqual({ my_role: "admin" });
     const { snippet } = await import("../../scripts/authentik/hubconfig");
-    expect(snippet(r.apps!, settings)).toContain('role_claim = "my_role"');
+    expect(snippet(defined(outcome.apps), settings)).toContain('role_claim = "my_role"');
   });
 });

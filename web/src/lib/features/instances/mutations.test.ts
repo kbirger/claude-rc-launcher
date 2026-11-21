@@ -1,11 +1,17 @@
 import { expect, test } from "vitest";
-import { pauseInstanceMutation, restartInstanceMutation, resumeInstanceMutation, startInstanceMutation, updateSettingsMutation } from "./mutations";
+import {
+  pauseInstanceMutation,
+  restartInstanceMutation,
+  resumeInstanceMutation,
+  startInstanceMutation,
+  updateSettingsMutation,
+} from "./mutations";
 
 test("the start mutation key holds the host", () => {
-  const a = startInstanceMutation("a").mutationKey;
-  const b = startInstanceMutation("b").mutationKey;
-  expect(a).toEqual(["instances", "a", "start"]);
-  expect(a).not.toEqual(b);
+  const item = startInstanceMutation("a").mutationKey;
+  const entry = startInstanceMutation("b").mutationKey;
+  expect(item).toEqual(["instances", "a", "start"]);
+  expect(item).not.toEqual(entry);
   expect("onSettled" in startInstanceMutation("a")).toBe(false);
 });
 

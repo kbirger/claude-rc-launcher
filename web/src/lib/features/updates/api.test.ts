@@ -8,7 +8,10 @@ let calls: { url: string; init?: RequestInit }[] = [];
 function stub(status: number, body: unknown) {
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   }) as any;
 }
 
@@ -36,7 +39,7 @@ test("getLatest and getUpdates GET their endpoints", async () => {
   await getLatest();
   stub(200, []);
   await getUpdates();
-  expect(calls.map((c) => c.url)).toEqual(["/api/latest", "/api/updates"]);
+  expect(calls.map((call) => call.url)).toEqual(["/api/latest", "/api/updates"]);
 });
 
 test("getReleaseNotes GETs the range with encoded versions", async () => {

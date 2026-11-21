@@ -8,7 +8,10 @@ let calls: { url: string; init?: RequestInit }[] = [];
 function stub(status: number, body: unknown) {
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   }) as any;
 }
 
@@ -26,15 +29,15 @@ test("host ids are URL-encoded in every fs path", async () => {
   await browse("a/b", "/x y");
   stub(201, {});
   await mkdir("a/b", "/p", "n");
-  for (const c of calls) expect(c.url.startsWith("/api/hosts/a%2Fb/")).toBe(true);
+  for (const call of calls) expect(call.url.startsWith("/api/hosts/a%2Fb/")).toBe(true);
   expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/fs?path=%2Fx%20y");
 });
 
 test("listUsers calls /users", async () => {
   stub(200, { selectable: true, default: "a", users: [{ name: "a" }] });
-  const r = await listUsers("a/b");
+  const usersInfo = await listUsers("a/b");
   expect(calls[0]!.url).toBe("/api/hosts/a%2Fb/users");
-  expect(r.default).toBe("a");
+  expect(usersInfo.default).toBe("a");
 });
 
 test("browse adds the user query", async () => {

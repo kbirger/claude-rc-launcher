@@ -19,9 +19,9 @@ test("mergePending", () => {
   expect(withStart[0].instance).toBeUndefined();
 
   const stopping = mergePending(list, [], [{ id: "b", kind: "stopping" }]);
-  expect(stopping.map((r) => r.pending)).toEqual([undefined, "stopping"]);
+  expect(stopping.map((listRow) => listRow.pending)).toEqual([undefined, "stopping"]);
   expect(stopping[1].instance).toBe(list[1]);
 
-  expect(mergePending(list, [], []).every((r) => r.pending === undefined)).toBe(true);
+  expect(mergePending(list, [], []).every((listRow) => listRow.pending === undefined)).toBe(true);
   expect(mergePending(list, [{ path: "/p/a" }], [])).toHaveLength(2);
 });

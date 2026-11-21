@@ -1,32 +1,42 @@
-import { isIPv4, isIPv6 } from "node:net";
 import type { Context } from "hono";
 import { getConnInfo } from "hono/bun";
+import { isIPv4, isIPv6 } from "node:net";
 import type { ProxyJwtUserAuth } from "./config";
 import type { JwtVerifier } from "./jwt";
-import { isAllowed, userFromClaims, type UserAuthStrategy } from "./userauth";
+import { isAllowed, userFromClaims } from "./userauth";
+import type { UserAuthStrategy } from "./userauth";
 
-type Ip = { v: 4 | 6; n: bigint };
+interface Ip {
+  version: 4 | 6;
+  value: bigint;
+}
 
 function parseIp(raw: string): Ip | null {
-  if (isIPv4(raw)) return { v: 4, n: raw.split(".").reduce((a, o) => (a << 8n) | BigInt(o), 0n) };
+  if (isIPv4(raw))
+    return { version: 4, value: raw.split(".").reduce((total, octet) => (total << 8n) | BigInt(octet), 0n) };
   if (!isIPv6(raw)) return null;
-  let s = raw;
-  const lastColon = s.lastIndexOf(":");
-  const tail = s.slice(lastColon + 1);
+  let address = raw;
+  const lastColon = address.lastIndexOf(":");
+  const tail = address.slice(lastColon + 1);
+
   if (tail.includes(".")) {
     if (!isIPv4(tail)) return null;
-    const [a, b, c, d] = tail.split(".").map(Number) as [number, number, number, number];
-    s = `${s.slice(0, lastColon + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+    const [first, second, third, fourth] = tail.split(".").map(Number) as [number, number, number, number];
+    address = `${address.slice(0, lastColon + 1)}${((first << 8) | second).toString(16)}:${((third << 8) | fourth).toString(16)}`;
   }
-  const [head, rest] = s.split("::") as [string, string | undefined];
-  const h = head ? head.split(":") : [];
-  const r = rest === undefined ? [] : rest ? rest.split(":") : [];
-  const groups = rest === undefined ? h : [...h, ...Array<string>(8 - h.length - r.length).fill("0"), ...r];
+
+  const [head, rest] = address.split("::") as [string, string | undefined];
+  const headGroups = head ? head.split(":") : [];
+  const tailGroups = rest === undefined ? [] : rest ? rest.split(":") : [];
+  const groups =
+    rest === undefined
+      ? headGroups
+      : [...headGroups, ...Array<string>(8 - headGroups.length - tailGroups.length).fill("0"), ...tailGroups];
   if (groups.length !== 8) return null;
-  const n = groups.reduce((a, g) => (a << 16n) | BigInt(`0x${g}`), 0n);
+  const bits = groups.reduce((group, hex) => (group << 16n) | BigInt(`0x${hex}`), 0n);
   // ::ffff:a.b.c.d is IPv4 in IPv6 clothing
-  if (n >> 32n === 0xffffn) return { v: 4, n: n & 0xffffffffn };
-  return { v: 6, n };
+  if (bits >> 32n === 0xffffn) return { version: 4, value: bits & 0xffffffffn };
+  return { version: 6, value: bits };
 }
 
 type Net = Ip & { bits: number };
@@ -36,12 +46,12 @@ function parseNet(entry: string): Net | null {
   if (extra.length) return null;
   const ip = parseIp(addr);
   if (!ip) return null;
-  const max = ip.v === 4 ? 32 : 128;
+  const max = ip.version === 4 ? 32 : 128;
   if (len === undefined) return { ...ip, bits: max };
   if (!/^\d{1,3}$/.test(len)) return null;
   const bits = Number(len);
   // A prefix on a mapped IPv4-in-IPv6 address is ambiguous; reject rather than guess.
-  if (bits > max || (isIPv6(addr) && ip.v === 4)) return null;
+  if (bits > max || (isIPv6(addr) && ip.version === 4)) return null;
   return { ...ip, bits };
 }
 
@@ -52,48 +62,56 @@ export const validPeer = (entry: string) => parseNet(entry) !== null;
 export function cidrContains(list: string[], addr: string): boolean {
   const ip = parseIp(addr);
   if (!ip) return false;
-  const max = ip.v === 4 ? 32n : 128n;
-  return list.some((e) => {
-    const net = parseNet(e);
-    if (!net || net.v !== ip.v) return false;
+  const max = ip.version === 4 ? 32n : 128n;
+  return list.some((item) => {
+    const net = parseNet(item);
+    if (!net || net.version !== ip.version) return false;
     const shift = max - BigInt(net.bits);
-    return net.n >> shift === ip.n >> shift;
+    return net.value >> shift === ip.value >> shift;
   });
 }
 
-export type PeerResolver = (c: Context) => string | undefined;
+export type PeerResolver = (context: Context) => string | undefined;
 
-const defaultPeer: PeerResolver = (c) => {
+const defaultPeer: PeerResolver = (context) => {
   try {
-    return getConnInfo(c).remote.address;
+    return getConnInfo(context).remote.address;
   } catch {
     return undefined;
   }
 };
 
-export function proxyJwtUserAuth(o: { settings: ProxyJwtUserAuth; verify: JwtVerifier; peer?: PeerResolver }): UserAuthStrategy {
-  const { settings, verify } = o;
-  const peer = o.peer ?? defaultPeer;
+export function proxyJwtUserAuth(options: {
+  settings: ProxyJwtUserAuth;
+  verify: JwtVerifier;
+  peer?: PeerResolver;
+}): UserAuthStrategy {
+  const { settings, verify } = options;
+  const peer = options.peer ?? defaultPeer;
   return {
     ...(settings.logoutUrl ? { logoutUrl: settings.logoutUrl } : {}),
-    middleware: async (c, next) => {
+    middleware: async (context, next) => {
       if (settings.trustedPeers.length > 0) {
-        const p = peer(c);
-        if (p === undefined || !cidrContains(settings.trustedPeers, p)) return c.json({ error: "forbidden" }, 403);
+        const peerAddress = peer(context);
+        if (peerAddress === undefined || !cidrContains(settings.trustedPeers, peerAddress))
+          return context.json({ error: "forbidden" }, 403);
       }
-      const token = c.req.header(settings.header);
-      if (!token) return c.json({ error: "unauthenticated" }, 401);
+
+      const token = context.req.header(settings.header);
+      if (!token) return context.json({ error: "unauthenticated" }, 401);
       let claims;
+
       try {
         claims = await verify(token);
       } catch {
-        return c.json({ error: "unauthenticated" }, 401);
+        return context.json({ error: "unauthenticated" }, 401);
       }
+
       const user = userFromClaims(claims, settings.roles);
-      if (!user) return c.json({ error: "unauthenticated" }, 401);
-      if (!isAllowed(user, settings.allowedUsers)) return c.json({ error: "user is not allowed" }, 403);
-      if (user.role === "none") return c.json({ error: "access refused" }, 403);
-      c.set("user" as never, user as never);
+      if (!user) return context.json({ error: "unauthenticated" }, 401);
+      if (!isAllowed(user, settings.allowedUsers)) return context.json({ error: "user is not allowed" }, 403);
+      if (user.role === "none") return context.json({ error: "access refused" }, 403);
+      context.set("user" as never, user as never);
       await next();
     },
   };

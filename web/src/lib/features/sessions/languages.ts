@@ -20,17 +20,17 @@ export const languageLoaders: Record<LanguageId, Loader> = {
   javascript: async () => (await import("@codemirror/lang-javascript")).javascript({ jsx: true }),
   json: async () => (await import("@codemirror/lang-json")).json(),
   python: async () => (await import("@codemirror/lang-python")).python(),
-  bash: () => stream(import("@codemirror/legacy-modes/mode/shell").then((m) => m.shell)),
+  bash: () => stream(import("@codemirror/legacy-modes/mode/shell").then((mode) => mode.shell)),
   yaml: async () => (await import("@codemirror/lang-yaml")).yaml(),
   xml: async () => (await import("@codemirror/lang-html")).html(),
   css: async () => (await import("@codemirror/lang-css")).css(),
   sql: async () => (await import("@codemirror/lang-sql")).sql(),
   go: async () => (await import("@codemirror/lang-go")).go(),
   rust: async () => (await import("@codemirror/lang-rust")).rust(),
-  ini: () => stream(import("@codemirror/legacy-modes/mode/toml").then((m) => m.toml)),
-  diff: () => stream(import("@codemirror/legacy-modes/mode/diff").then((m) => m.diff)),
-  dockerfile: () => stream(import("@codemirror/legacy-modes/mode/dockerfile").then((m) => m.dockerFile)),
-  makefile: () => stream(import("@codemirror/legacy-modes/mode/shell").then((m) => m.shell)),
+  ini: () => stream(import("@codemirror/legacy-modes/mode/toml").then((mode) => mode.toml)),
+  diff: () => stream(import("@codemirror/legacy-modes/mode/diff").then((mode) => mode.diff)),
+  dockerfile: () => stream(import("@codemirror/legacy-modes/mode/dockerfile").then((mode) => mode.dockerFile)),
+  makefile: () => stream(import("@codemirror/legacy-modes/mode/shell").then((mode) => mode.shell)),
   markdown: async () => {
     const md = await import("@codemirror/lang-markdown");
     return md.markdown({ base: md.markdownLanguage });
@@ -39,5 +39,7 @@ export const languageLoaders: Record<LanguageId, Loader> = {
 
 /** The CodeMirror extension for a language. Rejects when the import fails (for example offline) or the id is unknown. */
 export function loadLanguage(id: LanguageId): Promise<Extension> {
-  return Object.hasOwn(languageLoaders, id) ? languageLoaders[id]() : Promise.reject(new Error(`unknown language: ${id}`));
+  return Object.hasOwn(languageLoaders, id)
+    ? languageLoaders[id]()
+    : Promise.reject(new Error(`unknown language: ${id}`));
 }

@@ -5,28 +5,41 @@
  * See docs/session-files.md.
  */
 import { realpath } from "node:fs/promises";
-import { readLiveSessions, type LiveInfo } from "./livesessions";
-import { SessionChains } from "./sessionchains";
-import { PinnedRoot } from "./pinnedroot";
+import { blockedIn } from "./blocked";
+import type { BlockedCall } from "./blocked";
+import { readLiveSessions } from "./livesessions";
+import type { LiveInfo } from "./livesessions";
 import { NameMemory } from "./namememory";
-import { chooseName, newNameCache, nameInfoOf, tidy, type NameCache, type NameInfo } from "./sessionnames";
-import { scan, type Found } from "./sessionscan";
+import { PinnedRoot } from "./pinnedroot";
+import { SessionChains } from "./sessionchains";
 import { openDownload, previewIn } from "./sessionfs";
-import { blockedIn, type BlockedCall } from "./blocked";
+import { chooseName, newNameCache, nameInfoOf, tidy } from "./sessionnames";
+import type { NameCache, NameInfo } from "./sessionnames";
+import { scan } from "./sessionscan";
+import type { Found } from "./sessionscan";
 import type { ClaudeSettings, PermissionLayers } from "./settingsfile";
-import { touchedIn, type TouchedFile } from "./touched";
+import { touchedIn } from "./touched";
+import type { TouchedFile } from "./touched";
 import { SESSION_ID } from "./transcript";
-import { defaultTranscriptFs, type TranscriptFs } from "./transcriptfs";
+import { defaultTranscriptFs } from "./transcriptfs";
+import type { TranscriptFs } from "./transcriptfs";
 
 /** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
-export type SessionSummary = { id: string; root: string; name?: string; branch?: string; startedAt: string; lastActiveAt: string; live?: { status?: string; remoteControl: boolean };
+export interface SessionSummary {
+  id: string;
+  root: string;
+  name?: string;
+  branch?: string;
+  startedAt: string;
+  lastActiveAt: string;
+  live?: { status?: string; remoteControl: boolean };
   /** Set when `/clear` made this session out of earlier ones (same Remote Control connection): their ids, oldest first. */
   earlier?: string[];
-};
+}
 
 export type LiveReader = (home: string) => Promise<ReadonlyMap<string, LiveInfo>>;
 
-export type SessionCatalogOptions = {
+export interface SessionCatalogOptions {
   fs?: TranscriptFs;
   names?: NameCache;
   live?: LiveReader;
@@ -39,21 +52,27 @@ export type SessionCatalogOptions = {
   platform?: NodeJS.Platform;
   openDownload?: typeof openDownload;
   previewIn?: typeof previewIn;
-};
+}
 
 /** At most this many transcripts are read for names at once, so that a big folder stays under the open-file limit. */
 const NAME_READS = 8;
 
 /** `fn` over `items` with at most `limit` running at once. Results keep the order of `items`. */
-async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
+async function mapLimit<Value, Result>(
+  items: readonly Value[],
+  limit: number,
+  fn: (value: Value) => Promise<Result>,
+): Promise<Result[]> {
+  const out = new Array<Result>(items.length);
   let next = 0;
+
   const worker = async () => {
     while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
+      const index = next++;
+      out[index] = await fn(items[index]);
     }
   };
+
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
 }
@@ -69,22 +88,22 @@ export class SessionCatalog {
   private readonly live: LiveReader;
   private readonly refuseDirs?: readonly string[];
 
-  constructor(o: SessionCatalogOptions = {}) {
-    this.fs = o.fs ?? defaultTranscriptFs;
-    this.names = o.names ?? newNameCache();
-    this.chains = new SessionChains(o.chainFile);
-    this.nameMemory = new NameMemory(o.nameFile);
+  constructor(sessionCatalogOptions: SessionCatalogOptions = {}) {
+    this.fs = sessionCatalogOptions.fs ?? defaultTranscriptFs;
+    this.names = sessionCatalogOptions.names ?? newNameCache();
+    this.chains = new SessionChains(sessionCatalogOptions.chainFile);
+    this.nameMemory = new NameMemory(sessionCatalogOptions.nameFile);
     this.nameMemory.useFs(this.fs);
-    this.platform = o.platform ?? process.platform;
-    this.openDownload = o.openDownload ?? openDownload;
-    this.previewIn = o.previewIn ?? previewIn;
-    this.live = o.live ?? ((home) => readLiveSessions({ home }));
-    this.refuseDirs = o.refuseDirs;
+    this.platform = sessionCatalogOptions.platform ?? process.platform;
+    this.openDownload = sessionCatalogOptions.openDownload ?? openDownload;
+    this.previewIn = sessionCatalogOptions.previewIn ?? previewIn;
+    this.live = sessionCatalogOptions.live ?? ((home) => readLiveSessions({ home }));
+    this.refuseDirs = sessionCatalogOptions.refuseDirs;
   }
 
   /** No I/O here. */
-  instance(h: { path: string; home: string }): InstanceSessions {
-    return new InstanceSessions(this, h.path, h.home);
+  instance(options: { path: string; home: string }): InstanceSessions {
+    return new InstanceSessions(this, options.path, options.home);
   }
 
   /** The running sessions by session id. It rejects as the reader rejects. */
@@ -95,8 +114,8 @@ export class SessionCatalog {
   /** The state folders, as given and as real paths (a state folder reached through a link). */
   async refusedDirs(): Promise<string[]> {
     const given = this.refuseDirs ?? [];
-    const real = await Promise.all(given.map((d) => realpath(d).catch(() => undefined)));
-    return [...given, ...real.filter((d): d is string => d !== undefined)];
+    const real = await Promise.all(given.map((path) => realpath(path).catch(() => undefined)));
+    return [...given, ...real.filter((item): item is string => item !== undefined)];
   }
 }
 
@@ -111,11 +130,18 @@ const CLEAR_AFTER_MS = 2500;
  */
 export function matchByTime(found: readonly Found[]): [string, string][] {
   const wanted = new Map<string, string[]>();
-  for (const f of found) {
-    if (f.clearedAt === undefined) continue;
-    const c = found.filter((o) => o.id !== f.id && o.mtimeMs >= f.clearedAt! - CLEAR_BEFORE_MS && o.mtimeMs <= f.clearedAt! + CLEAR_AFTER_MS);
-    if (c.length === 1) wanted.set(c[0].id, [...(wanted.get(c[0].id) ?? []), f.id]);
+
+  for (const session of found) {
+    if (session.clearedAt === undefined) continue;
+    const founds = found.filter(
+      (item) =>
+        item.id !== session.id &&
+        item.mtimeMs >= session.clearedAt! - CLEAR_BEFORE_MS &&
+        item.mtimeMs <= session.clearedAt! + CLEAR_AFTER_MS,
+    );
+    if (founds.length === 1) wanted.set(founds[0].id, [...(wanted.get(founds[0].id) ?? []), session.id]);
   }
+
   return [...wanted].flatMap(([pred, succ]) => (succ.length === 1 ? [[pred, succ[0]] as [string, string]] : []));
 }
 
@@ -131,55 +157,102 @@ export class InstanceSessions {
     const live = await this.catalog.readLive(this.home).catch(() => undefined);
     const fs = this.catalog.fs;
     const found = await scan({ home: this.home, path: this.path, fs });
+
     // Remember which session ids belong together: the same Remote Control connection (exact), and the first session of
     // a running process (exact, Linux only). Then a `/clear` that no running file showed is matched by time.
     if (live) {
-      await this.catalog.chains.observe([...live].flatMap(([id, v]) => (v.bridgeId ? [[v.bridgeId, id] as const] : [])));
-      for (const [id, v] of live) if (v.firstSessionId) await this.catalog.chains.link(v.firstSessionId, id);
+      await this.catalog.chains.observe(
+        [...live].flatMap(([id, liveInfo]) => (liveInfo.bridgeId ? [[liveInfo.bridgeId, id] as const] : [])),
+      );
+      for (const [id, liveInfo] of live)
+        if (liveInfo.firstSessionId) await this.catalog.chains.link(liveInfo.firstSessionId, id);
     }
+
     for (const [pred, succ] of matchByTime(found)) await this.catalog.chains.link(pred, succ);
-    const byId = new Map(found.map((f) => [f.id, f]));
+    const byId = new Map(found.map((item) => [item.id, item]));
     const hidden = new Set<string>();
     const chainOf = new Map<string, Found[]>();
-    for (const f of found) {
-      if (hidden.has(f.id)) continue;
-      const members = (await this.catalog.chains.chainOf(f.id)).flatMap((i) => byId.get(i) ?? []);
+
+    for (const item of found) {
+      if (hidden.has(item.id)) continue;
+      const members = (await this.catalog.chains.chainOf(item.id)).flatMap((id) => byId.get(id) ?? []);
       if (members.length < 2) continue;
       // The newest transcript of the chain is the one that shows. The others are folded into it.
-      const head = members.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a));
-      for (const m of members) if (m !== head) hidden.add(m.id);
-      chainOf.set(head.id, members.filter((m) => m !== head));
+      const head = members.reduce((member, candidate) => (candidate.mtimeMs > member.mtimeMs ? candidate : member));
+      for (const member of members) if (member !== head) hidden.add(member.id);
+      chainOf.set(
+        head.id,
+        members.filter((member) => member !== head),
+      );
     }
-    const sessions = await mapLimit(found.filter((f) => !hidden.has(f.id)), NAME_READS, async (f): Promise<SessionSummary> => {
-      const earlier = chainOf.get(f.id);
-      const first = earlier?.length ? earlier.reduce((a, b) => ((b.startedAt ?? "") < (a.startedAt ?? "") ? b : a)) : undefined;
-      const lastActiveAt = new Date(f.mtimeMs).toISOString();
-      const s: SessionSummary = { id: f.id, root: f.root, startedAt: first?.startedAt ?? f.startedAt ?? lastActiveAt, lastActiveAt };
-      const liveInfo = live?.get(f.id);
-      // The order of the sources is chooseName (sessionnames.ts). The name memory then decides: a name that the launcher
-      // learned from a better source stays, also after `/compact`.
-      const liveName = tidy(liveInfo?.name);
-      const chainInfo = first ? await nameInfoOf(fs, first, this.catalog.names) : undefined;
-      const ownInfo = await nameInfoOf(fs, f, this.catalog.names);
-      const picked = chooseName({ live: liveName, liveIsDefault: liveInfo?.nameIsDefault, chain: chainInfo?.name, transcript: ownInfo?.name });
-      let cand: NameInfo | undefined;
-      if (picked !== undefined) {
-        const source = !liveInfo?.nameIsDefault && picked === liveName ? "live" : picked === chainInfo?.name ? chainInfo.source : picked === ownInfo?.name ? ownInfo.source : "default";
-        cand = { name: picked, source };
-      }
-      const chain = [f.id, ...(earlier ?? []).map((m) => m.id)];
-      const name = (await this.catalog.nameMemory.resolve({ id: f.id, chain, candidate: cand, file: f.file }))?.name;
-      if (name) s.name = name;
-      // Field by field: nothing else from the running-session file reaches the answer.
-      if (liveInfo) {
-        s.live = { remoteControl: liveInfo.remoteControl };
-        if (liveInfo.status !== undefined) s.live.status = liveInfo.status;
-      }
-      if (f.branch) s.branch = f.branch;
-      if (earlier?.length) s.earlier = earlier.sort((a, b) => ((a.startedAt ?? "") < (b.startedAt ?? "") ? -1 : 1)).map((m) => m.id);
-      return s;
-    });
-    return sessions.sort((a, b) => (a.lastActiveAt < b.lastActiveAt ? 1 : a.lastActiveAt > b.lastActiveAt ? -1 : 0));
+
+    const sessions = await mapLimit(
+      found.filter((item) => !hidden.has(item.id)),
+      NAME_READS,
+      async (item): Promise<SessionSummary> => {
+        const earlier = chainOf.get(item.id);
+        const first = earlier?.length
+          ? earlier.reduce((total, entry) => ((entry.startedAt ?? "") < (total.startedAt ?? "") ? entry : total))
+          : undefined;
+        const lastActiveAt = new Date(item.mtimeMs).toISOString();
+        const sessionSummary: SessionSummary = {
+          id: item.id,
+          root: item.root,
+          startedAt: first?.startedAt ?? item.startedAt ?? lastActiveAt,
+          lastActiveAt,
+        };
+        const liveInfo = live?.get(item.id);
+        // The order of the sources is chooseName (sessionnames.ts). The name memory then decides: a name that the launcher
+        // learned from a better source stays, also after `/compact`.
+        const liveName = tidy(liveInfo?.name);
+        const chainInfo = first ? await nameInfoOf(fs, first, this.catalog.names) : undefined;
+        const ownInfo = await nameInfoOf(fs, item, this.catalog.names);
+        const picked = chooseName({
+          live: liveName,
+          liveIsDefault: liveInfo?.nameIsDefault,
+          chain: chainInfo?.name,
+          transcript: ownInfo?.name,
+        });
+        let cand: NameInfo | undefined;
+
+        if (picked !== undefined) {
+          const source =
+            !liveInfo?.nameIsDefault && picked === liveName
+              ? "live"
+              : picked === chainInfo?.name
+                ? chainInfo.source
+                : picked === ownInfo?.name
+                  ? ownInfo.source
+                  : "default";
+          cand = { name: picked, source };
+        }
+
+        const chain = [item.id, ...(earlier ?? []).map((entry) => entry.id)];
+        const name = (await this.catalog.nameMemory.resolve({ id: item.id, chain, candidate: cand, file: item.file }))
+          ?.name;
+        if (name) sessionSummary.name = name;
+
+        // Field by field: nothing else from the running-session file reaches the answer.
+        if (liveInfo) {
+          sessionSummary.live = { remoteControl: liveInfo.remoteControl };
+          if (liveInfo.status !== undefined) sessionSummary.live.status = liveInfo.status;
+        }
+
+        if (item.branch) sessionSummary.branch = item.branch;
+        if (earlier?.length)
+          sessionSummary.earlier = earlier
+            .sort((left, right) => ((left.startedAt ?? "") < (right.startedAt ?? "") ? -1 : 1))
+            .map((session) => session.id);
+        return sessionSummary;
+      },
+    );
+    return sessions.sort((sessionSummary, session) =>
+      sessionSummary.lastActiveAt < session.lastActiveAt
+        ? 1
+        : sessionSummary.lastActiveAt > session.lastActiveAt
+          ? -1
+          : 0,
+    );
   }
 
   /**
@@ -217,9 +290,15 @@ export class Session {
   }
 
   /** The files this session touched. It reads this transcript and never scans again. */
-  touched(o: { dirs: readonly string[] }): Promise<TouchedFile[]> {
+  touched(options: { dirs: readonly string[] }): Promise<TouchedFile[]> {
     const catalog = this.instance.catalog;
-    return touchedIn({ fs: catalog.fs, file: this.file, root: this.root, platform: catalog.platform, dirs: o.dirs });
+    return touchedIn({
+      fs: catalog.fs,
+      file: this.file,
+      root: this.root,
+      platform: catalog.platform,
+      dirs: options.dirs,
+    });
   }
 
   /** The blocked tool calls of this transcript, newest first. It reads this transcript and never scans again. */
@@ -228,13 +307,13 @@ export class Session {
   }
 
   /** The settings layers that apply to this session. It runs the real-root check first (a failed check is a 404). */
-  async permissions(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
-    return (await this.open()).permissions(o);
+  async permissions(options: { ownerUid?: number; isRoot?: () => boolean }): Promise<PermissionLayers> {
+    return (await this.open()).permissions(options);
   }
 
   /** The settings files that apply to this session. It runs the real-root check first (a failed check is a 404). */
-  async settings(o: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
-    return (await this.open()).settings(o);
+  async settings(options: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
+    return (await this.open()).settings(options);
   }
 
   /** Runs the real-root check and gives the checked root. A failed check is a 404. */

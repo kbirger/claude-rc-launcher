@@ -1,19 +1,23 @@
 // Small helpers for the session screens. They only use values the API gave.
+import { resolve } from "$app/paths";
+import type { ResolvedPathname } from "$app/types";
 import { ago } from "../../shared/time";
 import type { Session, TouchedFile } from "./api";
 
-const fwd = (p: string): string => p.replace(/\\/g, "/");
+const fwd = (path: string): string => path.replace(/\\/g, "/");
 
 /** The part of `path` below `root`, with "/" separators, or undefined for the root itself or a path outside it.
  *  Both sides may use "\\" (a Windows node). A drive path compares without case, and the result keeps the real case. */
 export function relativeTo(root: string, path: string): string | undefined {
-  const p = fwd(path);
-  let r = fwd(root);
-  if (!r.endsWith("/")) r += "/";
-  const win = /^[A-Za-z]:/.test(r);
-  const head = p.slice(0, r.length);
-  const same = win ? head.toLowerCase() === r.toLowerCase() : head === r;
-  return same && p.length > r.length ? p.slice(r.length) : undefined;
+  const normalizedPath = fwd(path);
+  let normalizedRoot = fwd(root);
+  if (!normalizedRoot.endsWith("/")) normalizedRoot += "/";
+  const win = /^[A-Za-z]:/.test(normalizedRoot);
+  const head = normalizedPath.slice(0, normalizedRoot.length);
+  const same = win ? head.toLowerCase() === normalizedRoot.toLowerCase() : head === normalizedRoot;
+  return same && normalizedPath.length > normalizedRoot.length
+    ? normalizedPath.slice(normalizedRoot.length)
+    : undefined;
 }
 
 /** The last two segments of a path, for a short label. Accepts "\\" like `relativeTo`. */
@@ -21,20 +25,26 @@ export const lastSegments = (path: string): string => fwd(path).split("/").filte
 
 export const joinPath = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name);
 
-export function humanSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+export function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export { ago };
 
 /** The calendar date and time of an instant, for a reader's locale ("Nov 12, 2:05 PM"). The year shows only when it is not the year of `now`. */
 export function shortDate(iso: string, now: number): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit" });
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 const WT = "/.claude/worktrees/";
@@ -43,17 +53,21 @@ export const worktreeName = (root: string): string | undefined =>
   fwd(root).includes(WT) ? fwd(root).split("/").filter(Boolean).at(-1) : undefined;
 
 /** Link to the sessions page. Empty and false values are left out; `true` becomes "1" (as in `hidden=1`). */
-export function sessionsHref(q: Record<string, string | boolean | undefined>): string {
-  const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(q)) if (v) p.set(k, v === true ? "1" : v);
-  return `/sessions?${p}`;
+export function sessionsHref(params: Record<string, string | boolean | undefined>): ResolvedPathname {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) if (value) searchParams.set(key, value === true ? "1" : value);
+  return resolve(`/sessions?${searchParams}`);
 }
 
 /** True when a segment of the folder path is a dot name: that folder can only be listed with hidden names shown. */
-export const inHiddenPath = (path: string): boolean => fwd(path).split("/").some((s) => s.startsWith("."));
+export const inHiddenPath = (path: string): boolean =>
+  fwd(path)
+    .split("/")
+    .some((part) => part.startsWith("."));
 
 /** Whether the folder view shows dot names: `hidden=1` in the address, or a path that goes through a dot name. */
-export const showHidden = (param: string | null | undefined, path: string): boolean => param === "1" || inHiddenPath(path);
+export const showHidden = (param: string | null | undefined, path: string): boolean =>
+  param === "1" || inHiddenPath(path);
 
 /**
  * Rows of the Touched list, in the order the node sends them (written files first, newest first). `rel` is set for a
@@ -77,28 +91,31 @@ export const baseName = (path: string): string => fwd(path).split("/").filter(Bo
 
 /** A path split into its last name and the folder above it ("" when there is none). Accepts "\\" like `baseName`. */
 export function splitPath(path: string): { name: string; dir: string } {
-  const p = fwd(path).replace(/\/+$/, "");
-  const i = p.lastIndexOf("/");
-  if (i < 0) return { name: p, dir: "" };
+  const replaced = fwd(path).replace(/\/+$/, "");
+  const position = replaced.lastIndexOf("/");
+  if (position < 0) return { name: replaced, dir: "" };
   // The root "/" is a folder of its own: "/x" has the folder "/".
-  return { name: p.slice(i + 1), dir: i === 0 ? "/" : p.slice(0, i) };
+  return { name: replaced.slice(position + 1), dir: position === 0 ? "/" : replaced.slice(0, position) };
 }
 
 /** The session name, or undefined when it has none (the list then shows a placeholder). */
-export const sessionTitle = (s: Session): string | undefined => s.name || undefined;
+export const sessionTitle = (session: Session): string | undefined => session.name || undefined;
 
 /** True when every word of `query` (split on spaces, any case) is in the name, id, branch, folder or work tree of the session. An empty query matches all. */
-export function sessionMatches(s: Session, query: string): boolean {
+export function sessionMatches(session: Session, query: string): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [s.name, s.id, s.branch, s.root, worktreeName(s.root)].filter(Boolean).join("\n").toLowerCase();
-  return words.every((w) => hay.includes(w));
+  const hay = [session.name, session.id, session.branch, session.root, worktreeName(session.root)]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return words.every((word) => hay.includes(word));
 }
 
 /** Detail parts of a session row: short id, last active time (relative, then the date), and the branch unless it is unset or a detached "HEAD". */
-export function sessionDetail(s: Session, now: number): string[] {
-  const out = [s.id.slice(0, 8), `${ago(s.lastActiveAt, now)} · ${shortDate(s.lastActiveAt, now)}`];
-  if (s.branch && s.branch !== "HEAD") out.push(s.branch);
+export function sessionDetail(session: Session, now: number): string[] {
+  const out = [session.id.slice(0, 8), `${ago(session.lastActiveAt, now)} · ${shortDate(session.lastActiveAt, now)}`];
+  if (session.branch && session.branch !== "HEAD") out.push(session.branch);
   return out;
 }
 
@@ -106,9 +123,21 @@ export function sessionDetail(s: Session, now: number): string[] {
  * The state of a session for the list: one indicator and a Remote Control flag. A running session is "live" (green; the dot
  * pulses while it is busy), a session that is not running is "offline" (gray). `title` is the longer text for a tooltip and a screen reader.
  */
-export function sessionState(s: Session): { live: boolean; busy: boolean; label: "live" | "offline"; title: string; remoteControl: boolean } {
-  if (!s.live) return { live: false, busy: false, label: "offline", title: "Not running", remoteControl: false };
+export function sessionState(session: Session): {
+  live: boolean;
+  busy: boolean;
+  label: "live" | "offline";
+  title: string;
+  remoteControl: boolean;
+} {
+  if (!session.live) return { live: false, busy: false, label: "offline", title: "Not running", remoteControl: false };
   // Only the two known statuses are named. No status, or any other value (another node version), is "Running" alone.
-  const status = s.live.status === "busy" ? "busy" : s.live.status === "idle" ? "idle" : "";
-  return { live: true, busy: status === "busy", label: "live", title: status ? `Running, ${status}` : "Running", remoteControl: s.live.remoteControl };
+  const status = session.live.status === "busy" ? "busy" : session.live.status === "idle" ? "idle" : "";
+  return {
+    live: true,
+    busy: status === "busy",
+    label: "live",
+    title: status ? `Running, ${status}` : "Running",
+    remoteControl: session.live.remoteControl,
+  };
 }

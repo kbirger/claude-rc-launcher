@@ -3,10 +3,12 @@ import { blockWeights, runCost, weightOfWord } from "./layoutweight";
 
 describe("weightOfWord", () => {
   test("a word with only characters below U+0590 weighs 0", () => {
-    for (const w of ["hello", "Hello,", "2024", "привет", "Ωmega", "café", "é", "a-b_c"]) expect(weightOfWord(w), w).toBe(0);
+    for (const item of ["hello", "Hello,", "2024", "привет", "Ωmega", "café", "é", "a-b_c"])
+      expect(weightOfWord(item), item).toBe(0);
   });
   test("a word with letters of one other script weighs 1", () => {
-    for (const w of ["你好", "ア", "한글", "नमस्ते", "ก", "2024년", "كلمة", "שלום"]) expect(weightOfWord(w), w).toBe(1);
+    for (const item of ["你好", "ア", "한글", "नमस्ते", "ก", "2024년", "كلمة", "שלום"])
+      expect(weightOfWord(item), item).toBe(1);
   });
   test("a word of emoji weighs 1 plus half a point for each symbol, rounded up", () => {
     expect(weightOfWord("😀")).toBe(2);
@@ -52,14 +54,17 @@ describe("blockWeights", () => {
     expect(blockWeights("word ".repeat(30000))).toEqual({ total: 0, heavy: 0 });
   });
   test("every Unicode white space ends a word", () => {
-    for (const sep of ["\u00a0", "\f", "\n"]) expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(3);
+    for (const sep of ["\u00a0", "\f", "\n"])
+      expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(3);
   });
   test("a white space above U+0590 adds 1 for itself", () => {
-    for (const sep of ["\u3000", "\u2009", "\u200b", "\u2028"]) expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(5);
+    for (const sep of ["\u3000", "\u2009", "\u200b", "\u2028"])
+      expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(5);
     expect(blockWeights("ab\u3000".repeat(100)).total).toBe(100);
   });
   test("punctuation, digits and joiners end a word too", () => {
-    for (const sep of [",", "-", "/", "…", "—", "\u200d", "\u2060", "!", "1"]) expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(3);
+    for (const sep of [",", "-", "/", "…", "—", "\u200d", "\u2060", "!", "1"])
+      expect(blockWeights("ア" + sep + "ア" + sep + "ア").total, JSON.stringify(sep)).toBe(3);
   });
   test("a bidirectional control adds 2", () => {
     expect(blockWeights("a\u202bb\u202c").total).toBe(4);

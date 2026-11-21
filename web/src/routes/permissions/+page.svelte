@@ -4,10 +4,10 @@
   import { getShell } from "#lib/shell/context";
 
   const shell = getShell();
-  const p = $derived(page.url.searchParams);
+  const params = $derived(page.url.searchParams);
   // The host in the address wins. Without one the selected host is used.
-  const host = $derived(p.get("host") || shell.flow.selected);
-  const instance = $derived(p.get("instance") ?? "");
+  const host = $derived(params.get("host") || shell.flow.selected);
+  const instance = $derived(params.get("instance") ?? "");
 </script>
 
 {#if !instance}

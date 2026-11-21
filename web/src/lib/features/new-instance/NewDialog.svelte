@@ -20,14 +20,22 @@
   import type { StartArgs } from "../instances";
   import { createNewDialogModel } from "./model.svelte";
 
-  let { host, onclose, onstart, busyReason, initial, canChooseUser = true, canSignInGitHub = true }: {
+  let {
+    host,
+    onclose,
+    onstart,
+    busyReason,
+    initial,
+    canChooseUser = true,
+    canSignInGitHub = true,
+  }: {
     host: string;
     /** False hides Run as: the hub only lets an admin start an instance as another user. */
     canChooseUser?: boolean;
     /** False hides the GitHub sign-in: the hub only lets an admin start it. */
     canSignInGitHub?: boolean;
     onclose: () => void;
-    onstart: (a: StartArgs) => void;
+    onstart: (other: StartArgs) => void;
     busyReason?: string;
     initial?: NewInitial;
   } = $props();
@@ -40,7 +48,7 @@
     initial: () => initial,
     busyReason: () => busyReason,
     canChooseUser: () => canChooseUser,
-    onstart: (a) => onstart(a),
+    onstart: (item) => onstart(item),
   });
 
   // Escape and a click outside ask to close. A clone in progress keeps the dialog open, like the disabled Close button.
@@ -62,7 +70,8 @@
     {#if busyReason}
       <Alert.Root class="my-2 border-l-[3px] border-l-warning">
         <Alert.Description>
-          This machine {busyReason}. A session or a clone that you start now can be cut off, and the page can show an error for something that worked.
+          This machine {busyReason}. A session or a clone that you start now can be cut off, and the page can show an
+          error for something that worked.
         </Alert.Description>
         <div class="flex items-center gap-2">
           <Checkbox id="start-anyway" bind:checked={model.ack} />
@@ -73,25 +82,42 @@
     {#if model.usersInfo}
       <div class="my-1 flex items-center gap-2">
         <Label id="runas-label">Run as</Label>
-        <Select.Root type="single" value={model.user} disabled={model.cloning} onValueChange={(v) => model.changeUser(v)}>
-          <Select.Trigger class="w-48 data-[size=default]:h-11" aria-labelledby="runas-label">{model.user}</Select.Trigger>
+        <Select.Root
+          type="single"
+          value={model.user}
+          disabled={model.cloning}
+          onValueChange={(value) => model.changeUser(value)}
+        >
+          <Select.Trigger class="w-48 data-[size=default]:h-11" aria-labelledby="runas-label">
+            {model.user}
+          </Select.Trigger>
           <Select.Content>
-            {#each model.usersInfo.users as u (u.name)}<Select.Item value={u.name} label={u.name}>{u.name}</Select.Item>{/each}
+            {#each model.usersInfo.users as user (user.name)}<Select.Item value={user.name} label={user.name}>
+                {user.name}
+              </Select.Item>{/each}
           </Select.Content>
         </Select.Root>
       </div>
     {/if}
     <Breadcrumb.Root aria-label="Folder" class="my-1">
       <Breadcrumb.List class="gap-0">
-        {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as c, i (c.path ?? "")}
-          {#if i > 0}<Breadcrumb.Separator />{/if}
+        {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as crumb, index (crumb.path ?? "")}
+          {#if index > 0}<Breadcrumb.Separator />{/if}
           <Breadcrumb.Item>
-            {#if i === model.crumbs.length}
-              <Breadcrumb.Page class="inline-flex min-h-11 items-center px-1.5">{c.label}</Breadcrumb.Page>
+            {#if index === model.crumbs.length}
+              <Breadcrumb.Page class="inline-flex min-h-11 items-center px-1.5">{crumb.label}</Breadcrumb.Page>
             {:else}
               <Breadcrumb.Link>
                 {#snippet child({ props })}
-                  <button {...(props as Record<string, unknown>)} type="button" class="inline-flex min-h-11 items-center px-1.5 hover:underline disabled:pointer-events-none disabled:opacity-50" disabled={model.cloning} onclick={() => model.go(c.path)}>{c.label}</button>
+                  <button
+                    {...props as Record<string, unknown>}
+                    type="button"
+                    class="inline-flex min-h-11 items-center px-1.5 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                    disabled={model.cloning}
+                    onclick={() => model.go(crumb.path)}
+                  >
+                    {crumb.label}
+                  </button>
                 {/snippet}
               </Breadcrumb.Link>
             {/if}
@@ -100,31 +126,96 @@
       </Breadcrumb.List>
     </Breadcrumb.Root>
     <div class="mb-2 flex gap-2">
-      <Button variant="outline" size="icon-touch" aria-label="Up one folder" title="Up one folder" disabled={!model.listing || model.listing.parent === null || model.cloning} onclick={() => model.go(model.listing!.parent!)}><ActionIcon name="up" /></Button>
-      <Button variant="outline" size="icon-touch" aria-label="New folder" title="New folder" aria-pressed={model.creating} disabled={model.atTop} onclick={() => (model.creating = !model.creating)}><ActionIcon name="new-folder" /></Button>
-      {#if model.canClone}<Button size="touch" disabled={model.atTop || model.cloning || model.needsAck} onclick={() => model.openClone()}><ActionIcon name="github" />Clone with GitHub</Button>{/if}
+      <Button
+        variant="outline"
+        size="icon-touch"
+        aria-label="Up one folder"
+        title="Up one folder"
+        disabled={!model.listing || model.listing.parent === null || model.cloning}
+        onclick={() => model.go(model.listing!.parent!)}
+      >
+        <ActionIcon name="up" />
+      </Button>
+      <Button
+        variant="outline"
+        size="icon-touch"
+        aria-label="New folder"
+        title="New folder"
+        aria-pressed={model.creating}
+        disabled={model.atTop}
+        onclick={() => (model.creating = !model.creating)}
+      >
+        <ActionIcon name="new-folder" />
+      </Button>
+      {#if model.canClone}<Button
+          size="touch"
+          disabled={model.atTop || model.cloning || model.needsAck}
+          onclick={() => model.openClone()}
+        >
+          <ActionIcon name="github" />Clone with GitHub
+        </Button>{/if}
     </div>
     {#if model.creating}
-      <form class="mb-2 flex gap-2" onsubmit={(e) => { e.preventDefault(); model.createFolder(); }}>
+      <form
+        class="mb-2 flex gap-2"
+        onsubmit={(event) => {
+          event.preventDefault();
+          model.createFolder();
+        }}
+      >
         <Input class="h-11" placeholder="Folder name" aria-label="Folder name" bind:value={model.folderName} />
-        <Button size="icon-touch" type="submit" aria-label="Create folder" title="Create folder" disabled={model.mkdirPending}><ActionIcon name="new-folder" /></Button>
+        <Button
+          size="icon-touch"
+          type="submit"
+          aria-label="Create folder"
+          title="Create folder"
+          disabled={model.mkdirPending}
+        >
+          <ActionIcon name="new-folder" />
+        </Button>
       </form>
     {/if}
     {#if model.cloning && model.listing}
-      <ClonePanel {host} parent={model.listing.path} user={model.chosenUser} oncloned={model.cloned} onclose={model.closeClone} onbusy={model.setCloneBusy} canSignIn={canSignInGitHub} />
+      <ClonePanel
+        {host}
+        parent={model.listing.path}
+        user={model.chosenUser}
+        oncloned={model.cloned}
+        onclose={model.closeClone}
+        onbusy={model.setCloneBusy}
+        canSignIn={canSignInGitHub}
+      />
     {:else}
       <div class="mb-2 min-h-0 flex-1 overflow-auto rounded-lg border bg-card">
         {#if model.listing && model.listing.dirs.length === 0}
-          <Empty.Root class="border-0 p-4"><Empty.Header><Empty.Title class="font-sans font-normal text-muted-foreground">No subfolders</Empty.Title></Empty.Header></Empty.Root>
+          <Empty.Root class="border-0 p-4">
+            <Empty.Header>
+              <Empty.Title class="font-sans font-normal text-muted-foreground">No subfolders</Empty.Title>
+            </Empty.Header>
+          </Empty.Root>
         {:else}
           <Item.Group class="gap-0 divide-y">
-            {#each model.listing?.dirs ?? [] as d (d.path)}
-              <Item.Root size="xs" class="min-h-11 rounded-none border-0 hover:bg-muted {d.trusted === false ? 'text-muted-foreground' : ''}">
+            {#each model.listing?.dirs ?? [] as dir (dir.path)}
+              <Item.Root
+                size="xs"
+                class="min-h-11 rounded-none border-0 hover:bg-muted {dir.trusted === false
+                  ? 'text-muted-foreground'
+                  : ''}"
+              >
                 {#snippet child({ props })}
-                  <button {...props} type="button" class="{props.class} cursor-pointer text-left" onclick={() => model.go(d.path)}>
-                    <Item.Media><FolderIcon kind={iconKind(d)} /></Item.Media>
-                    <Item.Content><Item.Title class="line-clamp-none [overflow-wrap:anywhere]">{d.name}</Item.Title></Item.Content>
-                    {#if d.trusted === false}<span class="inline-flex flex-none" role="img" aria-label="not trusted"><Lock size={18} aria-hidden="true" /></span>{/if}
+                  <button
+                    {...props}
+                    type="button"
+                    class="{props.class} cursor-pointer text-left"
+                    onclick={() => model.go(dir.path)}
+                  >
+                    <Item.Media><FolderIcon kind={iconKind(dir)} /></Item.Media>
+                    <Item.Content>
+                      <Item.Title class="line-clamp-none [overflow-wrap:anywhere]">{dir.name}</Item.Title>
+                    </Item.Content>
+                    {#if dir.trusted === false}<span class="inline-flex flex-none" role="img" aria-label="not trusted">
+                        <Lock size={18} aria-hidden="true" />
+                      </span>{/if}
                   </button>
                 {/snippet}
               </Item.Root>
@@ -134,7 +225,9 @@
       </div>
       <div class="grid gap-2">
         <Input class="h-11" placeholder="Name (optional)" aria-label="Name" bind:value={model.name} />
-        {#if model.error}<Alert.Root variant="destructive"><Alert.Description>{model.error}</Alert.Description></Alert.Root>{/if}
+        {#if model.error}<Alert.Root variant="destructive">
+            <Alert.Description>{model.error}</Alert.Description>
+          </Alert.Root>{/if}
         {#if model.trustPrompt}
           <Alert.Root>
             <Alert.Description class="[overflow-wrap:anywhere]">

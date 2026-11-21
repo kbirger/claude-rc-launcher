@@ -33,6 +33,7 @@
         if (!gone) failed = true;
       },
     );
+
     return () => {
       gone = true;
       editor = undefined;
@@ -41,34 +42,44 @@
   });
 
   $effect(() => {
-    const e = editor;
-    if (!e) return;
-    e.setText(text);
-    e.setWrap(wrap);
-    e.setLineNumbers(lineNumbers);
+    const view = editor;
+    if (!view) return;
+    view.setText(text);
+    view.setWrap(wrap);
+    view.setLineNumbers(lineNumbers);
   });
 
   // The language loads on its own, so a slow or failed language never holds back the text.
   $effect(() => {
-    const e = editor;
+    const view = editor;
     const id = language;
-    if (!e) return;
+    if (!view) return;
     let stale = false;
     colorsFailed = false;
     (id ? loadLanguage(id) : Promise.resolve(undefined)).then(
-      (ext) => { if (!stale) e.setLanguage(ext); },
+      (ext) => {
+        if (!stale) view.setLanguage(ext);
+      },
       () => {
         if (stale) return;
-        e.setLanguage(undefined);
+        view.setLanguage(undefined);
         colorsFailed = id !== undefined && (LANGUAGES as readonly string[]).includes(id);
       },
     );
-    return () => { stale = true; };
+
+    return () => {
+      stale = true;
+    };
   });
 </script>
 
 <!-- The note takes 1.75rem, so the box under it is that much lower: the page keeps no scroll bar of its own. -->
-<div class="contents" style:--code-note={(failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0) > 0 ? `${((failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0)) * 1.75}rem` : null}>
+<div
+  class="contents"
+  style:--code-note={(failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0) > 0
+    ? `${((failed || colorsFailed ? 1 : 0) + (unmarked ? 1 : 0)) * 1.75}rem`
+    : null}
+>
   {#if failed || colorsFailed}
     <p data-code-note class="mb-2 text-sm text-muted-foreground">Colors could not load. Showing plain text.</p>
   {/if}
@@ -76,7 +87,8 @@
     <p data-code-note data-special-note class="mb-2 text-sm text-muted-foreground">{SPECIAL_CHARS_NOTE}</p>
   {/if}
   {#if failed}
-    <pre class="max-h-[calc(var(--pane-max,100dvh)-var(--code-note,0rem))] overflow-auto overscroll-contain rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
+    <pre
+      class="max-h-[calc(var(--pane-max,100dvh)-var(--code-note,0rem))] overflow-auto overscroll-contain rounded-lg border bg-card p-3 font-mono text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>
   {:else}
     <div bind:this={host} class="code-view min-w-0 max-w-full rounded-lg border bg-card"></div>
   {/if}

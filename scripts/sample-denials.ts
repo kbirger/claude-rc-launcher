@@ -19,30 +19,39 @@ const counts = new Map<string, number>();
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((c) => (c && typeof c === "object" && typeof (c as any).text === "string" ? (c as any).text : "")).join("");
+  if (Array.isArray(content))
+    return content
+      .map((item) => (item && typeof item === "object" && typeof item.text === "string" ? item.text : ""))
+      .join("");
   return "";
 }
 
 for (const dir of await readdir(root).catch(() => [])) {
-  for (const f of await readdir(join(root, dir)).catch(() => [])) {
-    if (!f.endsWith(".jsonl")) continue;
-    const rl = createInterface({ input: createReadStream(join(root, dir, f)), crlfDelay: Infinity });
+  for (const name of await readdir(join(root, dir)).catch(() => [])) {
+    if (!name.endsWith(".jsonl")) continue;
+    const rl = createInterface({ input: createReadStream(join(root, dir, name)), crlfDelay: Infinity });
+
     for await (const line of rl) {
       if (!line.includes('"is_error":true')) continue;
       let rec: any;
+
       try {
         rec = JSON.parse(line);
       } catch {
         continue;
       }
+
       const content = rec?.message?.content;
       if (!Array.isArray(content)) continue;
-      for (const b of content) {
-        if (b?.type !== "tool_result" || b.is_error !== true) continue;
-        const first = textOf(b.content).split("\n")[0]!.trim().slice(0, 110);
+
+      for (const block of content) {
+        if (block?.type !== "tool_result" || block.is_error !== true) continue;
+        const first = textOf(block.content).split("\n")[0].trim().slice(0, 110);
         counts.set(first, (counts.get(first) ?? 0) + 1);
       }
     }
   }
 }
-for (const [text, n] of [...counts].sort((a, b) => b[1] - a[1]).slice(0, top)) console.log(String(n).padStart(6), text);
+
+for (const [text, count] of [...counts].sort((left, right) => right[1] - left[1]).slice(0, top))
+  console.log(String(count).padStart(6), text);

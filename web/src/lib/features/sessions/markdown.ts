@@ -50,7 +50,13 @@ export const MAX_OUTPUT_FACTOR = 8;
 export const MAX_OUTPUT_EXTRA = 4096;
 
 /** Escapes text for use in HTML text and in a double-quoted or single-quoted attribute. */
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const esc = (text: string) =>
+  text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 /**
  * The address if it is safe to link, else undefined. The address must START with http://, https:// or mailto: with no
@@ -59,7 +65,7 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
  */
 export function safeHref(href: string | null | undefined): string | undefined {
   if (!href) return undefined;
-  return /^(?:https?:\/\/|mailto:)[^\s<>"'`\\\u0000-\u001f\u007f]*$/i.test(href) ? href : undefined;
+  return /^(?:https?:\/\/|mailto:)[^\s<>"'`\\\p{Cc}]*$/iu.test(href) ? href : undefined;
 }
 
 // html: false makes raw HTML in the source come out as escaped text. maxNesting stays at the default of 100: it caps the
@@ -73,9 +79,9 @@ const md = new MarkdownIt({ html: false, linkify: false, typographer: false, bre
 md.validateLink = () => true;
 
 // The attribute value as a string, or undefined. The types allow numbers, markdown-it never gives one for these.
-const attr = (t: Token, name: string): string | undefined => {
-  const v = t.attrGet(name);
-  return typeof v === "string" ? v : undefined;
+const attr = (token: Token, name: string): string | undefined => {
+  const value = token.attrGet(name);
+  return typeof value === "string" ? value : undefined;
 };
 
 // A link whose address is not safe is not a link: hide its open and close tokens, so only its content shows. The children of an
@@ -83,51 +89,56 @@ const attr = (t: Token, name: string): string | undefined => {
 // must not be able to print them by accident.
 function hideUnsafeLinks(children: Token[]): void {
   let open: Token | undefined;
-  for (const t of children) {
-    if (t.type === "link_open") {
-      open = t;
-      if (!safeHref(attr(t, "href"))) t.hidden = true;
-    } else if (t.type === "link_close") {
-      if (open?.hidden) t.hidden = true;
+
+  for (const token of children) {
+    if (token.type === "link_open") {
+      open = token;
+      if (!safeHref(attr(token, "href"))) token.hidden = true;
+    } else if (token.type === "link_close") {
+      if (open?.hidden) token.hidden = true;
       open = undefined;
-    } else if (t.type === "image" && t.children) hideUnsafeLinks(t.children);
+    } else if (token.type === "image" && token.children) hideUnsafeLinks(token.children);
   }
 }
+
 md.core.ruler.push("strict_links", (state) => {
   for (const block of state.tokens) if (block.type === "inline" && block.children) hideUnsafeLinks(block.children);
   return true;
 });
 
-const r = md.renderer.rules;
-r.link_open = (tokens, i) => {
-  const href = safeHref(attr(tokens[i]!, "href"));
+const item = md.renderer.rules;
+
+item.link_open = (tokens, index) => {
+  const href = safeHref(attr(tokens[index]!, "href"));
   if (!href) return ""; // the close tag is hidden by the core rule; layer 2 repairs any stray tag
-  const title = attr(tokens[i]!, "title");
+  const title = attr(tokens[index]!, "title");
   return `<a href="${esc(href)}"${title ? ` title="${esc(title)}"` : ""}>`;
 };
+
 // Images never load. They show as a text link ("Image: alt"), or as plain text when the address is not allowed.
-r.image = (tokens, i) => {
-  const t = tokens[i]!;
-  const label = esc(`Image: ${t.content || attr(t, "src") || ""}`);
-  const href = safeHref(attr(t, "src"));
+item.image = (tokens, index) => {
+  const token = tokens[index]!;
+  const label = esc(`Image: ${token.content || attr(token, "src") || ""}`);
+  const href = safeHref(attr(token, "src"));
   return href ? `<a href="${esc(href)}">${label}</a>` : label;
 };
-// Code never gets a class (no language class), and the cells get no style (no align style).
-r.fence = (tokens, i) => `<pre><code>${esc(tokens[i]!.content)}</code></pre>\n`;
-r.code_block = r.fence;
-r.th_open = () => "<th>";
-r.td_open = () => "<td>";
-r.html_block = (tokens, i) => `<p>${esc(tokens[i]!.content.trim())}</p>\n`;
-r.html_inline = (tokens, i) => esc(tokens[i]!.content);
 
+// Code never gets a class (no language class), and the cells get no style (no align style).
+item.fence = (tokens, index) => `<pre><code>${esc(tokens[index]!.content)}</code></pre>\n`;
+item.code_block = item.fence;
+item.th_open = () => "<th>";
+item.td_open = () => "<td>";
+item.html_block = (tokens, index) => `<p>${esc(tokens[index]!.content.trim())}</p>\n`;
+item.html_inline = (tokens, index) => esc(tokens[index]!.content);
 
 /** Why a file was not rendered: too complex for the guard, or the library failed. */
 export type RenderResult = { ok: true; html: SafeHtml } | { ok: false; reason: "complex" | "failed" };
 
 /** How many elements a token counts as. A close token counts 0, because its open token counted the pair. */
-function elementWeight(t: Token): number {
-  if (t.nesting === -1 || t.hidden) return 0;
-  switch (t.type) {
+function elementWeight(token: Token): number {
+  if (token.nesting === -1 || token.hidden) return 0;
+
+  switch (token.type) {
     case "inline":
     case "text":
     case "softbreak":
@@ -149,29 +160,35 @@ function tooComplex(tokens: Token[]): boolean {
   let elements = 0;
   let total = 0;
   let heavy = 0;
-  for (const t of tokens) {
-    if (t.level > MAX_LEVEL) return true;
-    elements += elementWeight(t);
-    if (t.type === "inline") {
-      const w = blockWeights(t.content);
-      total += w.total;
-      heavy += w.heavy;
-      if (w.total > MAX_BLOCK_WEIGHT || total > MAX_TOTAL_WEIGHT || heavy > MAX_HEAVY_WEIGHT) return true;
+
+  for (const token of tokens) {
+    if (token.level > MAX_LEVEL) return true;
+    elements += elementWeight(token);
+
+    if (token.type === "inline") {
+      const weights = blockWeights(token.content);
+      total += weights.total;
+      heavy += weights.heavy;
+      if (weights.total > MAX_BLOCK_WEIGHT || total > MAX_TOTAL_WEIGHT || heavy > MAX_HEAVY_WEIGHT) return true;
     }
-    for (const c of t.children ?? []) {
-      if (c.level > MAX_LEVEL) return true;
-      elements += elementWeight(c);
+
+    for (const child of token.children ?? []) {
+      if (child.level > MAX_LEVEL) return true;
+      elements += elementWeight(child);
     }
+
     if (elements > MAX_ELEMENTS) return true;
   }
+
   return false;
 }
 
 /** The number of [ characters, up to one past the limit. */
 function bracketCount(text: string): number {
-  let n = 0;
-  for (let i = text.indexOf("["); i >= 0; i = text.indexOf("[", i + 1)) if (++n > MAX_BRACKETS) return n;
-  return n;
+  let count = 0;
+  for (let position = text.indexOf("["); position >= 0; position = text.indexOf("[", position + 1))
+    if (++count > MAX_BRACKETS) return count;
+  return count;
 }
 
 /** Layer 1 only: the untrusted html, or undefined when the guard refuses the text. Exported for the tests. Do not show this output: use renderMarkdown. */
@@ -201,6 +218,6 @@ export function renderMarkdownResult(text: string): RenderResult {
 
 /** The same, as one value: undefined when the guard refuses the text or anything throws, so the preview shows plain text. */
 export function renderMarkdown(text: string): SafeHtml | undefined {
-  const r = renderMarkdownResult(text);
-  return r.ok ? r.html : undefined;
+  const markdownResult = renderMarkdownResult(text);
+  return markdownResult.ok ? markdownResult.html : undefined;
 }

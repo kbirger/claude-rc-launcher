@@ -1,13 +1,35 @@
 import type { QueryClient } from "@tanstack/svelte-query";
-import { pauseInstance, restartInstance, resumeInstance, startInstance, stopInstance, updateInstanceSettings, type SettingsPatch, type SpawnMode } from "./api";
+import {
+  pauseInstance,
+  restartInstance,
+  resumeInstance,
+  startInstance,
+  stopInstance,
+  updateInstanceSettings,
+  type SettingsPatch,
+  type SpawnMode,
+} from "./api";
 
 // The settings are set only when the node has the settings route: an old node gets none.
-export type StartArgs = { path: string; name?: string; user?: string; addTrust?: boolean; createSession?: boolean; spawnMode?: SpawnMode };
+export type StartArgs = {
+  path: string;
+  name?: string;
+  user?: string;
+  addTrust?: boolean;
+  createSession?: boolean;
+  spawnMode?: SpawnMode;
+};
 
 // No onSettled: the caller invalidates the list of the host it started on.
 export const startInstanceMutation = (host: string) => ({
   mutationKey: ["instances", host, "start"] as const,
-  mutationFn: (v: StartArgs) => startInstance(host, v.path, v.name, { user: v.user, addTrust: v.addTrust, createSession: v.createSession, spawnMode: v.spawnMode }),
+  mutationFn: (startArgs: StartArgs) =>
+    startInstance(host, startArgs.path, startArgs.name, {
+      user: startArgs.user,
+      addTrust: startArgs.addTrust,
+      createSession: startArgs.createSession,
+      spawnMode: startArgs.spawnMode,
+    }),
 });
 
 export const stopInstanceMutation = (host: string, client: QueryClient) => ({
@@ -34,7 +56,7 @@ export type SettingsArgs = { id: string; patch: SettingsPatch };
 // A change restarts the instance and can take about a minute. The list refreshes after it, whatever the answer.
 export const updateSettingsMutation = (host: string, client: QueryClient) => ({
   mutationKey: ["instances", host, "settings"] as const,
-  mutationFn: (v: SettingsArgs) => updateInstanceSettings(host, v.id, v.patch),
+  mutationFn: (settingsArgs: SettingsArgs) => updateInstanceSettings(host, settingsArgs.id, settingsArgs.patch),
   onSettled: () => client.invalidateQueries({ queryKey: ["instances", host] }),
 });
 

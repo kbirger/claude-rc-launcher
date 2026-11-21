@@ -1,6 +1,9 @@
 import type { MiddlewareHandler } from "hono";
 
-export type WebFile = { path: string; type: string };
+export interface WebFile {
+  path: string;
+  type: string;
+}
 export type WebFiles = Map<string, WebFile>;
 
 const TYPES: Record<string, string> = {
@@ -21,7 +24,14 @@ const TYPES: Record<string, string> = {
  * The files that a browser fetches without the login cookie when it installs the app: the manifest, its icons and the
  * service worker. They hold nothing private, and behind login they would redirect to the login page and break install.
  */
-const PWA_FILES = new Set(["/manifest.webmanifest", "/service-worker.js", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png"]);
+const PWA_FILES = new Set([
+  "/manifest.webmanifest",
+  "/service-worker.js",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
+  "/apple-touch-icon.png",
+]);
 export const isPwaFile = (path: string): boolean => PWA_FILES.has(path);
 
 export function contentType(name: string): string {
@@ -29,36 +39,43 @@ export function contentType(name: string): string {
   return TYPES[ext] ?? "application/octet-stream";
 }
 
-const hasExtension = (p: string) => /\.[A-Za-z0-9]+$/.test(p.slice(p.lastIndexOf("/") + 1));
+const hasExtension = (file: string) => /\.[A-Za-z0-9]+$/.test(file.slice(file.lastIndexOf("/") + 1));
 
 /** Decode once; null when the path is unsafe (bad encoding, NUL, backslash, `..` segment). */
 function safePath(raw: string): string | null {
-  let p: string;
+  let item: string;
+
   try {
-    p = decodeURIComponent(raw);
+    item = decodeURIComponent(raw);
   } catch {
     return null;
   }
-  if (p.includes("\0") || p.includes("\\")) return null;
-  if (p.split("/").includes("..")) return null;
-  return p;
+
+  if (item.includes("\0") || item.includes("\\")) return null;
+  if (item.split("/").includes("..")) return null;
+  return item;
 }
 
 /** Serves only files present in `files` (never touches disk by user-supplied name); SPA fallback to /index.html. */
 export function staticHandler(files: WebFiles): MiddlewareHandler {
-  return async (c, next) => {
-    if (c.req.method !== "GET" && c.req.method !== "HEAD") return next();
-    const safe = safePath(new URL(c.req.url).pathname);
+  return async (context, next) => {
+    if (context.req.method !== "GET" && context.req.method !== "HEAD") return next();
+    const safe = safePath(new URL(context.req.url).pathname);
     let key = safe === null || safe === "/" ? "/index.html" : safe;
     let entry = files.get(key);
+
     if (!entry) {
-      if (safe !== null && hasExtension(safe)) return c.text("Not Found", 404);
+      if (safe !== null && hasExtension(safe)) return context.text("Not Found", 404);
       key = "/index.html";
       entry = files.get(key);
-      if (!entry) return c.text("Not Found", 404);
+      if (!entry) return context.text("Not Found", 404);
     }
-    const cache = key.startsWith("/assets/") || key.startsWith("/_app/immutable/") ? "public, max-age=31536000, immutable" : "no-cache";
-    return new Response(c.req.method === "HEAD" ? null : Bun.file(entry.path), {
+
+    const cache =
+      key.startsWith("/assets/") || key.startsWith("/_app/immutable/")
+        ? "public, max-age=31536000, immutable"
+        : "no-cache";
+    return new Response(context.req.method === "HEAD" ? null : Bun.file(entry.path), {
       headers: { "Content-Type": entry.type, "Cache-Control": cache },
     });
   };

@@ -8,7 +8,10 @@ let calls: { url: string; init?: RequestInit }[] = [];
 function stub(status: number, body: unknown) {
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
   }) as any;
 }
 
@@ -23,7 +26,7 @@ afterEach(() => {
 
 test("409 rejects with ApiError carrying status and body", async () => {
   stub(409, { error: "already running", instance: { id: "x" } });
-  const err = await request("POST", `${hostUrl("local")}/instances`, { path: "/p" }).catch((e) => e);
+  const err = await request("POST", `${hostUrl("local")}/instances`, { path: "/p" }).catch((error) => error);
   expect(err).toBeInstanceOf(ApiError);
   expect(err.status).toBe(409);
   expect(err.message).toBe("already running");
@@ -44,7 +47,7 @@ test("a 204 reply resolves with undefined", async () => {
 
 test("a 502 body's error becomes the ApiError message", async () => {
   stub(502, { error: "host nas: unreachable", host: "nas" });
-  const err = await request("GET", `${hostUrl("nas")}/instances`).catch((e) => e);
+  const err = await request("GET", `${hostUrl("nas")}/instances`).catch((error) => error);
   expect(err).toBeInstanceOf(ApiError);
   expect(err.status).toBe(502);
   expect(err.message).toBe("host nas: unreachable");
@@ -52,7 +55,7 @@ test("a 502 body's error becomes the ApiError message", async () => {
 
 test("428 yields an ApiError with body.code untrusted", async () => {
   stub(428, { error: "not trusted", code: "untrusted", user: "alice", path: "/p" });
-  const err = await request("POST", `${hostUrl("local")}/instances`, { path: "/p" }).catch((e) => e);
+  const err = await request("POST", `${hostUrl("local")}/instances`, { path: "/p" }).catch((error) => error);
   expect(err).toBeInstanceOf(ApiError);
   expect(err.status).toBe(428);
   expect(err.body.code).toBe("untrusted");

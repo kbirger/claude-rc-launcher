@@ -2,21 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../src/instances";
-import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest } from "../src/requests";
+import {
+  isObject,
+  parseCloneRequest,
+  parseLoginRequest,
+  parseMkdirRequest,
+  parseSettingsPatch,
+  parseStartRequest,
+  parseUpdateRequest,
+} from "../src/requests";
 
 const rejects = (fn: () => unknown) => {
   try {
     fn();
-  } catch (e) {
-    expect(e).toBeInstanceOf(HttpError);
-    return { status: (e as HttpError).status, message: (e as Error).message };
+  } catch (error) {
+    expect(error).toBeInstanceOf(HttpError);
+    return { status: (error as HttpError).status, message: (error as Error).message };
   }
+
   throw new Error("did not throw");
 };
 
 describe("isObject", () => {
   test("true only for plain objects", () => {
-    expect([{}, { a: 1 }].every(isObject)).toBe(true);
+    expect([{}, { value: 1 }].every(isObject)).toBe(true);
     expect([null, undefined, [], "x", 5, true].some(isObject)).toBe(false);
   });
 });
@@ -24,9 +33,9 @@ describe("isObject", () => {
 describe("parseStartRequest", () => {
   test("keeps only the known fields, in a fresh object", () => {
     const body = { path: "/srv/p", name: "n", user: "alice", addTrust: true, evil: 1 };
-    const r = parseStartRequest(body);
-    expect(r).toEqual({ path: "/srv/p", name: "n", user: "alice", addTrust: true });
-    expect(r).not.toBe(body);
+    const startRequest = parseStartRequest(body);
+    expect(startRequest).toEqual({ path: "/srv/p", name: "n", user: "alice", addTrust: true });
+    expect(startRequest).not.toBe(body);
   });
   test("optional fields are left out when absent", () => {
     expect(parseStartRequest({ path: "/srv/p" })).toEqual({ path: "/srv/p" });
@@ -49,7 +58,11 @@ describe("parseStartRequest", () => {
 
 describe("parseMkdirRequest", () => {
   test("keeps only the known fields", () => {
-    expect(parseMkdirRequest({ parent: "/srv", name: "a", user: "alice", evil: 1 })).toEqual({ parent: "/srv", name: "a", user: "alice" });
+    expect(parseMkdirRequest({ parent: "/srv", name: "a", user: "alice", evil: 1 })).toEqual({
+      parent: "/srv",
+      name: "a",
+      user: "alice",
+    });
     expect(parseMkdirRequest({ parent: "/srv", name: "a" })).toEqual({ parent: "/srv", name: "a" });
   });
   test.each([
@@ -75,7 +88,10 @@ describe("parseUpdateRequest", () => {
     expect(parseUpdateRequest({ release: "v0.8.3" })).toEqual({ release: "v0.8.3" });
   });
   test("still rejects a path-like release", () => {
-    expect(rejects(() => parseUpdateRequest({ release: "../x" }))).toEqual({ status: 400, message: "release must be a version tag such as v1.2.3" });
+    expect(rejects(() => parseUpdateRequest({ release: "../x" }))).toEqual({
+      status: 400,
+      message: "release must be a version tag such as v1.2.3",
+    });
   });
   test.each([
     [[], "body must be an object"],
@@ -92,7 +108,11 @@ describe("parseUpdateRequest", () => {
 describe("parseCloneRequest", () => {
   test("keeps only known fields", () => {
     expect(parseCloneRequest({ repo: "a/b", parent: "/srv", extra: 1 })).toEqual({ repo: "a/b", parent: "/srv" });
-    expect(parseCloneRequest({ repo: "a/b", parent: "/srv", user: "alice" })).toEqual({ repo: "a/b", parent: "/srv", user: "alice" });
+    expect(parseCloneRequest({ repo: "a/b", parent: "/srv", user: "alice" })).toEqual({
+      repo: "a/b",
+      parent: "/srv",
+      user: "alice",
+    });
   });
   test.each([
     [[], "body must be an object"],
@@ -110,7 +130,7 @@ describe("parseCloneRequest", () => {
 describe("parseLoginRequest", () => {
   test("allows an empty object and keeps only user", () => {
     expect(parseLoginRequest({})).toEqual({});
-    expect(parseLoginRequest({ user: "alice", x: 1 })).toEqual({ user: "alice" });
+    expect(parseLoginRequest({ user: "alice", extra: 1 })).toEqual({ user: "alice" });
   });
   test.each([
     [null, "body must be an object"],
@@ -123,9 +143,9 @@ describe("parseLoginRequest", () => {
 
 // The local routes (app.ts), the forwarding routes (hosts.ts) and the host admin API (hostadmin.ts) share these helpers.
 describe("the request helpers have a single definition", () => {
-  const src = (f: string) => readFileSync(path.join(import.meta.dir, "../src", f), "utf8");
-  test.each(["app.ts", "hosts.ts", "hostadmin.ts"])("%s does not define its own isObject or readJson", (f) => {
-    const text = src(f);
+  const src = (item: string) => readFileSync(path.join(import.meta.dir, "../src", item), "utf8");
+  test.each(["app.ts", "hosts.ts", "hostadmin.ts"])("%s does not define its own isObject or readJson", (item) => {
+    const text = src(item);
     expect(text).not.toMatch(/const isObject\s*=/);
     expect(text).not.toMatch(/function readJson/);
     expect(text).not.toMatch(/function readObject/);
@@ -135,22 +155,29 @@ describe("the request helpers have a single definition", () => {
 describe("parseSettingsPatch and the start settings", () => {
   test("a valid patch keeps only the sent fields", () => {
     expect(parseSettingsPatch({ createSession: false })).toEqual({ createSession: false });
-    expect(parseSettingsPatch({ spawnMode: "worktree", createSession: true })).toEqual({ spawnMode: "worktree", createSession: true });
+    expect(parseSettingsPatch({ spawnMode: "worktree", createSession: true })).toEqual({
+      spawnMode: "worktree",
+      createSession: true,
+    });
   });
   test.each<[unknown, string]>([
     [{}, "at least one"],
     [null, "object"],
     [{ createSession: "yes" }, "createSession"],
     [{ spawnMode: "tree" }, "spawnMode"],
-    [{ x: 1 }, "x"],
-    [{ createSession: true, x: 1 }, "x"],
+    [{ extra: 1 }, "extra"],
+    [{ createSession: true, extra: 1 }, "extra"],
   ])("rejects %j", (body, word) => {
-    const r = rejects(() => parseSettingsPatch(body));
-    expect(r.status).toBe(400);
-    expect(r.message).toContain(word);
+    const failure = rejects(() => parseSettingsPatch(body));
+    expect(failure.status).toBe(400);
+    expect(failure.message).toContain(word);
   });
   test("parseStartRequest returns and validates createSession and spawnMode", () => {
-    expect(parseStartRequest({ path: "/p", createSession: false, spawnMode: "worktree" })).toEqual({ path: "/p", createSession: false, spawnMode: "worktree" });
+    expect(parseStartRequest({ path: "/p", createSession: false, spawnMode: "worktree" })).toEqual({
+      path: "/p",
+      createSession: false,
+      spawnMode: "worktree",
+    });
     expect(rejects(() => parseStartRequest({ path: "/p", createSession: 1 })).status).toBe(400);
     expect(rejects(() => parseStartRequest({ path: "/p", spawnMode: "x" })).status).toBe(400);
   });

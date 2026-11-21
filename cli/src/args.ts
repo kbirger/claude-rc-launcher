@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { ExitError } from "./creds";
 
-export type Flags = {
+export interface Flags {
   hub?: string;
   host?: string;
   json?: boolean;
@@ -29,7 +29,7 @@ export type Flags = {
   yes?: boolean;
   help?: boolean;
   version?: boolean;
-};
+}
 
 export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
   try {
@@ -67,8 +67,8 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         version: { type: "boolean" },
       },
     });
-    return { command: positionals, flags: values as Flags };
-  } catch (e) {
-    throw new ExitError((e as Error).message, 1);
+    return { command: positionals, flags: values };
+  } catch (error) {
+    throw new ExitError((error as Error).message, 1);
   }
 }

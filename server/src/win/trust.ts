@@ -16,41 +16,46 @@ export function trustKey(absPath: string): string {
   return absPath.replaceAll("\\", "/");
 }
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function isTrustedWin(doc: unknown, absPath: string): boolean {
   if (!isObject(doc) || !isObject(doc.projects)) return false;
   const projects = doc.projects;
-  let p = trustKey(absPath);
+  let key = trustKey(absPath);
+
   for (;;) {
-    if (Object.hasOwn(projects, p)) {
-      const entry = projects[p];
-      if (isObject(entry) && entry.hasTrustDialogAccepted === true) return true;
+    if (Object.hasOwn(projects, key)) {
+      const project = projects[key];
+      if (isObject(project) && project.hasTrustDialogAccepted === true) return true;
     }
-    const parent = win32.dirname(p);
-    if (parent === p) return false;
-    p = parent;
+
+    const parent = win32.dirname(key);
+    if (parent === key) return false;
+    key = parent;
   }
 }
 
 /** Larger than any real `.claude.json`. A bigger file is refused, not read. */
 const MAX_DOC_BYTES = 1024 * 1024;
 
-type ReadResult = { kind: "missing" } | { kind: "invalid"; reason: string } | { kind: "ok"; doc: Record<string, unknown> };
+type ReadResult =
+  { kind: "missing" } | { kind: "invalid"; reason: string } | { kind: "ok"; doc: Record<string, unknown> };
 
 async function readDoc(file: string): Promise<ReadResult> {
   let text: string;
+
   try {
     const st = await stat(file);
     if (!st.isFile()) return { kind: "invalid", reason: "it is not a regular file" };
     if (st.size > MAX_DOC_BYTES) return { kind: "invalid", reason: "it is too large" };
     text = await readFile(file, "utf8");
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
     return { kind: "invalid", reason: "it cannot be read" };
   }
+
   try {
     const doc = JSON.parse(text);
     return isObject(doc) ? { kind: "ok", doc } : { kind: "invalid", reason: "it is not a JSON object" };
@@ -63,19 +68,22 @@ export function windowsTrust(): TrustStore {
   const queues = new Map<string, Promise<unknown>>();
 
   // One add at a time per home, so two parallel read-modify-write cycles cannot lose an update.
-  function serial<T>(home: string, job: () => Promise<T>): Promise<T> {
+  function serial<Value>(home: string, job: () => Promise<Value>): Promise<Value> {
     const run = (queues.get(home) ?? Promise.resolve()).then(job, job);
     const tail = run.catch(() => {});
     queues.set(home, tail);
-    void tail.then(() => { if (queues.get(home) === tail) queues.delete(home); });
+    void tail.then(() => {
+      if (queues.get(home) === tail) queues.delete(home);
+    });
     return run;
   }
 
   async function addOne(user: TrustOwner, absPath: string): Promise<void> {
     const file = join(user.home, ".claude.json");
-    const r = await readDoc(file);
-    if (r.kind === "invalid") throw new HttpError(500, `cannot read the user's .claude.json: ${r.reason}`);
-    const doc = r.kind === "ok" ? r.doc : {};
+    const readResult = await readDoc(file);
+    if (readResult.kind === "invalid")
+      throw new HttpError(500, `cannot read the user's .claude.json: ${readResult.reason}`);
+    const doc = readResult.kind === "ok" ? readResult.doc : {};
     const projects = isObject(doc.projects) ? doc.projects : {};
     const key = trustKey(absPath);
     const prev = projects[key];
@@ -84,19 +92,20 @@ export function windowsTrust(): TrustStore {
 
     // Write a new file and rename it over the old one, so a reader never sees half a file.
     const tmp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+
     try {
       await writeFile(tmp, JSON.stringify(doc, null, 2) + "\n", { flag: "wx" });
       await rename(tmp, file);
-    } catch (e) {
+    } catch (error) {
       await rm(tmp, { force: true }).catch(() => {});
-      throw e;
+      throw error;
     }
   }
 
   return {
     async checker(home) {
-      const r = await readDoc(join(home, ".claude.json"));
-      const doc = r.kind === "ok" ? r.doc : null;
+      const readResult = await readDoc(join(home, ".claude.json"));
+      const doc = readResult.kind === "ok" ? readResult.doc : null;
       return (absPath) => isTrustedWin(doc, absPath);
     },
     add: (user, absPath) => serial(user.home, () => addOne(user, absPath)),

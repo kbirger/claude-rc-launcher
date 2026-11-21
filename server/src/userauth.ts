@@ -1,7 +1,14 @@
 import type { Hono, MiddlewareHandler } from "hono";
-import { resolveRole, type RoleSettings, type RoleValue } from "./roles";
+import { resolveRole } from "./roles";
+import type { RoleSettings, RoleValue } from "./roles";
 
-export type User = { sub: string; name: string; email?: string; username?: string; role?: RoleValue };
+export interface User {
+  sub: string;
+  name: string;
+  email?: string;
+  username?: string;
+  role?: RoleValue;
+}
 
 /** How the hub authenticates browsers. `middleware` sets `user` or responds 401/403. */
 export interface UserAuthStrategy {
@@ -10,10 +17,11 @@ export interface UserAuthStrategy {
   logoutUrl?: string;
 }
 
-const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+const str = (value: unknown) => (typeof value === "string" && value ? value : undefined);
 
 /** The IdP says that it did not verify this address. A missing claim is trusted, as before. */
-const emailUnverified = (claims: Record<string, unknown>) => claims.email_verified === false || claims.email_verified === "false";
+const emailUnverified = (claims: Record<string, unknown>) =>
+  claims.email_verified === false || claims.email_verified === "false";
 
 /**
  * An email that the IdP marks as unverified is dropped here, so that no caller can match on it. The user then
@@ -34,5 +42,5 @@ export function userFromClaims(claims: Record<string, unknown>, roles?: RoleSett
 /** `undefined` allows everyone; otherwise the username or email must equal an entry exactly. */
 export function isAllowed(user: User, allowed: string[] | undefined): boolean {
   if (allowed === undefined) return true;
-  return allowed.some((a) => a === user.username || a === user.email);
+  return allowed.some((item) => item === user.username || item === user.email);
 }
