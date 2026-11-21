@@ -98,11 +98,11 @@ class FakeNode {
 
 function fakeRegistry() {
   const entries = new Map<string, HostEntry>();
-  const subs = new Set<(e: { type: "added" | "removed"; id: string }) => void>();
+  const subs = new Set<(e: { type: "added" | "removed" | "renamed"; id: string }) => void>();
   return {
     list: () => [...entries.values()],
     get: (id: string) => entries.get(id),
-    onChange: (fn: (e: { type: "added" | "removed"; id: string }) => void) => {
+    onChange: (fn: (e: { type: "added" | "removed" | "renamed"; id: string }) => void) => {
       subs.add(fn);
       return () => void subs.delete(fn);
     },
@@ -115,11 +115,16 @@ function fakeRegistry() {
       entries.delete(id);
       for (const s of subs) s({ type: "removed", id });
     },
+    rename(id: string, name: string) {
+      const e = entries.get(id)!;
+      entries.set(id, { ...e, host: { ...e.host, name } });
+      for (const s of subs) s({ type: "renamed", id });
+    },
     subs,
   };
 }
 
-function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void } = {}) {
+function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void } = {}) {
   const clock = new Clock();
   const reg = fakeRegistry();
   const nodes: Record<string, FakeNode> = {};
@@ -131,10 +136,15 @@ function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h:
   const log = new UpdateLog({ now: clock.now });
   const presence: Presence[] = [];
   const steps: [string, any][] = [];
+  const sessions: [string, any][] = [];
   const w = createNodeWatchers({
     registry: reg as unknown as HostRegistry,
     log,
     onPresence: (p) => presence.push(p),
+    onSessions: (h, e) => {
+      sessions.push([h, e]);
+      o.onSessions?.(h, e);
+    },
     onStep: (h, e) => {
       steps.push([h, e]);
       o.onStep?.(h, e);
@@ -144,7 +154,7 @@ function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h:
     random: o.random ?? (() => 0),
   });
   const statuses = (h = "nas") => presence.filter((p) => p.host === h).map((p) => p.status);
-  return { clock, reg, nodes, log, presence, steps, w, statuses };
+  return { clock, reg, nodes, log, presence, steps, sessions, w, statuses };
 }
 
 describe("createNodeWatchers presence", () => {
@@ -156,6 +166,19 @@ describe("createNodeWatchers presence", () => {
     await flush();
     expect(s.presence).toEqual([{ host: "nas", status: "online", version: "2.3.4", at: s.clock.now().toISOString() }]);
     expect(s.w.presence()).toEqual(s.presence);
+  });
+
+  test("a renamed host keeps its stream and its presence", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot("2.3.4");
+    await flush();
+    s.reg.rename("nas", "Big NAS");
+    await flush();
+    expect(s.nodes.nas!.last.aborted).toBe(false);
+    expect(s.nodes.nas!.conns.length).toBe(1);
+    expect(s.statuses()).toEqual(["online"]);
+    expect(s.w.presence().map((p) => p.status)).toEqual(["online"]);
   });
 
   test("a stream that ends gives offline", async () => {
@@ -824,5 +847,72 @@ describe("presenceLogger", () => {
     log({ host: "nas", status: "online", at: "t" });
     expect(out.at(-1)).toEqual(["host nas: online", "log"]);
     expect(out.length).toBe(2);
+  });
+});
+
+describe("createNodeWatchers sessions", () => {
+  const payload = { scannedAt: "2026-11-20T10:00:00.000Z", available: true, sessions: [] as unknown[] };
+
+  test("the sessions field of a snapshot goes to onSessions", async () => {
+    const order: string[] = [];
+    const s = setup(["nas"], { onSessions: () => order.push("sessions") });
+    await flush();
+    s.nodes.nas!.last.push("snapshot", { version: "1", update: null, sessions: payload });
+    await flush();
+    expect(s.sessions).toEqual([["nas", payload]]);
+    expect(s.statuses()).toEqual(["online"]);
+    expect(order).toEqual(["sessions"]);
+  });
+
+  test("a snapshot with sessions null calls nothing", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.push("snapshot", { version: "1", update: null, sessions: null });
+    await flush();
+    expect(s.sessions).toEqual([]);
+    expect(s.statuses()).toEqual(["online"]);
+  });
+
+  test("a sessions event goes to onSessions", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("sessions", payload);
+    await flush();
+    expect(s.sessions).toEqual([["nas", payload]]);
+  });
+
+  test("a sessions event with truncated true goes to onSessions with the flag", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("sessions", { ...payload, truncated: true });
+    s.nodes.nas!.last.push("sessions", { ...payload, truncated: "yes" });
+    await flush();
+    expect(s.sessions).toEqual([["nas", { ...payload, truncated: true }]]);
+  });
+
+  test("a sessions event with a bad shape is ignored and the stream stays up", async () => {
+    const s = setup();
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("sessions", { scannedAt: "x", available: true });
+    s.nodes.nas!.last.push("sessions", { scannedAt: "x", available: "yes", sessions: [] });
+    s.nodes.nas!.last.push("sessions", { available: true, sessions: [] });
+    s.nodes.nas!.last.push("sessions", payload);
+    await flush();
+    expect(s.sessions).toEqual([["nas", payload]]);
+    expect(s.statuses()).toEqual(["online"]);
+  });
+
+  test("a throwing onSessions does not end the watcher", async () => {
+    const s = setup(["nas"], { onSessions: () => { throw new Error("boom"); } });
+    await flush();
+    s.nodes.nas!.last.snapshot();
+    s.nodes.nas!.last.push("sessions", payload);
+    s.nodes.nas!.last.push("sessions", payload);
+    await flush();
+    expect(s.sessions.length).toBe(2);
+    expect(s.statuses()).toEqual(["online"]);
   });
 });

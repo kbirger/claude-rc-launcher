@@ -66,6 +66,14 @@ const H = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "ap
 const post = (app: any, body: unknown, headers = H()) =>
   app.request("/api/hosts/local/instances", { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
 
+describe("node-only heartbeat route", () => {
+  test("the hub does not serve /api/hosts/local/sessions/watch", async () => {
+    const { app } = mk();
+    const res = await app.request("/api/hosts/local/sessions/watch", { method: "POST", headers: H(), body: "{}" });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("PWA files", () => {
   const files = new Map([
     ["/index.html", { path: "/dev/null", type: "text/html" }],
@@ -504,7 +512,8 @@ describe("host-scoped API", () => {
     const app = createApp({ cfg: local, instances: f.svc, userAuth: oidcUserAuth(local, oidc) });
     const r = await app.request("/api/hosts", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false }]);
+    // No claude home on this fake: the local index reports no session files.
+    expect(await r.json()).toEqual([{ id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: false }]);
   });
   test("an unknown host is 404", async () => {
     const r = await mk().app.request("/api/hosts/other/instances", { headers: H() });
@@ -753,6 +762,9 @@ describe("GET /api/updates and /api/events", () => {
       log.add("nas", "hello", "2026-11-09T00:00:01.000Z");
       const presence = fakePresence([pres("nas")]);
       const app = mk(rec, undefined, { updateLog: log, presence, ...withCli });
+      // The session store of the app listens to presence for as long as the app lives: only the streams count here.
+      const held = presence.count();
+      const streams = () => presence.count() - held;
       const r = await app.request(url, { headers: hdr() });
       expect(r.status).toBe(200);
       expect(r.headers.get("content-type")).toContain("text/event-stream");
@@ -766,7 +778,7 @@ describe("GET /api/updates and /api/events", () => {
       const snap = `event: snapshot\ndata: ${JSON.stringify({ updates: [entry("nas")], logs: { nas: [{ line: "hello", at: "2026-11-09T00:00:01.000Z" }] }, presence: [pres("nas")] })}\n\n`;
       expect(await readUntil(reader, /\n\n/)).toBe(snap);
       expect(await readUntil(reader2, /\n\n/)).toBe(snap);
-      expect([rec.count(), presence.count()]).toEqual([2, 2]);
+      expect([rec.count(), streams()]).toEqual([2, 2]);
       rec.emit(entry("box"));
       log.add("box", "line 1", "2026-11-09T00:00:02.000Z");
       presence.emit(pres("box", "offline"));
@@ -781,8 +793,8 @@ describe("GET /api/updates and /api/events", () => {
       await reader.cancel();
       await reader2.cancel();
       const lines = () => (log as any).subs.size as number;
-      await gone(rec.count, presence.count, lines);
-      expect([rec.count(), presence.count(), lines()]).toEqual([0, 0, 0]);
+      await gone(rec.count, streams, lines);
+      expect([rec.count(), streams(), lines()]).toEqual([0, 0, 0]);
     });
 
     test(`${url}: without updateLog and presence the snapshot has empty logs and presence`, async () => {

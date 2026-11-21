@@ -147,7 +147,7 @@ describe("host list client versions", () => {
   });
   test("local gets its clientVersion from the local /node", async () => {
     const app = hub([], new Map(), { clientVersions: async () => [{ path: "/a", version: "0.9.0" }, { path: "/b" }] });
-    expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0", platform: process.platform, stale: false });
+    expect((await (await get(app, "/api/hosts")).json())[0]).toEqual({ id: "local", name: "box", status: "ok", version: VERSION, clientVersion: "0.9.0", platform: process.platform, stale: false, sessions: false });
   });
 });
 
@@ -159,9 +159,9 @@ describe("host list", () => {
     const r = await get(app, "/api/hosts");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false },
-      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: true },
+      { id: "pi", name: "PI", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: true },
     ]);
   });
 
@@ -177,10 +177,10 @@ describe("host list", () => {
     expect(Date.now() - t0).toBeLessThan(2_500);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
-      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false },
-      { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config", stale: false },
-      { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config", stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: false },
+      { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: true },
+      { id: "pi", name: "PI", status: "offline", error: "unreachable", source: "config", stale: false, sessions: true },
+      { id: "slow", name: "SLOW", status: "offline", error: "timeout", source: "config", stale: false, sessions: true },
     ]);
   });
 
@@ -191,9 +191,9 @@ describe("host list", () => {
     const wrongPin = createHostClient({ ...b.host, ca: other.host.ca }, secretAuthorizer(b.secret));
     const app = hub([a.host, b.host], new Map([["nas", a.client], ["pi", wrongPin]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
-      { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config", stale: false },
-      { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config", stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: false },
+      { id: "nas", name: "NAS", status: "error", error: "rejected our credentials", source: "config", stale: false, sessions: true },
+      { id: "pi", name: "PI", status: "error", error: "certificate mismatch", source: "config", stale: false, sessions: true },
     ]);
   });
 });
@@ -545,9 +545,9 @@ describe("node and update routes", () => {
     const old: HostClient = { ...noStream, call: async () => ({ status: 200, body: { ok: true, name: "old" } }) };
     const app = hub([hostCfg("nas"), hostCfg("old")], new Map([["nas", client], ["old", old]]));
     expect(await (await get(app, "/api/hosts")).json()).toEqual([
-      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false },
-      { id: "nas", name: "nas", status: "ok", source: "config", version: "1.4.0", stale: false },
-      { id: "old", name: "old", status: "ok", source: "config", stale: false },
+      { id: "local", name: "box", status: "ok", version: VERSION, noClient: true, platform: process.platform, stale: false, sessions: false },
+      { id: "nas", name: "nas", status: "ok", source: "config", version: "1.4.0", stale: false, sessions: true },
+      { id: "old", name: "old", status: "ok", source: "config", stale: false, sessions: true },
     ]);
   });
 
@@ -1086,5 +1086,30 @@ describe("instance settings routes", () => {
     const app = hub([host], new Map([["nas", { ...noStream, call: async () => { throw new HostError("nas", "unreachable"); } } as unknown as HostClient]]));
     expect((await patch(app, { spawnMode: "worktree" })).status).toBe(502);
     expect(logged.filter((l) => l.includes("action=settings"))).toEqual([`audit user=kir role=admin host=nas action=settings instance=${ID} want=?,worktree status=502`]);
+  });
+});
+
+describe("host list sessions field", () => {
+  const cfgHost = (id: string) => ({ id, name: id, url: "https://localhost:1", auth: { type: "secret", secret: "s" } }) as HostConfig;
+  const up: HostClient = { call: async () => ({ status: 200, body: { ok: true, version: VERSION, clients: [] } }) } as unknown as HostClient;
+  const down: HostClient = { call: async () => { throw new HostError("pi", "unreachable"); } } as unknown as HostClient;
+  async function list(sessionsAvailable?: (host: string) => boolean) {
+    const local = new Hono();
+    local.get("/node", (c) => c.json({ clients: [] }));
+    const registry = HostRegistry.memory([cfgHost("nas"), cfgHost("pi")], new Map([["nas", up], ["pi", down]]));
+    const api = hostsApi({ cfg: { name: "box" } as unknown as Config, local, registry, ...(sessionsAvailable ? { sessionsAvailable } : {}) });
+    return (await (await api.request("/")).json()) as any[];
+  }
+
+  test("each host has sessions from sessionsAvailable, local included", async () => {
+    const asked: string[] = [];
+    const l = await list((h) => (asked.push(h), h !== "nas"));
+    expect(l.map((h) => [h.id, h.status, h.sessions])).toEqual([["local", "ok", true], ["nas", "ok", false], ["pi", "offline", true]]);
+    expect(asked.sort()).toEqual(["local", "nas", "pi"]);
+  });
+
+  test("with no sessionsAvailable the field is absent", async () => {
+    const l = await list();
+    expect(l.map((h) => "sessions" in h)).toEqual([false, false, false]);
   });
 });

@@ -1,23 +1,17 @@
-import { getChanged, getPreview, getTouched, listAllSessions, listFiles, listSessions } from "./api";
+import { getChanged, getPreview, getTouched, listAllSessions, listFiles } from "./api";
 
-export const SESSIONS_POLL_MS = 15000;
+/** The query of the hub session list. The sessions stream writes into it. */
+export const ALL_SESSIONS_KEY = ["all-sessions"] as const;
+
 export const SESSIONS_STALE_MS = 5000;
 
-export const sessionsQuery = (host: string, instance: string) => ({
-  queryKey: ["sessions", host, instance] as const,
-  queryFn: () => listSessions(host, instance),
-  staleTime: SESSIONS_STALE_MS,
-  refetchInterval: SESSIONS_POLL_MS,
-  refetchOnWindowFocus: true,
-  retry: false as const,
-});
-
+// No poll, no refocus read and no mount read once the data is in: the sessions stream keeps this query fresh, and a slow
+// read must not overwrite newer stream data. A cold cache fetches once. A pull to refresh still reads it through invalidateQueries.
 export const allSessionsQuery = () => ({
-  queryKey: ["all-sessions"] as const,
+  queryKey: ALL_SESSIONS_KEY,
   queryFn: listAllSessions,
-  staleTime: SESSIONS_STALE_MS,
-  refetchInterval: SESSIONS_POLL_MS,
-  refetchOnWindowFocus: true,
+  staleTime: Infinity,
+  refetchOnWindowFocus: false as const,
   retry: false as const,
 });
 

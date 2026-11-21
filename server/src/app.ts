@@ -30,8 +30,13 @@ import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
 import { sessionApi } from "./sessionapi";
 import { SessionCatalog } from "./sessioncatalog";
-import { SessionIndex } from "./sessionindex";
+import { SessionIndex, type SessionIndexOptions, type SessionsEvent } from "./sessionindex";
+import { WatchFlag } from "./sessionwatch";
+import type { ChangeSource, Timers } from "./changesource";
 import { allSessionsApi } from "./allsessions";
+import { SessionsStore } from "./sessionsstore";
+import { sessionsStream } from "./sessionsstream";
+import { createBeatLoop, type BeatLoop } from "./sessionbeat";
 import { isObject, parseCloneRequest, parseLoginRequest, parseMkdirRequest, parseSettingsPatch, parseStartRequest, parseUpdateRequest, readJson } from "./requests";
 import { UpdateRefused, type ClientVersion, type ClientVersionsLookup, type UpdateReport } from "./serviceupdate";
 import { VERSION } from "./version";
@@ -42,7 +47,15 @@ export type CliDeps = { issuer: string; clientId: string; roleScope?: string; au
 /** Updates this machine. One instance per process: it holds the lock that refuses a second run. */
 export type Updater = { run(release?: string): Promise<UpdateReport> };
 
-export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number };
+export type Deps = { cfg: Config; instances: Instances; userAuth: UserAuthStrategy; staticHandler?: MiddlewareHandler; dirOwner?: DirOwner; hostClients?: Map<string, HostClient>; hosts?: HostRegistry; cli?: CliDeps; probeTimeoutMs?: number; requestTimeoutMs?: number; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; clientVersions?: ClientVersionsLookup; latest?: ReturnType<typeof createLatestRelease>; releaseList?: ReturnType<typeof createReleaseList>; updates?: UpdateRecord; history?: UpdateHistory; updateLog?: UpdateLog; presence?: { list(): Presence[]; onChange(fn: (p: Presence) => void): () => void }; keepaliveMs?: number;
+  /** The hub passes the catalog, the started index and the store it built, so that one name cache and one copy serve every route. The caller feeds this index into this store. */
+  sessions?: SessionCatalog; sessionIndex?: SessionIndex; sessionsStore?: SessionsStore;
+  /** The timers of the local watch flag and of the beat loop. Default: real timers. */
+  watchTimers?: Timers;
+  /** The hub passes the beat loop it built, so that its stop() can end it. */
+  beatLoop?: BeatLoop };
+
+const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -68,16 +81,18 @@ function csrf(cfg: Config): MiddlewareHandler {
 export type InstanceApiDeps = { cfg: Config; instances: Instances; clientVersions?: ClientVersionsLookup; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; adoptDir?: AdoptDir; definition?: () => DefinitionStatus | undefined; sessions?: SessionCatalog; sessionIndex?: SessionIndex };
 
 /** The session catalog of one app. Each app factory builds one, so that all its session routes share one name cache. */
-function sessionCatalogFor(cfg: Config): SessionCatalog {
+export function sessionCatalogFor(cfg: Config): SessionCatalog {
   // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
   const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter((d): d is string => typeof d === "string" && d.length > 0);
   const dir = cfg.node?.tls.stateDir ?? cfg.stateDir;
   return new SessionCatalog({ refuseDirs, ...(dir ? { chainFile: join(dir, "session-chains.json"), nameFile: join(dir, "session-names.json") } : {}) });
 }
 
-/** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its timer. */
-function sessionIndexFor(instances: Instances, catalog: SessionCatalog): SessionIndex {
-  const index = new SessionIndex({ instances, catalog });
+/** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its change source. */
+function sessionIndexFor(instances: Instances, catalog: SessionCatalog, onEvent?: (e: SessionsEvent) => void, extra: Partial<SessionIndexOptions> = {}): SessionIndex {
+  const index = new SessionIndex({ instances, catalog, ...extra });
+  // Subscribe before start(): the first event must not come before the subscription.
+  if (onEvent) index.subscribe(onEvent);
   index.start();
   return index;
 }
@@ -92,7 +107,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   // A start, stop, pause, resume, restart or settings change moves sessions in or out of the list: scan again at once.
   r.use("/instances/*", async (c, next) => {
     await next();
-    if (c.req.method !== "GET" && c.res.status < 400) index.invalidate();
+    if (c.req.method !== "GET" && c.res.status < 400) index.trigger({ scope: "all" });
   });
   r.get("/sessions", async (c) => c.json(await index.get()));
 
@@ -245,7 +260,7 @@ const isWrite = (m: string) => m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 const MAX_EVENT_CONNECTIONS = 8;
 
 /** The API of a node: no browser surface, bearer auth, JSON-only writes, audit log. */
-export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined }): Hono {
+export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: MiddlewareHandler; dirOwner?: DirOwner; update?: Updater; cloner?: Cloner; clientVersions?: ClientVersionsLookup; events?: NodeEvents; keepaliveMs?: number; definition?: () => DefinitionStatus | undefined; sessionSource?: ChangeSource; watchTimers?: Timers; sessions?: SessionCatalog }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
   trackStreams(app);
@@ -261,7 +276,8 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
   });
   api.use("*", async (c, next) => {
     await next();
-    if (isWrite(c.req.method)) {
+    // The hub heartbeat comes every 20 seconds from each hub and changes nothing that an audit needs.
+    if (isWrite(c.req.method) && !(c.req.method === "POST" && new URL(c.req.url).pathname === "/api/sessions/watch")) {
       const act = c.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
       const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
       console.log(`audit caller=${String(c.get("caller" as never) ?? "unknown")}${actPart} ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status}`);
@@ -279,7 +295,7 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
         const done = new Promise<void>((resolve) => stream.onAbort(resolve));
         try {
           // Queue the snapshot and the kept lines, then listen, all without a gap. The stream keeps the order of the writes.
-          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }) })];
+          const first = [stream.writeSSE({ event: "snapshot", data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate(), sessions: events.latestSessions() }) })];
           for (const l of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(l) }));
           unsubscribe = events.subscribe((e) => {
             const { type, ...data } = e;
@@ -295,8 +311,14 @@ export function createNodeApp(deps: { cfg: Config; instances: Instances; auth: M
       });
     });
   }
-  const sessions = sessionCatalogFor(cfg);
-  const sessionIndex = sessionIndexFor(instances, sessions);
+  const sessions = deps.sessions ?? sessionCatalogFor(cfg);
+  const sessionIndex = sessionIndexFor(instances, sessions, events ? (e) => events.emit(e) : undefined, deps.sessionSource ? { source: deps.sessionSource } : {});
+  // A hub that watches this node sends a heartbeat. Node only: the hub forwards /api/hosts/local/* to instanceApi as a whole.
+  const watch = new WatchFlag({ target: sessionIndex, ...(deps.watchTimers ? { timers: deps.watchTimers } : {}) });
+  api.post("/sessions/watch", (c) => {
+    watch.beat();
+    return c.body(null, 204);
+  });
   api.route("/", instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(deps.definition ? { definition: deps.definition } : {}), ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(clientVersions ? { clientVersions } : {}) }));
   app.route("/api", api);
   app.onError(onError);
@@ -350,9 +372,21 @@ export function createApp(deps: Deps): Hono {
     ? { record: deps.updates, tracker: createUpdateTracker({ record: deps.updates, hubVersion: VERSION, probe: probeVersion, ...(deps.presence ? { presence: deps.presence } : {}) }), probe: probeVersion }
     : undefined;
   // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
-  const sessions = sessionCatalogFor(cfg);
-  const sessionIndex = sessionIndexFor(instances, sessions);
-  // The node API of this machine: the host `local` for the forwarding routes and the first part of the all-sessions list.
+  const sessions = deps.sessions ?? sessionCatalogFor(cfg);
+  const store = deps.sessionsStore ?? new SessionsStore({ localName: cfg.name, registry, presence: deps.presence ?? NO_PRESENCE });
+  const feedLocal = (e: SessionsEvent) => store.set("local", e);
+  let sessionIndex: SessionIndex;
+  if (!deps.sessionIndex) sessionIndex = sessionIndexFor(instances, sessions, feedLocal);
+  else {
+    sessionIndex = deps.sessionIndex;
+    // A given index with a store built here: the caller could not feed it, so feed it now, with what it already sent.
+    if (!deps.sessionsStore) {
+      sessionIndex.subscribe(feedLocal);
+      const last = sessionIndex.latest();
+      if (last) feedLocal(last);
+    }
+  }
+  // The node API of this machine: the host `local` for the forwarding routes.
   const localApi = instanceApi({ cfg, instances, dirOwner, sessions, sessionIndex, ...(update ? { update } : {}), ...(cloner ? { cloner } : {}), ...(adoptDir ? { adoptDir } : {}), ...(clientVersions ? { clientVersions } : {}) });
   const forwarding = () =>
     hostsApi({
@@ -363,6 +397,7 @@ export function createApp(deps: Deps): Hono {
       requestTimeoutMs: deps.requestTimeoutMs,
       ...(deps.latest ? { latest: deps.latest } : {}),
       ...(updates ? { updates } : {}),
+      sessionsAvailable: (h) => store.available(h),
     });
   // The web page renames a host. It cannot add or remove one: that stays with the CLI.
   api.patch("/hosts/:id", async (c, next) => {
@@ -370,7 +405,12 @@ export function createApp(deps: Deps): Hono {
     const u = c.get("user" as never) as User | undefined;
     console.log(`audit user=${u?.username ?? u?.sub ?? "unknown"} role=${u?.role ?? "read"} host=${c.req.param("id")} PATCH ${new URL(c.req.url).pathname} ${c.res.status}`);
   });
-  const allSessions = allSessionsApi({ cfg, local: localApi, registry, timeoutMs: deps.probeTimeoutMs, ...(deps.presence ? { presence: () => deps.presence!.list() } : {}) });
+  const allSessions = allSessionsApi({ store });
+  // While a sessions stream is open, the beat loop tells every node, and the local index, that somebody watches.
+  const timerOpt = deps.watchTimers ? { timers: deps.watchTimers } : {};
+  const beat = deps.beatLoop ?? createBeatLoop({ registry, presence: deps.presence ?? NO_PRESENCE, local: new WatchFlag({ target: sessionIndex, ...timerOpt }), ...timerOpt });
+  // Browsers only: a CLI client must never count as a viewer. Before the /sessions mount, so that it wins.
+  api.get("/sessions/events", sessionsStream({ store, viewers: beat, ...(deps.keepaliveMs ? { keepaliveMs: deps.keepaliveMs } : {}) }));
   api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
   api.get("/updates/history", (c) => (deps.history ? c.json(deps.history.list()) : c.json({ error: "update history not available" }, 501)));

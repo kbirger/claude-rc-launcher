@@ -22,6 +22,15 @@ describe("HostRegistry.onChange", () => {
     expect(seen).toEqual(["added:pi:present", "removed:pi:gone"]);
   });
 
+  test("rename notifies, and the entry already has the new name", async () => {
+    const r = await make();
+    await r.add(host("pi"));
+    const seen: string[] = [];
+    r.onChange((e) => seen.push(`${e.type}:${e.id}:${r.get(e.id)?.host.name}`));
+    await r.rename("pi", "Kitchen Pi");
+    expect(seen).toEqual(["renamed:pi:Kitchen Pi"]);
+  });
+
   test("a failed add does not notify, an unsubscribed listener gets nothing, a throwing listener does not break add", async () => {
     const r = await make();
     const seen: string[] = [];

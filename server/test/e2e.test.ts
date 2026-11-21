@@ -13,6 +13,7 @@ import type { UpdateReport } from "../src/serviceupdate";
 import { NodeEvents } from "../src/updateevents";
 import { readSse } from "../src/ssereader";
 import { VERSION } from "../src/version";
+import { fakeTimers } from "./faketimers";
 
 const tmp = () => realpathSync(mkdtempSync(path.join(os.tmpdir(), "rc-e2e-")));
 const stoppers: (() => void)[] = [];
@@ -81,9 +82,10 @@ describe("hub + node end to end", () => {
   test("the host list shows both ok; instances and fs go through to the node", async () => {
     const s = await setup();
     // The client copies on the machine running the test decide `clientVersion` and `noClient`, and the latest release decides `stale` and `target`, so they are left out here.
-    const list = ((await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[]).map(({ clientVersion: _c, noClient: _n, stale: _s, target: _t, ...h }) => h);
+    // `sessions` of a node depends on whether its first list has reached the hub store yet, so only local keeps it.
+    const list = ((await (await fetch(s.hubUrl("/api/hosts"), { headers: s.h() })).json()) as any[]).map(({ clientVersion: _c, noClient: _n, stale: _s, target: _t, sessions, ...h }) => (h.id === "local" ? { ...h, sessions } : h));
     expect(list).toEqual([
-      { id: "local", name: "hub", status: "ok", version: VERSION, platform: process.platform },
+      { id: "local", name: "hub", status: "ok", version: VERSION, platform: process.platform, sessions: false },
       { id: "nas", name: "NAS", status: "ok", source: "config", version: VERSION, platform: process.platform },
     ]);
     expect(await (await fetch(s.hubUrl("/api/hosts/nas/instances"), { headers: s.h() })).json()).toMatchObject([{ name: "pi-one" }]);
@@ -93,6 +95,25 @@ describe("hub + node end to end", () => {
     expect(s.hubFake.started).toEqual([]);
     const fs = await (await fetch(s.hubUrl("/api/hosts/nas/fs"), { headers: s.h() })).text();
     expect(fs).toContain(JSON.stringify(s.nodeRoot).slice(1, -1));
+  });
+
+  test("the list a node sends on its stream reaches the hub sessions stream", async () => {
+    const s = await setup();
+    // The node has no claudeHome, so its index sends `available: false`. Only the node stream, fed into the store, gives `unavailable`.
+    const ac = new AbortController();
+    const r = await fetch(s.hubUrl("/api/sessions/events"), { headers: s.h(), signal: ac.signal });
+    expect(r.status).toBe(200);
+    const nasStatus = (e: { event: string; data: string }): string | undefined => {
+      const d = JSON.parse(e.data);
+      return e.event === "snapshot" ? d.hosts.find((h: any) => h.id === "nas")?.status : d.host.id === "nas" ? d.host.status : undefined;
+    };
+    let status: string | undefined;
+    for await (const e of readSse(r.body!)) {
+      status = nasStatus(e);
+      if (status === "unavailable") break;
+    }
+    ac.abort();
+    expect(status).toBe("unavailable");
   });
 
   test("a request straight to the node with the wrong secret or none is 401", async () => {
@@ -255,6 +276,30 @@ describe("a slow update end to end", () => {
     );
     expect([remote, local, straight]).toEqual([200, 200, 200]);
   }, 30_000);
+});
+
+describe("hub stop and the beat loop", () => {
+  test("a hub stop with a sessions stream still open leaves no beat or watch timer", async () => {
+    const hubCfg = {
+      ...common, mode: "hub", stateDir: tmp(), name: "hub", port: 0, host: "127.0.0.1", publicUrl: "https://rc.example.com", roots: [tmp()],
+      userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
+      hosts: [],
+    } as unknown as Config;
+    const timers = fakeTimers();
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watchTimers: timers }));
+    let stopped = false;
+    stoppers.push(() => void (stopped || hub.stop()));
+    const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
+    const ac = new AbortController();
+    const r = await fetch(`http://127.0.0.1:${hub.port}/api/sessions/events`, { headers: { cookie }, signal: ac.signal });
+    for await (const e of readSse(r.body!)) if (e.event === "snapshot") break;
+    // The open stream started the beat loop (20 s) and the local watch flag (60 s).
+    expect(timers.pending()).toBe(2);
+    hub.stop();
+    stopped = true;
+    expect(timers.pending()).toBe(0);
+    ac.abort();
+  });
 });
 
 describe("hub key log line", () => {

@@ -1,8 +1,8 @@
 <script lang="ts">
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { replaceState } from "$app/navigation";
-  import { untrack } from "svelte";
-  import { createQuery } from "@tanstack/svelte-query";
+  import { onMount, untrack } from "svelte";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import ArrowLeft from "@tabler/icons-svelte/icons/arrow-left";
   import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
@@ -11,9 +11,9 @@
   import FilePreview from "./FilePreview.svelte";
   import TouchedList from "./TouchedList.svelte";
   import { SessionPermissions } from "../permissions";
-  import { isUnsupported } from "./api";
-  import { ago, sessionsHref, sessionTitle, worktreeName } from "./format";
-  import { sessionsQuery } from "./queries";
+  import { connectSessions } from "../../realtime/sessions";
+  import { ago, hostNotice, sessionsHref, sessionTitle, worktreeName } from "./format";
+  import { allSessionsQuery } from "./queries";
 
   // `touched`, `changed` and `folder` are the tabs of the Files section. `permissions` and `blocked` are the tabs of the Permissions section.
   type View = "touched" | "changed" | "folder" | "permissions" | "blocked";
@@ -22,8 +22,14 @@
   type Props = { host: string; instance: string; session: string; view: View; path: string; hidden: boolean; file: string; abs?: string; now: number };
   let { host, instance, session, view, path, hidden, file, abs = "", now }: Props = $props();
 
-  const q = createQuery(() => sessionsQuery(host, instance));
-  const s = $derived(q.data?.find((x) => x.id === session));
+  // useQueryClient reads the Svelte context, so it runs at setup. The page holds the sessions stream while it is open.
+  const client = useQueryClient();
+  onMount(() => connectSessions(client));
+  // The session comes from the hub list of all nodes, which the sessions stream keeps fresh.
+  const q = createQuery(allSessionsQuery);
+  const s = $derived(q.data?.sessions.find((x) => x.host.id === host && x.instance.id === instance && x.id === session));
+  // The status of this node's part of the list: when the session is missing, a node that is not ok says why.
+  const hostState = $derived(q.data?.hosts.find((h) => h.id === host));
   // The name of the instance, for the way back. The instance list is cached by the page before this one.
   const href = (v: View, extra: { path?: string; file?: string } = {}) =>
     sessionsHref({ host, instance, session, view: v, ...(v === "folder" ? { hidden } : {}), ...extra });
@@ -91,10 +97,10 @@
       <Tabs.Content value={current} class="min-w-0">
         {#if q.isPending}
           <p class="text-muted-foreground">Loading session...</p>
-        {:else if isUnsupported(q.error)}
-          <p class="text-muted-foreground">This node does not support session files. Update the node.</p>
-        {:else if q.error}
+        {:else if q.error && !q.data}
           <Alert.Root variant="destructive"><Alert.Description>Could not load the session: {q.error.message}</Alert.Description></Alert.Root>
+        {:else if !s && hostState && hostState.status !== "ok"}
+          <Alert.Root><Alert.Description>{hostNotice(hostState)}</Alert.Description></Alert.Root>
         {:else if !s}
           <Alert.Root variant="destructive"><Alert.Description>Session not found.</Alert.Description></Alert.Root>
         {:else if current === "folder"}

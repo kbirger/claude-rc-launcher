@@ -1,8 +1,11 @@
+import type { SessionsEvent, SessionsPayload } from "./sessionindex";
+
 export type StepName = "downloading" | "verifying" | "installing-client" | "installing" | "restarting" | "failed" | "up-to-date";
 
 export type NodeEvent =
   | { type: "step"; step: StepName; to?: string; client?: string; detail?: string }
-  | { type: "log"; line: string; at: string };
+  | { type: "log"; line: string; at: string }
+  | SessionsEvent;
 
 export type UpdateHooks = {
   onStep?(e: { step: StepName; to?: string; client?: string; detail?: string }): void;
@@ -17,6 +20,7 @@ export class NodeEvents {
   private readonly maxLines: number;
   private readonly subs = new Set<(e: NodeEvent) => void>();
   private buffer: Line[] = [];
+  private sessions: SessionsPayload | null = null;
   private current: { step: StepName; to?: string; startedAt: string } | null = null;
 
   constructor(o: { now?: () => Date; maxLines?: number } = {}) {
@@ -32,7 +36,10 @@ export class NodeEvents {
   }
 
   emit(e: NodeEvent): void {
-    if (e.type === "log") {
+    if (e.type === "sessions") {
+      const { type: _type, ...payload } = e;
+      this.sessions = payload;
+    } else if (e.type === "log") {
       this.buffer.push({ line: e.line, at: e.at });
       if (this.buffer.length > this.maxLines) this.buffer.splice(0, this.buffer.length - this.maxLines);
     } else if (e.step === "downloading") {
@@ -59,6 +66,10 @@ export class NodeEvents {
 
   snapshotUpdate(): { step: StepName; to?: string; startedAt: string } | null {
     return this.current ? { ...this.current } : null;
+  }
+
+  latestSessions(): SessionsPayload | null {
+    return this.sessions;
   }
 
   lines(): { line: string; at: string }[] {

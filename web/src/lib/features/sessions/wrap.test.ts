@@ -16,6 +16,7 @@ const touched: TouchedFile[] = [
 ];
 const listing: Listing = { path: "", parent: null, entries: [{ name: long, kind: "file", size: 5, mtime: "2026-11-12T10:00:00Z" }, { name: long + "b", kind: "dir", mtime: "2026-11-12T10:00:00Z" }, { name: "dev", kind: "other", mtime: "2026-11-12T10:00:00Z" }] };
 const sessions: Session[] = [{ id: "11111111-1111-4111-8111-111111111111", root: "/proj", name: long, branch: long, startedAt: "2026-11-12T10:00:00Z", lastActiveAt: "2026-11-12T10:00:00Z" }];
+vi.mock("../../realtime/sessions", () => ({ connectSessions: () => () => {} }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   getTouched: async () => touched,
