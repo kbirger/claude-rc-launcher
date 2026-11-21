@@ -11,6 +11,7 @@ import { nodeConfig } from "./nodecmd";
 import type { NodeFs } from "./nodecmd";
 import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
+import { nodeRoots, ROOTS_USAGE } from "./noderoots";
 import { login, logout, renew } from "./oidc";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, updateAll } from "./updateall";
@@ -44,6 +45,12 @@ Commands:
                                      update this claude-rc binary (--all-nodes: every node, the hub, then this binary)
   node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force]
                                      install, start and register this machine as a node
+  node roots list [--config file] [--json]
+                                     list the root folders of this node
+  node roots add <dir> [--config file] [--no-restart]
+                                     add a root folder to this node and restart it
+  node roots remove <dir> [--config file] [--no-restart]
+                                     remove a root folder from this node and restart it
   node update [--binary file] [--release tag]
                                      update this node's server binary and restart it
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
@@ -195,6 +202,14 @@ export async function main(
       return 0;
     }
 
+    if (name === "node" && args[0] === "roots") {
+      // Works on the node machine only and talks to no hub, so no login is needed.
+      const stray = Object.keys(flags).find((f) => !["config", "no-restart", "json", "help"].includes(f));
+      if (stray) throw new ExitError(`--${stray} does not apply to node roots. ${ROOTS_USAGE}`, 1);
+      await nodeRoots({ args: args.slice(1), flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
+      return 0;
+    }
+
     let creds = loadCreds(env.credsFile);
 
     if (!creds && name === "node" && args[0] === "setup" && flags.hub) {
@@ -246,7 +261,7 @@ export async function main(
 
       if (args[0] !== "config")
         throw new ExitError(
-          "usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>]",
+          "usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>] | claude-rc node roots list|add|remove",
           1,
         );
       await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.nodeFs ? { fs: env.nodeFs } : {}) });
