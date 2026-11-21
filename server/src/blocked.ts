@@ -5,7 +5,7 @@
  * A blocked call is a `tool_use` block (in an `assistant` record) with a later `tool_result` block (in a `user` record)
  * that has `is_error: true` and a known denial text. A command that failed by itself (exit code 1) also has `is_error: true`,
  * so the text decides. The texts are Claude Code internals and can change with a version: DENIALS is the one table to
- * update, and `bun scripts/sample-denials.ts` shows the texts in the transcripts of this machine. A denial with a text
+ * update. A denial with a text
  * that is not in the table is not listed (a lower bound, like the touched list).
  */
 import { dig, isRecord, parse } from "./transcript";
