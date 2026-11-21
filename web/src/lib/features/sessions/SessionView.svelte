@@ -83,13 +83,13 @@
           {sessionTitle(summary) ?? "Untitled session"}
         </h2>
         <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-          {#if summary.branch}<span data-session-branch class="inline-flex min-w-0 items-center gap-1"
-              ><GitBranch size={14} class="flex-none" aria-hidden="true" /><span class="min-w-0 [overflow-wrap:anywhere]"
-                >{summary.branch}</span
-              ></span
-            ><span aria-hidden="true">
-              ·
-            </span>{/if}
+          {#if summary.branch}<span data-session-branch class="inline-flex min-w-0 items-center gap-1">
+              <GitBranch size={14} class="flex-none" aria-hidden="true" /><span
+                class="min-w-0 [overflow-wrap:anywhere]"
+              >
+                {summary.branch}
+              </span>
+            </span><span aria-hidden="true"> · </span>{/if}
           <span class="font-mono text-xs">{summary.id.slice(0, 8)}</span>
           <span aria-hidden="true">·</span>
           <span>{ago(summary.lastActiveAt, now)}</span>

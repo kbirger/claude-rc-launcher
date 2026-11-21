@@ -9,9 +9,9 @@ import { hostAdd, hostRemove, hostRename } from "./hostcmd";
 import { hubClient } from "./hub";
 import { nodeConfig } from "./nodecmd";
 import type { NodeFs } from "./nodecmd";
+import { nodeRoots, ROOTS_USAGE } from "./noderoots";
 import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
-import { nodeRoots, ROOTS_USAGE } from "./noderoots";
 import { login, logout, renew } from "./oidc";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, updateAll } from "./updateall";
@@ -204,7 +204,7 @@ export async function main(
 
     if (name === "node" && args[0] === "roots") {
       // Works on the node machine only and talks to no hub, so no login is needed.
-      const stray = Object.keys(flags).find((f) => !["config", "no-restart", "json", "help"].includes(f));
+      const stray = Object.keys(flags).find((flag) => !["config", "no-restart", "json", "help"].includes(flag));
       if (stray) throw new ExitError(`--${stray} does not apply to node roots. ${ROOTS_USAGE}`, 1);
       await nodeRoots({ args: args.slice(1), flags, out: io.out, ...(env.sys ? { sys: env.sys } : {}) });
       return 0;

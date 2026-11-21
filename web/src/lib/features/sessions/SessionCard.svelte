@@ -64,11 +64,11 @@
         {#each sessionDetail(session, now) as part, i (i)}
           <span class={i === 0 ? "font-mono" : "min-w-0 [overflow-wrap:anywhere]"}>{part}</span>
         {/each}
-        {#if branch}<span data-session-branch class="inline-flex min-w-0 items-center gap-1"
-            ><GitBranch size={14} class="flex-none" aria-hidden="true" /><span class="min-w-0 [overflow-wrap:anywhere]"
-              >{branch}</span
-            ></span
-          >{/if}
+        {#if branch}<span data-session-branch class="inline-flex min-w-0 items-center gap-1">
+            <GitBranch size={14} class="flex-none" aria-hidden="true" /><span class="min-w-0 [overflow-wrap:anywhere]">
+              {branch}
+            </span>
+          </span>{/if}
         {#if wt}<span class="min-w-0 [overflow-wrap:anywhere]">work tree: {wt}</span>{/if}
       </div>
     </Card.Content>

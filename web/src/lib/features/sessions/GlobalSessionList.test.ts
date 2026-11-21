@@ -104,8 +104,11 @@ test("a row shows the node name and the instance name, and links to the session"
 });
 
 test("a row shows a branch icon before a real branch name, and none for a detached HEAD", () => {
-  const t = show({ sessions: [row("a", "local", { branch: "feat/x" }), row("b", "local", { branch: "HEAD" }), row("c", "local")], hosts: [status("local", "ok")] });
-  const marks = [...t.querySelectorAll("[data-session-branch]")];
+  const view = show({
+    sessions: [row("a", "local", { branch: "feat/x" }), row("b", "local", { branch: "HEAD" }), row("c", "local")],
+    hosts: [status("local", "ok")],
+  });
+  const marks = [...view.querySelectorAll("[data-session-branch]")];
   expect(marks).toHaveLength(1);
   expect(marks[0]!.firstElementChild?.tagName.toLowerCase()).toBe("svg");
   expect(marks[0]!.firstElementChild?.getAttribute("aria-hidden")).toBe("true");

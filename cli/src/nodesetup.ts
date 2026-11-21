@@ -35,6 +35,7 @@ interface Result {
 export async function waitForActive(sys: Sys): Promise<boolean> {
   const isActive = () => sys.run(["systemctl", "is-active", NAME]).code === 0;
   const deadline = sys.now() + HEALTH_WAIT_MS;
+
   while (sys.now() < deadline) {
     if (isActive()) {
       await sys.sleep(STAY_ACTIVE_MS);
@@ -43,6 +44,7 @@ export async function waitForActive(sys: Sys): Promise<boolean> {
       await sys.sleep(500);
     }
   }
+
   return false;
 }
 
