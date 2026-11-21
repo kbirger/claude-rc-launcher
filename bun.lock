@@ -5,6 +5,7 @@
     "": {
       "name": "claude-rc-launcher",
       "dependencies": {
+        "@hono/bun": "^1.0.1",
         "@peculiar/x509": "^3.1.0",
         "hono": "^4.13.16",
         "jose": "^6.2.15",
@@ -111,6 +112,8 @@
     "@eslint/object-schema": ["@eslint/object-schema@3.0.5", "", {}, "sha512-vqTaUEgxzm+YDSdElad6PiRoX4t8VGDjCtt05zn4nU810UIx/uNEV7/lZJ6KwFThKZOzOxzXy48da+No7HZaMw=="],
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.7.3", "", { "dependencies": { "@eslint/core": "^1.2.1", "levn": "^0.4.1" } }, "sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q=="],
+
+    "@hono/bun": ["@hono/bun@1.0.1", "", { "peerDependencies": { "hono": ">=4.13.9 || ^5.0.0-0" } }, "sha512-74m9j/JY6sPhjOnZZSSPFDRWWRVqO8jI7cDTrcjXP+qnlCMOu0BCLnjq31LrKsWGWW7SsRWDzqrf9vDfnwtStA=="],
 
     "@hono/eslint-config": ["@hono/eslint-config@2.1.1", "", { "dependencies": { "@eslint/js": "^9.39.3", "eslint-config-prettier": "^10.1.8", "eslint-import-resolver-typescript": "^4.4.4", "eslint-plugin-import-x": "^4.16.1", "eslint-plugin-n": "^17.24.0", "typescript-eslint": "^8.62.1" }, "peerDependencies": { "eslint": "^9.0.0 || ^10.0.0", "typescript": "^5.0.0 || ^6.0.0" } }, "sha512-EYBjADOysloZOQOT50EEA8UHj6DbuK5bc0Y07MjJhMXRPu+ZcGginQFbs8lc9ASnYTn5pLNwMavsX687O5iL5Q=="],
 
