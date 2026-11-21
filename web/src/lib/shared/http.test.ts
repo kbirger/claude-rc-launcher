@@ -1,28 +1,8 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { ApiError, hostUrl, request } from "./http";
+import { useFetchStub } from "../../../test/fetch-stub";
 
-const realFetch = globalThis.fetch;
-const realLoc = (globalThis as any).location;
-let calls: { url: string; init?: RequestInit }[] = [];
-
-function stub(status: number, body: unknown) {
-  globalThis.fetch = (async (url: any, init?: RequestInit) => {
-    calls.push({ url: String(url), init });
-    return new Response(status === 204 ? null : JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    });
-  }) as any;
-}
-
-beforeEach(() => {
-  calls = [];
-  (globalThis as any).location = { href: "/" };
-});
-afterEach(() => {
-  globalThis.fetch = realFetch;
-  (globalThis as any).location = realLoc;
-});
+const { calls, stub } = useFetchStub();
 
 test("409 rejects with ApiError carrying status and body", async () => {
   stub(409, { error: "already running", instance: { id: "x" } });
@@ -36,7 +16,7 @@ test("409 rejects with ApiError carrying status and body", async () => {
 test("401 reloads the app root, which starts login in oidc mode and lets the proxy log in in proxy-jwt mode", async () => {
   stub(401, { error: "unauthorized" });
   await request("GET", `${hostUrl("local")}/instances`).catch(() => {});
-  expect((globalThis as any).location.href).toBe("/");
+  expect(Reflect.get(globalThis, "location").href).toBe("/");
 });
 
 test("a 204 reply resolves with undefined", async () => {
