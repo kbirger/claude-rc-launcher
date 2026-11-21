@@ -25,8 +25,12 @@ const GITHUB_PATH_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?github\/(?:repos|lo
  */
 const INSTANCE_CHANGE_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?instances\/[0-9a-f]{12}(?:\/restart)?$/;
 
-/** The update event stream sends nothing between events, so it must not hit the idle limit. */
-const EVENTS_PATH_RE = /^\/(?:cli\/)?api\/events$/;
+/**
+ * An event stream sends nothing between events (only a keepalive every 15 s), so it must not hit the idle limit.
+ * `/api/events` and `/cli/api/events` carry the update stream. `/api/sessions/events` carries the browser session list.
+ * The CLI has no sessions stream.
+ */
+const EVENTS_PATH_RE = /^\/(?:(?:cli\/)?api\/events|api\/sessions\/events)$/;
 
 type Fetch = (req: Request, server: Server<undefined>) => Response | Promise<Response>;
 

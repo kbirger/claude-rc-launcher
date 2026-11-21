@@ -57,8 +57,15 @@ export interface SessionCatalogOptions {
 /** At most this many transcripts are read for names at once, so that a big folder stays under the open-file limit. */
 const NAME_READS = 8;
 
+/** The `live` field of a session summary, copied field by field: nothing else from the running-session file reaches the answer. */
+export function liveOf(info: LiveInfo): { status?: string; remoteControl: boolean } {
+  const live: { status?: string; remoteControl: boolean } = { remoteControl: info.remoteControl };
+  if (info.status !== undefined) live.status = info.status;
+  return live;
+}
+
 /** `fn` over `items` with at most `limit` running at once. Results keep the order of `items`. */
-async function mapLimit<Value, Result>(
+export async function mapLimit<Value, Result>(
   items: readonly Value[],
   limit: number,
   fn: (value: Value) => Promise<Result>,
@@ -234,10 +241,7 @@ export class InstanceSessions {
         if (name) sessionSummary.name = name;
 
         // Field by field: nothing else from the running-session file reaches the answer.
-        if (liveInfo) {
-          sessionSummary.live = { remoteControl: liveInfo.remoteControl };
-          if (liveInfo.status !== undefined) sessionSummary.live.status = liveInfo.status;
-        }
+        if (liveInfo) sessionSummary.live = liveOf(liveInfo);
 
         if (item.branch) sessionSummary.branch = item.branch;
         if (earlier?.length)

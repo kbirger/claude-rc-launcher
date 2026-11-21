@@ -18,10 +18,13 @@
   import FolderIcon from "../../shared/ui/FolderIcon.svelte";
   import { iconKind } from "../../shared/ui/foldericon";
   import type { StartArgs } from "../instances";
+  import type { HostInfo } from "../hosts";
   import { createNewDialogModel } from "./model.svelte";
 
   let {
     host,
+    hosts = [],
+    onhost,
     onclose,
     onstart,
     busyReason,
@@ -30,12 +33,16 @@
     canSignInGitHub = true,
   }: {
     host: string;
+    /** The nodes to choose from. With more than one, the dialog starts with a node field. */
+    hosts?: HostInfo[];
+    /** The user chose another node: the page starts the dialog again for that node. */
+    onhost?: (id: string) => void;
     /** False hides Run as: the hub only lets an admin start an instance as another user. */
     canChooseUser?: boolean;
     /** False hides the GitHub sign-in: the hub only lets an admin start it. */
     canSignInGitHub?: boolean;
     onclose: () => void;
-    onstart: (other: StartArgs) => void;
+    onstart: (a: StartArgs) => void;
     busyReason?: string;
     initial?: NewInitial;
   } = $props();
@@ -48,7 +55,7 @@
     initial: () => initial,
     busyReason: () => busyReason,
     canChooseUser: () => canChooseUser,
-    onstart: (item) => onstart(item),
+    onstart: (args) => onstart(args),
   });
 
   // Escape and a click outside ask to close. A clone in progress keeps the dialog open, like the disabled Close button.
@@ -67,6 +74,26 @@
       <Button variant="outline" size="touch" onclick={onclose} disabled={model.cloneBusy}>Close</Button>
     </div>
     <Dialog.Description class="sr-only">Choose a folder, then start an instance in it.</Dialog.Description>
+    {#if hosts.length > 1}
+      <div class="my-1 flex items-center gap-2">
+        <Label id="node-label">Node</Label>
+        <Select.Root
+          type="single"
+          value={host}
+          disabled={model.cloning}
+          onValueChange={(next) => next !== host && onhost?.(next)}
+        >
+          <Select.Trigger class="w-56 data-[size=default]:h-11" aria-label="Node">
+            {hosts.find((entry) => entry.id === host)?.name ?? host}
+          </Select.Trigger>
+          <Select.Content>
+            {#each hosts as h (h.id)}<Select.Item value={h.id} label={h.name} disabled={h.status !== "ok"}>
+                {h.name}
+              </Select.Item>{/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+    {/if}
     {#if busyReason}
       <Alert.Root class="my-2 border-l-[3px] border-l-warning">
         <Alert.Description>
@@ -86,14 +113,14 @@
           type="single"
           value={model.user}
           disabled={model.cloning}
-          onValueChange={(value) => model.changeUser(value)}
+          onValueChange={(next) => model.changeUser(next)}
         >
           <Select.Trigger class="w-48 data-[size=default]:h-11" aria-labelledby="runas-label">
             {model.user}
           </Select.Trigger>
           <Select.Content>
-            {#each model.usersInfo.users as user (user.name)}<Select.Item value={user.name} label={user.name}>
-                {user.name}
+            {#each model.usersInfo.users as u (u.name)}<Select.Item value={u.name} label={u.name}>
+                {u.name}
               </Select.Item>{/each}
           </Select.Content>
         </Select.Root>
@@ -101,11 +128,11 @@
     {/if}
     <Breadcrumb.Root aria-label="Folder" class="my-1">
       <Breadcrumb.List class="gap-0">
-        {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as crumb, index (crumb.path ?? "")}
-          {#if index > 0}<Breadcrumb.Separator />{/if}
+        {#each [{ path: undefined, label: "Roots" }, ...model.crumbs] as c, i (c.path ?? "")}
+          {#if i > 0}<Breadcrumb.Separator />{/if}
           <Breadcrumb.Item>
-            {#if index === model.crumbs.length}
-              <Breadcrumb.Page class="inline-flex min-h-11 items-center px-1.5">{crumb.label}</Breadcrumb.Page>
+            {#if i === model.crumbs.length}
+              <Breadcrumb.Page class="inline-flex min-h-11 items-center px-1.5">{c.label}</Breadcrumb.Page>
             {:else}
               <Breadcrumb.Link>
                 {#snippet child({ props })}
@@ -114,9 +141,9 @@
                     type="button"
                     class="inline-flex min-h-11 items-center px-1.5 hover:underline disabled:pointer-events-none disabled:opacity-50"
                     disabled={model.cloning}
-                    onclick={() => model.go(crumb.path)}
+                    onclick={() => model.go(c.path)}
                   >
-                    {crumb.label}
+                    {c.label}
                   </button>
                 {/snippet}
               </Breadcrumb.Link>
@@ -195,10 +222,10 @@
           </Empty.Root>
         {:else}
           <Item.Group class="gap-0 divide-y">
-            {#each model.listing?.dirs ?? [] as dir (dir.path)}
+            {#each model.listing?.dirs ?? [] as d (d.path)}
               <Item.Root
                 size="xs"
-                class="min-h-11 rounded-none border-0 hover:bg-muted {dir.trusted === false
+                class="min-h-11 rounded-none border-0 hover:bg-muted {d.trusted === false
                   ? 'text-muted-foreground'
                   : ''}"
               >
@@ -207,13 +234,13 @@
                     {...props}
                     type="button"
                     class="{props.class} cursor-pointer text-left"
-                    onclick={() => model.go(dir.path)}
+                    onclick={() => model.go(d.path)}
                   >
-                    <Item.Media><FolderIcon kind={iconKind(dir)} /></Item.Media>
+                    <Item.Media><FolderIcon kind={iconKind(d)} /></Item.Media>
                     <Item.Content>
-                      <Item.Title class="line-clamp-none [overflow-wrap:anywhere]">{dir.name}</Item.Title>
+                      <Item.Title class="line-clamp-none [overflow-wrap:anywhere]">{d.name}</Item.Title>
                     </Item.Content>
-                    {#if dir.trusted === false}<span class="inline-flex flex-none" role="img" aria-label="not trusted">
+                    {#if d.trusted === false}<span class="inline-flex flex-none" role="img" aria-label="not trusted">
                         <Lock size={18} aria-hidden="true" />
                       </span>{/if}
                   </button>

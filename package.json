@@ -1,6 +1,7 @@
 {
   "name": "claude-rc-launcher",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "bun --watch server/src/index.ts",

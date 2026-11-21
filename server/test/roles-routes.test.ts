@@ -78,6 +78,11 @@ describe("route table", () => {
     expect(seen).toBeGreaterThan(40);
     expect(missing).toEqual([]);
   });
+
+  test("the sessions stream is a read route of the browser API", () => {
+    expect(mk().routes.some((r) => r.method === "GET" && r.path === "/api/sessions/events")).toBe(true);
+    expect(requiredRole("GET", "/sessions/events")).toBe("read");
+  });
 });
 
 describe("enforcement", () => {

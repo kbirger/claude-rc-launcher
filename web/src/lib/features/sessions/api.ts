@@ -1,4 +1,4 @@
-import { ApiError, hostUrl, request } from "../../shared/http";
+import { hostUrl, request } from "../../shared/http";
 
 /** `live`: set only while the session runs. `status` is "busy" or "idle", or absent for a status the node does not know. `remoteControl`: attached to Remote Control. */
 export type Session = {
@@ -21,7 +21,29 @@ const base = (host: string, instance: string) => `${hostUrl(host)}/instances/${e
 const sessionBase = (host: string, instance: string, session: string) =>
   `${base(host, instance)}/${encodeURIComponent(session)}`;
 
-export const listSessions = (host: string, instance: string) => request<Session[]>("GET", base(host, instance));
+/** A session of the hub list: the node and the instance it belongs to come with it. */
+export type GlobalSession = Session & {
+  instance: { id: string; name: string; path: string; state: string };
+  host: { id: string; name: string };
+};
+/**
+ * What the hub knows about one node's part of the list. `unavailable`: the node cannot list sessions. `loading`: no list yet.
+ * `truncated`: the node sent only its newest rows. The UI does not show it.
+ */
+export type HostSessions = {
+  id: string;
+  name: string;
+  status: "ok" | "offline" | "error" | "unavailable" | "loading";
+  error?: string;
+  scannedAt?: string;
+  truncated?: boolean;
+};
+export type AllSessions = { sessions: GlobalSession[]; hosts: HostSessions[] };
+/** One host's part of the list: the `host` event of the sessions stream. */
+export type HostPart = { host: HostSessions; rows: GlobalSession[] };
+
+/** The sessions of every node and instance, from the hub (each node answers from its own cached list). */
+export const listAllSessions = () => request<AllSessions>("GET", "/api/sessions");
 
 export const getTouched = (host: string, instance: string, session: string) =>
   request<TouchedFile[]>("GET", `${sessionBase(host, instance, session)}/touched`);
@@ -33,27 +55,23 @@ export const getChanged = (host: string, instance: string, session: string) =>
   request<ChangedFile[]>("GET", `${sessionBase(host, instance, session)}/changed`);
 
 export const listFiles = (host: string, instance: string, session: string, path: string, hidden: boolean) => {
-  const searchParams = new URLSearchParams();
-  if (path) searchParams.set("path", path);
-  if (hidden) searchParams.set("hidden", "1");
-  const qs = searchParams.toString();
+  const params = new URLSearchParams();
+  if (path) params.set("path", path);
+  if (hidden) params.set("hidden", "1");
+  const qs = params.toString();
   return request<Listing>("GET", `${sessionBase(host, instance, session)}/files${qs ? `?${qs}` : ""}`);
 };
 
 /** `abs: true`: `path` is the absolute path of a touched file (it may be outside the session folder). */
 export type FileOpts = { abs?: boolean };
-const fileKey = (fileOpts: FileOpts) => (fileOpts.abs ? "abs" : "path");
+const fileKey = (options: FileOpts) => (options.abs ? "abs" : "path");
 
-export const getPreview = (host: string, instance: string, session: string, path: string, fileOpts: FileOpts = {}) =>
+export const getPreview = (host: string, instance: string, session: string, path: string, options: FileOpts = {}) =>
   request<Preview>(
     "GET",
-    `${sessionBase(host, instance, session)}/file?${new URLSearchParams({ [fileKey(fileOpts)]: path })}`,
+    `${sessionBase(host, instance, session)}/file?${new URLSearchParams({ [fileKey(options)]: path })}`,
   );
 
 /** A plain link: the browser sends its login cookie with it. */
-export const downloadUrl = (host: string, instance: string, session: string, path: string, fileOpts: FileOpts = {}) =>
-  `${sessionBase(host, instance, session)}/download?${fileKey(fileOpts)}=${encodeURIComponent(path)}`;
-
-/** True when the node has no session files feature (404 or 501). */
-export const isUnsupported = (response: unknown): boolean =>
-  response instanceof ApiError && (response.status === 404 || response.status === 501);
+export const downloadUrl = (host: string, instance: string, session: string, path: string, options: FileOpts = {}) =>
+  `${sessionBase(host, instance, session)}/download?${fileKey(options)}=${encodeURIComponent(path)}`;

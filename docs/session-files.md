@@ -19,6 +19,13 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `livesessions.ts` | Reads the running-session files. It tells which sessions run now, their status, their name in the Claude app, and whether they use Remote Control. |
 | `sessionfs.ts` | Opens project files safely inside one root folder. It lists a folder, makes a preview of a file and opens a file for download. It never reads a transcript. |
 | `paths.ts` | Path helpers. `within` checks that a path is inside a folder. `absRefused` checks that a full path is in a refused place. |
+| `sessionindex.ts` | `SessionIndex`. It keeps the sessions of all instances of the node in memory, compares each new result with the last event, and emits a `sessions` event when the list changed. Read [The list of all sessions](#the-list-of-all-sessions). |
+| `changesource.ts` | The change source. It tells the index when to look again. `PollSource` is the first one. |
+| `sessionwatch.ts` | `WatchFlag`. It turns the heartbeat of the hub into the active state of the index. |
+| `sessionbeat.ts` | The hub beat loop. It sends the heartbeat to all nodes while somebody looks at the Sessions view. |
+| `sessionsstore.ts` | The hub store. It keeps the last list of each host in memory. |
+| `sessionsstream.ts` | The hub stream `GET /api/sessions/events` for browsers. |
+| `allsessions.ts` | The hub route `GET /api/sessions`. It answers from the hub store and calls no node. |
 | `sessionapi.ts` | The HTTP routes on the node. It is a thin layer over the session classes. It checks the instance id, the session id and the query, and it never holds a checked root as a string. |
 | `app.ts` | Mounts the routes. It builds one `SessionCatalog` for each app, with the state folders of the node. |
 | `hosts.ts` | The hub routes. They pass session requests to the node of the host. |
@@ -31,7 +38,7 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 | `markdown.ts`, `sanitize.ts` (web) | `markdown.ts` is layer 1 (`markdown-it`, strict renderer, and the complexity guard) and runs both layers. `sanitize.ts` is the DOMPurify layer. Both load as one lazy chunk, only for a markdown file. |
 | `FormattedText.svelte` (web) | The only place that inserts HTML into the page. It takes only text that went through the sanitizer. |
 | `CodeView.svelte`, `editor.ts`, `codetheme.ts`, `languages.ts` (web) | The read-only code viewer. `CodeView.svelte` loads the editor and one language by `import()`. `editor.ts` builds the CodeMirror view. `codetheme.ts` maps the colors to the theme variables. `languages.ts` holds one lazy loader for each language. |
-| `SessionList.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
+| `GlobalSessionList.svelte`, `SessionCard.svelte`, `SessionView.svelte`, `TouchedList.svelte`, `FileBrowser.svelte`, `FilePreview.svelte` (web) | The screens. |
 
 ## The request flow for a download
 
@@ -200,6 +207,31 @@ Three sources join sessions. Each one is saved in the same store:
 If two or more transcripts of the folder are joined, directly or through other transcripts, the list shows one session. It is the newest transcript.
 Its name is the name that someone set, or else the name of the first transcript of the chain (the Claude app names the
 connection from it). Its start time is the start of the first transcript. The ids of the others are in `earlier`.
+
+## The list of all sessions
+
+The Sessions view shows the sessions of all instances on all nodes. A node does not scan its folders for each request. `SessionIndex` (`sessionindex.ts`) keeps the last result in memory. The node route `GET /api/sessions` answers from it at once, with the time of the scan (`scannedAt`). The route does not change the scan rate.
+
+The index works in three steps: trigger, compare and emit.
+
+1. **Trigger.** A change source tells the index when to look again. A trigger has a scope. Scope `all` scans every instance. Scope `instance` scans one instance. Scope `live` only reads the running-session files again. The source is easy to swap. `PollSource` is the first one. It fires triggers from timers. A file watcher can replace it later, and nothing after the trigger changes.
+2. **Compare.** After a trigger, the index lays the live state (running, busy, idle, Remote Control) over the last scan. It compares the result with the last event it emitted. The `scannedAt` time alone is not a change. A new or removed session, a rename, and a change of state are changes.
+3. **Emit.** If the list changed, the index emits one full `sessions` event. Events are combined: the index sends at most one event in each 500 ms. A node with no session files sends one event with `available: false`.
+
+The 30 second rule: a move of `lastActiveAt` counts as a change only if it is 30 seconds or more from the value in the last emitted event. A busy session writes to its transcript all the time. Without this rule, each write would send the whole list.
+
+`PollSource` has two modes. In the passive mode it fires `all` every 300 000 ms (5 minutes). In the active mode it fires `live` every 3 000 ms and `all` every 10 000 ms. A start, stop, pause, resume, restart or settings change of an instance fires an `instance` or `all` trigger at once. Only one scan runs at a time. If a scan fails, the old result stays.
+
+A node is active only while a hub watches. The hub sends a heartbeat, `POST /api/sessions/watch`, every 20 000 ms while at least one browser has the sessions stream open. The first heartbeat after a quiet time makes the node active and fires an `all` trigger. Each heartbeat restarts a timer of 60 000 ms. When the timer ends with no new heartbeat, the node drops to the passive mode. If nobody looks, the hub sends no heartbeat, so the cost stays low.
+
+The hub merges the lists of all nodes in `sessionsstore.ts`. Each node sends its list in the snapshot of its event stream, and again in each `sessions` event. The hub does not call a node to answer `GET /api/sessions`. A node that is not online shows its status from the watcher at once, and a node that returns keeps its old list. Before the first list of a node arrives, the host has the status `loading`.
+
+A rename of a host makes the hub send a new `snapshot` on each open sessions stream, so the rows show the new name.
+
+### Known limits
+
+- **A large list is cut.** The hub reads at most 1 MiB in one event of the node stream. A node with some thousand sessions can go over that. So the index keeps the payload of each `sessions` event below 900 000 bytes of JSON (`MAX_SESSIONS_BYTES` in `sessionindex.ts`). The snapshot of the node stream holds the same payload, so it also stays below the cap. If the list is larger, the index keeps only the newest rows (by `lastActiveAt`) that fit, and it adds `truncated: true`. The older sessions do not show in the Sessions view. The hub keeps the flag on the status of the host, but the web app does not show it. The list of `local` on the hub comes from the same index, so the same cap applies to it.
+- A node whose first scan always fails stays `loading`, because the index emits no event until a scan succeeds.
 
 ## Cost and threading
 

@@ -1,5 +1,5 @@
 /**
- * Sets up authentik for the hub (see README, "Authentik setup"). It shows the plan and changes nothing, unless you pass --apply.
+ * Sets up authentik for the hub (see docs/authentication.md, "Authentik setup script"). It shows the plan and changes nothing, unless you pass --apply.
  * It can run again: it changes only what differs.
  *
  *   AUTHENTIK_URL=https://auth.example.com AUTHENTIK_TOKEN=... bun scripts/authentik-setup.ts --admin-user kir [--apply] [--remove-old-hub]

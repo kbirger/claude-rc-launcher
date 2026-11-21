@@ -1,4 +1,5 @@
 export { default as InstanceList } from "./InstanceList.svelte";
+export { instancesHref } from "./href";
 export { default as InstanceSettingsFields } from "./InstanceSettingsFields.svelte";
 export { startInstanceMutation } from "./mutations";
 export type { StartArgs } from "./mutations";

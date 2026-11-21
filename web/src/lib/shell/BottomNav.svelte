@@ -2,7 +2,7 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import type { ResolvedPathname } from "$app/types";
-  import Server from "@tabler/icons-svelte/icons/server";
+  import Messages from "@tabler/icons-svelte/icons/messages";
   import Home from "@tabler/icons-svelte/icons/home";
   import LayoutGrid from "@tabler/icons-svelte/icons/layout-grid";
   import { Button } from "#lib/components/ui/button/index.js";
@@ -10,7 +10,7 @@
   import MenuSheet from "./MenuSheet.svelte";
 
   let menuOpen = $state(false);
-  const left = [{ href: resolve("/nodes"), label: "Nodes", icon: Server }];
+  const left = [{ href: resolve("/sessions"), label: "Sessions", icon: Messages }];
   const right = [{ href: resolve("/instances"), label: "Instances", icon: Home }];
   const link = (active: boolean) =>
     cn(
@@ -19,7 +19,7 @@
     );
 </script>
 
-{#snippet item(it: { href: ResolvedPathname; label: string; icon: typeof Server })}
+{#snippet item(it: { href: ResolvedPathname; label: string; icon: typeof Messages })}
   <a
     href={it.href}
     class={link(page.url.pathname === it.href)}

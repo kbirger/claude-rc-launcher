@@ -3,6 +3,7 @@ import type { HostInfo } from "../features/hosts";
 import { HOSTS_KEY } from "../features/hosts";
 import type { LogLine, UpdateEntry } from "../features/updates";
 import { HISTORY_KEY, LATEST_KEY, LOGS_KEY, UPDATES_KEY } from "../features/updates";
+import { keepStream, type Visibility } from "./stream";
 
 export type Presence = {
   host: string;
@@ -18,52 +19,44 @@ const HOST_STATUS = { online: "ok", offline: "offline", restarting: "restarting"
 type Timer = ReturnType<typeof setTimeout>;
 
 /**
- * Keeps one event stream open. When the browser gives up on it (readyState CLOSED), the stream is reopened after each
- * of `delays` in turn, and then on the next window focus. Any received message resets the retries.
+ * Keeps the shared event stream open (see `keepStream` for the retries and the hidden tab) and writes its events into
+ * the query cache. After a reconnect it invalidates the keys that it owns.
  */
 export function connectEvents(options: {
   client: QueryClient;
   open?: (url: string) => EventSource;
   delays?: number[];
-  setTimeout?: (callback: () => void, ms: number) => Timer;
-  clearTimeout?: (timer: Timer) => void;
+  setTimeout?: (f: () => void, ms: number) => Timer;
+  clearTimeout?: (t: Timer) => void;
+  visibility?: Visibility;
+  hiddenMs?: number;
   /** Where the `[claude-rc]` lines go. Never gets output lines or error text of a node. */
   log?: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
 }): () => void {
   const log = options.log ?? console;
-  const open = options.open ?? ((url: string) => new EventSource(url));
-  const delays = options.delays ?? [5000, 15000, 45000];
-  const setT = options.setTimeout ?? ((callback, ms) => setTimeout(callback, ms));
-  const clearT = options.clearTimeout ?? ((entry) => clearTimeout(entry));
-  let es: EventSource | undefined;
-  let stopped = false;
-  let waiting = false;
-  let retries = 0;
-  let timer: Timer | undefined;
-  let opens = 0;
 
   // Patches status, version and error of the cached host. Returns true when the host list is stale: the version changed,
   // or the host is not in a loaded list (a new node). A cold cache is left alone.
-  const patchHost = (presence: Presence): boolean => {
+  const patchHost = (item: Presence): boolean => {
     let stale = false;
-    const status = Object.hasOwn(HOST_STATUS, presence.status) ? HOST_STATUS[presence.status] : "error";
+    const status = Object.hasOwn(HOST_STATUS, item.status) ? HOST_STATUS[item.status] : "error";
     options.client.setQueryData<HostInfo[]>(HOSTS_KEY, (cur) => {
       if (!cur) return cur;
 
-      if (!cur.some((hostInfo) => hostInfo.id === presence.host)) {
+      if (!cur.some((host) => host.id === item.host)) {
         stale = true;
         return cur;
       }
 
-      return cur.map((hostInfo) => {
-        if (hostInfo.id !== presence.host) return hostInfo;
-        stale = presence.version !== undefined && presence.version !== hostInfo.version;
-        const { error: _error, ...rest } = hostInfo;
+      return cur.map((host) => {
+        if (host.id !== item.host) return host;
+        stale = item.version !== undefined && item.version !== host.version;
+        const { error: _drop, ...rest } = host;
         return {
           ...rest,
           status,
-          ...(presence.version !== undefined ? { version: presence.version } : {}),
-          ...(presence.status !== "online" && presence.reason ? { error: presence.reason } : {}),
+          ...(item.version !== undefined ? { version: item.version } : {}),
+          ...(item.status !== "online" && item.reason ? { error: item.reason } : {}),
         };
       });
     });
@@ -84,18 +77,16 @@ export function connectEvents(options: {
       return;
     const data = ev.query.state.data as UpdateEntry[] | undefined;
     if (!Array.isArray(data)) return;
-    const next = new Map(
-      data.map((updateEntry) => [updateEntry.host, `${updateEntry.startedAt}|${updateEntry.status}`]),
-    );
+    const next = new Map(data.map((event) => [event.host, `${event.startedAt}|${event.status}`]));
 
     if (seen) {
       let hosts = false;
       let history = false;
 
-      for (const updateEntry of data) {
-        if (seen.get(updateEntry.host) === next.get(updateEntry.host)) continue;
+      for (const event of data) {
+        if (seen.get(event.host) === next.get(event.host)) continue;
         hosts = true;
-        if (updateEntry.status !== "running") history = true;
+        if (event.status !== "running") history = true;
       }
 
       if (hosts) void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
@@ -105,126 +96,75 @@ export function connectEvents(options: {
     seen = next;
   });
 
-  const clearTimer = () => {
-    if (timer !== undefined) clearT(timer);
-    timer = undefined;
-  };
-
-  const onFocus = () => {
-    globalThis.removeEventListener("focus", onFocus);
-    waiting = false;
-    retries = 0;
-    if (!stopped) connect();
-  };
-
-  const connect = () => {
-    clearTimer();
-    es?.close();
-    const eventSource = open("/api/events");
-    es = eventSource;
-    eventSource.addEventListener("open", () => {
-      retries = 0;
-      opens++;
-      log.info(`[claude-rc] event stream open (open ${opens})`);
-
-      // After a reconnect the page may have missed events: read the state again. The first open needs no read, the snapshot carries it.
-      if (opens > 1) {
-        void options.client.invalidateQueries({ queryKey: UPDATES_KEY });
-        void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
-        void options.client.invalidateQueries({ queryKey: HISTORY_KEY });
-        void options.client.invalidateQueries({ queryKey: LATEST_KEY });
-      }
-    });
-    eventSource.addEventListener("snapshot", (messageEvent) => {
-      retries = 0;
-
-      try {
-        const snap = JSON.parse(String((messageEvent as MessageEvent).data));
-        if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
-        log.info(`[claude-rc] snapshot: ${snap.updates.length} updates, ${snap.presence.length} hosts`);
-        options.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, snap.updates);
-        if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs))
-          options.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, snap.logs);
-        if ((snap.presence as Presence[]).map((presence) => patchHost(presence)).some(Boolean))
-          void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
-      } catch {
-        /* a malformed event is ignored */
-      }
-    });
-    eventSource.addEventListener("update", (messageEvent) => {
-      retries = 0;
-
-      try {
-        const parsed = JSON.parse(String((messageEvent as MessageEvent).data)) as UpdateEntry;
-        options.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, (cur = []) => {
-          const position = cur.findIndex((updateEntry) => updateEntry.host === parsed.host);
-          return position < 0
-            ? [...cur, parsed]
-            : cur.map((updateEntry, index) => (index === position ? parsed : updateEntry));
-        });
-      } catch {
-        /* a malformed event is ignored */
-      }
-    });
-    eventSource.addEventListener("log", (messageEvent) => {
-      retries = 0;
-
-      try {
-        const parsed = JSON.parse(String((messageEvent as MessageEvent).data)) as {
-          host: string;
-          line: string;
-          at: string;
-        };
-        options.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, (cur = {}) => ({
-          ...cur,
-          [parsed.host]: [...(cur[parsed.host] ?? []), { line: parsed.line, at: parsed.at }].slice(-MAX_LINES),
-        }));
-      } catch {
-        /* a malformed event is ignored */
-      }
-    });
-    eventSource.addEventListener("presence", (messageEvent) => {
-      retries = 0;
-
-      try {
-        if (patchHost(JSON.parse(String((messageEvent as MessageEvent).data)) as Presence))
-          void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
-      } catch {
-        /* a malformed event is ignored */
-      }
-    });
-    eventSource.addEventListener("error", () => {
-      // CLOSED (2): the browser gave up (a 502 from a proxy while the hub restarts, a 401, a 501). CONNECTING (0): the browser retries itself.
-      if (eventSource.readyState !== 2) {
-        log.info(`[claude-rc] event stream error (ready state ${eventSource.readyState}), the browser retries`);
-        return;
-      }
-
-      if (stopped || waiting || timer !== undefined) return;
-      log.warn("[claude-rc] event stream closed");
-
-      if (retries < delays.length) {
-        log.info(`[claude-rc] reconnect in ${delays[retries]! / 1000}s`);
-        timer = setT(() => {
-          timer = undefined;
-          if (!stopped) connect();
-        }, delays[retries++]!);
-      } else {
-        // The retries are used up (for example a real 401). Try once more on the next focus.
-        waiting = true;
-        log.warn("[claude-rc] retries used up, will reconnect on the next focus");
-        globalThis.addEventListener("focus", onFocus);
-      }
-    });
-  };
-
-  connect();
+  const stopStream = keepStream({
+    url: "/api/events",
+    name: "event stream",
+    open: options.open,
+    delays: options.delays,
+    setTimeout: options.setTimeout,
+    clearTimeout: options.clearTimeout,
+    visibility: options.visibility,
+    hiddenMs: options.hiddenMs,
+    log,
+    // After a reconnect the page may have missed events: read the state again. The first open needs no read, the snapshot carries it.
+    onOpen(opens) {
+      if (opens <= 1) return;
+      void options.client.invalidateQueries({ queryKey: UPDATES_KEY });
+      void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+      void options.client.invalidateQueries({ queryKey: HISTORY_KEY });
+      void options.client.invalidateQueries({ queryKey: LATEST_KEY });
+    },
+    listeners: {
+      snapshot(data) {
+        try {
+          const snap = JSON.parse(data);
+          if (!snap || !Array.isArray(snap.updates) || !Array.isArray(snap.presence)) return;
+          log.info(`[claude-rc] snapshot: ${snap.updates.length} updates, ${snap.presence.length} hosts`);
+          options.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, snap.updates);
+          if (snap.logs && typeof snap.logs === "object" && !Array.isArray(snap.logs))
+            options.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, snap.logs);
+          if ((snap.presence as Presence[]).map((item) => patchHost(item)).some(Boolean))
+            void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+        } catch {
+          // A snapshot that does not parse is skipped. The next event brings the state.
+        }
+      },
+      update(data) {
+        try {
+          const entry = JSON.parse(data) as UpdateEntry;
+          options.client.setQueryData<UpdateEntry[]>(UPDATES_KEY, (cur = []) => {
+            const index = cur.findIndex((existing) => existing.host === entry.host);
+            return index < 0
+              ? [...cur, entry]
+              : cur.map((existing, position) => (position === index ? entry : existing));
+          });
+        } catch {
+          // An event that does not parse is skipped. The next event brings the state.
+        }
+      },
+      log(data) {
+        try {
+          const line = JSON.parse(data) as { host: string; line: string; at: string };
+          options.client.setQueryData<Record<string, LogLine[]>>(LOGS_KEY, (cur = {}) => ({
+            ...cur,
+            [line.host]: [...(cur[line.host] ?? []), { line: line.line, at: line.at }].slice(-MAX_LINES),
+          }));
+        } catch {
+          // An event that does not parse is skipped. The next event brings the state.
+        }
+      },
+      presence(data) {
+        try {
+          if (patchHost(JSON.parse(data) as Presence)) void options.client.invalidateQueries({ queryKey: HOSTS_KEY });
+        } catch {
+          // An event that does not parse is skipped. The next event brings the state.
+        }
+      },
+    },
+  });
 
   return () => {
-    stopped = true;
     offCache();
-    clearTimer();
-    globalThis.removeEventListener("focus", onFocus);
-    es?.close();
+    stopStream();
   };
 }

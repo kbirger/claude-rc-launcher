@@ -1,7 +1,8 @@
-import { createApp } from "./app";
+import { createApp, sessionCatalogFor } from "./app";
 import type { CliDeps, Updater } from "./app";
 import { createOidcClient, oidcUserAuth } from "./auth";
 import type { OidcClient } from "./auth";
+import type { Timers } from "./changesource";
 import { cliBearerAuth } from "./cliauth";
 import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
@@ -26,6 +27,10 @@ import { rolesFrom } from "./roles";
 import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
+import { createBeatLoop } from "./sessionbeat";
+import { SessionIndex } from "./sessionindex";
+import { SessionsStore } from "./sessionsstore";
+import { WatchFlag } from "./sessionwatch";
 import { stopServer } from "./sse";
 import { staticHandler } from "./static";
 import type { UpdateHooks } from "./updateevents";
@@ -46,6 +51,8 @@ export interface HubDeps {
   update?: Updater;
   limits?: ServeLimits;
   watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number };
+  /** The timers of the local watch flag and of the beat loop. Default: real timers. */
+  watchTimers?: Timers;
 }
 
 function buildUserAuth(cfg: Config, deps: HubDeps): UserAuthStrategy {
@@ -224,6 +231,19 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const logPresence = presenceLogger((line, level) => {
     console[level](line);
   });
+  // `list` reads `watchers` only when it is called, after the watchers exist.
+  const presence = {
+    list: () => watchers.presence(),
+    onChange: (fn: (presence: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
+  };
+  // One catalog, one started index and one store for the whole hub. The index feeds the store before it starts.
+  const sessionCatalog = sessionCatalogFor(cfg);
+  const store = new SessionsStore({ localName: cfg.name, registry: hosts, presence });
+  const sessionIndex = new SessionIndex({ instances, catalog: sessionCatalog });
+  sessionIndex.subscribe((event) => {
+    store.set("local", event);
+  });
+  sessionIndex.start();
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,
@@ -239,13 +259,16 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
       }
     },
     onStep: writeStep,
+    onSessions: (host, payload) => {
+      store.set(host, payload);
+    },
     ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
     ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
   });
-  const presence = {
-    list: () => watchers.presence(),
-    onChange: (fn: (presence: Presence) => void) => (presenceSubs.add(fn), () => void presenceSubs.delete(fn)),
-  };
+  // One beat loop for the hub, built here so that stop() can end it: a stream still open at stop keeps it running.
+  const timerOptions = deps.watchTimers ? { timers: deps.watchTimers } : {};
+  const watch = new WatchFlag({ target: sessionIndex, ...timerOptions });
+  const beatLoop = createBeatLoop({ registry: hosts, presence, local: watch, ...timerOptions });
   // The restarting state of a node ends at once when its update entry settles without a new version.
   const offRecord = record.onChange((updateEntry) => {
     if (updateEntry.host !== "local" && (updateEntry.status === "unknown" || updateEntry.status === "rolled back"))
@@ -266,6 +289,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     history,
     updateLog,
     presence,
+    sessions: sessionCatalog,
+    sessionIndex,
+    sessionsStore: store,
+    beatLoop,
     ...(cloner ? { cloner } : {}),
     ...(cli ? { cli } : {}),
   });
@@ -288,6 +315,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     stop: () => {
       offRecord();
       watchers.stop();
+      beatLoop.stop();
+      watch.stop();
+      sessionIndex.stop();
+      store.stop();
       stopServer(server, app);
     },
   };

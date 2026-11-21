@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { join } from "node:path";
+import { allSessionsApi } from "./allsessions";
+import type { ChangeSource, Timers } from "./changesource";
 import { cliConfigRoute } from "./cliauth";
 import type { Cloner } from "./cloner";
 import type { Config } from "./config";
@@ -35,7 +37,14 @@ import { enforceRoles, logToken } from "./roles";
 import { UpdateRefused } from "./serviceupdate";
 import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./serviceupdate";
 import { sessionApi } from "./sessionapi";
+import { createBeatLoop } from "./sessionbeat";
+import type { BeatLoop } from "./sessionbeat";
 import { SessionCatalog } from "./sessioncatalog";
+import { SessionIndex } from "./sessionindex";
+import type { SessionIndexOptions, SessionsEvent } from "./sessionindex";
+import { SessionsStore } from "./sessionsstore";
+import { sessionsStream } from "./sessionsstream";
+import { WatchFlag } from "./sessionwatch";
 import { sseResponse, trackStreams } from "./sse";
 import { isPwaFile } from "./static";
 import type { NodeEvents } from "./updateevents";
@@ -84,7 +93,17 @@ export interface Deps {
   updateLog?: UpdateLog;
   presence?: { list(): Presence[]; onChange(fn: (presence: Presence) => void): () => void };
   keepaliveMs?: number;
+  /** The hub passes the catalog, the started index and the store it built, so that one name cache and one copy serve every route. The caller feeds this index into this store. */
+  sessions?: SessionCatalog;
+  sessionIndex?: SessionIndex;
+  sessionsStore?: SessionsStore;
+  /** The timers of the local watch flag and of the beat loop. Default: real timers. */
+  watchTimers?: Timers;
+  /** The hub passes the beat loop it built, so that its stop() can end it. */
+  beatLoop?: BeatLoop;
 }
+
+const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
 
 const ID_RE = /^[0-9a-f]{12}$/;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
@@ -126,10 +145,11 @@ export interface InstanceApiDeps {
   adoptDir?: AdoptDir;
   definition?: () => DefinitionStatus | undefined;
   sessions?: SessionCatalog;
+  sessionIndex?: SessionIndex;
 }
 
 /** The session catalog of one app. Each app factory builds one, so that all its session routes share one name cache. */
-function sessionCatalogFor(cfg: Config): SessionCatalog {
+export function sessionCatalogFor(cfg: Config): SessionCatalog {
   // The node's state folders (certificate, keys, managed hosts) are never served as a touched file.
   const refuseDirs = [cfg.stateDir, cfg.node?.tls.stateDir].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
@@ -141,10 +161,33 @@ function sessionCatalogFor(cfg: Config): SessionCatalog {
   });
 }
 
+/** The cached list of the sessions of all instances of one app. One per app factory, like the catalog, and it runs its change source. */
+function sessionIndexFor(
+  instances: Instances,
+  catalog: SessionCatalog,
+  onEvent?: (e: SessionsEvent) => void,
+  extra: Partial<SessionIndexOptions> = {},
+): SessionIndex {
+  const index = new SessionIndex({ instances, catalog, ...extra });
+  // Subscribe before start(): the first event must not come before the subscription.
+  if (onEvent) index.subscribe(onEvent);
+  index.start();
+  return index;
+}
+
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
   const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
   const hono = new Hono();
+  const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
+  const index = deps.sessionIndex ?? new SessionIndex({ instances, catalog: sessionCatalog });
+
+  // A start, stop, pause, resume, restart or settings change moves sessions in or out of the list: scan again at once.
+  hono.use("/instances/*", async (context, next) => {
+    await next();
+    if (context.req.method !== "GET" && context.res.status < 400) index.trigger({ scope: "all" });
+  });
+  hono.get("/sessions", async (context) => context.json(await index.get()));
 
   hono.get("/node", async (context) => {
     let clients: ClientVersion[] | undefined = [];
@@ -305,11 +348,12 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     });
   }
 
-  const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
   hono.route("/instances/:id/sessions", sessionApi({ instances, sessions: sessionCatalog }));
   hono.route("/instances/:id", permissionsApi({ instances, sessions: sessionCatalog }));
 
   hono.all("*", (context) => context.json({ error: "not found" }, 404));
+  // A caller that serves these routes by `request()` (the hub list of all sessions) gets the JSON error, not Hono's plain 500.
+  hono.onError(onError);
   return hono;
 }
 
@@ -340,6 +384,9 @@ export function createNodeApp(deps: {
   events?: NodeEvents;
   keepaliveMs?: number;
   definition?: () => DefinitionStatus | undefined;
+  sessionSource?: ChangeSource;
+  watchTimers?: Timers;
+  sessions?: SessionCatalog;
 }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
@@ -357,7 +404,11 @@ export function createNodeApp(deps: {
   api.use("*", async (context, next) => {
     await next();
 
-    if (isWrite(context.req.method)) {
+    // The hub heartbeat comes every 20 seconds from each hub and changes nothing that an audit needs.
+    if (
+      isWrite(context.req.method) &&
+      !(context.req.method === "POST" && new URL(context.req.url).pathname === "/api/sessions/watch")
+    ) {
       const act = context.get("act" as never) as { actSub?: string; actRole?: string } | undefined;
       const actPart = act?.actSub ? ` act=${logToken(act.actSub)}/${logToken(act.actRole ?? "unknown")}` : "";
       console.log(
@@ -385,7 +436,11 @@ export function createNodeApp(deps: {
           const first = [
             stream.writeSSE({
               event: "snapshot",
-              data: JSON.stringify({ version: VERSION, update: events.snapshotUpdate() }),
+              data: JSON.stringify({
+                version: VERSION,
+                update: events.snapshotUpdate(),
+                sessions: events.latestSessions(),
+              }),
             }),
           ];
           for (const line of events.lines()) first.push(stream.writeSSE({ event: "log", data: JSON.stringify(line) }));
@@ -404,7 +459,23 @@ export function createNodeApp(deps: {
     });
   }
 
-  const sessions = sessionCatalogFor(cfg);
+  const sessions = deps.sessions ?? sessionCatalogFor(cfg);
+  const sessionIndex = sessionIndexFor(
+    instances,
+    sessions,
+    events
+      ? (event) => {
+          events.emit(event);
+        }
+      : undefined,
+    deps.sessionSource ? { source: deps.sessionSource } : {},
+  );
+  // A hub that watches this node sends a heartbeat. Node only: the hub forwards /api/hosts/local/* to instanceApi as a whole.
+  const watch = new WatchFlag({ target: sessionIndex, ...(deps.watchTimers ? { timers: deps.watchTimers } : {}) });
+  api.post("/sessions/watch", (context) => {
+    watch.beat();
+    return context.body(null, 204);
+  });
   api.route(
     "/",
     instanceApi({
@@ -412,6 +483,7 @@ export function createNodeApp(deps: {
       instances,
       dirOwner,
       sessions,
+      sessionIndex,
       ...(deps.definition ? { definition: deps.definition } : {}),
       ...(update ? { update } : {}),
       ...(cloner ? { cloner } : {}),
@@ -489,25 +561,50 @@ export function createApp(deps: Deps): Hono {
       }
     : undefined;
   // One catalog for both calls of forwarding(), so that the hub keeps one name cache.
-  const sessions = sessionCatalogFor(cfg);
+  const sessions = deps.sessions ?? sessionCatalogFor(cfg);
+  const store =
+    deps.sessionsStore ?? new SessionsStore({ localName: cfg.name, registry, presence: deps.presence ?? NO_PRESENCE });
+
+  const feedLocal = (event: SessionsEvent) => {
+    store.set("local", event);
+  };
+
+  let sessionIndex: SessionIndex;
+
+  if (!deps.sessionIndex) sessionIndex = sessionIndexFor(instances, sessions, feedLocal);
+  else {
+    sessionIndex = deps.sessionIndex;
+
+    // A given index with a store built here: the caller could not feed it, so feed it now, with what it already sent.
+    if (!deps.sessionsStore) {
+      sessionIndex.subscribe(feedLocal);
+      const last = sessionIndex.latest();
+      if (last) feedLocal(last);
+    }
+  }
+
+  // The node API of this machine: the host `local` for the forwarding routes.
+  const localApi = instanceApi({
+    cfg,
+    instances,
+    dirOwner,
+    sessions,
+    sessionIndex,
+    ...(update ? { update } : {}),
+    ...(cloner ? { cloner } : {}),
+    ...(adoptDir ? { adoptDir } : {}),
+    ...(clientVersions ? { clientVersions } : {}),
+  });
   const forwarding = () =>
     hostsApi({
       cfg,
-      local: instanceApi({
-        cfg,
-        instances,
-        dirOwner,
-        sessions,
-        ...(update ? { update } : {}),
-        ...(cloner ? { cloner } : {}),
-        ...(adoptDir ? { adoptDir } : {}),
-        ...(clientVersions ? { clientVersions } : {}),
-      }),
+      local: localApi,
       registry,
       probeTimeoutMs: deps.probeTimeoutMs,
       requestTimeoutMs: deps.requestTimeoutMs,
       ...(deps.latest ? { latest: deps.latest } : {}),
       ...(updates ? { updates } : {}),
+      sessionsAvailable: (host) => store.available(host),
     });
   // The web page renames a host. It cannot add or remove one: that stays with the CLI.
   api.patch("/hosts/:id", async (context, next) => {
@@ -517,6 +614,23 @@ export function createApp(deps: Deps): Hono {
       `audit user=${response?.username ?? response?.sub ?? "unknown"} role=${response?.role ?? "read"} host=${context.req.param("id")} PATCH ${new URL(context.req.url).pathname} ${context.res.status}`,
     );
   });
+  const allSessions = allSessionsApi({ store });
+  // While a sessions stream is open, the beat loop tells every node, and the local index, that somebody watches.
+  const timerOpt = deps.watchTimers ? { timers: deps.watchTimers } : {};
+  const beat =
+    deps.beatLoop ??
+    createBeatLoop({
+      registry,
+      presence: deps.presence ?? NO_PRESENCE,
+      local: new WatchFlag({ target: sessionIndex, ...timerOpt }),
+      ...timerOpt,
+    });
+  // Browsers only: a CLI client must never count as a viewer. Before the /sessions mount, so that it wins.
+  api.get(
+    "/sessions/events",
+    sessionsStream({ store, viewers: beat, ...(deps.keepaliveMs ? { keepaliveMs: deps.keepaliveMs } : {}) }),
+  );
+  api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
   api.get("/updates/history", (context) =>
     deps.history ? context.json(deps.history.list()) : context.json({ error: "update history not available" }, 501),
@@ -604,6 +718,7 @@ export function createApp(deps: Deps): Hono {
     cliApi.get("/me", (context) => context.json(context.get("user" as never) as User));
     cliApi.get("/events", hubEvents);
     cliApi.route("/node-enrollment", enrollmentApi(cli.enrollment));
+    cliApi.route("/sessions", allSessions);
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());

@@ -1,5 +1,6 @@
 import { request } from "../../shared/http";
 
+/** `sessions`: false when the node cannot list sessions (the hub store has it as unavailable). Absent: not known. */
 export type HostInfo = {
   id: string;
   name: string;
@@ -13,6 +14,7 @@ export type HostInfo = {
   definition?: { installed: number; required: number };
   stale?: boolean;
   target?: string;
+  sessions?: boolean;
 };
 
 export const listHosts = () => request<HostInfo[]>("GET", "/api/hosts");

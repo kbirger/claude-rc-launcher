@@ -2,7 +2,7 @@
   // Test helper: the session screens need a query client in their context.
   import { QueryClientProvider, type QueryClient } from "@tanstack/svelte-query";
   import FileBrowser from "./FileBrowser.svelte";
-  import SessionList from "./SessionList.svelte";
+  import GlobalSessionList from "./GlobalSessionList.svelte";
   import TouchedList from "./TouchedList.svelte";
 
   type Props = { which: "touched" | "folder" | "list"; path: string; client: QueryClient };
@@ -16,6 +16,14 @@
   {:else if which === "folder"}
     <FileBrowser host="h" instance="i" session="s" {path} hidden={false} {now} />
   {:else}
-    <SessionList host="h" instance="i" {now} />
+    <GlobalSessionList
+      hosts={[{ id: "h", name: "h", status: "ok" }]}
+      nodes={[]}
+      host=""
+      instance=""
+      {now}
+      ontoggle={() => {}}
+      onclear={() => {}}
+    />
   {/if}
 </QueryClientProvider>

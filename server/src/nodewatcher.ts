@@ -1,6 +1,7 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
 import { isObject } from "./requests";
+import type { SessionsPayload } from "./sessionindex";
 import type { StepName } from "./updateevents";
 import { cutLine, MAX_AT } from "./updatelog";
 import type { UpdateLog } from "./updatelog";
@@ -50,6 +51,15 @@ const isStr = (value: unknown): value is string => typeof value === "string";
 const isStep = (value: unknown): value is StepName =>
   isStr(value) && Object.prototype.hasOwnProperty.call(STEPS, value);
 
+function asSessions(value: unknown): SessionsPayload | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const flag = record.truncated === undefined || typeof record.truncated === "boolean";
+  return isStr(record.scannedAt) && typeof record.available === "boolean" && Array.isArray(record.sessions) && flag
+    ? (record as unknown as SessionsPayload)
+    : undefined;
+}
+
 function parse(data: string): Record<string, unknown> | undefined {
   try {
     const parsed: unknown = JSON.parse(data);
@@ -69,6 +79,7 @@ export function createNodeWatchers(options: {
   log: UpdateLog;
   onPresence(presence: Presence): void;
   onStep(host: string, stepEvent: StepEvent): void;
+  onSessions?(host: string, payload: SessionsPayload): void;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -254,6 +265,8 @@ export function createNodeWatchers(options: {
             pending = new Map();
             for (const item of seen) pending.set(item, (pending.get(item) ?? 0) + 1);
             publish("online", isStr(snap.version) ? { version: snap.version.slice(0, MAX_VERSION) } : {});
+            const list = asSessions(snap.sessions);
+            if (list) safe(() => options.onSessions?.(id, list));
           } else if (ev.event === "log") {
             const record = parse(ev.data);
             if (!record || !isStr(record.line)) continue;
@@ -268,6 +281,9 @@ export function createNodeWatchers(options: {
               if (seen.length > 200) seen.shift();
               options.log.add(id, record.line, isStr(record.at) ? record.at : undefined);
             }
+          } else if (ev.event === "sessions") {
+            const list = asSessions(parse(ev.data));
+            if (list) safe(() => options.onSessions?.(id, list));
           } else if (ev.event === "step") {
             const record = parse(ev.data);
             if (!record || !isStep(record.step)) continue;
@@ -354,8 +370,10 @@ export function createNodeWatchers(options: {
     presence.delete(id);
   };
 
+  // A rename keeps the id and the client, so the stream stays open.
   const off = options.registry.onChange((change) => {
-    change.type === "added" ? start(change.id) : stopOne(change.id);
+    if (change.type === "added") start(change.id);
+    else if (change.type === "removed") stopOne(change.id);
   });
   for (const hostEntry of options.registry.list()) start(hostEntry.host.id);
 

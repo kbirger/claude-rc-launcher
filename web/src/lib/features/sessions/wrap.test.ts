@@ -38,24 +38,32 @@ const sessions: Session[] = [
     lastActiveAt: "2026-11-12T10:00:00Z",
   },
 ];
+vi.mock("../../realtime/sessions", () => ({ connectSessions: () => () => {} }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   getTouched: async () => touched,
   listFiles: async () => listing,
-  listSessions: async () => sessions,
+  listAllSessions: async () => ({
+    sessions: sessions.map((text) => ({
+      ...text,
+      instance: { id: "0123456789ab", name: "i", path: "/proj", state: "active" },
+      host: { id: "h", name: "h" },
+    })),
+    hosts: [{ id: "h", name: "h", status: "ok" }],
+  }),
 }));
 
 const open: Array<() => void> = [];
 afterEach(() => {
-  for (const helper of open.splice(0)) helper();
+  for (const url of open.splice(0)) url();
 });
 
 async function show(which: "touched" | "folder" | "list", path = "") {
   const target = document.createElement("div");
   document.body.append(target);
-  const mounted = mount(WrapHarness, { target, props: { which, path, client: createQueryClient() } });
+  const item = mount(WrapHarness, { target, props: { which, path, client: createQueryClient() } });
   open.push(() => {
-    unmount(mounted);
+    unmount(item);
     target.remove();
   });
   await vi.waitFor(() => expect(target.querySelector("li")).not.toBeNull());
@@ -63,20 +71,19 @@ async function show(which: "touched" | "folder" | "list", path = "") {
   return target;
 }
 
-const bad = (element: Element) => /\b(truncate|whitespace-nowrap|line-clamp-\d)\b/.test(element.className.toString());
+const bad = (event: Element) => /\b(truncate|whitespace-nowrap|line-clamp-\d)\b/.test(event.className.toString());
 // A badge holds one short fixed word (live, offline), never text from the user, so it may stay on one line. The session name in the list is cut with an ellipsis on purpose.
-const noClip = (htmlElement: HTMLElement) =>
+const noClip = (item: HTMLElement) =>
   expect(
-    [...htmlElement.querySelectorAll("*")].filter(
-      (element) =>
-        bad(element) && element.getAttribute("data-slot") !== "badge" && !element.hasAttribute("data-session-title"),
+    [...item.querySelectorAll("*")].filter(
+      (event) => bad(event) && event.getAttribute("data-slot") !== "badge" && !event.hasAttribute("data-session-title"),
     ),
   ).toEqual([]);
 
 test("Touched rows show the name in bold and the folder below it, both wrapping", async () => {
-  const shown = await show("touched");
-  noClip(shown);
-  const rows = shown.querySelectorAll("li");
+  const item = await show("touched");
+  noClip(item);
+  const rows = item.querySelectorAll("li");
   expect(rows).toHaveLength(3);
   const name = rows[0].querySelector("[data-file-name]")!;
   expect(name.textContent).toBe(`${long}.svelte`);
@@ -99,25 +106,25 @@ test("Touched rows show the name in bold and the folder below it, both wrapping"
 });
 
 test("Folder entries and the breadcrumb wrap", async () => {
-  const shown = await show("folder", `${"p".repeat(100)}/q`);
-  noClip(shown);
-  const names = [...shown.querySelectorAll("li span")].filter(
-    (element) => element.textContent === long || element.textContent === `${long}b/`,
+  const item = await show("folder", `${"p".repeat(100)}/q`);
+  noClip(item);
+  const names = [...item.querySelectorAll("li span")].filter(
+    (text) => text.textContent === long || text.textContent === `${long}b/`,
   );
   expect(names).toHaveLength(2);
-  for (const name of names) expect(name.className).toContain("[overflow-wrap:anywhere]");
-  const crumbs = shown.querySelectorAll('nav[aria-label="Folder"] a');
+  for (const count of names) expect(count.className).toContain("[overflow-wrap:anywhere]");
+  const crumbs = item.querySelectorAll('nav[aria-label="Folder"] a');
   // The session folder and the first folder are links. The folder you are in (q) is the current crumb and not a link.
   expect(crumbs).toHaveLength(2);
   for (const crumb of crumbs) expect(crumb.className).toContain("[overflow-wrap:anywhere]");
-  expect(shown.querySelector('nav[aria-label="Folder"] [aria-current="page"]')!.textContent).toBe("q");
+  expect(item.querySelector('nav[aria-label="Folder"] [aria-current="page"]')!.textContent).toBe("q");
 });
 
 test("Session rows cut the title to one line and wrap the details", async () => {
-  const shown = await show("list");
-  noClip(shown);
-  expect(shown.textContent).toContain(long);
-  const title = shown.querySelector("[data-session-title]")!;
+  const item = await show("list");
+  noClip(item);
+  expect(item.textContent).toContain(long);
+  const title = item.querySelector("[data-session-title]")!;
   expect(title.className).toContain("truncate");
   expect(title.getAttribute("title")).toBe(long);
 });

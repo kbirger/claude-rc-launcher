@@ -88,6 +88,7 @@ export interface HostInfo {
   definition?: { installed: number; required: number };
   stale: boolean;
   target?: string;
+  sessions?: boolean;
 }
 
 /** The longest a cached latest release is trusted before the host list asks for a new one (as in `createLatestRelease`). */
@@ -117,7 +118,7 @@ const MAX_PATH_QUERY = 4096;
 /** The most of an error body the hub reads from a node that refuses a download. */
 const MAX_ERROR_BODY = 64 * 1024;
 const LOGIN_ID_RE = /^[0-9a-f]{32}$/;
-const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
+export const OFFLINE: HostFailure[] = ["unreachable", "timeout"];
 
 const REPORT_STATUSES: readonly string[] = ["restarting", "up-to-date", "clients-only", "failed"];
 const isWrite = (method: string) => method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
@@ -138,12 +139,16 @@ export function hostsApi(options: {
   version?: string;
   /** Records each update: the record, its tracker and the call that reads the version of a node. */
   updates?: { record: UpdateRecord; tracker: UpdateTracker; probe(host: string): Promise<string | undefined> };
+  /** Whether a host has session files, from the hub store. Without it a host entry has no `sessions` field. */
+  sessionsAvailable?: (host: string) => boolean;
 }): Hono {
   const { cfg, local } = options;
   const probeTimeoutMs = options.probeTimeoutMs ?? 3_000;
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   const hubVersion = options.version ?? VERSION;
   const app = new Hono();
+  const sessionsOf = (id: string): { sessions?: boolean } =>
+    options.sessionsAvailable ? { sessions: options.sessionsAvailable(id) } : {};
 
   app.get("/", async (context) => {
     // The host list never waits on GitHub: it reads what is cached and refreshes in the background.
@@ -152,7 +157,7 @@ export function hostsApi(options: {
       void options.latest.get().catch(() => {});
     // A node can only install a release, so a local-build hub is the target through the release it is based on.
     const hubTarget = releaseOf(hubVersion);
-    const rest = await Promise.all(
+    const probed = await Promise.all(
       options.registry.list().map(async ({ host: hostConfig, client, source }): Promise<HostInfo> => {
         try {
           const reply = await client.call("GET", "/api/node", { timeoutMs: probeTimeoutMs });
@@ -206,6 +211,7 @@ export function hostsApi(options: {
         }
       }),
     );
+    const rest = probed.map((entry) => ({ ...entry, ...sessionsOf(entry.id) }));
     let localClient: string | undefined;
     let localNoClient = false;
     let localPlatform: string | undefined;
@@ -232,6 +238,7 @@ export function hostsApi(options: {
         ...(localNoClient ? { noClient: true as const } : {}),
         ...(localPlatform ? { platform: localPlatform } : {}),
         ...staleness(localTarget, hubVersion, localClient),
+        ...sessionsOf("local"),
       } satisfies HostInfo,
       ...rest,
     ]);

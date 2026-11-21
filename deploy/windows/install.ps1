@@ -374,7 +374,10 @@ if (-not $haveSideFiles) {
   try {
     $zipFile = Get-ReleaseAsset $Release $bootTemp $InstallerAsset
     $unpacked = Join-Path $bootTemp 'installer'
-    Expand-Archive -LiteralPath $zipFile -DestinationPath $unpacked -Force
+    # Not Expand-Archive: on newer Windows images its module calls a three-argument ExtractToDirectory that the
+    # .NET Framework of Windows PowerShell 5.1 does not have, and it fails with "Cannot find an overload".
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $unpacked)
     foreach ($f in @('install.ps1') + $sideFiles) {
       if (-not (Test-Path -LiteralPath (Join-Path $unpacked $f))) { throw "$InstallerAsset does not contain $f" }  # also stops a loop
     }

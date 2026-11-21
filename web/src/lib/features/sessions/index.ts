@@ -1,8 +1,19 @@
-export type { Entry, Listing, Preview, Session, TouchedFile } from "./api";
-export { downloadUrl, getPreview, getTouched, isUnsupported, listFiles, listSessions } from "./api";
-export { filesQuery, previewQuery, sessionsQuery, touchedQuery } from "./queries";
+export type {
+  AllSessions,
+  Entry,
+  GlobalSession,
+  HostPart,
+  HostSessions,
+  Listing,
+  Preview,
+  Session,
+  TouchedFile,
+} from "./api";
+export { downloadUrl, getPreview, getTouched, listAllSessions, listFiles } from "./api";
+export { allSessionsQuery, filesQuery, previewQuery, touchedQuery } from "./queries";
+export { sessionKey, sortSessions } from "./sessionorder";
 export { crumbs } from "./crumbs";
-export { default as SessionList } from "./SessionList.svelte";
+export { default as GlobalSessionList } from "./GlobalSessionList.svelte";
 export { default as SessionView } from "./SessionView.svelte";
 export { default as SessionsLink } from "./SessionsLink.svelte";
-export { inHiddenPath, sessionsHref, showHidden } from "./format";
+export { globalMatches, hostNotice, inHiddenPath, sessionsHref, showHidden } from "./format";

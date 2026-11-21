@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { resolve } from "$app/paths";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
 
-  // The instance list lives at /instances; the bare address leads there.
-  onMount(() => void goto(resolve("/instances"), { replaceState: true }));
+  // The session list lives at /sessions; the bare address leads there.
+  onMount(() => void goto(resolve("/sessions"), { replaceState: true }));
 </script>

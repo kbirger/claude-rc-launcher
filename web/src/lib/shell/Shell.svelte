@@ -1,26 +1,26 @@
 <script lang="ts">
-  import { resolve } from "$app/paths";
   import { onMount } from "svelte";
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import type { Snippet } from "svelte";
+  import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import Logo from "../shared/ui/Logo.svelte";
   import * as Alert from "#lib/components/ui/alert/index.js";
+  import * as DropdownMenu from "#lib/components/ui/dropdown-menu/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { can, meQuery } from "../features/auth";
   import { connectEvents } from "../realtime/events";
-  import { HostPicker, hostsQuery, selectionAfter, type HostInfo } from "../features/hosts";
   import {
-    UpdateBanner,
-    UpdateOutput,
-    busyReason,
-    lastEntry,
-    latestQuery,
-    reloadDecision,
-    showsFinishedPanel,
-    updatesQuery,
-  } from "../features/updates";
+    hostsQuery,
+    pruneNodes,
+    readNodes,
+    selectionAfter,
+    toggleNode,
+    writeNodes,
+    type HostInfo,
+  } from "../features/hosts";
+  import { UpdateBanner, busyReason, lastEntry, latestQuery, reloadDecision, updatesQuery } from "../features/updates";
   import { startInstanceMutation, type StartArgs } from "../features/instances";
   import { NewDialog, startErrorAction } from "../features/new-instance";
   import { createStartFlow } from "../startflow.svelte";
@@ -29,6 +29,7 @@
   import PullToRefresh from "./PullToRefresh.svelte";
   import RefreshBar from "./RefreshBar.svelte";
   import { setShell } from "./context";
+  import Avatar from "./Avatar.svelte";
 
   const HOST_KEY = "claude-rc-host";
 
@@ -44,7 +45,7 @@
     try {
       sessionStorage.setItem(HOST_KEY, id);
     } catch {
-      /* storage is unavailable: the choice is not remembered */
+      // The storage can be blocked. Then the host is not remembered.
     }
   }
 
@@ -67,25 +68,21 @@
       ...startInstanceMutation(host),
       // Awaited by the mutation, so the pending row stays until the list has the new instance.
       onSuccess: () => client.invalidateQueries({ queryKey: ["instances", host] }),
-      onError: (error: unknown, startArgs: StartArgs) =>
-        flow.startFailed(
-          host,
-          startErrorAction(error, { path: startArgs.path, user: startArgs.user ?? "" }),
-          startArgs,
-        ),
+      onError: (caught: unknown, args: StartArgs) =>
+        flow.startFailed(host, startErrorAction(caught, { path: args.path, user: args.user ?? "" }), args),
     };
   });
 
-  function startNew(startArgs: StartArgs) {
+  function startNew(args: StartArgs) {
     flow.startNew();
-    startM.mutate(startArgs);
+    startM.mutate(args);
   }
 
   // The page code only changes with a reload. When the hub runs another version than the one that served this page, reload
   // (or ask, while the New dialog is open).
   let loadedVersion: string | undefined;
   let reloadBar = $state(false);
-  const hubVersion = $derived(hostsQ.data?.find((host) => host.id === "local")?.version);
+  const hubVersion = $derived(hostsQ.data?.find((entry) => entry.id === "local")?.version);
   $effect(() => {
     const current = hubVersion;
     if (!current || reloadBar) return;
@@ -113,7 +110,7 @@
   });
   const selectedBusy = $derived(
     busyReason(
-      hosts.find((host) => host.id === flow.selected),
+      hosts.find((entry) => entry.id === flow.selected),
       lastEntry(updatesQ.data ?? [], flow.selected),
       now,
     ),
@@ -125,8 +122,21 @@
     flow.fallback(selectionAfter(hostsQ.data, flow.selected));
   });
 
-  function select(id: string) {
-    flow.select(id);
+  // The nodes that the views show: kept for the tab, and a node that is gone from the host list leaves the selection.
+  let nodes = $state<string[]>(readNodes());
+  function setNodes(ids: string[]) {
+    nodes = ids;
+    writeNodes(ids);
+  }
+  $effect(() => {
+    if (!hostsQ.data) return;
+    const pruned = pruneNodes(nodes, hostsQ.data);
+    if (pruned.length !== nodes.length) setNodes(pruned);
+  });
+
+  // The node of a new instance. The dialog restarts for the new node (it is keyed by it), so its node field comes first.
+  function pickHost(id: string) {
+    flow.pick(id);
     remember(id);
   }
 
@@ -144,12 +154,25 @@
     get user() {
       return meQ.data?.name ?? "";
     },
+    get email() {
+      return meQ.data?.email;
+    },
+    get role() {
+      return meQ.data ? (meQ.data.role ?? "read") : "";
+    },
     get logoutUrl() {
       return meQ.data?.logoutUrl ?? "/auth/logout";
     },
     // While the user loads, the role is unknown and every control shows. The hub still refuses what the role cannot do.
     can: (need) => can(meQ.data?.role, need, meQ.data !== undefined),
-    select,
+    nodes: {
+      // Only nodes that exist count. While the host list loads, or if it fails, a saved choice of another node must not empty the views.
+      get selected() {
+        return pruneNodes(nodes, hosts);
+      },
+      toggle: (id) => setNodes(toggleNode(pruneNodes(nodes, hosts), id)),
+      clear: () => setNodes([]),
+    },
     get latestError() {
       return latestQ.isError;
     },
@@ -166,41 +189,43 @@
   });
 </script>
 
-<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2">
+<!-- Up to 480px wide the header is hidden: the bottom bar has Sessions, and the menu sheet has the name and Log out. The refresh bar moves to the top of the screen. -->
+<div class="sticky top-0 z-40 h-0 min-[481px]:hidden"><div class="relative h-0.5"><RefreshBar /></div></div>
+<header class="sticky top-0 z-40 flex items-center gap-3 border-b bg-card px-4 py-2 max-[480px]:hidden">
   <h1 class="flex min-h-0 min-w-11 flex-none flex-col items-center self-stretch">
     <a
       class="flex min-h-0 min-w-11 flex-[1_1_0] flex-col items-center rounded-lg"
-      href={resolve("/instances")}
+      href={resolve("/sessions")}
       aria-label="Claude RC: home"
     >
       <Logo />
     </a>
   </h1>
-  {#if hosts.length > 1}
-    <HostPicker
-      {hosts}
-      selected={flow.selected}
-      updates={updatesQ.data ?? []}
-      {now}
-      onselect={select}
-      allowUpdate={can(meQ.data?.role, "admin", meQ.data !== undefined)}
-    />
-  {/if}
-  <span class="ml-auto hidden min-w-0 text-[0.9rem] text-muted-foreground min-[481px]:inline-flex">
-    <span class="truncate">{meQ.data?.name ?? ""}</span>
-  </span>
-  <a
-    class="inline-flex min-h-11 min-w-11 flex-none items-center justify-center text-primary"
-    href={meQ.data?.logoutUrl ?? "/auth/logout"}
-    rel="external"
-    aria-label="Logout"
-    title="Logout"
-  >
-    <LogOut size={22} aria-hidden="true" />
-  </a>
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger
+      class="ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-[0.9rem] text-muted-foreground"
+      aria-label={`Account menu${meQ.data?.name ? `: ${meQ.data.name}` : ""}`}
+    >
+      <Avatar name={meQ.data?.name ?? ""} email={meQ.data?.email} size={28} />
+      <span class="hidden truncate min-[481px]:inline">{meQ.data?.name ?? ""}</span>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end" class="w-auto min-w-40">
+      {#if meQ.data?.name}
+        <DropdownMenu.Label class="font-normal">
+          {meQ.data.name}{#if meQ.data.role}<span class="ml-1.5 text-muted-foreground">· {meQ.data.role}</span>{/if}
+        </DropdownMenu.Label>
+        <DropdownMenu.Separator />
+      {/if}
+      <DropdownMenu.Item class="min-h-11" onSelect={() => (location.href = meQ.data?.logoutUrl ?? "/auth/logout")}>
+        <LogOut size={20} aria-hidden="true" />Log out
+      </DropdownMenu.Item>
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
   <RefreshBar />
 </header>
-<div class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+<div
+  class="mx-auto flex max-w-[720px] flex-col gap-3 px-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]"
+>
   {#if reloadBar}
     <Alert.Root role="status" class="border-l-[3px] border-l-warning">
       <Alert.Description class="text-foreground">The hub was updated. Reload to get the new page.</Alert.Description>
@@ -211,19 +236,10 @@
       </Alert.Action>
     </Alert.Root>
   {/if}
-  <!-- The Updates page shows the whole panel itself. -->
-  {#if page.url.pathname !== "/updates"}
-    <UpdateBanner
-      {hosts}
-      updates={updatesQ.data ?? []}
-      latestError={latestQ.isError}
-      canRun={can(meQ.data?.role, "admin", meQ.data !== undefined)}
-    />
-  {/if}
-  {#if showsFinishedPanel(lastEntry(updatesQ.data ?? [], flow.selected))}
-    {#key flow.selected}
-      <div><UpdateOutput host={flow.selected} open={false} /></div>
-    {/key}
+  <!-- The Updates page shows the whole panel itself. Only an admin can act on an update, so everyone else gets the small
+       indicators (the arrow in the host picker, the node list) and no banner. -->
+  {#if page.url.pathname !== "/updates" && can(meQ.data?.role, "admin", meQ.data !== undefined)}
+    <UpdateBanner {hosts} updates={updatesQ.data ?? []} latestError={latestQ.isError} />
   {/if}
   <main>
     {@render children()}
@@ -235,6 +251,8 @@
   {#key flow.selected}
     <NewDialog
       host={flow.selected}
+      {hosts}
+      onhost={pickHost}
       busyReason={selectedBusy}
       initial={flow.newInitial}
       onclose={() => flow.closeNew()}

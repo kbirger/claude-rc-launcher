@@ -10,6 +10,11 @@ export interface HostEntry {
   client: HostClient;
   source: "config" | "managed";
 }
+/** A change of the list. `renamed` keeps the id and the client: only the display name is new. */
+export interface HostChange {
+  type: "added" | "removed" | "renamed";
+  id: string;
+}
 
 const FILE = "managed-hosts.json";
 const COMMENT = "Owned by claude-rc-launcher. Do not edit by hand. Put hand-written hosts in config.toml.";
@@ -32,7 +37,7 @@ interface Store {
  */
 export class HostRegistry {
   private chain: Promise<unknown> = Promise.resolve();
-  private subs = new Set<(event: { type: "added" | "removed"; id: string }) => void>();
+  private subs = new Set<(event: HostChange) => void>();
 
   private constructor(
     private entries: HostEntry[],
@@ -121,13 +126,13 @@ export class HostRegistry {
     return new HostRegistry(entries, { dir: options.stateDir, makeClient: options.makeClient });
   }
 
-  /** Runs `fn` after `add` or `remove` has changed the list. A throwing listener does not break the others. Returns the unsubscribe function. */
-  onChange(fn: (event: { type: "added" | "removed"; id: string }) => void): () => void {
+  /** Runs `fn` after `add`, `remove` or `rename` has changed the list. A throwing listener does not break the others. Returns the unsubscribe function. */
+  onChange(fn: (event: HostChange) => void): () => void {
     this.subs.add(fn);
     return () => void this.subs.delete(fn);
   }
 
-  private notify(type: "added" | "removed", id: string): void {
+  private notify(type: HostChange["type"], id: string): void {
     for (const fn of [...this.subs]) {
       try {
         fn({ type, id });
@@ -198,6 +203,7 @@ export class HostRegistry {
       const next = this.entries.map((hostEntry) => (hostEntry === response ? renamed : hostEntry));
       await this.persist(next);
       this.entries = next;
+      this.notify("renamed", id);
       return renamed;
     });
   }

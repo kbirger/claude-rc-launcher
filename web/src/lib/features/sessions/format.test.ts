@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import type { GlobalSession } from "./api";
 import {
   ago,
   humanSize,
@@ -238,4 +239,21 @@ test("sessionMatches needs every word in the name, id, branch or folder", () => 
   expect(sessionMatches(item, "LOGIN auth")).toBe(true);
   expect(sessionMatches(item, "abcdef12")).toBe(true);
   expect(sessionMatches(item, "login nope")).toBe(false);
+});
+
+test("globalMatches also matches the node name and the instance name", async () => {
+  const { globalMatches } = await import("./format");
+  const text: GlobalSession = {
+    id: "abcdef12",
+    root: "/work/proj",
+    startedAt: "",
+    lastActiveAt: "",
+    instance: { id: "i", name: "Blog", path: "/p", state: "active" },
+    host: { id: "nas", name: "Basement NAS" },
+  };
+  expect(globalMatches(text, "basement")).toBe(true);
+  expect(globalMatches(text, "BLOG")).toBe(true);
+  expect(globalMatches(text, "proj")).toBe(true);
+  expect(globalMatches(text, "zzz")).toBe(false);
+  expect(globalMatches(text, "")).toBe(true);
 });

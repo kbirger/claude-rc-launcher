@@ -11,10 +11,15 @@ export type Shell = {
   readonly updates: UpdateEntry[];
   readonly now: Date;
   readonly user: string;
+  /** The email of the user, for the avatar. Absent when the identity provider gave none or did not verify it. */
+  readonly email: string | undefined;
+  /** The role to show: a user with no role acts as read. Empty while the user is loading. */
+  readonly role: Role | "";
   readonly logoutUrl: string;
   /** Whether the user can use a control that needs this role. The hub enforces the role: this only hides what would be refused. */
   can(need: Role): boolean;
-  select(id: string): void;
+  /** The nodes that the Sessions and Instances views show. Empty means all nodes. */
+  readonly nodes: { readonly selected: string[]; toggle(id: string): void; clear(): void };
   /** True when the check for the latest release failed. */
   readonly latestError: boolean;
 };

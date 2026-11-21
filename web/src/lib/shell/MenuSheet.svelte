@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
   import Home from "@tabler/icons-svelte/icons/home";
+  import Messages from "@tabler/icons-svelte/icons/messages";
   import Server from "@tabler/icons-svelte/icons/server";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
   import Palette from "@tabler/icons-svelte/icons/palette";
@@ -9,6 +10,7 @@
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { resolve } from "$app/paths";
   import { Button } from "#lib/components/ui/button/index.js";
+  import Avatar from "./Avatar.svelte";
   import { getShell } from "./context";
   import { REPO_URL } from "./links";
 
@@ -16,6 +18,7 @@
   const shell = getShell();
   // The update history is part of Updates (the "All history" link there), so it is not a menu item. It lights up Updates.
   const items = [
+    { href: resolve("/sessions"), label: "Sessions", icon: Messages },
     { href: resolve("/instances"), label: "Instances", icon: Home },
     { href: resolve("/nodes"), label: "Nodes", icon: Server },
     { href: resolve("/updates"), label: "Updates", icon: ArrowUp, also: resolve("/history") },
@@ -29,7 +32,13 @@
     class="mx-auto max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]"
   >
     <Sheet.Header>
-      <Sheet.Title>Menu</Sheet.Title>
+      <Sheet.Title class="flex items-center gap-2">
+        {#if shell.user}<Avatar name={shell.user} email={shell.email} /><span>
+            {shell.user}{#if shell.role}<span class="ml-1.5 font-normal text-muted-foreground">
+                · {shell.role}
+              </span>{/if}
+          </span>{:else}Menu{/if}
+      </Sheet.Title>
       <Sheet.Description class="sr-only">Pages and links.</Sheet.Description>
     </Sheet.Header>
     <nav class="grid gap-1 px-4" aria-label="Menu">
@@ -55,7 +64,7 @@
         <Github size={20} aria-hidden="true" />GitHub
       </Button>
       <Button variant="ghost" size="touch" class="justify-start" externalHref={shell.logoutUrl}>
-        <LogOut size={20} aria-hidden="true" />Log out{shell.user ? ` (${shell.user})` : ""}
+        <LogOut size={20} aria-hidden="true" />Log out
       </Button>
     </nav>
   </Sheet.Content>

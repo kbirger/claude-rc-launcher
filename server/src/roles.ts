@@ -122,6 +122,9 @@ const RULES: Rule[] = [
     "/hosts/:host/instances/:id/logs",
     "/hosts/:host/instances/:id/permissions",
     "/hosts/:host/instances/:id/sessions",
+    "/sessions",
+    "/sessions/events",
+    "/hosts/:host/sessions",
     "/hosts/:host/users",
     "/hosts/:host/clone/:id",
     ...["blocked", "changed", "download", "file", "files", "permissions", "touched"].map(

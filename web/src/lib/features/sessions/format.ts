@@ -2,7 +2,7 @@
 import { resolve } from "$app/paths";
 import type { ResolvedPathname } from "$app/types";
 import { ago } from "../../shared/time";
-import type { Session, TouchedFile } from "./api";
+import type { GlobalSession, HostSessions, Session, TouchedFile } from "./api";
 
 const fwd = (path: string): string => path.replace(/\\/g, "/");
 
@@ -32,6 +32,10 @@ export function humanSize(bytes: number): string {
 }
 
 export { ago };
+
+/** The notice of a node whose part of the session list is not ok, for example "NAS: not answering". */
+export const hostNotice = (host: HostSessions): string =>
+  `${host.name}: ${host.status === "unavailable" ? "no session files on this node" : host.status === "loading" ? "loading" : host.status === "offline" ? "not answering" : (host.error ?? "error")}`;
 
 /** The calendar date and time of an instant, for a reader's locale ("Nov 12, 2:05 PM"). The year shows only when it is not the year of `now`. */
 export function shortDate(iso: string, now: number): string {
@@ -110,6 +114,17 @@ export function sessionMatches(session: Session, query: string): boolean {
     .join("\n")
     .toLowerCase();
   return words.every((word) => hay.includes(word));
+}
+
+/** `sessionMatches`, and also true when every word is in the node name or the instance name. */
+export function globalMatches(text: GlobalSession, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const own = [text.name, text.id, text.branch, text.root, worktreeName(text.root), text.host.name, text.instance.name]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  return words.every((word) => own.includes(word));
 }
 
 /** Detail parts of a session row: short id, last active time (relative, then the date), and the branch unless it is unset or a detached "HEAD". */

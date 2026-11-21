@@ -92,4 +92,29 @@ describe("NodeEvents", () => {
     }).not.toThrow();
     expect(got).toHaveLength(1);
   });
+
+  const payload = { scannedAt: "t", available: true, sessions: [] };
+
+  test("a sessions event is kept as the latest and given to subscribers", () => {
+    const ev = new NodeEvents({ now: fixed });
+    const got: NodeEvent[] = [];
+    ev.subscribe((e) => got.push(e));
+    ev.emit({ type: "sessions", ...payload });
+    expect(got).toEqual([{ type: "sessions", ...payload }]);
+    expect(ev.latestSessions()).toEqual(payload);
+  });
+
+  test("latestSessions is null before the first sessions event", () => {
+    expect(new NodeEvents().latestSessions()).toBeNull();
+  });
+
+  test("a sessions event does not touch the update step or the lines", () => {
+    const ev = new NodeEvents({ now: fixed });
+    ev.emit({ type: "step", step: "downloading", to: "1.0.0" });
+    ev.emit({ type: "log", line: "a", at: "t" });
+    const step = ev.snapshotUpdate();
+    ev.emit({ type: "sessions", ...payload });
+    expect(ev.snapshotUpdate()).toEqual(step);
+    expect(ev.lines()).toEqual([{ line: "a", at: "t" }]);
+  });
 });

@@ -2,7 +2,7 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
-  import Circle from "@tabler/icons-svelte/icons/circle";
+  import Home from "@tabler/icons-svelte/icons/home";
   import Close from "@tabler/icons-svelte/icons/x";
   import Check from "@tabler/icons-svelte/icons/circle-check";
   import Pencil from "@tabler/icons-svelte/icons/pencil";
@@ -24,18 +24,16 @@
   // `onupdate` updates a node to the latest release. It rejects with the error to show.
   let {
     hosts,
-    selected,
     onselect,
     latest,
     onrename,
     onupdate,
   }: {
     hosts: HostInfo[];
-    selected: string;
     onselect: (id: string) => void;
     latest?: string;
     onrename?: (id: string, name: string) => Promise<unknown>;
-    onupdate?: (value: HostInfo) => Promise<unknown>;
+    onupdate?: (h: HostInfo) => Promise<unknown>;
   } = $props();
 
   let editing = $state<string | null>(null);
@@ -45,19 +43,19 @@
   let updating = $state<string | null>(null);
   let ask = $state<Ask | null>(null);
   let updateError = $state<Record<string, string>>({});
-  const renamable = (hostInfo: HostInfo) => !!onrename && hostInfo.id !== "local" && hostInfo.source === "managed";
-  function edit(hostInfo: HostInfo) {
-    editing = hostInfo.id;
-    draft = hostInfo.name;
+  const renamable = (host: HostInfo) => !!onrename && host.id !== "local" && host.source === "managed";
+  function edit(host: HostInfo) {
+    editing = host.id;
+    draft = host.name;
     error = "";
   }
-  async function save(hostInfo: HostInfo) {
+  async function save(host: HostInfo) {
     const name = draft.trim();
-    if (!name || name === hostInfo.name) return void (editing = null);
+    if (!name || name === host.name) return void (editing = null);
     saving = true;
 
     try {
-      await onrename!(hostInfo.id, name);
+      await onrename!(host.id, name);
       editing = null;
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
@@ -65,33 +63,33 @@
       saving = false;
     }
   }
-  async function update(hostInfo: HostInfo) {
-    updating = hostInfo.id;
-    delete updateError[hostInfo.id];
+  async function update(host: HostInfo) {
+    updating = host.id;
+    delete updateError[host.id];
 
     try {
-      await onupdate!(hostInfo);
+      await onupdate!(host);
     } catch (caught) {
-      updateError[hostInfo.id] = caught instanceof Error ? caught.message : String(caught);
+      updateError[host.id] = caught instanceof Error ? caught.message : String(caught);
     } finally {
       updating = null;
     }
   }
 
-  const hasContent = (hostInfo: HostInfo) =>
-    hostInfo.status === "ok" || (editing === hostInfo.id && !!error) || !!updateError[hostInfo.id] || !!hostInfo.error;
+  const hasContent = (host: HostInfo) =>
+    host.status === "ok" || (editing === host.id && !!error) || !!updateError[host.id] || !!host.error;
 </script>
 
 <ul class="grid gap-3" aria-label="Nodes">
-  {#each hosts as host (host.id)}
-    {#snippet title()}{host.name}{/snippet}
+  {#each hosts as h (h.id)}
+    {#snippet title()}{h.name}{/snippet}
     {#snippet titleEditor()}
       <form
-        id="rename-{host.id}"
+        id="rename-{h.id}"
         class="flex min-w-0 flex-1 basis-32"
         onsubmit={(event) => {
           event.preventDefault();
-          void save(host);
+          void save(h);
         }}
       >
         <Input
@@ -105,43 +103,41 @@
       </form>
     {/snippet}
     <!-- The hub is the special node, so its pill has the primary tone. An agent has the plain pill. -->
-    {#snippet titleAside()}<Badge variant="outline" class={cn(BADGE, roleOf(host) === "hub" ? PRIMARY : MUTED)}>
-        {roleOf(host)}
+    {#snippet titleAside()}<Badge variant="outline" class={cn(BADGE, roleOf(h) === "hub" ? PRIMARY : MUTED)}>
+        {roleOf(h)}
       </Badge>{/snippet}
     <!-- The health of the node is a plain dot: green (ok), orange (restarting) or red (any other status). The status is the tooltip and the label for a screen reader. -->
     {#snippet status()}
       <StatusDot
-        tone={host.status === "ok" ? "ok" : host.status === "restarting" ? "warn" : "bad"}
-        label="Status: {host.status}"
+        tone={h.status === "ok" ? "ok" : h.status === "restarting" ? "warn" : "bad"}
+        label="Status: {h.status}"
       />
     {/snippet}
     <!-- One pill for each component, with its update badge, then the error texts. -->
     {#snippet content()}
-      {#if host.status === "ok"}
-        {#each components(host, latest) as component (component.key)}
+      {#if h.status === "ok"}
+        {#each components(h, latest) as c (c.key)}
           <Badge variant="outline" class={cn(BADGE, MUTED)}>
-            {component.text}
-            {#if component.outdated}
+            {c.text}
+            {#if c.outdated}
               <span
                 class="size-2 flex-none rounded-full bg-warning"
                 title="Update available"
                 role="img"
-                aria-label="Update available for the {component.key}"
+                aria-label="Update available for the {c.key}"
               ></span>
             {/if}
           </Badge>
         {/each}
       {/if}
-      {#if editing === host.id && error}<span class="w-full text-xs text-destructive" role="alert">{error}</span>{/if}
-      {#if updateError[host.id]}<span class="w-full text-xs text-destructive" role="alert">
-          {updateError[host.id]}
-        </span>{/if}
-      {#if host.status !== "ok" && host.error}
-        <span class="w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">{host.error}</span>
+      {#if editing === h.id && error}<span class="w-full text-xs text-destructive" role="alert">{error}</span>{/if}
+      {#if updateError[h.id]}<span class="w-full text-xs text-destructive" role="alert">{updateError[h.id]}</span>{/if}
+      {#if h.status !== "ok" && h.error}
+        <span class="w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">{h.error}</span>
       {/if}
     {/snippet}
     {#snippet actions()}
-      {#if editing === host.id}
+      {#if editing === h.id}
         <Button
           type="button"
           variant="ghost"
@@ -157,18 +153,18 @@
           variant="ghost"
           size="sm"
           class="h-8 px-2 text-muted-foreground"
-          onclick={() => edit(host)}
-          aria-label="Rename {host.name}"
+          onclick={() => edit(h)}
+          aria-label="Rename {h.name}"
         >
           <Pencil aria-hidden="true" />Rename
         </Button>
       {/if}
     {/snippet}
     {#snippet actionsEnd()}
-      {#if editing === host.id}
+      {#if editing === h.id}
         <Button
           type="submit"
-          form="rename-{host.id}"
+          form="rename-{h.id}"
           variant="ghost"
           size="sm"
           class="h-8 px-2 text-primary"
@@ -178,50 +174,40 @@
           <Check aria-hidden="true" />Save
         </Button>
       {:else}
-        {#if onupdate && host.status === "ok" && components(host, latest).some((component) => component.outdated)}
+        {#if onupdate && h.status === "ok" && components(h, latest).some((component) => component.outdated)}
           <!-- The yellow dot on the pill shows that a component is behind. This button updates the service and the client of the node. -->
           <Button
             variant="ghost"
             size="sm"
             class="h-8 px-2 text-warning hover:bg-warning/10 hover:text-warning"
-            disabled={updating === host.id}
+            disabled={updating === h.id}
             onclick={() =>
               (ask = {
-                title: `Update ${host.name}?`,
+                title: `Update ${h.name}?`,
                 body: "The update replaces the service and the client of this node.",
                 label: "Update",
-                run: () => update(host),
+                run: () => update(h),
               })}
-            aria-label="Update {host.name}"
+            aria-label="Update {h.name}"
           >
-            <ArrowUp aria-hidden="true" />{updating === host.id ? "Updating..." : "Update"}
+            <ArrowUp aria-hidden="true" />{updating === h.id ? "Updating..." : "Update"}
           </Button>
         {/if}
-        <!-- One button for the state of the node in the app: Active (the node in use), Use (it can be used), or Unavailable (it is not running). -->
-        <Button
-          variant="ghost"
-          size="sm"
-          class={cn("h-8 min-w-24 px-2", host.id === selected && "text-primary disabled:opacity-100")}
-          disabled={host.id === selected || host.status !== "ok"}
-          onclick={() => onselect(host.id)}
-          aria-pressed={host.id === selected}
-        >
-          {#if host.id === selected}<Check aria-hidden="true" />Active{:else if host.status === "ok"}<Circle
-              aria-hidden="true"
-            />Use{:else}<Circle aria-hidden="true" />Unavailable{/if}
+        <!-- Shows the instances of this node (the page sets the node filter to it). A node that is not running has nothing to show. -->
+        <Button variant="ghost" size="sm" class="h-8 px-2" disabled={h.status !== "ok"} onclick={() => onselect(h.id)}>
+          <Home aria-hidden="true" />{h.status === "ok" ? "Show instances" : "Unavailable"}
         </Button>
       {/if}
     {/snippet}
     <li class="min-w-0">
       <EntityCard
         {title}
-        titleText={host.name}
-        titleEditor={editing === host.id ? titleEditor : undefined}
+        titleText={h.name}
+        titleEditor={editing === h.id ? titleEditor : undefined}
         {titleAside}
         {status}
-        selected={host.id === selected}
-        children={hasContent(host) ? content : undefined}
-        actions={editing === host.id || renamable(host) ? actions : undefined}
+        children={hasContent(h) ? content : undefined}
+        actions={editing === h.id || renamable(h) ? actions : undefined}
         {actionsEnd}
       />
     </li>
