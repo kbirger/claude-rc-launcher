@@ -124,7 +124,11 @@ describe("the SSH parts of a node on Linux", () => {
     expect(statSync(dir).mode & 0o777).toBe(0o711);
     expect(statSync(join(dir, ID1)).mode & 0o777).toBe(0o700);
     expect(chowns).toContainEqual([join(dir, ID1), 1000, 1001]);
-    expect(chowns).toContainEqual([socketOf(ID1), 1000, 1001]);
+    // The socket is chowned in the staging folder of the node, then moved into the folder of the instance.
+    expect(
+      chowns.some(([path, uid, gid]) => path.startsWith(join(dir, ".stage")) && uid === 1000 && gid === 1001),
+    ).toBe(true);
+    expect(chowns.map(([path]) => path)).not.toContain(socketOf(ID1));
     await ssh.stop();
     expect(existsSync(socketOf(ID1))).toBe(false);
   });
@@ -286,6 +290,16 @@ describe("removeGrantFiles", () => {
       expect(existsSync(join(dir, ID1, name))).toBe(false);
     expect(existsSync(join(dir, ID2, "g2.config"))).toBe(false);
     expect(existsSync(join(dir, "top.sock"))).toBe(true); // only the folders of the instances are cleaned
+  });
+
+  test("removes the .pub file of a grant and a socket left in the staging folder", async () => {
+    mkdirSync(join(dir, ID1), { recursive: true });
+    mkdirSync(join(dir, ".stage"), { recursive: true });
+    writeFileSync(join(dir, ID1, "g1.pub"), "x");
+    writeFileSync(join(dir, ".stage", "0b1c.sock"), "x");
+    await removeGrantFiles(dir);
+    expect(existsSync(join(dir, ID1, "g1.pub"))).toBe(false);
+    expect(existsSync(join(dir, ".stage", "0b1c.sock"))).toBe(false);
   });
 
   test("never follows a link", async () => {

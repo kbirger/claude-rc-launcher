@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -124,7 +124,15 @@ function makeAgent(
   forwardSign: (keyBlob: Uint8Array, data: Uint8Array, flags: number) => Promise<Uint8Array>,
   signTimeoutMs?: number,
 ): GrantAgent {
-  agent = new GrantAgent({ dir, grantId: "g1", publicBlob: BLOB, comment: COMMENT, forwardSign, signTimeoutMs });
+  agent = new GrantAgent({
+    dir,
+    topDir: dir,
+    grantId: "g1",
+    publicBlob: BLOB,
+    comment: COMMENT,
+    forwardSign,
+    signTimeoutMs,
+  });
   return agent;
 }
 
@@ -245,6 +253,7 @@ describe("GrantAgent", () => {
   test("a failed start leaves no listener and no socket file", async () => {
     const failing = new GrantAgent({
       dir,
+      topDir: dir,
       grantId: "g2",
       publicBlob: BLOB,
       comment: COMMENT,
@@ -259,6 +268,8 @@ describe("GrantAgent", () => {
     );
     expect(failed).toBe(true);
     expect(await Bun.file(path).exists()).toBe(false);
+    // The socket was made in the staging folder: nothing stays there either.
+    expect(await readdir(join(dir, ".stage"))).toEqual([]);
     const refused = await connect(path).then(
       () => false,
       () => true,

@@ -82,10 +82,11 @@ describe("SshControl", () => {
     expect(JSON.stringify(answer.parsed)).not.toContain("key");
     expect(statSync(socketPath).mode & 0o777).toBe(0o600);
     expect(statSync(path.join(dir, "inst-1")).mode & 0o777).toBe(0o700);
-    expect(chowns).toEqual([
-      [path.join(dir, "inst-1"), 1234, 1234],
-      [socketPath, 1234, 1234],
-    ]);
+    // The folder, then the socket in the staging folder of the node before it moves into the folder.
+    expect(chowns.length).toBe(2);
+    expect(chowns[0]).toEqual([path.join(dir, "inst-1"), 1234, 1234]);
+    expect(chowns[1]?.[0].startsWith(path.join(dir, ".stage") + path.sep)).toBe(true);
+    expect(chowns[1]?.slice(1)).toEqual([1234, 1234]);
   });
 
   test("request passes the instance id of the socket that was used", async () => {

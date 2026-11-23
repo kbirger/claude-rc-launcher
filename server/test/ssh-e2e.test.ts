@@ -172,6 +172,17 @@ function talk(socketPath: string, line: string): Promise<Record<string, any>> {
   });
 }
 
+/** The default public keys of the account that runs the test (`~/.ssh/id_*.pub` of its passwd home), read only. */
+function ownDefaultKeys(): string {
+  const folder = path.join(os.userInfo().homedir, ".ssh");
+  const names = ["id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"];
+  return names
+    .map((name) => path.join(folder, name))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, "utf8").trim() + "\n")
+    .join("");
+}
+
 /** Every file below a folder. */
 function filesBelow(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -281,6 +292,15 @@ describe("SSH delegation with a real sshd", () => {
       const key = await call("POST", `/targets/${TARGET}/key`, { unlock });
       expect(key.status).toBe(200);
       expect((await call("POST", `/targets/${TARGET}/pin`, { hostKey })).status).toBe(200);
+
+      // The own default keys of the account that runs the probe are authorized, but the install line is missing: the
+      // test must fail, because the probe offers only the key of the grant. The keys are only read, never written.
+      writeFileSync(authorizedKeys, ownDefaultKeys());
+      const withoutLine = await call("POST", `/targets/${TARGET}/test`, { node: "local", unlock });
+      expect(withoutLine.status).toBe(200);
+      expect(withoutLine.body.ok).toBe(false);
+      expect((await call("GET", `/targets/${TARGET}`)).body.state).toBe("draft");
+
       writeFileSync(authorizedKeys, `${String(key.body.installLine)}\n`);
       const tested = await call("POST", `/targets/${TARGET}/test`, { node: "local", unlock });
       expect(tested.status).toBe(200);
@@ -317,6 +337,25 @@ describe("SSH delegation with a real sshd", () => {
       const first = await ssh();
       expect(first.output).toBe("");
       expect(first.code).toBe(0);
+
+      // ssh finds the default keys through the passwd home, not $HOME, so the test cannot plant one. Its debug output
+      // lists every key that it will try: only the public key file of the grant may be there.
+      const verbose = await run([
+        need(sshPath),
+        "-v",
+        "-F",
+        sshConfig,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        TARGET,
+        "true",
+      ]);
+      expect(verbose.code).toBe(0);
+      const attempts = verbose.output.split("\n").filter((line) => line.includes("Will attempt key:"));
+      expect(attempts.length).toBeGreaterThan(0);
+      for (const line of attempts) expect(line).toContain(sshConfig.replace(/\.config$/, ".pub"));
 
       // Revoke ends it: the socket is gone and the next sign-in fails.
       expect((await call("POST", `/grants/${pending.id}/revoke`)).status).toBe(200);
