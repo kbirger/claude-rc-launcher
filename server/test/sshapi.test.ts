@@ -369,6 +369,38 @@ describe("targets", () => {
     ).toBe(400);
   });
 
+  test("POST /targets/:id/key with a prf hub makes a second key with another secret", async () => {
+    const { call, keys } = await setup({ setUp: false });
+    await call("POST", "/setup", "admin", { method: "prf", credentialId: "Y3JlZA" });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+
+    for (const id of ["nas", "web"])
+      await call("POST", "/targets", "admin", {
+        id,
+        address: "10.0.0.5",
+        account: "root",
+        systemType: "linux",
+        nodes: ["node1"],
+      });
+
+    // Each target has a salt of its own, so each target has its own passkey secret.
+    const one = { method: "prf", secret: Buffer.alloc(32, 1).toString("base64url") };
+    const two = { method: "prf", secret: Buffer.alloc(32, 2).toString("base64url") };
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: one })).status).toBe(200);
+    expect((await call("POST", "/targets/web/key", "admin", { unlock: two })).status).toBe(200);
+    expect(keys.publicLine("web")).toContain("claude-rc:web");
+  });
+
+  test("two setups at once, one for each mount, give one 200 and one 409", async () => {
+    const { call, keys } = await setup({ setUp: false });
+    const answers = await Promise.all([
+      call("POST", "/setup", "admin", { method: "passphrase" }),
+      call("POST", "/setup", "admin", { method: "passphrase" }, "/cli/api/ssh"),
+    ]);
+    expect(answers.map((item) => item.status).sort()).toEqual([200, 409]);
+    expect(keys.isSetUp()).toBe(true);
+  });
+
   test("POST /targets/:id/key with a wrong unlock gives 403 and creates no key", async () => {
     const { call, targets, keys } = await setup();
     await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });

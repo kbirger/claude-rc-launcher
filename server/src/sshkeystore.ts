@@ -37,10 +37,10 @@ export interface UnlockedKey {
   destroy(): void;
 }
 
-/** `wrong-unlock`: the secret does not open the key. `no-key`: no key for the target. `not-set-up`: no unlock method yet. */
+/** `wrong-unlock`: the secret does not open the key. `no-key`: no key for the target. `not-set-up`: no unlock method yet. `already-set-up`: `setup` ran before. */
 export class KeyError extends Error {
   constructor(
-    readonly code: "wrong-unlock" | "no-key" | "not-set-up" | "bad-recovery-key",
+    readonly code: "wrong-unlock" | "no-key" | "not-set-up" | "bad-recovery-key" | "already-set-up",
     message: string,
   ) {
     super(message);
@@ -151,8 +151,8 @@ export class SshKeyStore {
 
   /**
    * Chooses the unlock method and stores the recovery public key. The public key is tried once, so that a bad one
-   * (a wrong length or a low order point) is refused here and not at the first key. Refused when keys exist: their
-   * copies are sealed under the old method.
+   * (a wrong length or a low order point) is refused here and not at the first key. Refused when the store is set up
+   * already (a second recovery key would replace the first one, and its code would open nothing).
    */
   async setup(input: {
     method: "prf" | "passphrase";
@@ -168,6 +168,7 @@ export class SshKeyStore {
     }
 
     await this.mutate((draft) => {
+      if (draft.method) throw new KeyError("already-set-up", "SSH access is set up already");
       if (draft.keys.size > 0) throw new Error("keys exist, so the unlock method cannot change");
       draft.method = input.method;
       draft.recoveryPublicKey = input.recoveryPublicKey;

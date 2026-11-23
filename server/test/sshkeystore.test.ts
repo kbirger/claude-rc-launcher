@@ -182,6 +182,26 @@ describe("sshkeystore", () => {
     }
   });
 
+  test("a second setup is refused with already-set-up and keeps the first recovery key", async () => {
+    const store = await ready();
+    const other = newRecovery();
+    const results = await Promise.allSettled([
+      store.setup({ method: "passphrase", recoveryPublicKey: other.publicKey }),
+      store.setup({ method: "prf", credentialId: "cred2", recoveryPublicKey: other.publicKey }),
+    ]);
+
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      const reason = (result as PromiseRejectedResult).reason as KeyError;
+      expect(reason).toBeInstanceOf(KeyError);
+      expect(reason.code).toBe("already-set-up");
+    }
+
+    expect(store.method()).toBe("prf");
+    expect(store.credentialId()).toBe("cred");
+    expect(((await readJson()) as unknown as { recoveryPublicKey: string }).recoveryPublicKey).toBe(recovery.publicKey);
+  });
+
   test("a method that is not the store method is wrong-unlock", async () => {
     const store = await ready();
     const error = await failure(store.create("web", { method: "passphrase", secret: data }));
