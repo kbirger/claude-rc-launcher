@@ -123,6 +123,14 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 | `node roots remove <dir> [--config <file>] [--no-restart]` | Run on a node: remove a root folder and restart the service. |
 | `node update [--binary <file>] [--release <tag>]` | Run on a node: update its server binary and restart it. |
 
+### SSH
+
+| Command | What it does |
+|---|---|
+| `ssh targets` | Run in a session: list the targets that the instance can ask for. |
+| `ssh request <target> [--minutes <n>] [--reason <text>]` | Run in a session: ask the owner for SSH access, wait for the approval, and print the `ssh` command. |
+| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
+
 ### Updates
 
 | Command | What it does |
@@ -154,6 +162,42 @@ claude-rc stop <id>
 If the folder is not trusted for the chosen user, `start` fails. `--force` adds the folder to the `~/.claude.json` of that user and then starts the instance. If the host is too old to accept `--force`, the CLI stops with `The host did not accept --force. Update the hub and the node.`
 
 `--user` needs a node that runs as root in system scope. If the node is too old to know `--user`, the CLI stops with `this host does not support --user. Update the node.` and starts or creates nothing. This applies to `start` and `mkdir`. An empty `--user` is an error. A `--user` other than the default `service_user` needs the `admin` role.
+
+## SSH delegation
+
+SSH delegation lets a session log in to another machine, with the approval of the owner. Read [SSH delegation](ssh-delegation.md) for the setup.
+
+The commands `ssh targets` and `ssh request` run inside a session of an instance that has Allow SSH requests on. They talk to the node of the instance through the socket in `CLAUDE_RC_SSH_CONTROL`. They need no login and no hub address, because they do not call the hub. Outside such a session, they print `SSH access is not turned on for this instance`.
+
+```sh
+claude-rc ssh targets
+claude-rc ssh request slon --minutes 30 --reason "read logs"
+```
+
+`ssh request` waits for the owner. A grant lasts 60 minutes by default and 480 minutes at most. The command prints the path of the socket, the path of the SSH configuration file and the command `ssh -F <config> <target>`. A request that nobody answers fails after 10 minutes.
+
+The command `ssh target add` runs on your own machine, with the saved login. It needs the `admin` role. It has two forms. An external target does not run the launcher, and the command needs `--address` and `--identity`:
+
+```sh
+claude-rc ssh target add router --type dropbear --address 192.168.1.1 --account admin --node local --identity ~/.ssh/id_ed25519
+```
+
+A managed target runs the launcher as a node of this hub. Use `--managed` with its host id, and no key of your own:
+
+```sh
+claude-rc ssh target add slon --managed slon --type linux --account root --node local
+```
+
+These flags apply:
+
+- `--type` is `linux`, `windows`, `synology` or `dropbear`.
+- `--account` is the account on the target. It has no spaces, quotes, commas or backslashes. It does not start with a dash.
+- `--node` lists the host ids of the nodes that can reach the target, separated by commas and with no spaces.
+- `--port` is the SSH port. The default is 22.
+- `--fingerprint SHA256:<value>` answers the host key question in advance for an external target.
+- `--no-test` skips the one-minute test grant.
+
+The command makes the key, pins the host key, installs the key and runs the test. For a passphrase, you type it in the terminal. For a passkey, the command prints a link to the web UI and waits until you unlock there. The key of `--identity` stays on your machine and never goes to the hub. If a step fails, the target stays in `draft` on the hub.
 
 ## Instance settings
 
