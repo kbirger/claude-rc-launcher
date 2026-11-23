@@ -1,5 +1,20 @@
 import type { QueryClient } from "@tanstack/svelte-query";
-import { deleteTarget, patchTarget, putNode, setup, type UnlockMethod } from "./api";
+import {
+  authorizeManaged,
+  createKey,
+  createTarget,
+  deleteTarget,
+  patchTarget,
+  pinHostKey,
+  pinManaged,
+  putNode,
+  scanHostKey,
+  setup,
+  testTarget,
+  type NewTarget,
+  type Unlock,
+  type UnlockMethod,
+} from "./api";
 import { SSH_KEY } from "./queries";
 
 // The recovery code is in the answer of the setup call, and only there. `gcTime: 0` drops the mutation from the cache
@@ -30,4 +45,51 @@ export const deleteTargetMutation = (client: QueryClient) => ({
   mutationKey: [...SSH_KEY, "delete-target"] as const,
   mutationFn: (id: string) => deleteTarget(id),
   onSettled: () => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
+});
+
+// The wizard calls. The two that carry an unlock (`key` and `test`) keep no data: `gcTime: 0` drops the mutation as
+// soon as nothing watches it, and the caller resets it in a `finally`, so that the secret in the variables lives only
+// for the call. Each call refetches the targets, because the list shows the state of the target.
+const refreshTargets = (client: QueryClient) => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] });
+
+export const createTargetMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "create-target"] as const,
+  mutationFn: (body: NewTarget) => createTarget(body),
+  onSettled: () => refreshTargets(client),
+});
+
+export const createKeyMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "create-key"] as const,
+  mutationFn: ({ id, unlock }: { id: string; unlock: Unlock }) => createKey(id, unlock),
+  gcTime: 0,
+  onSettled: () => refreshTargets(client),
+});
+
+export const testTargetMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "test-target"] as const,
+  mutationFn: ({ id, node, unlock }: { id: string; node: string; unlock: Unlock }) => testTarget(id, node, unlock),
+  gcTime: 0,
+  onSettled: () => refreshTargets(client),
+});
+
+export const scanHostKeyMutation = () => ({
+  mutationKey: [...SSH_KEY, "scan-host-key"] as const,
+  mutationFn: ({ id, node }: { id: string; node: string }) => scanHostKey(id, node),
+});
+
+export const pinHostKeyMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "pin-host-key"] as const,
+  mutationFn: ({ id, hostKey }: { id: string; hostKey: string }) => pinHostKey(id, hostKey),
+  onSettled: () => refreshTargets(client),
+});
+
+export const pinManagedMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "pin-managed"] as const,
+  mutationFn: (id: string) => pinManaged(id),
+  onSettled: () => refreshTargets(client),
+});
+
+export const authorizeManagedMutation = () => ({
+  mutationKey: [...SSH_KEY, "authorize-managed"] as const,
+  mutationFn: (id: string) => authorizeManaged(id),
 });

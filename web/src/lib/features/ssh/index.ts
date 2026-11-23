@@ -40,9 +40,22 @@ export {
   setup,
   testTarget,
 } from "./api";
-export { deleteTargetMutation, patchTargetMutation, putNodeMutation, setupMutation } from "./mutations";
+export {
+  authorizeManagedMutation,
+  createKeyMutation,
+  createTargetMutation,
+  deleteTargetMutation,
+  patchTargetMutation,
+  pinHostKeyMutation,
+  pinManagedMutation,
+  putNodeMutation,
+  scanHostKeyMutation,
+  setupMutation,
+  testTargetMutation,
+} from "./mutations";
 export { grantsQuery, SSH_KEY, statusQuery, targetsQuery } from "./queries";
 export { default as NodeAccessList } from "./NodeAccess.svelte";
 export { default as SetupForm } from "./SetupForm.svelte";
 export { default as SshPage } from "./SshPage.svelte";
 export { default as TargetList } from "./TargetList.svelte";
+export { default as TargetWizard } from "./TargetWizard.svelte";

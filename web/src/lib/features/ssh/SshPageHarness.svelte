@@ -3,9 +3,13 @@
   import { QueryClientProvider, type QueryClient } from "@tanstack/svelte-query";
   import SshPage from "./SshPage.svelte";
 
-  let { client }: { client: QueryClient } = $props();
+  let {
+    client,
+    target = null,
+    onclose,
+  }: { client: QueryClient; target?: string | null; onclose?: () => void } = $props();
 </script>
 
 <QueryClientProvider {client}>
-  <SshPage />
+  <SshPage {target} {onclose} />
 </QueryClientProvider>
