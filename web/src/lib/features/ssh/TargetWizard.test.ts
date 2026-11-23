@@ -439,3 +439,25 @@ test("Cancel calls onclose", () => {
   press("Cancel");
   expect(closed).toBe(1);
 });
+
+test("the node select shows the node that the scan uses when the admin does not touch it", async () => {
+  answers["POST /api/ssh/targets/nas/scan"] = () => ({ body: { keys: [{ line: ED, fingerprint: "SHA256:ed" }] } });
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node1", "node2"] });
+  const select = document.querySelector<HTMLSelectElement>('select[id$="-scan-node"]')!;
+  expect(select.selectedIndex).toBe(0);
+  expect(select.value).toBe("node1");
+  press("Scan host key");
+  await waitText("SHA256:ed");
+  expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
+});
+
+test("the node select of the test step shows the node that the test uses", async () => {
+  answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: true } });
+  await toTest({ nodes: ["node1", "node2"] });
+  const select = document.querySelector<HTMLSelectElement>('select[id$="-test-node"]')!;
+  expect(select.selectedIndex).toBe(0);
+  press("Test connection");
+  await waitText("nas is ready");
+  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: select.value });
+  expect(select.value).toBe("node1");
+});

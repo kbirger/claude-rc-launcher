@@ -276,7 +276,7 @@
             {#if allowed.length > 1}
               <div class="grid gap-1">
                 <Label for="{uid}-scan-node">Node</Label>
-                <select id="{uid}-scan-node" class={field} bind:value={nodeChoice}>
+                <select id="{uid}-scan-node" class={field} bind:value={() => node, (value) => (nodeChoice = value)}>
                   {#each allowed as item (item)}
                     <option value={item}>{hostLabel(item, hosts.data)}</option>
                   {/each}
@@ -358,7 +358,7 @@
           {#if allowed.length > 1}
             <div class="grid gap-1">
               <Label for="{uid}-test-node">Node</Label>
-              <select id="{uid}-test-node" class={field} bind:value={nodeChoice}>
+              <select id="{uid}-test-node" class={field} bind:value={() => node, (value) => (nodeChoice = value)}>
                 {#each allowed as item (item)}
                   <option value={item}>{hostLabel(item, hosts.data)}</option>
                 {/each}
