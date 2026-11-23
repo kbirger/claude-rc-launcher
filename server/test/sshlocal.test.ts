@@ -165,7 +165,7 @@ async function askAgent(socketPath: string): Promise<Uint8Array> {
   const request = Uint8Array.of(0, 0, 0, 1, 11);
 
   return new Promise((resolve, reject) => {
-    void Bun.connect({
+    Bun.connect({
       unix: socketPath,
       socket: {
         open: (socket) => {
@@ -185,7 +185,7 @@ async function askAgent(socketPath: string): Promise<Uint8Array> {
         },
         error: () => {},
       },
-    });
+    }).catch(reject);
   });
 }
 
@@ -293,9 +293,31 @@ describe("SSH for the hub-local host", () => {
 
   test("stop ends the local controls and removes their sockets", async () => {
     const hub = await boot();
+    await prepare(hub);
     await until(() => existsSync(hub.controlSocket), "control socket");
+    const answer = talk(hub.controlSocket, '{"op":"request","targetId":"nas"}\n');
+    await until(async () => ((await hub.call("GET", "/grants")).body as any[]).length === 1, "pending grant");
+    const [grant] = (await hub.call("GET", "/grants")).body as any[];
+    expect((await hub.call("POST", `/grants/${grant.id}/approve`, { unlock })).status).toBe(200);
+    const agentSocket = (await answer).socket as string;
+    expect(existsSync(agentSocket)).toBe(true);
     hub.hub.stop();
     await until(() => !existsSync(hub.controlSocket), "control socket removed");
+    // The agent of the grant goes too, and nothing listens on its path any more.
+    await until(() => !existsSync(agentSocket), "agent socket removed");
+    const outcome = await askAgent(agentSocket).then(
+      () => "answered",
+      () => "refused",
+    );
+    expect(outcome).toBe("refused");
+  });
+
+  test("startHub without sshDir is refused under test, so that the live folder is never touched", async () => {
+    const { createLocalSsh } = await import("../src/sshnodewiring");
+    const { NodeEvents } = await import("../src/updateevents");
+    expect(() =>
+      createLocalSsh({ cfg: {} as Config, instances: {} as never, events: new NodeEvents(), platform: "linux" }),
+    ).toThrow("needs a dir under test");
   });
 
   test("the Windows guard leaves the local host without grant routes", async () => {

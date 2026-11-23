@@ -70,7 +70,7 @@ async function setup() {
     userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
     hosts: [{ id: "nas", name: "NAS", url: `https://localhost:${node.port}`, ca: certPem, auth: { type: "secret", secret: sec.secret } }],
   } as unknown as Config;
-  const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc }));
+  const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh") }));
   stoppers.push(hub.stop);
   const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
   const h = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "application/json", ...extra });
@@ -154,7 +154,7 @@ describe("hub key enrollment end to end", () => {
       hosts: [],
     } as unknown as Config;
     const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
-    const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, cliVerify }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify }));
     stoppers.push(hub.stop);
     const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -199,7 +199,7 @@ describe("update end to end", () => {
       hosts: [],
     } as unknown as Config;
     const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify, update: hubUp.update }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify, update: hubUp.update }));
     stoppers.push(hub.stop);
     const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -245,7 +245,7 @@ describe("a slow update end to end", () => {
       hosts: [],
     } as unknown as Config;
     const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify, update: slow, limits }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify, update: slow, limits }));
     stoppers.push(hub.stop);
     const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -286,7 +286,7 @@ describe("hub stop and the beat loop", () => {
       hosts: [],
     } as unknown as Config;
     const timers = fakeTimers();
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watchTimers: timers }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), watchTimers: timers }));
     let stopped = false;
     stoppers.push(() => void (stopped || hub.stop()));
     const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
@@ -316,7 +316,7 @@ describe("hub key log line", () => {
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));
     let hub: Awaited<ReturnType<typeof startHub>>;
     try {
-      hub = await startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify });
+      hub = await startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify });
     } finally {
       console.log = log;
     }
@@ -446,7 +446,7 @@ describe("node events end to end", () => {
     } as unknown as Config;
     // Short reconnect waits stand in for the real 1 to 30 seconds.
     const watcher = { sleep: (ms: number) => Bun.sleep(Math.min(ms, 20)), random: () => 0 };
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watcher }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), watcher }));
     stoppers.push(hub.stop);
     const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;

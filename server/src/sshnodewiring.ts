@@ -289,6 +289,9 @@ export function localHostClient(router: Hono, host = LOCAL_HOST): HostClient {
  * node has and an in-process client for them. Linux only: on Windows there is no client.
  */
 export function createLocalSsh(options: NodeSshOptions): LocalSsh {
+  // `start` removes grant files below the folder. A test that forgets the folder would reach the live one of the machine.
+  if (process.env.NODE_ENV === "test" && options.dir === undefined && options.platform !== "win32")
+    throw new Error("createLocalSsh needs a dir under test: the default folder is the live one of the machine");
   const node = createNodeSsh(options);
   if (!node.ssh) return node;
   const api = new Hono();
