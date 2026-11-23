@@ -106,7 +106,7 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 **Interfaces:**
 - Produces:
   - `type Sealed = { iv: string; ct: string }` (base64url)
-  - `deriveWrapKey(method: "prf" | "passphrase", secret: Uint8Array, salt: Uint8Array): Promise<Uint8Array>` (32 bytes. HKDF-SHA256 for `prf`. scrypt with N=32768 for `passphrase`)
+  - `deriveWrapKey(method: "prf" | "passphrase", secret: Uint8Array, salt: Uint8Array): Promise<Uint8Array>` (32 bytes. HKDF-SHA256 for `prf`. scrypt with N=32768 and `maxmem` of 67108864 for `passphrase`)
   - `seal(wrapKey: Uint8Array, plain: Uint8Array, aad: string): Sealed` (AES-256-GCM)
   - `unseal(wrapKey: Uint8Array, sealed: Sealed, aad: string): Uint8Array` (throws `WrapError` on a wrong key or changed `aad`)
   - `newRecovery(): { publicKey: string; code: string }` (X25519. `code` is the private key in groups of four, base32)
@@ -239,9 +239,9 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 - Produces:
   - `type GrantState = "pending" | "active" | "ended"`
   - `type EndReason = "expired" | "revoked" | "denied" | "node-lost" | "target-disabled" | "hub-restart"`
-  - `interface Grant { id: string; nodeId: string; instanceId: string; targetId: string; minutes: number; reason?: string; test: boolean; state: GrantState; requestedAt: number; approvedAt?: number; endsAt?: number; approvedBy?: string; endReason?: EndReason }`
+  - `interface Grant { id: string; requestId?: string; nodeId: string; instanceId: string; targetId: string; minutes: number; reason?: string; test: boolean; state: GrantState; requestedAt: number; approvedAt?: number; endsAt?: number; approvedBy?: string; endReason?: EndReason }`
   - `class GrantError extends Error` with `status: 400 | 404 | 409 | 403`
-  - `class GrantStore { constructor(options: { now?: () => number; timers?: Timers; audit: (line: string) => void; onEnd: (grant: Grant) => void; defaultMinutes?: number; maxMinutes?: number }); request(input: { nodeId: string; instanceId: string; targetId: string; minutes?: number; reason?: string; test?: boolean }): Grant; approve(id: string, by: string, key: UnlockedKey, minutes?: number): Grant; deny(id: string, by: string): Grant; revoke(id: string, by: string): Grant; endWhere(match: (grant: Grant) => boolean, reason: EndReason): Grant[]; sign(id: string, keyBlob: Uint8Array, data: Uint8Array): Uint8Array; get(id: string): Grant | undefined; list(): Grant[] }`
+  - `class GrantStore { constructor(options: { now?: () => number; timers?: Timers; audit: (line: string) => void; onEnd: (grant: Grant) => void; defaultMinutes?: number; maxMinutes?: number; pendingMinutes?: number }); request(input: { nodeId: string; instanceId: string; targetId: string; requestId?: string; minutes?: number; reason?: string; test?: boolean }): Grant; approve(id: string, by: string, key: UnlockedKey, minutes?: number): Grant; deny(id: string, by: string): Grant; revoke(id: string, by: string): Grant; endWhere(match: (grant: Grant) => boolean, reason: EndReason): Grant[]; sign(id: string, keyBlob: Uint8Array, data: Uint8Array): Uint8Array; get(id: string): Grant | undefined; list(): Grant[] }`
   - `Timers` is the type from `server/src/changesource.ts`.
   - When a grant ends, the store calls `key.destroy()` and then `onEnd`.
 
@@ -258,6 +258,7 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
   - `revoke ends the grant and destroys the key`
   - `endWhere ends every matching active grant`
   - `deny ends a pending grant with reason denied`
+  - `a pending grant expires after 10 minutes with reason expired and onEnd runs`
   - `every transition writes one audit line`
   - `an audit line for a sign holds the key fingerprint and no data`
 - [ ] **Step 2: Run** `bun test server/test/sshgrants.test.ts`. Expect FAIL.
@@ -307,10 +308,18 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 
 **Interfaces:**
 - Consumes: `GrantAgent` (Task 7).
-- Produces: `sshNodeApi(options: { dir: string; events: NodeEvents; resolveUser?: (instanceId: string) => { uid: number; gid: number } | undefined; keyscan?: (address: string, port: number) => Promise<string[]> }): Hono`
+- Produces:
+  - `sshNodeApi(options: { dir: string; events: NodeEvents; broker: SshBroker; resolveUser?: (instanceId: string) => { uid: number; gid: number } | undefined; keyscan?: (address: string, port: number) => Promise<string[]>; probe?: (config: string, targetId: string) => Promise<{ code: number; stderr: string }> }): Hono`
+  - `type TargetSummary = { id: string; account: string; address: string }`
+  - `type AccessResult = { socket: string; config: string; endsAt: number }`
+  - `class SshBroker { constructor(options: { events: NodeEvents; requestTimeoutMs?: number }); request(input: { instanceId: string; targetId: string; minutes?: number; reason?: string }): Promise<AccessResult>; activate(requestId: string, result: AccessResult): void; reject(requestId: string, reason: string): void; setTargets(list: TargetSummary[]): void; targets(): TargetSummary[] }`
+  - `request` emits an `ssh.request` event with a new `requestId` and waits. `activate` resolves the wait. `reject` fails it with the reason. After `requestTimeoutMs` (default 600000) the wait fails with the text `no answer from the hub`.
 - Routes, all behind the existing node auth:
   - `GET /status` returns `{ ssh: boolean; dir: boolean }`. The field `ssh` tells whether the `ssh` program exists.
-  - `POST /grants` takes `{ grantId, instanceId, targetId, publicKey, address, port, account, hostKey, endsAt }`. It starts a `GrantAgent`, writes `<dir>/<grantId>.config` and `<dir>/<grantId>.known_hosts`, and returns `{ socket, config }`.
+  - `POST /grants` takes `{ grantId, requestId?, instanceId, targetId, publicKey, address, port, account, hostKey, endsAt }`. It starts a `GrantAgent`, writes `<dir>/<grantId>.config` and `<dir>/<grantId>.known_hosts`, and returns `{ socket, config }`. If `requestId` is set, it also calls `broker.activate(requestId, { socket, config, endsAt })`.
+  - `POST /requests/:requestId/reject` takes `{ reason }`, calls `broker.reject`, and answers 204.
+  - `PUT /targets` takes `{ targets: TargetSummary[] }`, calls `broker.setTargets`, and answers 204.
+  - `POST /grants/:id/probe` runs `ssh -F <config> -o BatchMode=yes -o ConnectTimeout=10 <targetId> true` through `probe` and returns `{ code, stderr }`.
   - `DELETE /grants/:id` stops the agent and removes the three files.
   - `POST /sign-result` takes `{ signId, signature?: string, error?: string }` and settles the waiting sign request.
   - `POST /reset` stops every agent.
@@ -328,6 +337,11 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
   - `sign-result with an error gives the ssh client a failure`
   - `an unknown signId in sign-result gives 404`
   - `reset stops every agent`
+  - `POST /grants with a requestId resolves the waiting broker request`
+  - `POST /requests/:id/reject makes the waiting request fail with the reason`
+  - `a broker request with no answer fails after requestTimeoutMs`
+  - `PUT /targets sets the list that broker.targets returns`
+  - `POST /grants/:id/probe returns the exit code and the stderr of the probe`
   - `scan returns the fingerprint of each key line`
   - `a Windows node answers 501`. If the Windows app in `server/src/win/` mounts the routes, use it. Otherwise test the guard function.
   - `server/src/win/`
@@ -410,11 +424,15 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 
 **Interfaces:**
 - Consumes: Tasks 3, 4, 6. `HostClient` from `server/src/hostclient.ts`.
-- Produces: `class SshService { constructor(deps: { keys: SshKeyStore; targets: TargetStore; grants: GrantStore; client: (hostId: string) => HostClient | undefined; audit: (line: string) => void }); onNodeEvent(hostId: string, event: string, data: unknown): void; onNodeOnline(hostId: string): Promise<void>; onNodeOffline(hostId: string): void; approve(grantId: string, by: string, unlock: UnlockSecret, minutes?: number): Promise<Grant>; revoke(grantId: string, by: string): Promise<Grant>; scanHostKey(targetId: string, hostId: string): Promise<{ line: string; fingerprint: string }[]>; pinManaged(targetId: string): Promise<{ line: string; fingerprint: string }[]>; authorizeManaged(targetId: string): Promise<void>; test(targetId: string, hostId: string, by: string, unlock: UnlockSecret): Promise<Grant> }`
+- Produces: `class SshService { constructor(deps: { keys: SshKeyStore; targets: TargetStore; grants: GrantStore; client: (hostId: string) => HostClient | undefined; audit: (line: string) => void }); onNodeEvent(hostId: string, event: string, data: unknown): void; onNodeOnline(hostId: string): Promise<void>; onNodeOffline(hostId: string): void; approve(grantId: string, by: string, unlock: UnlockSecret, minutes?: number): Promise<Grant>; revoke(grantId: string, by: string): Promise<Grant>; scanHostKey(targetId: string, hostId: string): Promise<{ line: string; fingerprint: string }[]>; pinManaged(targetId: string): Promise<{ line: string; fingerprint: string }[]>; authorizeManaged(targetId: string): Promise<void>; test(targetId: string, hostId: string, by: string, unlock: UnlockSecret): Promise<{ ok: boolean; error?: string }>; pushTargets(hostId: string): Promise<void>; onGrantEnd(grant: Grant): void }`
 - `onNodeEvent` handles `ssh.request` (creates a pending grant) and `ssh.sign` (signs with the grant key and calls `POST /ssh/sign-result` on the node).
 - `approve` opens the key, activates the grant, then calls `POST /ssh/grants` on the node. If the node call fails, the grant ends with reason `node-lost` and the key is destroyed.
 - `pinManaged` reads the host key with `GET /ssh/hostkey` on the managed host and stores it. `authorizeManaged` calls `POST /ssh/authorize` on the managed host with the account, the system type and the install line. Both throw `TargetError` with status 409 for an external target.
-- `onNodeOnline` calls `POST /ssh/reset`. `onNodeOffline` ends the active grants of that node with reason `node-lost`.
+- `onNodeOnline` calls `POST /ssh/reset`, then `pushTargets`. `pushTargets` sends `PUT /ssh/targets` with the id, account and address of each target that lists the host and is `ready` or `draft`.
+- `onGrantEnd` is the `onEnd` hook of the `GrantStore`. For a pending grant with a `requestId`, it calls `POST /ssh/requests/:requestId/reject`. For an active grant, it calls `DELETE /ssh/grants/:id`.
+- A `ssh.request` event carries a `requestId`, which the service stores on the grant. `approve` passes it in `POST /ssh/grants`.
+- `test` uses the instance id `test`. After `approve` it calls `POST /ssh/grants/:id/probe`, then ends the grant. If the probe exits 0, `test` sets the target to `ready` and returns `{ ok: true }`. Otherwise it returns `{ ok: false, error }` with the stderr text, and keeps the state.
+- `onNodeOffline` ends the active grants of that node with reason `node-lost`.
 
 - [ ] **Step 1: Write the failing tests** with a fake `HostClient` that records calls.
   Test names:
@@ -428,7 +446,12 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
   - `an ssh.sign event for an ended grant calls sign-result with an error`
   - `onNodeOnline calls POST /ssh/reset`
   - `onNodeOffline ends the active grants of that node`
-  - `test makes a one-minute grant, approves it and returns it`
+  - `test makes a one-minute grant with the instance id test, approves it, probes it and ends it`
+  - `test sets the target to ready when the probe exits 0`
+  - `test returns the stderr text and keeps the state when the probe fails`
+  - `a pending grant that ends calls POST /ssh/requests/:requestId/reject`
+  - `an active grant that ends calls DELETE /ssh/grants/:id`
+  - `onNodeOnline pushes the targets of that node after the reset`
   - `pinManaged stores the host key from GET /ssh/hostkey`
   - `authorizeManaged sends the account, the system type and the install line`
   - `pinManaged and authorizeManaged on an external target throw 409`
@@ -448,7 +471,7 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 - Test: `server/test/sshapi.test.ts`
 
 **Interfaces:**
-- Produces: `sshApi(options: { service: SshService; keys: SshKeyStore; targets: TargetStore; grants: GrantStore; user: (context: Context) => string }): Hono`. Request bodies carry the unlock as `{ method: "prf" | "passphrase"; secret: string }` with the secret in base64url.
+- Produces: `sshApi(options: { service: SshService; keys: SshKeyStore; targets: TargetStore; grants: GrantStore; hostAddress: (hostId: string) => string | undefined; user: (context: Context) => string }): Hono`. Request bodies carry the unlock as `{ method: "prf" | "passphrase"; secret: string }` with the secret in base64url.
 - Routes and minimum roles (a route that is not set up answers 409 `SSH access is not set up`, except `GET /status` and `POST /setup`):
   - `write`: `GET /status`, `GET /targets`, `GET /grants`
   - `admin`, setup: `POST /setup` (returns the recovery code once) and `PUT /nodes/:host`.
@@ -469,6 +492,9 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
   - `a write user gets 403 on approve`
   - `every write route writes an audit line with the user`
   - `PATCH /targets/:id to disabled ends its active grants`
+  - `POST /targets with managedHost and no address takes the address from the host`
+  - `POST /targets/:id/test answers with ok and error from the service`
+  - `a change to a target or to node access pushes the targets to the affected nodes`
   - `GET /targets/:id/provision returns a shell and a script that holds the install line`
   - `POST /targets/:id/authorize on an external target gives 409`
   - `the same routes answer under /cli/api/ssh`
@@ -509,6 +535,7 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
   - `with the passphrase method the command asks for the passphrase and sends it with the key route`
   - `with the passkey method the command prints the link and polls until the key exists`
   - `the command exits 1 when the key does not exist after 10 minutes`
+  - `with the passkey method the test step prints the link and polls until the target is ready`
   - `a fingerprint that differs from --fingerprint exits 1 and pins nothing`
   - `without --fingerprint the command asks, and an answer other than y exits 1 and pins nothing`
   - `a failed provision prints the ssh error text and leaves the target in draft`
@@ -537,7 +564,7 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
   - `a unit from before this change parses as false`
   - `a patch with sshRequests true restarts the instance`
 - [ ] **Step 2: Run** `bun test server/test/instancesettings.test.ts server/test/unit.test.ts`. Expect FAIL.
-- [ ] **Step 3: Implement** the setting. In `nodemain.ts`, create the folder `/run/claude-rc-ssh` with mode 755. For each opted-in instance, create a subfolder with mode 700, owned by the instance user, and one `SshControl`. If the instance opts out, stop its control.
+- [ ] **Step 3: Implement** the setting. In `nodemain.ts`, build one `SshBroker` (Task 8), pass it to `sshNodeApi`, and give each `SshControl` the `broker.targets` and `broker.request` functions. Create the folder `/run/claude-rc-ssh` with mode 755. For each opted-in instance, create a subfolder with mode 700, owned by the instance user, and one `SshControl`. If the instance opts out, stop its control.
 - [ ] **Step 4: Run** `bun test server`. Expect PASS.
 - [ ] **Step 5: Commit** `feat: per-instance SSH opt-in`.
 
