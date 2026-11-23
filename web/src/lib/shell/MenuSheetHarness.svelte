@@ -1,10 +1,12 @@
 <script lang="ts">
   // Test helper: the menu reads the role from the shell in its context.
   import type { Role } from "#lib/features/auth";
+  import { createQueryClient } from "#lib/shared/query";
+  import { QueryClientProvider, type QueryClient } from "@tanstack/svelte-query";
   import { setShell } from "./context";
   import MenuSheet from "./MenuSheet.svelte";
 
-  let { role }: { role: Role } = $props();
+  let { role, client = createQueryClient() }: { role: Role; client?: QueryClient } = $props();
   // The role of a test does not change while the harness is mounted.
   // svelte-ignore state_referenced_locally
   const mine = role;
@@ -17,4 +19,6 @@
   } as never);
 </script>
 
-<MenuSheet open={true} />
+<QueryClientProvider {client}>
+  <MenuSheet open={true} />
+</QueryClientProvider>

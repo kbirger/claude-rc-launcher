@@ -1,7 +1,8 @@
 import { ApiError, hostUrl, request } from "../../shared/http";
 
 export type SpawnMode = "same-dir" | "worktree";
-export type InstanceSettings = { createSession: boolean; spawnMode: SpawnMode };
+// `sshRequests` is missing on an old node: that reads as off.
+export type InstanceSettings = { createSession: boolean; spawnMode: SpawnMode; sshRequests?: boolean };
 export type SettingsPatch = Partial<InstanceSettings>;
 // The built-in values of a node. The page uses them only for a node whose help has no `defaults`.
 export const DEFAULT_SETTINGS: InstanceSettings = { createSession: true, spawnMode: "same-dir" };
@@ -10,7 +11,7 @@ export const DEFAULT_SETTINGS: InstanceSettings = { createSession: true, spawnMo
 // The text comes from the node, so the page renders it as text, never as HTML.
 export type SettingsHelp = {
   settings: {
-    key: "createSession" | "spawnMode";
+    key: "createSession" | "spawnMode" | "sshRequests";
     label: string;
     values: { value: boolean | string; label: string; explanation: string }[];
     limits?: string;

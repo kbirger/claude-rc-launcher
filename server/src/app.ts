@@ -16,7 +16,7 @@ import { HostRegistry } from "./hostregistry";
 import { hostsApi } from "./hosts";
 import { HttpError } from "./instances";
 import type { Instances } from "./instances";
-import { SETTINGS_HELP, settingsFromArgs } from "./instancesettings";
+import { settingsFromArgs, settingsHelpFor } from "./instancesettings";
 import { LatestError } from "./latest";
 import type { createLatestRelease } from "./latest";
 import type { Presence } from "./nodewatcher";
@@ -298,7 +298,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   });
   // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
   hono.get("/instance-settings", (context) =>
-    context.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs) }),
+    context.json({ ...settingsHelpFor(process.platform), defaults: settingsFromArgs(cfg.claudeRcArgs) }),
   );
   hono.patch("/instances/:id", async (context) => {
     const id = context.req.param("id");

@@ -2,6 +2,9 @@
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import { createQuery } from "@tanstack/svelte-query";
+  import type { Grant } from "./api";
+  import ApproveSheet from "./ApproveSheet.svelte";
+  import GrantList from "./GrantList.svelte";
   import { statusQuery } from "./queries";
   import NodeAccess from "./NodeAccess.svelte";
   import SetupForm from "./SetupForm.svelte";
@@ -27,6 +30,9 @@
     wizard = null;
     onclose?.();
   };
+  // The approval sheet is outside the branches too, for the same reason. It holds the grant as it was when the owner
+  // opened it.
+  let approving = $state<Grant | null>(null);
   const nodeCount = $derived(query.data?.nodes.length ?? 0);
 </script>
 
@@ -45,6 +51,7 @@
     {nodeCount === 1 ? "node" : "nodes"}.
   </p>
   <div class="mt-4 grid gap-6">
+    <GrantList onapprove={(grant) => (approving = grant)} />
     <NodeAccess nodes={query.data.nodes} />
     <TargetList />
     <div>
@@ -55,5 +62,10 @@
 {#if wizard && query.data?.setUp && !holding}
   {#key wizard.id ?? ""}
     <TargetWizard targetId={wizard.id} status={query.data} onclose={closeWizard} />
+  {/key}
+{/if}
+{#if approving && query.data?.setUp && !holding}
+  {#key approving.id}
+    <ApproveSheet grant={approving} status={query.data} onclose={() => (approving = null)} />
   {/key}
 {/if}

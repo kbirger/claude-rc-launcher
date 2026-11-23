@@ -191,7 +191,9 @@ export function createInstancesModel(opts: { host: string; client: QueryClient; 
 }
 
 const sameSettings = (instanceSettings: InstanceSettings, right: InstanceSettings) =>
-  instanceSettings.createSession === right.createSession && instanceSettings.spawnMode === right.spawnMode;
+  instanceSettings.createSession === right.createSession &&
+  instanceSettings.spawnMode === right.spawnMode &&
+  (instanceSettings.sshRequests ?? false) === (right.sshRequests ?? false);
 const isSettings = (value: unknown): value is InstanceSettings =>
   !!value &&
   typeof (value as InstanceSettings).createSession === "boolean" &&
@@ -275,6 +277,8 @@ export function createSettingsDialogModel(opts: {
       const patch: SettingsPatch = {};
       if (value.createSession !== current.createSession) patch.createSession = value.createSession;
       if (value.spawnMode !== current.spawnMode) patch.spawnMode = value.spawnMode;
+      if ((value.sshRequests ?? false) !== (current.sshRequests ?? false))
+        patch.sshRequests = value.sshRequests ?? false;
       error = "";
       notice = "";
       const sent = { ...value };

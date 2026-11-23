@@ -11,8 +11,13 @@ const open: Array<() => void> = [];
 
 beforeEach(() => {
   statusAnswer = { status: 200, body: { setUp: false, nodes: [] } };
-  vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
-    const answer = init?.method === "POST" ? { status: 200, body: { recoveryCode: CODE } } : statusAnswer;
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    const answer =
+      init?.method === "POST"
+        ? { status: 200, body: { recoveryCode: CODE } }
+        : String(url) === "/api/ssh/grants"
+          ? { status: 200, body: [] }
+          : statusAnswer;
     return new Response(JSON.stringify(answer.body), {
       status: answer.status,
       headers: { "content-type": "application/json" },
@@ -84,7 +89,7 @@ function showReady(props: { target?: string | null; onclose?: () => void } = {})
               state: "draft",
               notes: [],
             }
-          : path === "/api/ssh/targets" || path === "/api/hosts"
+          : path === "/api/ssh/targets" || path === "/api/ssh/grants" || path === "/api/hosts"
             ? []
             : {};
     const code = path === "/api/ssh/status" ? statusAnswer.status : 200;
@@ -125,4 +130,44 @@ test("a failed status refetch leaves the wizard open", async () => {
   expect(client.getQueryState([...SSH_KEY, "status"])?.status).toBe("error");
   expect(document.body.textContent).toContain("Step 2 of 6: Key");
   expect(button("Create key")).toBeDefined();
+});
+
+test("a failed status refetch leaves an open approval sheet on screen", async () => {
+  let statusFails = false;
+  const grant = {
+    id: "g1",
+    nodeId: "node1",
+    instanceId: "inst1",
+    targetId: "nas",
+    minutes: 30,
+    test: false,
+    state: "pending",
+    requestedAt: 1,
+  };
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
+    const path = String(url);
+    if (path === "/api/ssh/status" && statusFails) return new Response("{}", { status: 500 });
+    const body =
+      path === "/api/ssh/status"
+        ? { setUp: true, method: "passphrase", nodes: [] }
+        : path === "/api/ssh/grants"
+          ? [grant]
+          : path === "/api/ssh/targets" || path === "/api/hosts"
+            ? []
+            : {};
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const client = createQueryClient();
+  const target = document.createElement("div");
+  document.body.append(target);
+  const mounted = mount(SshPageHarness, { target, props: { client } });
+  open.push(() => unmount(mounted));
+  await vi.waitFor(() => expect(button("Approve")).toBeDefined());
+  button("Approve").click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("claimed by the session"));
+  statusFails = true;
+  await client.refetchQueries({ queryKey: [...SSH_KEY, "status"] });
+  flushSync();
+  expect(client.getQueryState([...SSH_KEY, "status"])?.status).toBe("error");
+  expect(document.body.textContent).toContain("claimed by the session");
 });

@@ -1,13 +1,16 @@
 import type { QueryClient } from "@tanstack/svelte-query";
 import {
+  approveGrant,
   authorizeManaged,
   createKey,
   createTarget,
   deleteTarget,
+  denyGrant,
   patchTarget,
   pinHostKey,
   pinManaged,
   putNode,
+  revokeGrant,
   scanHostKey,
   setup,
   testTarget,
@@ -92,4 +95,29 @@ export const pinManagedMutation = (client: QueryClient) => ({
 export const authorizeManagedMutation = () => ({
   mutationKey: [...SSH_KEY, "authorize-managed"] as const,
   mutationFn: (id: string) => authorizeManaged(id),
+});
+
+// The grant calls. Each one refetches the grants, because the list shows the state of the grant. The approval carries an
+// unlock, so it keeps no data: `gcTime: 0` drops the mutation as soon as nothing watches it, and the caller resets it in
+// a `finally`, so that the secret in the variables lives only for the call.
+const refreshGrants = (client: QueryClient) => client.invalidateQueries({ queryKey: [...SSH_KEY, "grants"] });
+
+export const approveGrantMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "approve-grant"] as const,
+  mutationFn: ({ id, unlock, minutes }: { id: string; unlock: Unlock; minutes?: number }) =>
+    approveGrant(id, unlock, minutes),
+  gcTime: 0,
+  onSettled: () => refreshGrants(client),
+});
+
+export const denyGrantMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "deny-grant"] as const,
+  mutationFn: (id: string) => denyGrant(id),
+  onSettled: () => refreshGrants(client),
+});
+
+export const revokeGrantMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "revoke-grant"] as const,
+  mutationFn: (id: string) => revokeGrant(id),
+  onSettled: () => refreshGrants(client),
 });
