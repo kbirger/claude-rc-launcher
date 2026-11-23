@@ -71,7 +71,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isSystemType(value: unknown): value is SystemType {
+export function isSystemType(value: unknown): value is SystemType {
   return typeof value === "string" && SYSTEM_TYPES.includes(value);
 }
 
