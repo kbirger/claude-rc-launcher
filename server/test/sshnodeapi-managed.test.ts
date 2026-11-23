@@ -169,6 +169,26 @@ describe("managed SSH targets on the node", () => {
     expect(response.status).toBe(401);
   });
 
+  test("POST /authorize answers 501 and runs nothing for a shell script when the node has no user switch", async () => {
+    const standalone = sshManagedApi({ hostKeyFile: keyFile });
+    standalone.onError(onError);
+    const response = await standalone.request("/authorize", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ account: "alice", systemType: "linux", line: LINE }),
+    });
+    expect(response.status).toBe(501);
+    expect(await response.text()).toContain("the node has no user switch");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("POST /authorize answers 400 with the text when the Windows account has no profile", async () => {
+    result = { code: 1, stderr: "no profile for account 'bob': the account has never logged on" };
+    const response = await authorize({ systemType: "windows", account: "bob" });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("no profile for account");
+  });
+
   test("sshManagedApi works on its own", async () => {
     const standalone = sshManagedApi({ hostKeyFile: keyFile });
     standalone.onError(onError);
