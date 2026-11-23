@@ -73,10 +73,16 @@ export class GrantAgent {
       },
     });
 
-    await chmod(this.path, 0o600);
+    try {
+      await chmod(this.path, 0o600);
 
-    if (this.options.uid !== undefined && this.options.gid !== undefined) {
-      await chown(this.path, this.options.uid, this.options.gid);
+      if (this.options.uid !== undefined && this.options.gid !== undefined) {
+        await chown(this.path, this.options.uid, this.options.gid);
+      }
+    } catch (error) {
+      // A failed start must not leave a listening socket that nobody owns.
+      await this.stop();
+      throw error;
     }
 
     return this.path;

@@ -242,6 +242,26 @@ describe("GrantAgent", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 
+  test("a failed start leaves no listener and no socket file", async () => {
+    const failing = new GrantAgent({
+      dir,
+      grantId: "g2",
+      publicBlob: BLOB,
+      comment: COMMENT,
+      forwardSign: okSign,
+      uid: 2 ** 32,
+      gid: 2 ** 32,
+    });
+    const path = join(dir, "g2.sock");
+    await expect(failing.start()).rejects.toThrow();
+    expect(await Bun.file(path).exists()).toBe(false);
+    const refused = await connect(path).then(
+      () => false,
+      () => true,
+    );
+    expect(refused).toBe(true);
+  });
+
   test("stop removes the socket file and refuses new connections", async () => {
     const running = makeAgent(okSign);
     const path = await running.start();
