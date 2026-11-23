@@ -477,6 +477,22 @@ describe("targets", () => {
     expect((await call("PATCH", "/targets/nope", "admin", { state: "draft" })).status).toBe(404);
   });
 
+  for (const [name, change] of [
+    ["PATCH to disabled", ["PATCH", "/targets/nas", { state: "disabled" }]],
+    ["DELETE", ["DELETE", "/targets/nas", undefined]],
+  ] as const) {
+    test(`${name} also ends the pending grants of the target and the node is told`, async () => {
+      const { call, grants, node1, readyTarget, request } = await setup();
+      await readyTarget();
+      const grant = await request();
+      node1.calls.length = 0;
+      expect((await call(change[0], change[1], "admin", change[2])).status).toBe(200);
+      expect(grants.get(grant.id)).toMatchObject({ state: "ended", endReason: "target-disabled" });
+      await flush();
+      expect(node1.paths()).toContain("POST /api/ssh/requests/req1/reject");
+    });
+  }
+
   test("DELETE /targets/:id retires the target, removes the key and keeps the record", async () => {
     const { call, grants, keys, node1, readyTarget, request } = await setup();
     await readyTarget();
@@ -505,11 +521,8 @@ describe("targets", () => {
       systemType: "linux",
       nodes: ["node1"],
     });
-    expect(node1.calls.at(-1)).toEqual({
-      method: "PUT",
-      path: "/api/ssh/targets",
-      json: { targets: [{ id: "nas", account: "root", address: "10.0.0.5" }] },
-    });
+    // A new target is a draft: the node is told, but a draft is not requestable, so the list is empty.
+    expect(node1.calls.at(-1)).toEqual({ method: "PUT", path: "/api/ssh/targets", json: { targets: [] } });
     expect(node2.calls).toHaveLength(1);
     await call("PATCH", "/targets/nas", "admin", { state: "disabled" });
     expect(node1.calls.at(-1)?.json).toEqual({ targets: [] });
@@ -891,5 +904,35 @@ describe("recovery", () => {
     expect(logs).toContain("audit ssh recovery user=ann method=prf targets=1");
     expect(logs).toContain("audit ssh rewrap user=ann target=nas");
     expect(logs.filter((line) => line.startsWith("audit user=ann role=admin ssh POST /api/ssh/"))).toHaveLength(3);
+  });
+});
+
+describe("unlock bytes", () => {
+  test("the routes zero the bytes of the unlock after use", async () => {
+    const { call, keys, service, readyTarget, request } = await setup();
+    const seen: Uint8Array[] = [];
+    const realCreate = keys.create.bind(keys);
+
+    keys.create = (targetId, secret) => {
+      seen.push(secret.secret);
+      return realCreate(targetId, secret);
+    };
+
+    const realApprove = service.approve.bind(service);
+
+    service.approve = (grantId, by, secret, minutes) => {
+      seen.push(secret.secret);
+      return realApprove(grantId, by, secret, minutes);
+    };
+
+    await readyTarget();
+    const grant = await request();
+    expect((await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock })).status).toBe(200);
+    expect(seen).toHaveLength(2);
+
+    for (const bytes of seen) {
+      expect(bytes.length).toBeGreaterThan(0);
+      expect(bytes.every((byte) => byte === 0)).toBe(true);
+    }
   });
 });

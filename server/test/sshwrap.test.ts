@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deriveWrapKey,
+  joinAndWipe,
   newRecovery,
   openWithRecovery,
   recoveryPublicKeyOf,
@@ -84,5 +85,20 @@ describe("sshwrap", () => {
     expect(() => recoveryPublicKeyOf("")).toThrow(WrapError);
     expect(() => recoveryPublicKeyOf("1!!!")).toThrow(WrapError);
     expect(() => recoveryPublicKeyOf(code.slice(0, 20))).toThrow(WrapError);
+  });
+});
+
+describe("joinAndWipe", () => {
+  test("returns the joined bytes in a fresh array and zeroes every part", () => {
+    const first = Buffer.from([1, 2, 3]);
+    const second = Buffer.from([4, 5]);
+    const joined = joinAndWipe([first, second]);
+    expect([...joined]).toEqual([1, 2, 3, 4, 5]);
+    expect([...first]).toEqual([0, 0, 0]);
+    expect([...second]).toEqual([0, 0]);
+    // A fresh array: no part of the shared Buffer pool holds the seed.
+    expect(joined.buffer).not.toBe(first.buffer);
+    expect(joined.byteOffset).toBe(0);
+    expect(joined.buffer.byteLength).toBe(5);
   });
 });

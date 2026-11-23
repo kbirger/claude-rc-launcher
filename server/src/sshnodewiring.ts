@@ -168,6 +168,9 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       } catch (error) {
         log(`ssh control of ${id}: cannot stop: ${error instanceof Error ? error.message : String(error)}`);
       }
+
+      // The instance opted out or was deleted: the hub ends the grants of its sessions.
+      events.emit({ type: "ssh.instance-off", instanceId: id });
     }
 
     for (const id of wanted.keys()) {
@@ -308,5 +311,21 @@ export function createLocalSsh(options: NodeSshOptions): LocalSsh {
   const router = new Hono();
   router.route("/api", api);
   router.onError(onError);
-  return { ...node, client: localHostClient(router) };
+  const client = localHostClient(router);
+
+  return {
+    ...node,
+    client,
+    // The hub ends its grants at stop and tells this router with DELETEs that nobody waits for. The reset makes sure
+    // that every agent socket is closed before the control sockets go, also one that the hub no longer knows.
+    async stop() {
+      try {
+        await client.call("POST", "/api/ssh/reset");
+      } catch {
+        // the router answers in process: nothing to report at stop
+      }
+
+      await node.stop();
+    },
+  };
 }

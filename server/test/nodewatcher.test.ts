@@ -124,7 +124,7 @@ function fakeRegistry() {
   };
 }
 
-function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void; onSsh?: (h: string, e: string, d: unknown) => void; onOnline?: (h: string) => void; onOffline?: (h: string) => void } = {}) {
+function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void; onSsh?: (h: string, e: string, d: unknown) => void; onOnline?: (h: string) => void; onOffline?: (h: string) => void; onRemoved?: (h: string) => void } = {}) {
   const clock = new Clock();
   const reg = fakeRegistry();
   const nodes: Record<string, FakeNode> = {};
@@ -152,6 +152,7 @@ function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h:
     ...(o.onSsh ? { onSsh: o.onSsh } : {}),
     ...(o.onOnline ? { onOnline: o.onOnline } : {}),
     ...(o.onOffline ? { onOffline: o.onOffline } : {}),
+    ...(o.onRemoved ? { onRemoved: o.onRemoved } : {}),
     now: clock.now,
     sleep: clock.sleep,
     random: o.random ?? (() => 0),
@@ -504,6 +505,21 @@ describe("createNodeWatchers registry", () => {
     expect(s.w.presence()).toEqual([]);
     await s.clock.advance(120_000);
     expect(pi.conns.length).toBe(1);
+  });
+
+  test("remove calls onRemoved, for a host that was online and for one that never was", async () => {
+    const removed: string[] = [];
+    const watched = setup([], { onRemoved: (host) => removed.push(host) });
+    const pi = new FakeNode(watched.clock);
+    watched.reg.add("pi", pi.client);
+    await flush();
+    pi.last.snapshot();
+    await flush();
+    watched.reg.add("nas", new FakeNode(watched.clock).client);
+    watched.reg.remove("pi");
+    watched.reg.remove("nas");
+    await flush();
+    expect(removed).toEqual(["pi", "nas"]);
   });
 
   test("the host local gets no watcher", async () => {

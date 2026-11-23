@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any -- the answer bodies are loose JSON that the tests check */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mintSessionCookie } from "../src/auth";
@@ -10,7 +10,8 @@ import type { HostClient } from "../src/hostclient";
 import { sshHostClient, startHub } from "../src/hubmain";
 import type { Instance } from "../src/instances";
 import { DEFAULT_ROLES } from "../src/roles";
-import { identitiesAnswer, FrameReader } from "../src/sshagentproto";
+import { identitiesAnswer, FrameReader, publicKeyBlob } from "../src/sshagentproto";
+import { TargetStore } from "../src/sshtargets";
 
 const INSTANCE_ID = "0123456789ab";
 const unlock = { method: "passphrase", secret: Buffer.from("correct horse").toString("base64url") };
@@ -47,11 +48,14 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
 }
 
 /** A hub with one instance that opted in. Every folder is below a temporary folder. */
-async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean } = {}) {
+async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean; readyTarget?: boolean } = {}) {
   const root = tmp();
   cleanups.push(() => {
     rmSync(root, { recursive: true, force: true });
   });
+  // Only a target that passed its test can be requested, and the test needs a real sshd (ssh-e2e.test.ts). The
+  // hub reads its targets at start, so the test saves a ready target `nas` for the node `local` before the start.
+  if (options.readyTarget) await saveReadyTarget(path.join(root, "state", "ssh", "targets.json"));
   const sshDir = path.join(root, "run-ssh");
   const instance: Instance = {
     id: INSTANCE_ID,
@@ -61,9 +65,13 @@ async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean
     startedAt: null,
     settings: { createSession: true, spawnMode: "same-dir", sshRequests: options.sshRequests ?? true },
   };
+  let list = [instance];
   const fake = {
-    list: () => Promise.resolve([instance]),
-    stop: () => Promise.resolve(),
+    list: () => Promise.resolve(list),
+    stop: (id: string) => {
+      list = list.filter((item) => item.id !== id);
+      return Promise.resolve();
+    },
     trustFilter: () => Promise.resolve(() => false),
   } as never;
   const cfg = {
@@ -101,8 +109,8 @@ async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean
   });
   const cookie = await mintSessionCookie(cfg, user, Date.now() + 3600_000);
 
-  const call = async (method: string, route: string, body?: unknown) => {
-    const response = await fetch(`http://127.0.0.1:${hub.port}/api/ssh${route}`, {
+  const call = async (method: string, route: string, body?: unknown, prefix = "/api/ssh") => {
+    const response = await fetch(`http://127.0.0.1:${hub.port}${prefix}${route}`, {
       method,
       headers: { cookie, "content-type": "application/json" },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -116,21 +124,23 @@ async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean
 
 type Booted = Awaited<ReturnType<typeof boot>>;
 
-/** Sets SSH up, adds the target `nas` for the node `local`, gives it a key and pins its host key. */
+/** Saves the ready target `nas` for the node `local`, with its pinned host key and the access of `local`. */
+async function saveReadyTarget(file: string): Promise<void> {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const store = new TargetStore(file);
+  await store.add({ id: "nas", account: "root", address: "10.0.0.5", port: 22, systemType: "linux", nodes: ["local"] });
+  await store.setHostKey("nas", HOST_KEY);
+  await store.setState("nas", "ready");
+  await store.setNodeAccess("local", { enabled: true, sourceAddress: "10.9.9.9" });
+}
+
+/** Sets SSH up and gives the ready target `nas` (see `boot`) its key. */
 async function prepare(hub: Booted) {
   const { call } = hub;
   expect((await call("POST", "/setup", { method: "passphrase" })).status).toBe(200);
   expect((await call("PUT", "/nodes/local", { enabled: true, sourceAddress: "10.9.9.9" })).status).toBe(200);
-  const added = await call("POST", "/targets", {
-    id: "nas",
-    account: "root",
-    address: "10.0.0.5",
-    systemType: "linux",
-    nodes: ["local"],
-  });
-  expect(added.status).toBe(201);
+  expect((await call("GET", "/targets/nas")).body.state).toBe("ready");
   expect((await call("POST", "/targets/nas/key", { unlock })).status).toBe(200);
-  expect((await call("POST", "/targets/nas/pin", { hostKey: HOST_KEY })).status).toBe(200);
 }
 
 /** Sends lines to a control socket and returns the first answer. It answers when the request settles. */
@@ -200,7 +210,7 @@ describe("SSH for the hub-local host", () => {
   });
 
   test("an ssh.request event from the local broker creates a pending grant for node local", async () => {
-    const hub = await boot();
+    const hub = await boot({ readyTarget: true });
     await prepare(hub);
     await until(() => existsSync(hub.controlSocket), "control socket");
     const answer = talk(hub.controlSocket, '{"op":"request","targetId":"nas","reason":"deploy"}\n');
@@ -217,7 +227,7 @@ describe("SSH for the hub-local host", () => {
   });
 
   test("approve activates the grant through the in-process client and the local agent socket answers identities", async () => {
-    const hub = await boot();
+    const hub = await boot({ readyTarget: true });
     await prepare(hub);
     await until(() => existsSync(hub.controlSocket), "control socket");
     const answer = talk(hub.controlSocket, '{"op":"request","targetId":"nas"}\n');
@@ -234,6 +244,62 @@ describe("SSH for the hub-local host", () => {
     const blobLength = new DataView(payload.buffer, payload.byteOffset).getUint32(5);
     const blob = payload.slice(9, 9 + blobLength);
     expect(payload).toEqual(identitiesAnswer([{ blob, comment: "claude-rc:nas" }]).slice(4));
+  });
+
+  test("deleting an opted-in instance ends its grants, the active and the pending ones", async () => {
+    const hub = await boot({ readyTarget: true });
+    await prepare(hub);
+    await until(() => existsSync(hub.controlSocket), "control socket");
+    const answer = talk(hub.controlSocket, '{"op":"request","targetId":"nas"}\n');
+    await until(async () => ((await hub.call("GET", "/grants")).body as any[]).length === 1, "pending grant");
+    const [grant] = (await hub.call("GET", "/grants")).body as any[];
+    expect((await hub.call("POST", `/grants/${grant.id}/approve`, { unlock })).status).toBe(200);
+    const agentSocket = (await answer).socket as string;
+    const second = talk(hub.controlSocket, '{"op":"request","targetId":"nas"}\n');
+    second.catch(() => {});
+    await until(async () => ((await hub.call("GET", "/grants")).body as any[]).length === 2, "second grant");
+    expect((await hub.call("DELETE", `/hosts/local/instances/${INSTANCE_ID}`, undefined, "/api")).status).toBe(204);
+    const grants = (await hub.call("GET", "/grants")).body as any[];
+    expect(grants.map((item: Record<string, unknown>) => [item.state, item.endReason])).toEqual([
+      ["ended", "revoked"],
+      ["ended", "revoked"],
+    ]);
+    await until(() => !existsSync(agentSocket), "agent socket removed");
+  });
+
+  test("the stop of the local SSH resets the grant routes, so an agent that the hub forgot goes too", async () => {
+    const { createLocalSsh } = await import("../src/sshnodewiring");
+    const { NodeEvents } = await import("../src/updateevents");
+    const root = tmp();
+    cleanups.push(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+    const local = createLocalSsh({
+      cfg: { scope: "user" } as Config,
+      instances: { list: () => Promise.resolve([]) } as never,
+      events: new NodeEvents(),
+      dir: path.join(root, "ssh"),
+      platform: "linux",
+    });
+    await local.start();
+    const created = await local.client?.call("POST", "/api/ssh/grants", {
+      json: {
+        grantId: "g1",
+        instanceId: "inst1",
+        targetId: "nas",
+        publicKey: Buffer.from(publicKeyBlob(new Uint8Array(32).fill(7))).toString("base64"),
+        address: "10.0.0.5",
+        port: 22,
+        account: "root",
+        hostKey: HOST_KEY,
+        endsAt: Date.now() + 60_000,
+      },
+    });
+    expect(created?.status).toBe(200);
+    const socket = path.join(root, "ssh", "inst1", "g1.sock");
+    expect(existsSync(socket)).toBe(true);
+    await local.stop();
+    expect(existsSync(socket)).toBe(false);
   });
 
   test("a remote host id still uses the remote client", () => {
@@ -255,17 +321,9 @@ describe("SSH for the hub-local host", () => {
   });
 
   test("PUT /ssh/nodes/local is accepted and pushes the targets to the local broker", async () => {
-    const hub = await boot();
+    const hub = await boot({ readyTarget: true });
     await until(() => existsSync(hub.controlSocket), "control socket");
     expect((await hub.call("POST", "/setup", { method: "passphrase" })).status).toBe(200);
-    const added = await hub.call("POST", "/targets", {
-      id: "nas",
-      account: "root",
-      address: "10.0.0.5",
-      systemType: "linux",
-      nodes: ["local"],
-    });
-    expect(added.status).toBe(201);
     const put = await hub.call("PUT", "/nodes/local", { enabled: true, sourceAddress: "10.9.9.9" });
     expect(put.status).toBe(200);
     expect(put.body).toEqual({ host: "local", enabled: true, sourceAddress: "10.9.9.9", pushed: true });
@@ -292,7 +350,7 @@ describe("SSH for the hub-local host", () => {
   });
 
   test("stop ends the local controls and removes their sockets", async () => {
-    const hub = await boot();
+    const hub = await boot({ readyTarget: true });
     await prepare(hub);
     await until(() => existsSync(hub.controlSocket), "control socket");
     const answer = talk(hub.controlSocket, '{"op":"request","targetId":"nas"}\n');
