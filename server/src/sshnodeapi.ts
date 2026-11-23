@@ -11,7 +11,7 @@ import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./
 import { GrantAgent } from "./sshnodeagent";
 import { provisionScript } from "./sshprovision";
 import type { Script } from "./sshprovision";
-import { isSystemType } from "./sshtargets";
+import { HOST_KEY_RE, isAccount, isSystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
@@ -28,6 +28,7 @@ import type { NodeEvents } from "./updateevents";
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
 const SIGNATURE_LEN = 64;
+const NO_WAITING_REQUEST = "no request waits for this answer";
 /** The files of one grant in the folder of its instance. */
 const GRANT_SUFFIXES = [".sock", ".config", ".known_hosts", ".pub"];
 const KEY_BLOB_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);
@@ -37,8 +38,6 @@ const KEY_BLOB_LEN = 51;
 const TOKEN_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** One word without white space, control characters or a leading dash. It ends up on one line of the config file. */
 const WORD_RE = /^[^\s\p{Cc}-][^\s\p{Cc}]{0,252}$/u;
-/** A host key as `<type> <base64>`, the form of a known_hosts line without the host. */
-const HOST_KEY_RE = /^[a-z0-9@.-]{1,64} [A-Za-z0-9+/]+={0,2}$/;
 
 export interface TargetSummary {
   id: string;
@@ -84,10 +83,16 @@ export class SshBroker {
     });
   }
 
-  /** The hub approved. An unknown or finished request id is ignored. */
-  activate(requestId: string, result: AccessResult): void {
+  /** Whether a request with this id still waits for the answer of the hub. */
+  isWaiting(requestId: string): boolean {
+    return this.waiting.has(requestId);
+  }
+
+  /** The hub approved. Returns false for an unknown or finished request id: nobody gets the answer. */
+  activate(requestId: string, result: AccessResult): boolean {
     const waiter = this.take(requestId);
     waiter?.resolve(result);
+    return waiter !== undefined;
   }
 
   /** The hub refused. An unknown or finished request id is ignored. */
@@ -403,6 +408,9 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
     if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH || !stageFits(dir))
       throw new HttpError(400, `the socket path is longer than ${MAX_SOCKET_PATH} bytes`);
     if (grants.has(request.grantId)) throw new HttpError(409, "a grant with that id exists");
+    // An answer to a request that ended (a timeout, a node restart) would start an agent that no session uses.
+    if (request.requestId !== undefined && !broker.isWaiting(request.requestId))
+      throw new HttpError(409, NO_WAITING_REQUEST);
 
     const owner = options.resolveUser?.(request.instanceId);
     await ensureDir();
@@ -437,7 +445,12 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
       throw error;
     }
 
-    if (request.requestId) broker.activate(request.requestId, result);
+    if (request.requestId !== undefined && !broker.activate(request.requestId, result)) {
+      // The request ended while the agent started.
+      await removeGrant(request.grantId);
+      throw new HttpError(409, NO_WAITING_REQUEST);
+    }
+
     return context.json({ socket: result.socket, config: result.config });
   });
 
@@ -517,7 +530,6 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
   return app;
 }
 
-const ACCOUNT_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$/;
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
 
@@ -565,14 +577,24 @@ async function runWithStdin(
   }
 }
 
+/** A test must never run a real provision script: it would write an `authorized_keys` file of the machine. */
+function refuseUnderTest(): void {
+  if (process.env.NODE_ENV === "test")
+    throw new HttpError(500, "the provision script does not run under test: inject runAs in sshManaged");
+}
+
 function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions["runAs"]> {
   return async (account, { shell, script }) => {
-    if (shell === "powershell")
+    if (shell === "powershell") {
+      refuseUnderTest();
       return runWithStdin("powershell", ["-NoProfile", "-NonInteractive", "-Command", "-"], script);
+    }
+
     // Fail closed: without a user switch the script would write to the home of the node's own user.
     if (!identityFor) throw new HttpError(501, "the node has no user switch");
     // identityFor rejects an unknown account with a 400.
     const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
+    refuseUnderTest();
     return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env);
   };
 }
@@ -617,7 +639,8 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
   app.post("/authorize", async (context) => {
     const body = await readObject(context);
     const { account, systemType } = body;
-    if (typeof account !== "string" || !ACCOUNT_RE.test(account)) throw new HttpError(400, "account is not valid");
+    // The rule of the target store: the hub sends only accounts that it took, `user@domain` too.
+    if (!isAccount(account)) throw new HttpError(400, "account is not valid");
     if (!isSystemType(systemType)) throw new HttpError(400, "systemType is not valid");
     const line = authorizeLine(body.line);
 

@@ -10,7 +10,7 @@ import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
 import { NodeError } from "./sshservice";
 import type { SshService } from "./sshservice";
-import { authorizedKeysLine, installNotes, isSystemType, TargetError } from "./sshtargets";
+import { authorizedKeysLine, HOST_KEY_RE, installNotes, isSystemType, TargetError } from "./sshtargets";
 import type { Target, TargetState, TargetStore } from "./sshtargets";
 import { newRecovery } from "./sshwrap";
 import type { User } from "./userauth";
@@ -24,8 +24,6 @@ import type { User } from "./userauth";
 
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 const MAX_SECRET_CHARS = 4096;
-// `<type> <base64>`: one space, no newline, no comment.
-const HOST_KEY_RE = /^[A-Za-z0-9@._-]+ [A-Za-z0-9+/]+={0,2}$/;
 const DEFAULT_PORT = 22;
 
 export interface SshApiOptions {

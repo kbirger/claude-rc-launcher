@@ -189,6 +189,20 @@ describe("the SSH parts of a node on Linux", () => {
   });
 });
 
+describe("the folder guard under test", () => {
+  test("createNodeSsh without a dir on Linux is refused, so that the live folder is never touched", () => {
+    expect(() =>
+      createNodeSsh({ cfg, instances: fakeInstances([]).instances, events: new NodeEvents(), platform: "linux" }),
+    ).toThrow("needs a dir under test");
+  });
+
+  test("a Windows node needs no dir", () => {
+    expect(() =>
+      createNodeSsh({ cfg, instances: fakeInstances([]).instances, events: new NodeEvents(), platform: "win32" }),
+    ).not.toThrow();
+  });
+});
+
 describe("a Windows node", () => {
   const auth: MiddlewareHandler = async (context, next) => {
     if (context.req.header("authorization") !== "Bearer ok") return context.json({ error: "unauthorized" }, 401);

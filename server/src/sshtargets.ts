@@ -22,8 +22,19 @@ const STATES: readonly string[] = ["draft", "ready", "disabled", "retired"];
 const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
 const SOURCE_RE = /^[A-Za-z0-9._:*?/-]{1,255}$/;
-// An account cannot start with "-" either.
+// An account cannot start with "-" either. `user@domain` is allowed (a Windows domain account).
 const ACCOUNT_RE = /^[A-Za-z0-9_.][^\s"',\\]{0,127}$/;
+
+/**
+ * A pinned host key as `<type> <base64>`: one space, no newline, no comment, a type of at most 64 characters. The hub
+ * (pin) and the node (`POST /grants`) both use this one pattern, so a key that the hub pins is never refused by a node.
+ */
+export const HOST_KEY_RE = /^[A-Za-z0-9@._-]{1,64} [A-Za-z0-9+/]+={0,2}$/;
+
+/** An account as the target store takes it. The node (managed `/authorize`) uses the same rule. */
+export function isAccount(value: unknown): value is string {
+  return typeof value === "string" && ACCOUNT_RE.test(value);
+}
 
 export type SystemType = "linux" | "windows" | "synology" | "dropbear";
 export type TargetState = "draft" | "ready" | "disabled" | "retired";
