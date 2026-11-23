@@ -763,8 +763,8 @@ export function createApp(deps: Deps): Hono {
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());
-    const cliSsh = ssh();
-    if (cliSsh) cliApi.route("/ssh", cliSsh);
+    // The same router as the browser API, so that both mounts share one setup guard.
+    if (sshRoutes) cliApi.route("/ssh", sshRoutes);
     cliApi.all("*", (context) => context.json({ error: "not found" }, 404));
     app.route("/cli/api", cliApi);
     app.all("/cli/*", (context) => context.json({ error: "not found" }, 404));

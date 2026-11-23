@@ -313,8 +313,12 @@ export function sshApi(options: SshApiOptions): Hono {
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
 
-    // The unlock of a new key must be the unlock of the keys that exist: a typo would make a key that no one opens.
-    const other = targets.list().find((item) => item.id !== target.id && hasKey(item.id));
+    // All keys share one passphrase, so a typo would make a key that no one opens: check it against a key that exists.
+    // A passkey makes another secret for each target (each has its own salt), so there is nothing to check against.
+    const other =
+      keys.method() === "passphrase"
+        ? targets.list().find((item) => item.id !== target.id && hasKey(item.id))
+        : undefined;
 
     if (other) (await keys.open(other.id, unlock)).destroy();
 
