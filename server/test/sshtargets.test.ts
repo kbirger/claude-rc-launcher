@@ -69,6 +69,9 @@ describe("TargetStore", () => {
     expect(await status(store.add({ ...input, address: "" }))).toBe(400);
     expect(await status(store.add({ ...input, address: "a b" }))).toBe(400);
     expect(await status(store.add({ ...input, account: "" }))).toBe(400);
+    expect(await status(store.add({ ...input, address: "-v" }))).toBe(400);
+    expect(await status(store.add({ ...input, account: "-oProxyCommand=id" }))).toBe(400);
+    expect((await store.add({ ...input, id: "v6", address: "::1" })).address).toBe("::1");
     expect(await status(store.add({ ...input, systemType: "amiga" as never }))).toBe(400);
     expect(await status(store.add({ ...input, nodes: ["Bad Node"] }))).toBe(400);
   });

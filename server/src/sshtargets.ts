@@ -18,11 +18,12 @@ const MAX_TEXT = 4096;
 const VERSION = 1;
 const SYSTEM_TYPES: readonly string[] = ["linux", "windows", "synology", "dropbear"];
 const STATES: readonly string[] = ["draft", "ready", "disabled", "retired"];
-// A host name or an address: no space, no quote, no comma, so a value cannot add an option to the key line.
-const ADDRESS_RE = /^[A-Za-z0-9._:-]{1,255}$/;
+// A host name or an address: it cannot start with "-" (ssh would read it as an option), and has no space, no quote, no comma, so a value cannot add an option to the key line.
+const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
 const SOURCE_RE = /^[A-Za-z0-9._:*?/-]{1,255}$/;
-const ACCOUNT_RE = /^[^\s"',\\]{1,128}$/;
+// An account cannot start with "-" either.
+const ACCOUNT_RE = /^[A-Za-z0-9_.][^\s"',\\]{0,127}$/;
 
 export type SystemType = "linux" | "windows" | "synology" | "dropbear";
 export type TargetState = "draft" | "ready" | "disabled" | "retired";
