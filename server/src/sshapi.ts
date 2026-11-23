@@ -10,7 +10,7 @@ import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
 import { NodeError } from "./sshservice";
 import type { SshService } from "./sshservice";
-import { authorizedKeysLine, isSystemType, TargetError } from "./sshtargets";
+import { authorizedKeysLine, installNotes, isSystemType, TargetError } from "./sshtargets";
 import type { Target, TargetState, TargetStore } from "./sshtargets";
 import { newRecovery } from "./sshwrap";
 import type { User } from "./userauth";
@@ -266,7 +266,10 @@ export function sshApi(options: SshApiOptions): Hono {
     return context.json(target, 201);
   });
 
-  hono.get("/targets/:id", (context) => context.json(needTarget(context)));
+  hono.get("/targets/:id", (context) => {
+    const target = needTarget(context);
+    return context.json({ ...target, notes: installNotes(target.systemType) });
+  });
 
   hono.patch("/targets/:id", async (context) => {
     const target = needLive(needTarget(context));
@@ -328,6 +331,7 @@ export function sshApi(options: SshApiOptions): Hono {
       publicLine: made.publicLine,
       fingerprint: made.fingerprint,
       installLine: authorizedKeysLine(made.publicLine, sources),
+      notes: installNotes(target.systemType),
     });
   });
 
