@@ -226,6 +226,10 @@ describe("ssh node routes", () => {
       "Port 22",
       "User deploy",
       `IdentityAgent ${socket}`,
+      `IdentityFile ${join(dir, "inst1", "g1.pub")}`,
+      "IdentitiesOnly yes",
+      "PasswordAuthentication no",
+      "KbdInteractiveAuthentication no",
       `UserKnownHostsFile ${join(dir, "inst1", "g1.known_hosts")}`,
       "GlobalKnownHostsFile /dev/null",
       "StrictHostKeyChecking yes",
@@ -240,7 +244,15 @@ describe("ssh node routes", () => {
     expect(await readFile(join(dir, "inst1", "g1.known_hosts"), "utf8")).toBe(`[10.0.0.5]:2222 ${HOST_KEY}\n`);
     expect(knownHostsLine("h", 22, "k")).toBe("h k\n");
     expect(
-      grantConfig({ targetId: "t", address: "a", port: 1, account: "u", socket: "/s", knownHosts: "/k" }),
+      grantConfig({
+        targetId: "t",
+        address: "a",
+        port: 1,
+        account: "u",
+        socket: "/s",
+        identity: "/i",
+        knownHosts: "/k",
+      }),
     ).toContain("Port 1\n");
   });
 

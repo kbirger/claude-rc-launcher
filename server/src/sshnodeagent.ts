@@ -1,5 +1,4 @@
 import type { Socket, SocketListener } from "bun";
-import { chmod, chown, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AgentProtocolError,
@@ -9,6 +8,8 @@ import {
   parseRequest,
   signAnswer,
 } from "./sshagentproto";
+import { listenStaged, removeQuietly } from "./sshfiles";
+import type { Chown } from "./sshfiles";
 
 // The SSH agent of one grant. It listens on a Unix socket that the session's SSH_AUTH_SOCK points to and speaks the agent
 // protocol to the OpenSSH client. It holds no private key: a sign request goes to `forwardSign`, which asks the hub.
@@ -18,8 +19,10 @@ import {
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
 
 export interface GrantAgentOptions {
-  /** The folder for the socket file. */
+  /** The folder for the socket file: the folder of the instance, which its user owns. */
   dir: string;
+  /** The top folder of the node. The socket is made in its staging folder and then moved to `dir` (sshfiles.ts). */
+  topDir: string;
   grantId: string;
   /** The SSH public key blob of the grant's key. */
   publicBlob: Uint8Array;
@@ -30,6 +33,8 @@ export interface GrantAgentOptions {
   uid?: number;
   gid?: number;
   signTimeoutMs?: number;
+  /** Changes the owner of the staged socket. For tests. */
+  chown?: Chown;
 }
 
 interface Connection {
@@ -54,45 +59,41 @@ export class GrantAgent {
     this.signTimeoutMs = options.signTimeoutMs ?? DEFAULT_SIGN_TIMEOUT_MS;
   }
 
-  /** Creates the socket file with mode 600 and returns its path. */
+  /** Creates the socket file with mode 600 and returns its path. A failed start leaves no listener and no file. */
   async start(): Promise<string> {
-    await rm(this.path, { force: true });
-    this.listener = Bun.listen<Connection>({
-      unix: this.path,
-      socket: {
-        open: (socket) => {
-          socket.data = { reader: new FrameReader(), tail: Promise.resolve(), pending: new Uint8Array(0) };
-        },
-        data: (socket, chunk) => {
-          this.onData(socket, new Uint8Array(chunk));
-        },
-        drain: (socket) => {
-          this.flush(socket);
-        },
-        error: () => {},
-      },
+    if (this.listener) throw new Error("the agent is already started");
+    const { uid, gid } = this.options;
+    this.listener = await listenStaged({
+      dir: this.options.topDir,
+      path: this.path,
+      ...(uid !== undefined && gid !== undefined ? { owner: { uid, gid } } : {}),
+      ...(this.options.chown ? { chown: this.options.chown } : {}),
+      listen: (path) =>
+        Bun.listen<Connection>({
+          unix: path,
+          socket: {
+            open: (socket) => {
+              socket.data = { reader: new FrameReader(), tail: Promise.resolve(), pending: new Uint8Array(0) };
+            },
+            data: (socket, chunk) => {
+              this.onData(socket, new Uint8Array(chunk));
+            },
+            drain: (socket) => {
+              this.flush(socket);
+            },
+            error: () => {},
+          },
+        }),
     });
-
-    try {
-      await chmod(this.path, 0o600);
-
-      if (this.options.uid !== undefined && this.options.gid !== undefined) {
-        await chown(this.path, this.options.uid, this.options.gid);
-      }
-    } catch (error) {
-      // A failed start must not leave a listening socket that nobody owns.
-      await this.stop();
-      throw error;
-    }
 
     return this.path;
   }
 
-  /** Closes every connection and removes the socket file. */
+  /** Closes every connection and removes the socket file. The removal never follows a link. */
   async stop(): Promise<void> {
     this.listener?.stop(true);
     this.listener = undefined;
-    await rm(this.path, { force: true });
+    await removeQuietly(this.path);
   }
 
   private onData(socket: Socket<Connection>, chunk: Uint8Array): void {

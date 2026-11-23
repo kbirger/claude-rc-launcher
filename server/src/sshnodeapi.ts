@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { chmod, chown as chownDefault, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, chown as chownDefault, lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { asUser } from "./asuser";
 import type { IdentityFor } from "./asuser";
@@ -7,6 +7,7 @@ import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
+import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./sshfiles";
 import { GrantAgent } from "./sshnodeagent";
 import { provisionScript } from "./sshprovision";
 import type { Script } from "./sshprovision";
@@ -26,9 +27,9 @@ import type { NodeEvents } from "./updateevents";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
-/** A Unix socket path is limited to about 107 bytes. A shorter limit leaves room. */
-const MAX_SOCKET_PATH = 100;
 const SIGNATURE_LEN = 64;
+/** The files of one grant in the folder of its instance. */
+const GRANT_SUFFIXES = [".sock", ".config", ".known_hosts", ".pub"];
 const KEY_BLOB_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);
 const KEY_BLOB_LEN = 51;
 
@@ -250,13 +251,18 @@ function parseGrant(body: Record<string, unknown>): GrantRequest {
   };
 }
 
-/** The lines of the config file for one target. Every value was checked: none holds a newline. */
+/**
+ * The lines of the config file for one target. Every value was checked: none holds a newline. `identity` is the public
+ * key file of the grant: with `IdentitiesOnly yes`, ssh offers only that key of the agent, and never a default key of
+ * the account that runs it (`~/.ssh/id_*`), nor a password.
+ */
 export function grantConfig(input: {
   targetId: string;
   address: string;
   port: number;
   account: string;
   socket: string;
+  identity: string;
   knownHosts: string;
 }): string {
   return (
@@ -266,6 +272,10 @@ export function grantConfig(input: {
       `Port ${input.port}`,
       `User ${input.account}`,
       `IdentityAgent ${input.socket}`,
+      `IdentityFile ${input.identity}`,
+      "IdentitiesOnly yes",
+      "PasswordAuthentication no",
+      "KbdInteractiveAuthentication no",
       `UserKnownHostsFile ${input.knownHosts}`,
       "GlobalKnownHostsFile /dev/null",
       "StrictHostKeyChecking yes",
@@ -299,6 +309,8 @@ export async function ensureInstanceFolder(
   chown: (path: string, uid: number, gid: number) => Promise<void> = chownDefault,
 ): Promise<void> {
   await mkdir(folder, { recursive: true });
+  // The top folder belongs to the node, so no user can put a link here. The check makes sure of it anyway.
+  if (!(await lstat(folder)).isDirectory()) throw new Error(`${folder} is not a folder`);
   await chmod(folder, 0o700);
   if (owner) await chown(folder, owner.uid, owner.gid);
 }
@@ -328,11 +340,9 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
   const ensureInstanceDir = (folder: string, owner?: { uid: number; gid: number }) =>
     ensureInstanceFolder(folder, owner, chown);
 
-  async function writePrivate(path: string, text: string, owner?: { uid: number; gid: number }): Promise<void> {
-    await writeFile(path, text, { mode: 0o600 });
-    await chmod(path, 0o600);
-    if (owner) await chown(path, owner.uid, owner.gid);
-  }
+  /** The files of a grant never follow a link that a session put in its folder (sshfiles.ts). */
+  const writePrivate = (path: string, text: string, owner?: { uid: number; gid: number }) =>
+    createPrivateFile(path, text, owner, options.chown);
 
   function failSigns(grantId: string | undefined, reason: string): void {
     for (const [signId, pending] of signs) {
@@ -350,9 +360,7 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
     failSigns(grantId, "the grant ended");
     await grant.agent.stop();
     // The folder of the instance stays.
-    await Promise.all(
-      [".sock", ".config", ".known_hosts"].map((suffix) => rm(pathOf(grant.folder, grantId, suffix), { force: true })),
-    );
+    await Promise.all(GRANT_SUFFIXES.map((suffix) => removeQuietly(pathOf(grant.folder, grantId, suffix))));
   }
 
   function forwardSign(grantId: string): (keyBlob: Uint8Array, data: Uint8Array, flags: number) => Promise<Uint8Array> {
@@ -392,7 +400,7 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
     const request = parseGrant(await readObject(context));
     const folder = join(dir, request.instanceId);
     const socketPath = pathOf(folder, request.grantId, ".sock");
-    if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH)
+    if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH || !stageFits(dir))
       throw new HttpError(400, `the socket path is longer than ${MAX_SOCKET_PATH} bytes`);
     if (grants.has(request.grantId)) throw new HttpError(409, "a grant with that id exists");
 
@@ -402,6 +410,8 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
     const agent = new GrantAgent({
       dir: folder,
+      topDir: dir,
+      ...(options.chown ? { chown: options.chown } : {}),
       grantId: request.grantId,
       publicBlob: request.publicBlob,
       comment: `claude-rc:${request.targetId}`,
@@ -417,8 +427,10 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
       const socket = await agent.start();
       const config = pathOf(folder, request.grantId, ".config");
       const knownHosts = pathOf(folder, request.grantId, ".known_hosts");
+      const identity = pathOf(folder, request.grantId, ".pub");
       await writePrivate(knownHosts, knownHostsLine(request.address, request.port, request.hostKey), owner);
-      await writePrivate(config, grantConfig({ ...request, socket, knownHosts }), owner);
+      await writePrivate(identity, `ssh-ed25519 ${Buffer.from(request.publicBlob).toString("base64")}\n`, owner);
+      await writePrivate(config, grantConfig({ ...request, socket, identity, knownHosts }), owner);
       result = { socket, config, endsAt: request.endsAt };
     } catch (error) {
       await removeGrant(request.grantId);

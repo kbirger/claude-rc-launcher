@@ -1,5 +1,6 @@
-import { chmod, chown as chownDefault, rm } from "node:fs/promises";
+import { chown as chownDefault } from "node:fs/promises";
 import { join } from "node:path";
+import { listenStaged, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./sshfiles";
 import type { AccessResult, TargetSummary } from "./sshnodeapi";
 import { ensureInstanceFolder } from "./sshnodeapi";
 
@@ -11,8 +12,6 @@ import { ensureInstanceFolder } from "./sshnodeapi";
 // The protocol is one JSON object for each line, in both directions. A `request` line is answered only when the
 // broker settles, which can take as long as the hub needs to get an approval.
 
-/** A Unix socket path is limited to about 107 bytes. A shorter limit leaves room. */
-const MAX_SOCKET_PATH = 100;
 /** The longest line that a client may send. */
 const MAX_LINE = 16 * 1024;
 /** A short token: it is a part of a folder name and of a socket path. */
@@ -56,51 +55,58 @@ export class SshControl {
     this.options = options;
   }
 
-  /** Opens the socket and returns its path. */
+  /**
+   * Opens the socket and returns its path. The socket is made in the staging folder of the node and moved into the
+   * folder of the instance (sshfiles.ts), so a link there is never followed. A failed start leaves no listener and no file.
+   */
   async start(): Promise<string> {
     const { dir, instanceId, uid, gid } = this.options;
     if (!TOKEN_RE.test(instanceId)) throw new Error(`unsafe instance id: ${JSON.stringify(instanceId)}`);
     const folder = join(dir, instanceId);
     const path = join(folder, "control.sock");
-    if (Buffer.byteLength(path) > MAX_SOCKET_PATH)
+    if (Buffer.byteLength(path) > MAX_SOCKET_PATH || !stageFits(dir))
       throw new Error(`the socket path is too long (${Buffer.byteLength(path)} bytes, at most ${MAX_SOCKET_PATH})`);
     if (this.listener) throw new Error("the control socket is already open");
 
     const owner = uid !== undefined && gid !== undefined ? { uid, gid } : undefined;
     const chown = this.options.chown ?? chownDefault;
     await ensureInstanceFolder(folder, owner, chown);
-    await rm(path, { force: true });
+    this.path = path;
 
-    this.listener = Bun.listen<Connection>({
-      unix: path,
-      socket: {
-        open: (socket) => {
-          socket.data = { buffer: "", pending: "", chain: Promise.resolve(), closed: false };
-        },
-        data: (socket, chunk) => {
-          this.onData(socket, chunk);
-        },
-        drain: (socket) => {
-          flush(socket);
-        },
-        close: (socket) => {
-          socket.data.closed = true;
-        },
-        error: () => {},
-      },
+    this.listener = await listenStaged({
+      dir,
+      path,
+      ...(owner ? { owner } : {}),
+      chown,
+      listen: (staged) =>
+        Bun.listen<Connection>({
+          unix: staged,
+          socket: {
+            open: (socket) => {
+              socket.data = { buffer: "", pending: "", chain: Promise.resolve(), closed: false };
+            },
+            data: (socket, chunk) => {
+              this.onData(socket, chunk);
+            },
+            drain: (socket) => {
+              flush(socket);
+            },
+            close: (socket) => {
+              socket.data.closed = true;
+            },
+            error: () => {},
+          },
+        }),
     });
 
-    await chmod(path, 0o600);
-    if (owner) await chown(path, owner.uid, owner.gid);
-    this.path = path;
     return path;
   }
 
-  /** Closes every connection and removes the socket. */
+  /** Closes every connection and removes the socket. The removal never follows a link. */
   async stop(): Promise<void> {
     this.listener?.stop(true);
     this.listener = undefined;
-    if (this.path) await rm(this.path, { force: true });
+    if (this.path) await removeQuietly(this.path);
   }
 
   private onData(socket: Bun.Socket<Connection>, chunk: Uint8Array): void {

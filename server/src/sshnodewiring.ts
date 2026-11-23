@@ -21,8 +21,11 @@ import type { UserDirectory } from "./users";
 // socket for each instance that opted in. The node does not remember grants across a restart, so a start removes the
 // files that a grant left in the folders of the instances.
 
-/** The files of a grant. The control socket of an instance also ends in `.sock`, but it is made after the clean-up. */
-const GRANT_FILE_RE = /\.(sock|config|known_hosts)$/;
+/**
+ * The files of a grant, and the sockets left in the staging folder `.stage`. The control socket of an instance also ends
+ * in `.sock`, but it is made after the clean-up.
+ */
+const GRANT_FILE_RE = /\.(sock|config|known_hosts|pub)$/;
 /** The methods that start, stop or change an instance. A control socket follows each of them. */
 const CHANGING = new Set(["start", "stop", "pause", "resume", "restart", "update"]);
 
@@ -167,12 +170,13 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     for (const id of wanted.keys()) {
       if (controls.has(id)) continue;
       const owner = owners.get(id);
+      let control: SshControl | undefined;
 
       try {
         // The top folder belongs to the node: an instance user can enter it but cannot list it.
         await mkdir(dir, { recursive: true });
         await chmod(dir, 0o711);
-        const control = new SshControl({
+        control = new SshControl({
           dir,
           instanceId: id,
           ...(owner ?? {}),
@@ -183,6 +187,8 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
         await control.start();
         controls.set(id, control);
       } catch (error) {
+        // A failed start cleans up after itself. The stop makes sure of it.
+        await control?.stop().catch(() => {});
         log(`ssh control of ${id}: cannot start: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
