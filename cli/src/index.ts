@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import readline from "node:readline/promises";
+import { Writable } from "node:stream";
 import { VERSION } from "../../server/src/version";
 import { parseCli } from "./args";
 import { runCommand } from "./commands";
@@ -14,6 +15,7 @@ import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 import { sshRequest, sshTargets, SSH_OFF_MESSAGE } from "./sshcmd";
+import { sshTargetAdd, SSH_TARGET_USAGE } from "./sshtarget";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, updateAll } from "./updateall";
 
@@ -55,6 +57,9 @@ Commands:
   ssh targets                        list the machines that this instance may ask to reach
   ssh request <target> [--minutes n] [--reason text]
                                      ask the owner for SSH access and wait (inside an instance)
+  ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>)
+                                     [--port n] [--fingerprint f] [--no-test]
+                                     add a machine that sessions may ask to reach
   node update [--binary file] [--release tag]
                                      update this node's server binary and restart it
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
@@ -72,6 +77,10 @@ export interface Env {
   sys?: Sys;
   /** The environment variables. Tests replace it. The default is `process.env`. */
   environ?: Record<string, string | undefined>;
+  /** Asks for a secret and does not show what is typed. */
+  readSecret?: (prompt: string) => Promise<string>;
+  /** Runs a program on this machine with `stdin` as its input. Tests replace it. */
+  runLocal?: (argv: string[], stdin: string) => Promise<{ code: number; stderr: string }>;
   /** Waits between polls. Tests replace it so that they do not wait in real time. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -113,6 +122,34 @@ export function defaultEnv(): Env {
       }
     },
   };
+}
+
+/** Asks on the terminal and shows nothing of what is typed. */
+async function readHidden(prompt: string): Promise<string> {
+  let muted = false;
+  const output = new Writable({
+    write(chunk: Buffer, _encoding, done) {
+      if (!muted) process.stderr.write(chunk);
+      done();
+    },
+  });
+  const rl = readline.createInterface({ input: process.stdin, output, terminal: true });
+
+  try {
+    const answer = rl.question(prompt);
+    muted = true;
+    return await answer;
+  } finally {
+    rl.close();
+    process.stderr.write("\n");
+  }
+}
+
+/** Runs a program with `stdin` as its input. Its output is not kept: only the error text is. */
+async function runProgram(argv: string[], stdin: string): Promise<{ code: number; stderr: string }> {
+  const child = Bun.spawn(argv, { stdin: new TextEncoder().encode(stdin), stdout: "ignore", stderr: "pipe" });
+  const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+  return { code, stderr };
 }
 
 const INSTANCE_COMMANDS = new Set<string>([
@@ -177,7 +214,7 @@ export async function main(
     if (name !== "host" && name !== "node" && name !== "update" && name !== "ssh" && !INSTANCE_COMMANDS.has(name))
       throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
 
-    if (name === "ssh") {
+    if (name === "ssh" && args[0] !== "target") {
       // Talks to the control socket of the node of this instance and to no hub, so no login is needed.
       const sshUsage =
         "usage: claude-rc ssh targets | claude-rc ssh request <target> [--minutes <n>] [--reason <text>]";
@@ -275,6 +312,24 @@ export async function main(
       renew: (credentials) => renew(credentials, env.fetch),
       ...(env.fetch ? { fetch: env.fetch } : {}),
     });
+
+    if (name === "ssh") {
+      // `ssh target add` goes through the hub, as the owner, with the saved login.
+      if (args[0] !== "target" || args[1] !== "add" || !args[2] || args.length > 3)
+        throw new ExitError(SSH_TARGET_USAGE, 1);
+      await sshTargetAdd({
+        id: args[2],
+        flags,
+        hub,
+        hubUrl: creds.hub,
+        readLine: env.readLine,
+        readSecret: env.readSecret ?? readHidden,
+        runLocal: env.runLocal ?? runProgram,
+        out: io.out,
+        ...(env.sleep ? { sleep: env.sleep } : {}),
+      });
+      return 0;
+    }
 
     if (name === "update") {
       await updateAll({ flags, hub, out: io.out, err: io.err, ...(env.sys ? { sys: env.sys } : {}) });
