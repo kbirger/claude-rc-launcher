@@ -1,13 +1,13 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { HOST_ID_RE } from "../../server/src/hostid";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
 
 const SYSTEM_TYPES = ["linux", "windows", "synology", "dropbear"];
 // The same rules as the hub. A value that starts with "-" would be read by ssh as an option.
-const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 const ACCOUNT_RE = /^[A-Za-z0-9_.][^\s"',\\]{0,127}$/;
 const DEFAULT_PORT = 22;
@@ -74,15 +74,15 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
 
   if (isManaged && identity !== undefined) throw usage("--managed does not take --identity");
   if (identity === "") throw usage("--identity is empty");
-  if (!ID_RE.test(id)) throw usage("the target id is not valid");
+  if (!HOST_ID_RE.test(id)) throw usage("the target id is not valid");
   if (type === undefined || account === undefined || flags.node === undefined) throw usage();
   if (!isManaged && (address === undefined || identity === undefined)) throw usage();
   if (!SYSTEM_TYPES.includes(type)) throw usage(`--type must be one of ${SYSTEM_TYPES.join(", ")}`);
   if (!ACCOUNT_RE.test(account)) throw usage("--account is not valid");
   if (address !== undefined && !ADDRESS_RE.test(address)) throw usage("--address is not valid");
-  if (flags.managed !== undefined && !ID_RE.test(flags.managed)) throw usage("--managed is not a host id");
+  if (flags.managed !== undefined && !HOST_ID_RE.test(flags.managed)) throw usage("--managed is not a host id");
   const nodes = flags.node.split(",");
-  if (nodes.length === 0 || !nodes.every((node) => ID_RE.test(node))) throw usage("--node must list host ids");
+  if (nodes.length === 0 || !nodes.every((node) => HOST_ID_RE.test(node))) throw usage("--node must list host ids");
   const port = flags.port === undefined ? DEFAULT_PORT : Number(flags.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw usage("--port must be a number from 1 to 65535");
   const node = nodes[0] ?? "";
