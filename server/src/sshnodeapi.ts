@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { chmod, chown, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, chown as chownDefault, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
@@ -114,10 +114,14 @@ export interface SshNodeOptions {
   keyscan?: (address: string, port: number) => Promise<string[]>;
   probe?: (config: string, targetId: string) => Promise<{ code: number; stderr: string }>;
   signTimeoutMs?: number;
+  /** Changes the owner of a path. For tests. */
+  chown?: (path: string, uid: number, gid: number) => Promise<void>;
 }
 
 interface Grant {
   agent: GrantAgent;
+  /** The folder of the instance: it holds the three files of the grant. */
+  folder: string;
   targetId: string;
 }
 
@@ -285,13 +289,23 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
   const signs = new Map<string, PendingSign>();
   const app = new Hono();
 
-  const pathOf = (grantId: string, suffix: string) => join(dir, `${grantId}${suffix}`);
+  const chown = options.chown ?? chownDefault;
+  const pathOf = (folder: string, grantId: string, suffix: string) => join(folder, `${grantId}${suffix}`);
 
-  /** The folder is private: a socket is created with the umask before the agent sets mode 600. */
-  async function ensureDir(owner?: { uid: number; gid: number }): Promise<void> {
+  /**
+   * The top folder belongs to the node and is never chowned: it has mode 711, so an instance user can enter it but
+   * cannot list it. Each instance has its own folder with mode 700 that belongs to its user, because a user who owns
+   * the folder could replace the files of another user's grant in it.
+   */
+  async function ensureDir(): Promise<void> {
     await mkdir(dir, { recursive: true });
-    await chmod(dir, 0o700);
-    if (owner) await chown(dir, owner.uid, owner.gid);
+    await chmod(dir, 0o711);
+  }
+
+  async function ensureInstanceDir(folder: string, owner?: { uid: number; gid: number }): Promise<void> {
+    await mkdir(folder, { recursive: true });
+    await chmod(folder, 0o700);
+    if (owner) await chown(folder, owner.uid, owner.gid);
   }
 
   async function writePrivate(path: string, text: string, owner?: { uid: number; gid: number }): Promise<void> {
@@ -311,12 +325,13 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
   async function removeGrant(grantId: string): Promise<void> {
     const grant = grants.get(grantId);
+    if (!grant) return;
     grants.delete(grantId);
     failSigns(grantId, "the grant ended");
-    await grant?.agent.stop();
-    // The files go even when the grant is unknown (a second call, or a node that restarted).
+    await grant.agent.stop();
+    // The folder of the instance stays.
     await Promise.all(
-      [".sock", ".config", ".known_hosts"].map((suffix) => rm(pathOf(grantId, suffix), { force: true })),
+      [".sock", ".config", ".known_hosts"].map((suffix) => rm(pathOf(grant.folder, grantId, suffix), { force: true })),
     );
   }
 
@@ -355,16 +370,18 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
   app.post("/grants", async (context) => {
     const request = parseGrant(await readObject(context));
-    const socketPath = pathOf(request.grantId, ".sock");
+    const folder = join(dir, request.instanceId);
+    const socketPath = pathOf(folder, request.grantId, ".sock");
     if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH)
       throw new HttpError(400, `the socket path is longer than ${MAX_SOCKET_PATH} bytes`);
     if (grants.has(request.grantId)) throw new HttpError(409, "a grant with that id exists");
 
     const owner = options.resolveUser?.(request.instanceId);
-    await ensureDir(owner);
+    await ensureDir();
+    await ensureInstanceDir(folder, owner);
 
     const agent = new GrantAgent({
-      dir,
+      dir: folder,
       grantId: request.grantId,
       publicBlob: request.publicBlob,
       comment: `claude-rc:${request.targetId}`,
@@ -372,14 +389,14 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
       signTimeoutMs,
       ...(owner ? { uid: owner.uid, gid: owner.gid } : {}),
     });
-    grants.set(request.grantId, { agent, targetId: request.targetId });
+    grants.set(request.grantId, { agent, folder, targetId: request.targetId });
 
     let result: AccessResult;
 
     try {
       const socket = await agent.start();
-      const config = pathOf(request.grantId, ".config");
-      const knownHosts = pathOf(request.grantId, ".known_hosts");
+      const config = pathOf(folder, request.grantId, ".config");
+      const knownHosts = pathOf(folder, request.grantId, ".known_hosts");
       await writePrivate(knownHosts, knownHostsLine(request.address, request.port, request.hostKey), owner);
       await writePrivate(config, grantConfig({ ...request, socket, knownHosts }), owner);
       result = { socket, config, endsAt: request.endsAt };
@@ -417,7 +434,7 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
     const grantId = token(context.req.param("id"), "id");
     const grant = grants.get(grantId);
     if (!grant) throw new HttpError(404, "no such grant");
-    const config = pathOf(grantId, ".config");
+    const config = pathOf(grant.folder, grantId, ".config");
     return context.json(await probe(config, grant.targetId));
   });
 

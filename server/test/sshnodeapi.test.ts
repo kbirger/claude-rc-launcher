@@ -209,7 +209,7 @@ describe("ssh node routes", () => {
 
   test("POST /grants returns a socket path that answers identities", async () => {
     const { socket } = await createGrant();
-    expect(socket).toBe(join(dir, "g1.sock"));
+    expect(socket).toBe(join(dir, "inst1", "g1.sock"));
     expect(await ask(socket, IDENTITIES_REQUEST)).toEqual(
       payloadOf(identitiesAnswer([{ blob: BLOB, comment: "claude-rc:web1" }])),
     );
@@ -217,7 +217,7 @@ describe("ssh node routes", () => {
 
   test("POST /grants writes a config with the lines above and StrictHostKeyChecking yes", async () => {
     const { socket, config } = await createGrant();
-    expect(config).toBe(join(dir, "g1.config"));
+    expect(config).toBe(join(dir, "inst1", "g1.config"));
     const text = await readFile(config, "utf8");
     expect(text).toContain("StrictHostKeyChecking yes\n");
     expect(text.trimEnd().split("\n")).toEqual([
@@ -226,18 +226,18 @@ describe("ssh node routes", () => {
       "Port 22",
       "User deploy",
       `IdentityAgent ${socket}`,
-      `UserKnownHostsFile ${join(dir, "g1.known_hosts")}`,
+      `UserKnownHostsFile ${join(dir, "inst1", "g1.known_hosts")}`,
       "GlobalKnownHostsFile /dev/null",
       "StrictHostKeyChecking yes",
       "ControlMaster no",
       "ControlPath none",
     ]);
-    expect(await readFile(join(dir, "g1.known_hosts"), "utf8")).toBe(`10.0.0.5 ${HOST_KEY}\n`);
+    expect(await readFile(join(dir, "inst1", "g1.known_hosts"), "utf8")).toBe(`10.0.0.5 ${HOST_KEY}\n`);
   });
 
   test("a known_hosts line for a port other than 22 uses the [host]:port form", async () => {
     await createGrant({ port: 2222 });
-    expect(await readFile(join(dir, "g1.known_hosts"), "utf8")).toBe(`[10.0.0.5]:2222 ${HOST_KEY}\n`);
+    expect(await readFile(join(dir, "inst1", "g1.known_hosts"), "utf8")).toBe(`[10.0.0.5]:2222 ${HOST_KEY}\n`);
     expect(knownHostsLine("h", 22, "k")).toBe("h k\n");
     expect(
       grantConfig({ targetId: "t", address: "a", port: 1, account: "u", socket: "/s", knownHosts: "/k" }),
@@ -246,15 +246,16 @@ describe("ssh node routes", () => {
 
   test("the folder has mode 700 and the files and the socket have mode 600", async () => {
     await createGrant();
-    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(join(dir, "inst1"))).mode & 0o777).toBe(0o700);
+    expect((await stat(dir)).mode & 0o777).toBe(0o711);
 
     for (const name of ["g1.config", "g1.known_hosts", "g1.sock"])
-      expect((await stat(join(dir, name))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(dir, "inst1", name))).mode & 0o777).toBe(0o600);
   });
 
   test("DELETE /grants removes the socket and both files", async () => {
     const { socket, config } = await createGrant();
-    const knownHosts = join(dir, "g1.known_hosts");
+    const knownHosts = join(dir, "inst1", "g1.known_hosts");
     expect((await call("DELETE", "/grants/g1")).status).toBe(204);
 
     for (const path of [socket, config, knownHosts]) expect(await exists(path)).toBe(false);
@@ -394,9 +395,50 @@ describe("ssh node routes", () => {
   });
 });
 
+describe("ssh node routes: one folder for each instance", () => {
+  test("two grants for two instances get two folders with mode 700, and the top folder is never chowned", async () => {
+    const chowned: string[] = [];
+    extra = {
+      ...extra,
+      chown: (path) => {
+        chowned.push(path);
+        return Promise.resolve();
+      },
+      resolveUser: (instanceId) => (instanceId === "alice" ? { uid: 1001, gid: 1001 } : { uid: 1002, gid: 1002 }),
+    };
+    build();
+    const first = await createGrant({ grantId: "ga", instanceId: "alice" });
+    const second = await createGrant({ grantId: "gb", instanceId: "bob" });
+    expect(first.socket).toBe(join(dir, "alice", "ga.sock"));
+    expect(second.socket).toBe(join(dir, "bob", "gb.sock"));
+    expect((await stat(join(dir, "alice"))).mode & 0o777).toBe(0o700);
+    expect((await stat(join(dir, "bob"))).mode & 0o777).toBe(0o700);
+    expect(chowned).toContain(join(dir, "alice"));
+    expect(chowned).toContain(join(dir, "bob"));
+    expect(chowned).not.toContain(dir);
+  });
+
+  test("DELETE removes the files of the right folder only", async () => {
+    const first = await createGrant({ grantId: "ga", instanceId: "alice" });
+    const second = await createGrant({ grantId: "gb", instanceId: "bob" });
+    await call("DELETE", "/grants/ga");
+    expect(await exists(first.config)).toBe(false);
+    expect(await exists(first.socket)).toBe(false);
+    expect(await exists(second.config)).toBe(true);
+    expect(await exists(join(dir, "alice"))).toBe(true);
+    await call("POST", "/reset");
+    expect(await exists(second.config)).toBe(false);
+    expect(await exists(join(dir, "bob"))).toBe(true);
+  });
+
+  test("an instance id that is a path gives 400", async () => {
+    expect((await call("POST", "/grants", grantBody({ instanceId: ".." }))).status).toBe(400);
+  });
+});
+
 describe("ssh node routes: validation", () => {
   test("a socket path longer than 100 bytes gives 400", async () => {
-    const longDir = join(dir, "d".repeat(80));
+    const longDir = join(dir, "d".repeat(75));
     app = createNodeApp({ cfg, instances, auth, ssh: { dir: longDir, events, broker } });
     const refused = await call("POST", "/grants", grantBody());
     expect(refused.status).toBe(400);
@@ -412,8 +454,8 @@ describe("ssh node routes: validation", () => {
       const value = field === "hostKey" ? `${HOST_KEY}\nattacker ${HOST_KEY}` : "a\nStrictHostKeyChecking no";
       const response = await call("POST", "/grants", grantBody({ [field]: value }));
       expect(response.status).toBe(400);
-      expect(await exists(join(dir, "g1.config"))).toBe(false);
-      expect(await exists(join(dir, "g1.known_hosts"))).toBe(false);
+      expect(await exists(join(dir, "inst1", "g1.config"))).toBe(false);
+      expect(await exists(join(dir, "inst1", "g1.known_hosts"))).toBe(false);
     });
   }
 
