@@ -95,11 +95,17 @@ interface Entry {
 
 type EntryBase = Pick<Entry, "id" | "path" | "name" | "admin" | "settings">;
 
+/** SSH requests need a Linux node: the sessions of a Windows node cannot hold an SSH grant. */
+function refuseSshRequests(patch: SettingsPatch | undefined): void {
+  if (patch?.sshRequests === true) throw new HttpError(400, "SSH requests need a Linux node");
+}
+
 /** Copies only the fields of the patch that have a value. */
 function definedFields(settingsPatch: SettingsPatch): SettingsPatch {
   const out: SettingsPatch = {};
   if (settingsPatch.createSession !== undefined) out.createSession = settingsPatch.createSession;
   if (settingsPatch.spawnMode !== undefined) out.spawnMode = settingsPatch.spawnMode;
+  if (settingsPatch.sshRequests !== undefined) out.sshRequests = settingsPatch.sshRequests;
   return out;
 }
 
@@ -354,6 +360,7 @@ export class WinInstances implements Instances {
   }): Promise<Instance> {
     if (input.name !== undefined && !isValidName(input.name)) throw new HttpError(400, "invalid name");
     if (input.settings !== undefined && !isValidPatch(input.settings)) throw new HttpError(400, "invalid settings");
+    refuseSshRequests(input.settings);
     const real = await this.deps.resolvePath(input.path, this.o.roots);
     const admin = this.checkUser(input.user);
     // The operator list gives the defaults. The check uses the value that the process really gets.
@@ -580,6 +587,7 @@ export class WinInstances implements Instances {
 
     try {
       if (!isValidPatch(patch)) throw new HttpError(400, "invalid settings");
+      refuseSshRequests(patch);
       const entry = this.requireEntry(id);
       const previous: InstanceSettings = { ...entry.settings };
       const next: InstanceSettings = { ...previous, ...definedFields(patch) };
@@ -745,6 +753,7 @@ export class WinInstances implements Instances {
       const settings: InstanceSettings = {
         createSession: typeof it.createSession === "boolean" ? it.createSession : defaults.createSession,
         spawnMode: it.spawnMode === "same-dir" || it.spawnMode === "worktree" ? it.spawnMode : defaults.spawnMode,
+        sshRequests: false,
       };
       this.track({
         id: it.id,
