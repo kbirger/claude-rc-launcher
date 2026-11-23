@@ -13,6 +13,7 @@ import { nodeRoots, ROOTS_USAGE } from "./noderoots";
 import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
+import { sshRequest, sshTargets, SSH_OFF_MESSAGE } from "./sshcmd";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, updateAll } from "./updateall";
 
@@ -51,6 +52,9 @@ Commands:
                                      add a root folder to this node and restart it
   node roots remove <dir> [--config file] [--no-restart]
                                      remove a root folder from this node and restart it
+  ssh targets                        list the machines that this instance may ask to reach
+  ssh request <target> [--minutes n] [--reason text]
+                                     ask the owner for SSH access and wait (inside an instance)
   node update [--binary file] [--release tag]
                                      update this node's server binary and restart it
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
@@ -66,6 +70,8 @@ export interface Env {
   readLine: (prompt: string, signal?: AbortSignal) => Promise<string>;
   nodeFs?: NodeFs;
   sys?: Sys;
+  /** The environment variables. Tests replace it. The default is `process.env`. */
+  environ?: Record<string, string | undefined>;
   /** Waits between polls. Tests replace it so that they do not wait in real time. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -168,8 +174,37 @@ export async function main(
       return 0;
     }
 
-    if (name !== "host" && name !== "node" && name !== "update" && !INSTANCE_COMMANDS.has(name))
+    if (name !== "host" && name !== "node" && name !== "update" && name !== "ssh" && !INSTANCE_COMMANDS.has(name))
       throw new ExitError(`unknown command "${command.join(" ")}". Run "claude-rc --help"`, 1);
+
+    if (name === "ssh") {
+      // Talks to the control socket of the node of this instance and to no hub, so no login is needed.
+      const sshUsage =
+        "usage: claude-rc ssh targets | claude-rc ssh request <target> [--minutes <n>] [--reason <text>]";
+      const [sub, target, ...extra] = args;
+      if (sub !== "targets" && sub !== "request") throw new ExitError(sshUsage, 1);
+      if ((sub === "targets" && target) || (sub === "request" && (!target || extra.length > 0)))
+        throw new ExitError(sshUsage, 1);
+      const control = (env.environ ?? process.env).CLAUDE_RC_SSH_CONTROL;
+      if (!control) throw new ExitError(SSH_OFF_MESSAGE, 1);
+
+      if (sub === "targets") {
+        await sshTargets({ control, out: io.out });
+        return 0;
+      }
+
+      const minutes = flags.minutes === undefined ? undefined : Number(flags.minutes);
+      if (minutes !== undefined && (!Number.isInteger(minutes) || minutes < 1))
+        throw new ExitError("--minutes must be a whole number of minutes", 1);
+      await sshRequest({
+        control,
+        targetId: target,
+        ...(minutes === undefined ? {} : { minutes }),
+        ...(flags.reason === undefined ? {} : { reason: flags.reason }),
+        out: io.out,
+      });
+      return 0;
+    }
 
     if (name === "update") {
       const updateUsage = "usage: claude-rc update [--release <tag>] [--all-nodes]";
