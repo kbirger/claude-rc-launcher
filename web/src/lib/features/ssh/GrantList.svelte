@@ -13,7 +13,9 @@
 
   // The grants of SSH delegation: pending first, then active, ended last. The list refetches every 5 seconds while it
   // is mounted. TanStack stops the timer in a hidden tab. Approve only hands the grant to the page: the sheet lives
-  // there, outside the data branches, so that a failed refetch cannot unmount it. Deny and Revoke need no unlock.
+  // there, outside the data branches, so that a failed refetch cannot unmount it. Deny and Revoke need no unlock. A
+  // failed poll shows the error above the list and keeps the list, so the Revoke buttons stay. Deny and Revoke are off
+  // while their call runs, so that a double tap sends one call.
   let { onapprove }: { onapprove: (grant: Grant) => void } = $props();
 
   const GRANTS_POLL_MS = 5000;
@@ -58,12 +60,13 @@
   {#if problem}
     <Alert.Root variant="destructive" role="alert"><Alert.Description>{problem}</Alert.Description></Alert.Root>
   {/if}
-  {#if grants.isPending}
-    <p class="text-sm text-muted-foreground">Loading requests...</p>
-  {:else if grants.error}
+  {#if grants.error}
     <Alert.Root variant="destructive">
       <Alert.Description>Could not load requests: {grants.error.message}</Alert.Description>
     </Alert.Root>
+  {/if}
+  {#if grants.isPending}
+    <p class="text-sm text-muted-foreground">Loading requests...</p>
   {:else if grants.data}
     {#if sorted.length === 0}
       <p class="text-sm text-muted-foreground">No requests yet.</p>
@@ -94,11 +97,24 @@
           {#if grant.state === "pending"}
             <div class="flex flex-wrap gap-2">
               <Button size="touch" onclick={() => onapprove(grant)}>Approve</Button>
-              <Button variant="outline" size="touch" onclick={() => run(() => deny.mutateAsync(grant.id))}>Deny</Button>
+              <Button
+                variant="outline"
+                size="touch"
+                disabled={deny.isPending}
+                onclick={() => run(() => deny.mutateAsync(grant.id))}
+              >
+                Deny
+              </Button>
             </div>
           {:else if grant.state === "active"}
             <div class="flex flex-wrap gap-2">
-              <Button variant="outline" size="touch" class="text-destructive" onclick={() => askRevoke(grant)}>
+              <Button
+                variant="outline"
+                size="touch"
+                class="text-destructive"
+                disabled={revoke.isPending}
+                onclick={() => askRevoke(grant)}
+              >
                 Revoke
               </Button>
             </div>

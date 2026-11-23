@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "#lib/components/ui/button/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
@@ -9,7 +10,8 @@
 
   // The nodes that may carry a grant. Each row has a switch and the source address: the address that the targets see
   // when this node connects, which the hub writes into the `from=` limit of the key line. A node cannot be turned on
-  // without an address. Turning a node off keeps the address.
+  // without an address. Turning a node off keeps the address. For a node that is on, a changed address needs Save: it
+  // goes into the `from=` limit of the next install line.
   let { nodes }: { nodes: NodeStatus[] } = $props();
 
   const client = useQueryClient();
@@ -21,6 +23,26 @@
   let drafts = $state<Record<string, string>>({});
   let problems = $state<Record<string, string>>({});
   const addressOf = (node: NodeStatus) => drafts[node.host] ?? node.sourceAddress;
+
+  /** An enabled node whose typed address is not the stored one. */
+  const changed = (node: NodeStatus) => node.enabled && addressOf(node).trim() !== node.sourceAddress;
+
+  async function saveAddress(node: NodeStatus) {
+    const sourceAddress = addressOf(node).trim();
+    problems[node.host] = "";
+
+    if (sourceAddress === "") {
+      problems[node.host] = "Enter the source address, or turn this node off.";
+      return;
+    }
+
+    try {
+      await save.mutateAsync({ host: node.host, enabled: true, sourceAddress });
+      delete drafts[node.host];
+    } catch (error) {
+      problems[node.host] = error instanceof Error ? error.message : "The change failed.";
+    }
+  }
 
   async function change(node: NodeStatus, box: HTMLInputElement) {
     const enabled = box.checked;
@@ -79,6 +101,11 @@
             oninput={(event) => (drafts[node.host] = event.currentTarget.value)}
           />
         </div>
+        {#if changed(node)}
+          <div class="flex flex-wrap gap-2">
+            <Button size="touch" disabled={save.isPending} onclick={() => saveAddress(node)}>Save</Button>
+          </div>
+        {/if}
         {#if problems[node.host]}
           <p role="alert" class="text-sm text-destructive">{problems[node.host]}</p>
         {/if}

@@ -105,6 +105,7 @@ export async function unlockWithPasskey(credentialId: string, salt: string): Pro
   }
 
   const first = got ? prfOf(got as PublicKeyCredential)?.results?.first : undefined;
-  if (!first) throw new UnlockError("This passkey does not return a PRF secret");
+  // A result of zero bytes is no secret either.
+  if (!first || first.byteLength === 0) throw new UnlockError("This passkey does not return a PRF secret");
   return toBase64Url(first);
 }
