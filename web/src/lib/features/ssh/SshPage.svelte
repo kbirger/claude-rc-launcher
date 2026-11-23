@@ -1,16 +1,32 @@
 <script lang="ts">
   import * as Alert from "#lib/components/ui/alert/index.js";
+  import { Button } from "#lib/components/ui/button/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import { statusQuery } from "./queries";
   import NodeAccess from "./NodeAccess.svelte";
   import SetupForm from "./SetupForm.svelte";
   import TargetList from "./TargetList.svelte";
+  import TargetWizard from "./TargetWizard.svelte";
+
+  // `target` is the id of the `?target=` link of a draft target: the wizard opens on it. `onclose` lets the route drop
+  // the parameter, so that the same link opens the wizard again.
+  let { target = null, onclose }: { target?: string | null; onclose?: () => void } = $props();
 
   const query = createQuery(() => statusQuery());
   // True while the setup form holds the recovery code. It wins over every other branch (a failed or a set-up status
   // included): the hub shows the code once, so the form must stay mounted until Finish. One branch holds the form, so
   // it is the same instance before and after `holding` turns on.
   let holding = $state(false);
+  // The wizard is outside the branches below, so that a failed refetch of the status cannot unmount it. The status it
+  // gets is the last one that loaded.
+  let wizard = $state<{ id?: string } | null>(null);
+  $effect(() => {
+    if (target) wizard = { id: target };
+  });
+  const closeWizard = () => {
+    wizard = null;
+    onclose?.();
+  };
   const nodeCount = $derived(query.data?.nodes.length ?? 0);
 </script>
 
@@ -31,5 +47,13 @@
   <div class="mt-4 grid gap-6">
     <NodeAccess nodes={query.data.nodes} />
     <TargetList />
+    <div>
+      <Button size="touch" onclick={() => (wizard = {})}>Add target</Button>
+    </div>
   </div>
+{/if}
+{#if wizard && query.data?.setUp && !holding}
+  {#key wizard.id ?? ""}
+    <TargetWizard targetId={wizard.id} status={query.data} onclose={closeWizard} />
+  {/key}
 {/if}
