@@ -654,35 +654,70 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 - [ ] **Step 4: Run.** Expect PASS. Run `bun run --cwd web lint` and `bun run --cwd web check`. Expect no errors.
 - [ ] **Step 5: Commit** `feat(web): SSH access setup`.
 
-### Task 17: Targets and node access
+### Task 17a: Nodes section, target list and install notes
 
 **Files:**
-- Create: `web/src/lib/features/ssh/TargetWizard.svelte`, `TargetList.svelte`, `NodeAccessToggle.svelte`
-- Modify: `web/src/routes/ssh/+page.svelte`, the node card in `web/src/lib/features/hosts/NodeList.svelte` (add `NodeAccessToggle`)
-- Test: `TargetWizard.test.ts`, `TargetList.test.ts`, `NodeAccessToggle.test.ts`
+- Modify: `server/src/sshapi.ts` (answers), `server/test/sshapi.test.ts`
+- Create: `web/src/lib/features/ssh/NodeAccess.svelte`, `TargetList.svelte`, and their tests `NodeAccess.test.ts`, `TargetList.test.ts`
+- Modify: `web/src/lib/features/ssh/SshPage.svelte` (render the two sections when the hub is set up), `web/src/lib/features/ssh/api.ts` (types of the new answer fields), `index.ts`
 
 **Interfaces:**
-- `TargetWizard` runs the steps of "Target setup" in the spec, in this order: the form, the unlock that creates the key, the host key scan with a fingerprint compare, the install, and the test. The install step shows the line and the notes for the system type.
-- The wizard asks for the unlock with `unlockWithPasskey` or a passphrase field, depending on the method from `GET /status`.
-- The form offers the system types `linux`, `windows`, `synology` and `dropbear`, and a choice between an external target and a managed target. For a managed target, the wizard shows an Install on the node button and no paste step. For an external target, it shows the install line and the notes. The CLI does the install for an external target.
-- The page accepts `?target=<id>`. The wizard then resumes at the first step that is not done: no key means the unlock step, no pinned host key means the pin step, and a draft state means the install and test step.
+- Hub: the answers of `POST /ssh/targets/:id/key` and `GET /ssh/targets/:id` get a field `notes: string[]` that holds `installNotes(target.systemType)` from `server/src/sshtargets.ts`, so that the web wizard (Task 17b) can show the install notes for the system type. No other server change.
+- `NodeAccess` lists the nodes of `GET /ssh/status` (`nodes: { host, enabled, sourceAddress }[]`). Each row has a switch and a text field for the source address (the address that the targets see when this node connects). Turning a node on needs a non-empty source address; the switch sends `PUT /ssh/nodes/:host { enabled, sourceAddress }`. Turning it off sends `enabled: false` and keeps the address. Use the host list of the existing hosts feature (`web/src/lib/features/hosts`) to show a display name next to the host id when one is known.
+- `TargetList` lists `GET /ssh/targets`: for each target the id, `address:port`, the account, the system type, the nodes that can reach it and a state badge (`draft`, `ready`, `disabled`, `retired`). Actions: `Disable` (PATCH `{ state: "disabled" }`) for a ready target, `Enable` (PATCH `{ state: "draft" }`) for a disabled one, `Retire` (DELETE) with a confirmation. A draft target has a `Continue setup` link to `/ssh?target=<id>`. A retired target is dimmed and shows this text: `Remove the line that ends with claude-rc:<id> from the authorized_keys file of <account> on <address>.` Rotating a key is NOT part of this task: to rotate, the owner retires the target and adds it again.
+- Follow the layout, components and test style of the existing features (`web/src/lib/features/permissions`, `hosts`). Mobile first.
+
+- [ ] **Step 1: Write the failing tests.**
+  Hub test names (in `server/test/sshapi.test.ts`):
+  - `POST /targets/:id/key answers with the notes of the system type`
+  - `GET /targets/:id answers with the notes of the system type`
+  Web test names:
+  - `NodeAccess requires a source address before it turns on`
+  - `NodeAccess sends enabled and the source address`
+  - `NodeAccess turning off sends enabled false and keeps the address`
+  - `TargetList shows state, address, account and nodes`
+  - `TargetList offers Disable for a ready target and Enable for a disabled one`
+  - `TargetList Retire asks for a confirmation and then calls DELETE`
+  - `TargetList shows the line comment to remove for a retired target`
+  - `TargetList links a draft target to the wizard with ?target=<id>`
+- [ ] **Step 2: Run** `bun test server/test/sshapi.test.ts` and `bun run --cwd web test -- ssh`. Expect FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `bun test server ./cli`, `bun run --cwd web test`, `bun run --cwd web lint`, `bun run --cwd web check`, `bun run typecheck`. Expect PASS (check any failure against main 040a5d2 before you call it old).
+- [ ] **Step 5: Commit** `feat(web): SSH nodes and targets`.
+
+### Task 17b: The target wizard
+
+**Files:**
+- Create: `web/src/lib/features/ssh/TargetWizard.svelte` (and small step components if the file would grow too large), `TargetWizard.test.ts`
+- Modify: `web/src/lib/features/ssh/SshPage.svelte` (an `Add target` button that opens the wizard, and the `?target=<id>` deep link), `web/src/routes/ssh/+page.svelte` if the route must read the query parameter, `index.ts`
+
+**Interfaces:**
+- `TargetWizard` runs the steps of "Target setup" in the spec, in this order: the form, the unlock that creates the key, the host key (managed: read from the node; external: scan and compare), the install, and the test. It opens as a sheet or dialog like `web/src/features/permissions/RuleSheet.svelte` does.
+- Form: the id (same pattern as host ids: `^[a-z0-9][a-z0-9-]{0,31}$`, checked in the form), a choice between External and Managed, the managed host (a select over the hosts) for Managed, the system type (a select with `linux`, `windows`, `synology` and `dropbear`), address and port (External; for Managed they are optional), the account, and the nodes that can reach the target (checkboxes over the nodes of `GET /ssh/status` that have SSH access on; none by default). Submitting calls `POST /ssh/targets`.
+- Key step: `GET /ssh/targets/:id/salt`, then the unlock (`unlockWithPasskey(credentialId, salt)` for the passkey method, a passphrase field for the passphrase method; the method comes from `GET /ssh/status`), then `POST /ssh/targets/:id/key { unlock }`.
+- Host key step: Managed calls `POST /ssh/targets/:id/pin-managed` (no question). External calls `POST /ssh/targets/:id/scan { node }`, shows each fingerprint, and offers `They match`; the Pin button stays disabled until the admin selects it, then calls `POST /ssh/targets/:id/pin { hostKey }` with the ed25519 line (or the first line if there is none).
+- Install step: External shows the install line (from the key answer, or `GET /ssh/targets/:id/provision` for the script is NOT needed) in a monospace block with a Copy button, the notes for the system type (the `notes` field of the key and target answers, added in Task 17a), and the hint that `claude-rc ssh target add` can do the install over SSH. Managed shows an `Install on the node` button (`POST /ssh/targets/:id/authorize`) and no paste step.
+- Test step: `POST /ssh/targets/:id/test { node, unlock }` with a NEW unlock every time (a passkey tap or a passphrase typed again; never reuse an earlier one), a node select when more than one node is allowed. `{ ok: true }` shows `ready`; `{ ok: false, error }` shows the error text and keeps the target in draft, with a Try again button.
+- The page accepts `?target=<id>`: the wizard opens on that target and resumes at the first step that is not done: no `keyFingerprint` means the key step, no `hostKey` means the host key step, state `draft` means the install and test step, state `ready` means a done screen.
+- A passphrase or a PRF secret must never be shown, stored in localStorage or sessionStorage, written to a console line, or kept in the query cache: use mutations that keep no data, clear the field after each call, and test it.
+- Follow the layout, components and test style of the existing features. Mobile first.
 
 - [ ] **Step 1: Write the failing tests.**
   Test names:
   - `the wizard does not show the install line before the key exists`
-  - `the wizard blocks the pin step until the admin selects "They match"`
+  - `the wizard blocks the pin step until the admin selects They match`
   - `the wizard shows the notes for the chosen system type`
   - `the wizard resumes at the unlock step for a target with no key`
   - `a managed target shows Install on the node and no paste step`
   - `the type list holds linux, windows, synology and dropbear and nothing else`
   - `a failed test shows the ssh error text and keeps the target in draft`
   - `a passed test shows ready`
-  - `TargetList shows state and offers Disable, Rotate and Retire`
-  - `NodeAccessToggle requires a source address before it turns on`
+  - `the test step asks for a new unlock every time`
+  - `the passphrase is not in the DOM or in storage after a call`
 - [ ] **Step 2: Run** `bun run --cwd web test -- ssh`. Expect FAIL.
-- [ ] **Step 3: Implement** the components. Use the dialog and sheet components in `web/src/lib/ui` as `RuleSheet.svelte` does.
-- [ ] **Step 4: Run** the tests, `bun run --cwd web lint` and `bun run --cwd web check`. Expect PASS.
-- [ ] **Step 5: Commit** `feat(web): SSH targets and node access`.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `bun run --cwd web test`, `bun run --cwd web lint`, `bun run --cwd web check`. Expect PASS.
+- [ ] **Step 5: Commit** `feat(web): SSH target wizard`.
 
 ### Task 18: Approvals, revoke and instance toggle
 
