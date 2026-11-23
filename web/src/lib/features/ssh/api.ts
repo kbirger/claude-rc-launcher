@@ -39,7 +39,9 @@ export type NewTarget = {
   port?: number;
 };
 export type TargetSalt = { salt: string; method?: UnlockMethod; credentialId?: string };
-export type KeyResult = { publicLine: string; fingerprint: string; installLine: string };
+/** `notes`: the install steps for the system type of the target, as lines of text. */
+export type KeyResult = { publicLine: string; fingerprint: string; installLine: string; notes: string[] };
+export type TargetDetail = Target & { notes: string[] };
 export type HostKeyLine = { line: string; fingerprint: string };
 export type ProvisionScript = { shell: "sh" | "powershell"; script: string };
 export type NodeAccess = NodeStatus & { pushed: boolean };
@@ -75,7 +77,7 @@ export const putNode = (host: string, body: { enabled: boolean; sourceAddress: s
 
 export const listTargets = () => request<Target[]>("GET", `${BASE}/targets`);
 export const createTarget = (body: NewTarget) => request<Target>("POST", `${BASE}/targets`, body);
-export const getTarget = (id: string) => request<Target>("GET", targetUrl(id));
+export const getTarget = (id: string) => request<TargetDetail>("GET", targetUrl(id));
 export const patchTarget = (id: string, state: "disabled" | "draft") =>
   request<Target>("PATCH", targetUrl(id), { state });
 export const deleteTarget = (id: string) => request<Target & { comment: string }>("DELETE", targetUrl(id));

@@ -11,6 +11,7 @@ export type {
   SshStatus,
   SystemType,
   Target,
+  TargetDetail,
   TargetSalt,
   TargetState,
   TestResult,
@@ -39,7 +40,9 @@ export {
   setup,
   testTarget,
 } from "./api";
-export { setupMutation } from "./mutations";
+export { deleteTargetMutation, patchTargetMutation, putNodeMutation, setupMutation } from "./mutations";
 export { grantsQuery, SSH_KEY, statusQuery, targetsQuery } from "./queries";
+export { default as NodeAccessList } from "./NodeAccess.svelte";
 export { default as SetupForm } from "./SetupForm.svelte";
 export { default as SshPage } from "./SshPage.svelte";
+export { default as TargetList } from "./TargetList.svelte";

@@ -9,7 +9,7 @@ import { requiredRole } from "../src/roles";
 import { GrantStore } from "../src/sshgrants";
 import { SshKeyStore } from "../src/sshkeystore";
 import { SshService } from "../src/sshservice";
-import { TargetStore } from "../src/sshtargets";
+import { installNotes, TargetStore } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
 import type { UserAuthStrategy } from "../src/userauth";
 import { fakeTimers } from "./faketimers";
@@ -367,6 +367,36 @@ describe("targets", () => {
     expect(
       (await call("POST", "/targets/nas/key", "admin", { unlock: { method: "prf", secret: SECRET } })).status,
     ).toBe(400);
+  });
+
+  test("POST /targets/:id/key answers with the notes of the system type", async () => {
+    const { call } = await setup();
+    await call("POST", "/targets", "admin", {
+      id: "nas",
+      address: "10.0.0.5",
+      account: "root",
+      systemType: "synology",
+      nodes: ["node1"],
+    });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    const made = await call("POST", "/targets/nas/key", "admin", { unlock });
+    expect(made.status).toBe(200);
+    expect(made.body.notes).toEqual(installNotes("synology"));
+  });
+
+  test("GET /targets/:id answers with the notes of the system type", async () => {
+    const { call } = await setup();
+    await call("POST", "/targets", "admin", {
+      id: "pc",
+      address: "10.0.0.6",
+      account: "me",
+      systemType: "windows",
+      nodes: ["node1"],
+    });
+    const got = await call("GET", "/targets/pc");
+    expect(got.status).toBe(200);
+    expect(got.body).toMatchObject({ id: "pc", systemType: "windows" });
+    expect(got.body.notes).toEqual(installNotes("windows"));
   });
 
   test("POST /targets/:id/key with a prf hub makes a second key with another secret", async () => {

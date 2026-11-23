@@ -2,7 +2,9 @@
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { createQuery } from "@tanstack/svelte-query";
   import { statusQuery } from "./queries";
+  import NodeAccess from "./NodeAccess.svelte";
   import SetupForm from "./SetupForm.svelte";
+  import TargetList from "./TargetList.svelte";
 
   const query = createQuery(() => statusQuery());
   // True while the setup form holds the recovery code. It wins over every other branch (a failed or a set-up status
@@ -26,4 +28,8 @@
     Unlock method: {query.data.method === "prf" ? "passkey" : "passphrase"}. {nodeCount}
     {nodeCount === 1 ? "node" : "nodes"}.
   </p>
+  <div class="mt-4 grid gap-6">
+    <NodeAccess nodes={query.data.nodes} />
+    <TargetList />
+  </div>
 {/if}
