@@ -109,7 +109,13 @@ function parse(text: string): State {
 }
 
 function privateKeyOf(seed: Uint8Array) {
-  return createPrivateKey({ key: Buffer.concat([ED25519_PKCS8, seed]), format: "der", type: "pkcs8" });
+  const der = Buffer.concat([ED25519_PKCS8, seed]);
+
+  try {
+    return createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+  } finally {
+    der.fill(0);
+  }
 }
 
 function checkTarget(targetId: string): void {
@@ -227,7 +233,7 @@ export class SshKeyStore {
     const wrapKey = await deriveWrapKey(unlock.method, unlock.secret, unb64(salt));
 
     try {
-      const seed = Buffer.from(unseal(wrapKey, record.wrapped, targetId));
+      const seed = unseal(wrapKey, record.wrapped, targetId);
       return this.unlocked(seed, unb64(record.publicKey));
     } catch (error) {
       if (error instanceof WrapError) throw new KeyError("wrong-unlock", "the unlock secret does not open this key");
@@ -260,7 +266,7 @@ export class SshKeyStore {
       await this.mutate((draft) => {
         const current = draft.keys.get(targetId);
         if (!current) throw new KeyError("no-key", "no key for this target");
-        current.wrapped = wrapped;
+        draft.keys.set(targetId, { ...current, wrapped });
       });
     } finally {
       seed.fill(0);
@@ -276,7 +282,7 @@ export class SshKeyStore {
     });
   }
 
-  private unlocked(seed: Buffer, raw: Uint8Array): UnlockedKey {
+  private unlocked(seed: Uint8Array, raw: Uint8Array): UnlockedKey {
     const blob = publicKeyBlob(raw);
     let destroyed = false;
 
