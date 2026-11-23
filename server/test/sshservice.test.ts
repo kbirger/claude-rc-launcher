@@ -379,6 +379,36 @@ describe("SshService node presence", () => {
   });
 });
 
+describe("SshService blips", () => {
+  async function mixed() {
+    const ctx = await setup();
+    ctx.service.onNodeEvent("node1", "ssh.request", request({ requestId: "a" }));
+    ctx.service.onNodeEvent("node1", "ssh.request", request({ requestId: "b" }));
+    await flush();
+    const [first, second] = ctx.grants.list();
+    await ctx.service.approve(first.id, "alice", unlock);
+    ctx.node.calls.length = 0;
+    return { ...ctx, active: first, pending: second };
+  }
+
+  test("onNodeOffline ends the active grant and keeps the pending one, with no reject call", async () => {
+    const ctx = await mixed();
+    ctx.service.onNodeOffline("node1");
+    await flush();
+    expect(ctx.grants.get(ctx.active.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
+    expect(ctx.grants.get(ctx.pending.id)?.state).toBe("pending");
+    expect(ctx.node.paths().some((path) => path.includes("/requests/"))).toBe(false);
+  });
+
+  test("onNodeOnline ends the active grant and keeps the pending one, with no reject call", async () => {
+    const ctx = await mixed();
+    await ctx.service.onNodeOnline("node1");
+    expect(ctx.grants.get(ctx.active.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
+    expect(ctx.grants.get(ctx.pending.id)?.state).toBe("pending");
+    expect(ctx.node.paths().some((path) => path.includes("/requests/"))).toBe(false);
+  });
+});
+
 describe("SshService test", () => {
   const probeOk = { "POST /api/ssh/grants/:id/probe": { status: 200, body: { code: 0, stderr: "" } } };
 
