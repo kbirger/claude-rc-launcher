@@ -24,7 +24,9 @@ The flow has five steps:
 4. The hub holds the key in memory for the length of the grant. The node opens a socket that has no key. It forwards each sign request to the hub, and the hub signs.
 5. The grant ends. The hub destroys the key in memory, and the node closes the socket.
 
-The node agent holds no key. A root user on the node can use the socket during a grant, but cannot copy the key. After the grant ends, the socket is useless.
+The node agent holds no key. A root user on a separate node can use the socket during a grant, but cannot copy the key. After the grant ends, the socket is useless.
+
+This guarantee does not hold on the own host of the hub (the host `local`). Sessions there run with the trust of the hub. A root session on that host can read the memory of the hub during a grant, and so the open key and the unlock. It can also read `keys.json` and `hub-key.pem`. When you allow requests from instances of `local`, you give up the "cannot copy" guarantee for root sessions there.
 
 A grant has one of three states: `pending`, `active` and `ended`. A grant ends with one of these reasons: `expired`, `revoked`, `denied`, `node-lost`, `target-disabled` and `hub-restart`. The hub writes one audit line for each step.
 
@@ -34,7 +36,7 @@ A request that nobody answers expires after 10 minutes. The command in the sessi
 
 ## Set up
 
-Do these setups in order. You do the hub setup once. You do the node, target and instance setups once for each node, target and instance. You need the `admin` role for all of them.
+Do these setups in order. You do the hub setup once. You do the node, target and instance setups once for each node, target and instance. The hub, node and target setups need the `admin` role. The instance setup needs the `write` role, because it is an instance option. A `write` user can already run any command on the host. An admin still approves each grant.
 
 ### Hub setup
 
@@ -139,7 +141,7 @@ The page shows the notes for the type of the target. These are the same notes:
 
 No instance can request access by default. Open the More menu of the instance card, choose the entry that opens the instance options, and turn on Allow SSH requests. A change restarts a running instance. The web UI sets this option. The CLI has no flag for it.
 
-A session of the instance can then run `claude-rc ssh`. It sees only the targets that list its node. For each target, it sees the id, the account and the address. It never sees a key.
+A session of the instance can then run `claude-rc ssh`. It sees only the `ready` targets that list its node. A `draft` target is not in the list, and a request for it fails. For each target, it sees the id, the account and the address. It never sees a key.
 
 The node finds the instance from the systemd unit of the calling process. A root session can fake this. So the approval screen shows the instance name as a claim and not as proof.
 
@@ -170,7 +172,7 @@ A passkey must support the WebAuthn PRF extension. This extension lets the passk
 
 A passphrase works on any device. The hub derives a wrapping key from the passphrase and a salt for each target. All keys use the same passphrase. When you add a second key, the hub first checks your passphrase against an existing key.
 
-A wrong unlock fails with `the unlock secret does not open this key`. No grant is lost. Try again.
+A wrong unlock fails with `the unlock does not open the key`. No grant is lost. Try again.
 
 ### The recovery code
 
@@ -182,7 +184,7 @@ Keep the code away from the hub. Without it and without your unlock method, nobo
 
 Use the recovery code when you lose your passkey or forget your passphrase. A recovery chooses a new unlock method. It keeps the keys, the targets and the lines on the targets.
 
-1. Open the SSH access page, and tap Lost your passkey? Recover.
+1. Open the SSH access page. Tap Lost your passkey? Recover, or Forgot your passphrase? Recover.
 2. Type the recovery code.
 3. Choose the new unlock method. For a passkey, the browser registers it and asks for one test unlock. If the passkey gives no secret, the page offers the passphrase.
 4. For a passphrase, type it twice. The two must match, because a typo locks every key under a passphrase that nobody knows.
@@ -194,6 +196,8 @@ A recovery ends all active grants, because a lost or stolen phone must not leave
 
 If you reload the page before the last re-lock, the page shows a banner that says how many targets wait. Tap its button and start at step 2 again. The hub accepts the recovery code a second time.
 
+A second recovery starts the re-lock again for every target, also for the targets that show Done. For a passkey, it also needs a new passkey registration.
+
 The recovery needs the recovery code. If you lost the code too, you cannot recover. Stop the hub and delete the folder `<state_dir>/ssh`. Start the hub and run the setup again. Then add each target again, and remove the old lines from each target.
 
 ## End access
@@ -202,12 +206,14 @@ Access ends in these ways:
 
 - It expires at the end time.
 - You tap Revoke.
-- You disable a target. The hub ends its active grants.
-- You retire a target. The hub deletes the key and ends its grants. The page then names the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the target.
+- You disable a target. The hub ends its active grants and refuses its pending requests.
+- You retire a target. The hub deletes the key, ends its active grants and refuses its pending requests. The page then names the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the target.
 - The hub restarts. This ends all grants, because grants live in memory only.
-- A node loses its event stream to the hub. The hub ends the grants of that node.
+- A node loses its event stream to the hub. The hub ends the active grants of that node.
+- You remove a node from the hub. The hub ends all grants of that node, also the pending requests.
+- You turn off Allow SSH requests for an instance, or you delete the instance. The node closes the control socket of the instance and tells the hub. The hub ends all grants of that instance with the reason `revoked`.
 
-Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again.
+Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again. A session cannot request a `draft` target, so the target is not usable until the test passes.
 
 ## What it does not do
 
@@ -219,6 +225,7 @@ Disable a target to stop new grants and keep the key. Tap Enable to use it again
 - It sends no push message for a pending request. You see a badge on the menu.
 - A Windows node cannot host sessions that request access. A Windows machine can be a target.
 - Sessions on the own host of the hub need Linux.
+- On the own host of the hub, a root session can copy the key during a grant. Read the note in [How it works](#how-it-works).
 
 ## Back up and restore
 
@@ -237,7 +244,7 @@ The files `<state_dir>/ssh/keys.json` and `<state_dir>/ssh/targets.json` hold al
 - `SSH access is not turned on for this instance`: set Allow SSH requests to On for the instance, and restart the session.
 - `no answer from the hub`: nobody approved the request in 10 minutes. Ask again, and approve it sooner.
 - `the node has no user switch`: the node cannot run the install script as the account of the target. Install the line by hand.
-- `the unlock secret does not open this key`: the passphrase or the passkey is wrong. Unlock again.
+- `the unlock does not open the key`: the passphrase or the passkey is wrong. Unlock again.
 - `The recovery code does not belong to this hub.` (route text `wrong recovery code`): the code is wrong. Make sure that you type the code of this hub. Each hub has its own code.
 - `this target needs its key to be recovered`: a recovery started, and this target has no re-lock yet. Open the SSH access page, tap the banner button, and tap Re-lock for the target.
 - `no node of this target has access enabled with a source address`: turn on a node of the target on the SSH access page.
