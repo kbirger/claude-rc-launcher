@@ -121,7 +121,7 @@ describe("sshkeystore", () => {
     const next = { method: "prf" as const, secret: new Uint8Array(32).fill(9) };
 
     const bad = await failure(store.rewrapWithRecovery("web", newRecovery().code, next));
-    expect(bad.code).toBe("wrong-unlock");
+    expect(bad.code).toBe("wrong-recovery-code");
     await store.rewrapWithRecovery("web", recovery.code, next);
     expect((await store.open("web", next)).sign(data)).toEqual(expected);
     expect((await failure(store.open("web", secret))).code).toBe("wrong-unlock");
@@ -228,3 +228,143 @@ describe("sshkeystore", () => {
 });
 
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
+
+describe("recovery with the code", () => {
+  const passphrase = { method: "passphrase" as const, secret: new TextEncoder().encode("new passphrase") };
+  const begin = { method: "passphrase" as const };
+
+  /** A store with keys `web` and `nas` under the old passkey. */
+  async function twoKeys(): Promise<SshKeyStore> {
+    const store = await ready();
+    await store.create("web", secret);
+    await store.create("nas", secret);
+    return store;
+  }
+
+  test("beginRecovery with a wrong code throws wrong-recovery-code and changes nothing", async () => {
+    const store = await twoKeys();
+    const before = await readFile(file, "utf8");
+    const error = await failure(store.beginRecovery({ code: newRecovery().code, ...begin }));
+    expect(error.code).toBe("wrong-recovery-code");
+    expect((await failure(store.beginRecovery({ code: "1!!!", ...begin }))).code).toBe("wrong-recovery-code");
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect(store.method()).toBe("prf");
+    expect(store.pendingRewraps()).toEqual([]);
+    await store.open("web", secret);
+  });
+
+  test("beginRecovery refuses a store that is not set up", async () => {
+    const store = new SshKeyStore(file);
+    expect((await failure(store.beginRecovery({ code: recovery.code, ...begin }))).code).toBe("not-set-up");
+  });
+
+  test("beginRecovery with the right code sets the new method and marks every key pending", async () => {
+    const store = await twoKeys();
+    const result = await store.beginRecovery({ code: recovery.code, ...begin });
+    expect([...result.targets].sort()).toEqual(["nas", "web"]);
+    expect(store.method()).toBe("passphrase");
+    expect(store.credentialId()).toBeUndefined();
+    expect([...store.pendingRewraps()].sort()).toEqual(["nas", "web"]);
+
+    const again = await store.beginRecovery({ code: recovery.code, method: "prf", credentialId: "cred2" });
+    expect([...again.targets].sort()).toEqual(["nas", "web"]);
+    expect(store.method()).toBe("prf");
+    expect(store.credentialId()).toBe("cred2");
+  });
+
+  test("beginRecovery needs a credential id for a passkey and none for a passphrase", async () => {
+    const store = await twoKeys();
+    expect(await rejection(store.beginRecovery({ code: recovery.code, method: "prf" }))).toBeInstanceOf(Error);
+    expect(
+      await rejection(store.beginRecovery({ code: recovery.code, method: "passphrase", credentialId: "x" })),
+    ).toBeInstanceOf(Error);
+    expect(store.method()).toBe("prf");
+    expect(store.pendingRewraps()).toEqual([]);
+  });
+
+  test("open on a pending key throws needs-rewrap", async () => {
+    const store = await twoKeys();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    expect((await failure(store.open("web", passphrase))).code).toBe("needs-rewrap");
+  });
+
+  test("rewrapWithRecovery under the new method clears the mark and the new unlock opens the key", async () => {
+    const store = await twoKeys();
+    const expected = (await store.open("web", secret)).sign(data);
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    expect((await failure(store.rewrapWithRecovery("web", newRecovery().code, passphrase))).code).toBe(
+      "wrong-recovery-code",
+    );
+    expect(store.pendingRewraps()).toContain("web");
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    expect(store.pendingRewraps()).toEqual(["nas"]);
+    expect((await store.open("web", passphrase)).sign(data)).toEqual(expected);
+    expect((await failure(store.open("nas", passphrase))).code).toBe("needs-rewrap");
+  });
+
+  test("the old unlock no longer opens a re-wrapped key", async () => {
+    const store = await twoKeys();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    expect((await failure(store.open("web", secret))).code).toBe("wrong-unlock");
+    const wrong = { method: "passphrase" as const, secret: new TextEncoder().encode("other") };
+    expect((await failure(store.open("web", wrong))).code).toBe("wrong-unlock");
+  });
+
+  test("salts stay the same through a recovery", async () => {
+    const store = await twoKeys();
+    const before = (await readJson()).salts;
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    await store.rewrapWithRecovery("nas", recovery.code, passphrase);
+    expect((await readJson()).salts).toEqual(before);
+  });
+
+  test("the marks survive a reload from the file", async () => {
+    const store = await twoKeys();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    const reloaded = new SshKeyStore(file);
+    expect(reloaded.pendingRewraps()).toEqual(["nas"]);
+    expect(reloaded.method()).toBe("passphrase");
+    expect((await failure(reloaded.open("nas", passphrase))).code).toBe("needs-rewrap");
+    await reloaded.open("web", passphrase);
+  });
+
+  test("a file without the mark loads as not pending", async () => {
+    await twoKeys();
+    const json = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
+    delete json.pending;
+    await writeFile(file, JSON.stringify(json));
+    expect(new SshKeyStore(file).pendingRewraps()).toEqual([]);
+  });
+
+  test("a failed write during rewrap leaves the old state", async () => {
+    const store = await twoKeys();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    const before = await readFile(file, "utf8");
+    await mkdir(`${file}.tmp`);
+    expect(await rejection(store.rewrapWithRecovery("web", recovery.code, passphrase))).toBeInstanceOf(Error);
+    expect([...store.pendingRewraps()].sort()).toEqual(["nas", "web"]);
+    expect((await failure(store.open("web", passphrase))).code).toBe("needs-rewrap");
+    expect(await readFile(file, "utf8")).toBe(before);
+    await rm(`${file}.tmp`, { recursive: true });
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    await store.open("web", passphrase);
+  });
+
+  test("a key created after the recovery is not pending", async () => {
+    const store = await twoKeys();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.create("fresh", passphrase);
+    expect([...store.pendingRewraps()].sort()).toEqual(["nas", "web"]);
+    await store.open("fresh", passphrase);
+  });
+
+  test("remove clears the mark of a target", async () => {
+    const store = await twoKeys();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.remove("web");
+    expect(store.pendingRewraps()).toEqual(["nas"]);
+  });
+});

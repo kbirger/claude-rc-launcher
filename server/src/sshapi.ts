@@ -156,8 +156,13 @@ export function sshApi(options: SshApiOptions): Hono {
       status = error.status;
       body = error.message;
     } else if (error instanceof KeyError) {
-      status = error.code === "wrong-unlock" ? 403 : error.code === "bad-recovery-key" ? 400 : 409;
-      body = error.message;
+      status =
+        error.code === "wrong-unlock" || error.code === "wrong-recovery-code"
+          ? 403
+          : error.code === "bad-recovery-key"
+            ? 400
+            : 409;
+      body = error.code === "wrong-recovery-code" ? "wrong recovery code" : error.message;
     } else if (error instanceof NodeError) {
       status = 502;
       body = error.message;
@@ -181,7 +186,8 @@ export function sshApi(options: SshApiOptions): Hono {
   };
 
   hono.use("*", auditWrites);
-  for (const path of ["/nodes/*", "/targets", "/targets/*", "/grants", "/grants/*"]) hono.use(path, needSetUp);
+  for (const path of ["/recovery/*", "/nodes/*", "/targets", "/targets/*", "/grants", "/grants/*"])
+    hono.use(path, needSetUp);
 
   hono.get("/status", (context) => {
     const nodes = options.hostIds().map((host) => {
@@ -194,6 +200,7 @@ export function sshApi(options: SshApiOptions): Hono {
       setUp: keys.isSetUp(),
       ...(method ? { method } : {}),
       ...(credentialId ? { credentialId } : {}),
+      pendingRewrap: keys.pendingRewraps(),
       nodes,
     });
   });
@@ -223,6 +230,27 @@ export function sshApi(options: SshApiOptions): Hono {
     } finally {
       settingUp = false;
     }
+  });
+
+  hono.post("/recovery/begin", async (context) => {
+    const body = await readObject(context);
+    const { method, credentialId } = body;
+    const code = text(body, "code");
+    if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
+    if (method !== "prf" && method !== "passphrase") throw new HttpError(400, "method must be prf or passphrase");
+
+    if (method === "prf") {
+      if (typeof credentialId !== "string" || !B64URL_RE.test(credentialId) || credentialId.length > MAX_SECRET_CHARS)
+        throw new HttpError(400, "credentialId must be base64url text");
+    } else if (credentialId !== undefined) throw new HttpError(400, "credentialId is for a passkey only");
+
+    const { targets: pending } = await keys.beginRecovery({
+      code,
+      method,
+      ...(typeof credentialId === "string" ? { credentialId } : {}),
+    });
+    audit(`audit ssh recovery user=${logToken(options.user(context))} method=${method} targets=${pending.length}`);
+    return context.json({ targets: pending });
   });
 
   hono.put("/nodes/:host", async (context) => {
@@ -307,6 +335,18 @@ export function sshApi(options: SshApiOptions): Hono {
     });
   });
 
+  hono.post("/targets/:id/rewrap", async (context) => {
+    const target = needTarget(context);
+    const body = await readObject(context);
+    const code = text(body, "code");
+    if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
+    const unlock = parseUnlock(body.unlock);
+    if (!keys.pendingRewraps().includes(target.id)) throw new TargetError(409, "this target does not need a re-wrap");
+    await keys.rewrapWithRecovery(target.id, code, unlock);
+    audit(`audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}`);
+    return context.body(null, 204);
+  });
+
   hono.post("/targets/:id/key", async (context) => {
     const target = needLive(needTarget(context));
     const body = await readObject(context);
@@ -320,7 +360,9 @@ export function sshApi(options: SshApiOptions): Hono {
     // A passkey makes another secret for each target (each has its own salt), so there is nothing to check against.
     const other =
       keys.method() === "passphrase"
-        ? targets.list().find((item) => item.id !== target.id && hasKey(item.id))
+        ? targets
+            .list()
+            .find((item) => item.id !== target.id && hasKey(item.id) && !keys.pendingRewraps().includes(item.id))
         : undefined;
 
     if (other) (await keys.open(other.id, unlock)).destroy();

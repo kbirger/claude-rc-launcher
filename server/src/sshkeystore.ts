@@ -1,10 +1,18 @@
-import { createPrivateKey, generateKeyPairSync, randomBytes, sign as edSign } from "node:crypto";
+import { createPrivateKey, generateKeyPairSync, randomBytes, sign as edSign, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { HOST_ID_RE } from "./hostid";
 import { keyFingerprint, publicKeyBlob, publicKeyLine } from "./sshagentproto";
-import { deriveWrapKey, openWithRecovery, seal, sealToRecovery, unseal, WrapError } from "./sshwrap";
+import {
+  deriveWrapKey,
+  openWithRecovery,
+  recoveryPublicKeyOf,
+  seal,
+  sealToRecovery,
+  unseal,
+  WrapError,
+} from "./sshwrap";
 import type { Sealed } from "./sshwrap";
 
 // Encrypted key store for SSH delegation. The hub holds one Ed25519 key for each target. The private key (the 32 byte
@@ -37,10 +45,21 @@ export interface UnlockedKey {
   destroy(): void;
 }
 
-/** `wrong-unlock`: the secret does not open the key. `no-key`: no key for the target. `not-set-up`: no unlock method yet. `already-set-up`: `setup` ran before. */
+/**
+ * `wrong-unlock`: the secret does not open the key. `no-key`: no key for the target. `not-set-up`: no unlock method yet.
+ * `already-set-up`: `setup` ran before. `wrong-recovery-code`: the recovery code is not the one of this hub, or does not
+ * open the key. `needs-rewrap`: a recovery changed the unlock method, and the key is not sealed under the new one yet.
+ */
 export class KeyError extends Error {
   constructor(
-    readonly code: "wrong-unlock" | "no-key" | "not-set-up" | "bad-recovery-key" | "already-set-up",
+    readonly code:
+      | "wrong-unlock"
+      | "no-key"
+      | "not-set-up"
+      | "bad-recovery-key"
+      | "already-set-up"
+      | "wrong-recovery-code"
+      | "needs-rewrap",
     message: string,
   ) {
     super(message);
@@ -62,6 +81,8 @@ interface State {
   recoveryPublicKey?: string;
   salts: Map<string, string>;
   keys: Map<string, KeyRecord>;
+  /** Targets whose key is sealed under an old unlock method and waits for `rewrapWithRecovery`. */
+  pending: Set<string>;
 }
 
 const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
@@ -76,7 +97,7 @@ function isSealed(value: unknown): value is Sealed {
 }
 
 function emptyState(): State {
-  return { salts: new Map(), keys: new Map() };
+  return { salts: new Map(), keys: new Map(), pending: new Set() };
 }
 
 function parse(text: string): State {
@@ -101,6 +122,12 @@ function parse(text: string): State {
       if (typeof record.publicKey !== "string" || !isSealed(record.wrapped) || typeof record.recovery !== "string")
         continue;
       state.keys.set(id, { publicKey: record.publicKey, wrapped: record.wrapped, recovery: record.recovery });
+    }
+  }
+
+  if (Array.isArray(parsed.pending)) {
+    for (const id of parsed.pending) {
+      if (typeof id === "string" && state.keys.has(id)) state.pending.add(id);
     }
   }
 
@@ -177,6 +204,38 @@ export class SshKeyStore {
     });
   }
 
+  /** The targets that wait for `rewrapWithRecovery`. */
+  pendingRewraps(): string[] {
+    return [...this.state.pending];
+  }
+
+  /**
+   * Starts a recovery after a lost passkey. The code must belong to this hub (its public key is compared in constant
+   * time with the stored one). The new method replaces the old one, and every key is marked as pending a re-wrap: the
+   * old wrap belongs to the old method. A second call replaces the method again and marks every key again. Returns the
+   * ids of the keys to re-wrap. Throws `KeyError` `not-set-up` or `wrong-recovery-code`, and changes nothing then.
+   */
+  async beginRecovery(options: {
+    code: string;
+    method: "prf" | "passphrase";
+    credentialId?: string;
+  }): Promise<{ targets: string[] }> {
+    this.needSetup();
+    if (options.method === "prf" && !options.credentialId) throw new Error("a passkey needs a credential id");
+    if (options.method === "passphrase" && options.credentialId !== undefined)
+      throw new Error("a passphrase has no credential id");
+    if (!this.ownsCode(options.code))
+      throw new KeyError("wrong-recovery-code", "the recovery code is not the one of this hub");
+
+    return this.mutate((draft) => {
+      draft.method = options.method;
+      if (options.method === "prf") draft.credentialId = options.credentialId;
+      else delete draft.credentialId;
+      draft.pending = new Set(draft.keys.keys());
+      return { targets: [...draft.pending] };
+    });
+  }
+
   /** The salt of a target, base64url. It is made on the first call and stays the same after that, until `remove`. */
   async saltFor(targetId: string): Promise<string> {
     checkTarget(targetId);
@@ -233,6 +292,8 @@ export class SshKeyStore {
   async open(targetId: string, unlock: UnlockSecret): Promise<UnlockedKey> {
     this.needSetup();
     const record = this.record(targetId);
+    if (this.state.pending.has(targetId))
+      throw new KeyError("needs-rewrap", "this target needs its key to be recovered");
     this.needMethod(unlock);
     const salt = this.state.salts.get(targetId);
     if (!salt) throw new KeyError("no-key", "no key for this target");
@@ -249,34 +310,42 @@ export class SshKeyStore {
     }
   }
 
-  /** Opens the recovery copy with the recovery code and seals the key again under a new unlock secret. */
+  /**
+   * Opens the recovery copy with the recovery code and seals the key again under the unlock secret (the new method)
+   * and the unchanged salt of the target. Clears the pending mark. Throws `KeyError` `wrong-recovery-code` for a code
+   * that does not open the key. A failed write leaves the old wrap and the mark.
+   */
   async rewrapWithRecovery(targetId: string, code: string, unlock: UnlockSecret): Promise<void> {
     this.needSetup();
     const record = this.record(targetId);
     this.needMethod(unlock);
     const salt = this.state.salts.get(targetId);
     if (!salt) throw new KeyError("no-key", "no key for this target");
-    let seed: Uint8Array;
+    let seed: Uint8Array | undefined;
+    let wrapKey: Uint8Array | undefined;
 
     try {
-      seed = openWithRecovery(code, record.recovery, targetId);
-    } catch (error) {
-      if (error instanceof WrapError) throw new KeyError("wrong-unlock", "the recovery code does not open this key");
-      throw error;
-    }
+      try {
+        seed = openWithRecovery(code, record.recovery, targetId);
+      } catch (error) {
+        if (error instanceof WrapError)
+          throw new KeyError("wrong-recovery-code", "the recovery code does not open this key");
+        throw error;
+      }
 
-    const wrapKey = await deriveWrapKey(unlock.method, unlock.secret, unb64(salt));
-
-    try {
+      wrapKey = await deriveWrapKey(unlock.method, unlock.secret, unb64(salt));
       const wrapped = seal(wrapKey, seed, targetId);
       await this.mutate((draft) => {
         const current = draft.keys.get(targetId);
         if (!current) throw new KeyError("no-key", "no key for this target");
+        // Another recovery may have changed the method while the key was derived.
+        if (draft.method !== unlock.method) throw new KeyError("wrong-unlock", "the unlock method changed");
         draft.keys.set(targetId, { ...current, wrapped });
+        draft.pending.delete(targetId);
       });
     } finally {
-      seed.fill(0);
-      wrapKey.fill(0);
+      seed?.fill(0);
+      wrapKey?.fill(0);
     }
   }
 
@@ -285,6 +354,7 @@ export class SshKeyStore {
     await this.mutate((draft) => {
       draft.keys.delete(targetId);
       draft.salts.delete(targetId);
+      draft.pending.delete(targetId);
     });
   }
 
@@ -305,6 +375,18 @@ export class SshKeyStore {
         seed.fill(0);
       },
     };
+  }
+
+  /** True when the code belongs to this hub: its public key equals the stored one. A code that does not parse is not one. */
+  private ownsCode(code: string): boolean {
+    try {
+      const given = unb64(recoveryPublicKeyOf(code));
+      const stored = unb64(this.state.recoveryPublicKey ?? "");
+      return given.length === stored.length && timingSafeEqual(given, stored);
+    } catch (error) {
+      if (error instanceof WrapError) return false;
+      throw error;
+    }
   }
 
   private needSetup(): void {
@@ -333,6 +415,7 @@ export class SshKeyStore {
         ...this.state,
         salts: new Map(this.state.salts),
         keys: new Map(this.state.keys),
+        pending: new Set(this.state.pending),
       };
       const result = change(draft);
       await this.write(draft);
@@ -353,6 +436,7 @@ export class SshKeyStore {
       recoveryPublicKey: state.recoveryPublicKey,
       salts: Object.fromEntries(state.salts),
       keys: Object.fromEntries(state.keys),
+      ...(state.pending.size > 0 ? { pending: [...state.pending] } : {}),
     });
     if (text.length > MAX_BYTES) throw new Error("the key file would be too big");
     await mkdir(dirname(file), { recursive: true, mode: 0o700 });

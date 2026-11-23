@@ -170,12 +170,35 @@ export function sealToRecovery(publicKey: string, plain: Uint8Array, aad: string
   return b64(Buffer.concat([ephPub, iv, ct]));
 }
 
-/** Throws `WrapError` on a bad code (a typo gives another key, so the tag check fails), a changed `aad` or a damaged value. */
-export function openWithRecovery(code: string, sealed: string, aad: string): Uint8Array {
+/** The private key of a recovery code. Throws `WrapError` for a code that does not parse. */
+function recoveryPrivateKey(code: string): { key: KeyObject; seed: Buffer } {
   const decoded = unbase32(code.replace(/[\s-]/g, "").toUpperCase());
   // 32 bytes need 52 base32 characters. The last one carries 4 bits that are padding and are dropped.
   if (decoded.length < KEY_LEN) throw new WrapError("recovery code is too short");
   const seed = decoded.subarray(0, KEY_LEN);
+  // Import the raw private key through PKCS8, which lets Node derive the public half.
+  const pkcs8 = Buffer.concat([Buffer.from("302e020100300506032b656e04220420", "hex"), seed]);
+
+  try {
+    return { key: createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" }), seed };
+  } catch {
+    throw new WrapError("recovery code is not valid");
+  } finally {
+    pkcs8.fill(0);
+  }
+}
+
+/** The public key (the text form that `newRecovery` returns) of a recovery code. Throws `WrapError` for a code that does not parse. */
+export function recoveryPublicKeyOf(code: string): string {
+  const { key, seed } = recoveryPrivateKey(code);
+  seed.fill(0);
+  return b64(rawKeys(key).pub);
+}
+
+/** Throws `WrapError` on a bad code (a typo gives another key, so the tag check fails), a changed `aad` or a damaged value. */
+export function openWithRecovery(code: string, sealed: string, aad: string): Uint8Array {
+  const { key, seed } = recoveryPrivateKey(code);
+  seed.fill(0);
   const blob = unb64(sealed);
   if (blob.length < KEY_LEN + IV_LEN + TAG_LEN) throw new WrapError("sealed value is damaged");
   const ephPub = blob.subarray(0, KEY_LEN);
@@ -183,9 +206,6 @@ export function openWithRecovery(code: string, sealed: string, aad: string): Uin
   const ct = blob.subarray(KEY_LEN + IV_LEN);
 
   try {
-    // Import the raw private key through PKCS8, which lets Node derive the public half.
-    const pkcs8 = Buffer.concat([Buffer.from("302e020100300506032b656e04220420", "hex"), seed]);
-    const key = createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
     const recipient = rawKeys(key).pub;
     const shared = diffieHellman({ privateKey: key, publicKey: x25519Public(ephPub) });
     return decrypt(recoveryKey(shared, ephPub, recipient), iv, ct, aad);

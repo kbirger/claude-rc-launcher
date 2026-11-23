@@ -105,7 +105,8 @@ async function setup(
   const node2 = fakeNode();
   const nodes: Record<string, ReturnType<typeof fakeNode>> = { node1, node2 };
   const keys = new SshKeyStore();
-  if (options.setUp !== false) await keys.setup({ method: "passphrase", recoveryPublicKey: newRecovery().publicKey });
+  const recovery = newRecovery();
+  if (options.setUp !== false) await keys.setup({ method: "passphrase", recoveryPublicKey: recovery.publicKey });
   const targets = new TargetStore();
   const hook: { service?: SshService } = {};
   const grants = new GrantStore({
@@ -187,7 +188,7 @@ async function setup(
     return found;
   };
 
-  return { app, call, keys, targets, grants, service, node1, node2, timers, readyTarget, request };
+  return { app, call, keys, targets, grants, service, node1, node2, timers, readyTarget, request, recovery };
 }
 
 const ROLES: [string, string, "write" | "admin"][] = [
@@ -195,6 +196,8 @@ const ROLES: [string, string, "write" | "admin"][] = [
   ["GET", "/ssh/targets", "write"],
   ["GET", "/ssh/grants", "write"],
   ["POST", "/ssh/setup", "admin"],
+  ["POST", "/ssh/recovery/begin", "admin"],
+  ["POST", "/ssh/targets/:id/rewrap", "admin"],
   ["PUT", "/ssh/nodes/:host", "admin"],
   ["POST", "/ssh/targets", "admin"],
   ["GET", "/ssh/targets/:id", "admin"],
@@ -271,6 +274,8 @@ describe("setup", () => {
       ["PUT", "/nodes/node1"],
       ["POST", "/grants/x/approve"],
       ["GET", "/targets/nas/salt"],
+      ["POST", "/recovery/begin"],
+      ["POST", "/targets/nas/rewrap"],
     ] as const) {
       const answer = await call(method, path, "admin", {});
       expect([method, path, answer.status, answer.body.error]).toEqual([method, path, 409, "SSH access is not set up"]);
@@ -738,5 +743,135 @@ describe("audit", () => {
     await call("GET", "/targets");
     expect(logs.filter((line) => line.startsWith("audit user="))).toHaveLength(writes.length);
     expect(logs.join("\n")).not.toContain(SECRET);
+  });
+});
+
+describe("recovery", () => {
+  const next = { method: "prf" as const, secret: Buffer.from("new passkey output").toString("base64url") };
+  const begin = (recovery: { code: string }) => ({ code: recovery.code, method: "prf", credentialId: "cred2" });
+
+  test("POST /recovery/begin gives 403 for a wrong code and 200 with the pending targets for the right one", async () => {
+    const { call, readyTarget, recovery, keys, targets } = await setup();
+    await readyTarget();
+    await targets.add({
+      id: "web",
+      address: "10.0.0.6",
+      port: 22,
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    expect((await call("POST", "/targets/web/key", "admin", { unlock })).status).toBe(200);
+
+    const wrong = await call("POST", "/recovery/begin", "admin", begin(newRecovery()));
+    expect(wrong.status).toBe(403);
+    expect(wrong.body.error).toBe("wrong recovery code");
+    expect(keys.method()).toBe("passphrase");
+
+    expect((await call("POST", "/recovery/begin", "admin", { ...begin(recovery), method: "x" })).status).toBe(400);
+    expect((await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "prf" })).status).toBe(400);
+    expect((await call("POST", "/recovery/begin", "admin", { method: "prf", credentialId: "c" })).status).toBe(400);
+    expect(
+      (await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "passphrase", credentialId: "c" }))
+        .status,
+    ).toBe(400);
+
+    const right = await call("POST", "/recovery/begin", "admin", begin(recovery));
+    expect(right.status).toBe(200);
+    expect([...(right.body.targets as string[])].sort()).toEqual(["nas", "web"]);
+    expect(keys.method()).toBe("prf");
+    expect(keys.credentialId()).toBe("cred2");
+  });
+
+  test("POST /targets/:id/rewrap re-wraps one target and the new unlock then approves a grant", async () => {
+    const { call, readyTarget, request, recovery, grants, keys } = await setup();
+    await readyTarget();
+    await call("POST", "/recovery/begin", "admin", begin(recovery));
+    const grant = await request();
+
+    const done = await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: next });
+    expect(done.status).toBe(204);
+    expect(keys.pendingRewraps()).toEqual([]);
+    expect((await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock: next })).status).toBe(200);
+    expect(grants.get(grant.id)?.state).toBe("active");
+
+    const again = await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: next });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe("this target does not need a re-wrap");
+  });
+
+  test("POST /targets/:id/rewrap with a wrong code gives 403 and the target stays pending", async () => {
+    const { call, readyTarget, recovery, keys } = await setup();
+    await readyTarget();
+    await call("POST", "/recovery/begin", "admin", begin(recovery));
+    const refused = await call("POST", "/targets/nas/rewrap", "admin", { code: newRecovery().code, unlock: next });
+    expect(refused.status).toBe(403);
+    expect(keys.pendingRewraps()).toEqual(["nas"]);
+    // The method of the unlock must be the new one of the hub.
+    const old = await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock });
+    expect(old.status).toBe(400);
+    expect((await call("POST", "/targets/nas/rewrap", "admin", { unlock: next })).status).toBe(400);
+    expect((await call("POST", "/targets/nope/rewrap", "admin", { code: recovery.code, unlock: next })).status).toBe(
+      404,
+    );
+    expect(keys.pendingRewraps()).toEqual(["nas"]);
+  });
+
+  test("approve for a pending target gives 409 with the recovery text and holds no key", async () => {
+    const { call, readyTarget, request, recovery, grants, node1 } = await setup();
+    await readyTarget();
+    const grant = await request();
+    await call("POST", "/recovery/begin", "admin", begin(recovery));
+    node1.calls.length = 0;
+    const refused = await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock: next });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("this target needs its key to be recovered");
+    expect(grants.get(grant.id)?.state).toBe("pending");
+    expect(node1.calls).toEqual([]);
+
+    const tested = await call("POST", "/targets/nas/test", "admin", { node: "node1", unlock: next });
+    expect(tested.status).toBe(409);
+    expect(tested.body.error).toBe("this target needs its key to be recovered");
+    expect(grants.list().filter((item) => item.state === "active")).toEqual([]);
+    expect(grants.list().filter((item) => item.test && item.state === "pending")).toEqual([]);
+    expect(node1.calls).toEqual([]);
+  });
+
+  test("GET /status lists the pending targets", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    expect((await call("GET", "/status")).body.pendingRewrap).toEqual([]);
+    await call("POST", "/recovery/begin", "admin", begin(recovery));
+    expect((await call("GET", "/status", "write")).body.pendingRewrap).toEqual(["nas"]);
+    await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: next });
+    expect((await call("GET", "/status")).body.pendingRewrap).toEqual([]);
+  });
+
+  test("the recovery routes need the admin role", async () => {
+    const { call, readyTarget, recovery, keys } = await setup();
+    await readyTarget();
+
+    for (const role of ["write", "read"]) {
+      expect((await call("POST", "/recovery/begin", role, begin(recovery))).status).toBe(403);
+      expect((await call("POST", "/targets/nas/rewrap", role, { code: recovery.code, unlock: next })).status).toBe(403);
+    }
+
+    expect(keys.method()).toBe("passphrase");
+  });
+
+  test("the audit lines for the recovery routes never hold the code", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    logs.length = 0;
+    await call("POST", "/recovery/begin", "admin", begin(recovery));
+    await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: next });
+    await call("POST", "/targets/nas/rewrap", "admin", { code: newRecovery().code, unlock: next });
+    const text = logs.join("\n");
+    expect(text).not.toContain(recovery.code);
+    expect(text).not.toContain(recovery.code.replaceAll("-", ""));
+    expect(text).not.toContain(next.secret);
+    expect(logs).toContain("audit ssh recovery user=ann method=prf targets=1");
+    expect(logs).toContain("audit ssh rewrap user=ann target=nas");
+    expect(logs.filter((line) => line.startsWith("audit user=ann role=admin ssh POST /api/ssh/"))).toHaveLength(3);
   });
 });
