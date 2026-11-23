@@ -11,6 +11,7 @@ import { listDirs, makeDir, resolveChecked } from "./fsapi";
 import type { DirOwner } from "./fsapi";
 import { hostAdminApi, renameHandler } from "./hostadmin";
 import type { HostClient, HostConfig } from "./hostclient";
+import { LOCAL_HOST } from "./hostid";
 import { HostRegistry } from "./hostregistry";
 import { hostsApi } from "./hosts";
 import { HttpError } from "./instances";
@@ -109,7 +110,14 @@ export interface Deps {
   /** The hub passes the beat loop it built, so that its stop() can end it. */
   beatLoop?: BeatLoop;
   /** SSH delegation. The routes are mounted at `/ssh` of the browser API and of the CLI API when this is set. */
-  ssh?: { service: SshService; keys: SshKeyStore; targets: TargetStore; grants: GrantStore };
+  ssh?: {
+    service: SshService;
+    keys: SshKeyStore;
+    targets: TargetStore;
+    grants: GrantStore;
+    /** The address of the hub host `local`, when it has SSH wiring. Without it `local` is not a host of the SSH routes. */
+    localAddress?: string;
+  };
 }
 
 const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
@@ -653,9 +661,11 @@ export function createApp(deps: Deps): Hono {
   const ssh = () => {
     const { ssh: parts } = deps;
     if (!parts) return undefined;
+    const { localAddress, ...rest } = parts;
     return sshApi({
-      ...parts,
+      ...rest,
       hostAddress: (hostId) => {
+        if (hostId === LOCAL_HOST && localAddress !== undefined) return localAddress;
         const url = registry.get(hostId)?.host.url;
 
         try {
@@ -664,7 +674,10 @@ export function createApp(deps: Deps): Hono {
           return undefined;
         }
       },
-      hostIds: () => registry.list().map((entry) => entry.host.id),
+      hostIds: () => [
+        ...(localAddress !== undefined ? [LOCAL_HOST] : []),
+        ...registry.list().map((entry) => entry.host.id),
+      ],
       user: (context) => {
         const current = context.get("user" as never) as User | undefined;
         return current?.username ?? current?.sub ?? "unknown";

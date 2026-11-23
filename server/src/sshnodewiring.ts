@@ -1,10 +1,15 @@
+import { Hono } from "hono";
 import { lstat, mkdir, chmod, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { onError } from "./app";
 import type { IdentityFor } from "./asuser";
 import type { Config } from "./config";
+import { HostError } from "./hostclient";
+import type { HostClient } from "./hostclient";
+import { LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
 import type { Instance, Instances } from "./instances";
-import { SshBroker } from "./sshnodeapi";
+import { SshBroker, sshManagedApi, sshNodeApi } from "./sshnodeapi";
 import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
 import { SshControl } from "./sshnodecontrol";
 import { SSH_RUN_DIR, runAsFor } from "./unit";
@@ -242,4 +247,56 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       }
     },
   };
+}
+
+export interface LocalSsh extends NodeSsh {
+  /** The in-process client for the host `local`. Missing on Windows: the host has no grant routes there. */
+  client?: HostClient;
+}
+
+/**
+ * A `HostClient` with no network: `call` runs the request in `router` and gives `{ status, body }` as a remote call
+ * does (a 204 has a null body, any other body is JSON). `timeoutMs` has no effect, and `stream` is not supported:
+ * the events of the local broker go straight to the service.
+ */
+export function localHostClient(router: Hono, host = LOCAL_HOST): HostClient {
+  return {
+    async call(method, path, options = {}) {
+      const url = new URL(path, "http://local");
+      for (const [key, value] of Object.entries(options.query ?? {})) url.searchParams.set(key, value);
+      const hasBody = options.json !== undefined;
+      const response = await router.request(url.pathname + url.search, {
+        method,
+        ...(hasBody || method !== "GET" ? { headers: { "content-type": "application/json" } } : {}),
+        ...(hasBody ? { body: JSON.stringify(options.json) } : {}),
+      });
+      const text = await response.text();
+      if (response.status === 204) return { status: 204, body: null };
+      if (text === "") throw new HostError(host, "bad response");
+
+      try {
+        return { status: response.status, body: JSON.parse(text) as unknown };
+      } catch {
+        throw new HostError(host, "bad response");
+      }
+    },
+    stream: () => Promise.reject(new HostError(host, "bad response")),
+  };
+}
+
+/**
+ * The SSH wiring of the host `local`, for the hub process: `createNodeSsh`, plus a router with the same SSH routes as a
+ * node has and an in-process client for them. Linux only: on Windows there is no client.
+ */
+export function createLocalSsh(options: NodeSshOptions): LocalSsh {
+  const node = createNodeSsh(options);
+  if (!node.ssh) return node;
+  const api = new Hono();
+  // The same order as a node: the managed routes first, and a path they do not know falls through to the grant router.
+  api.route("/ssh", sshManagedApi(node.sshManaged));
+  api.route("/ssh", sshNodeApi(node.ssh));
+  const router = new Hono();
+  router.route("/api", api);
+  router.onError(onError);
+  return { ...node, client: localHostClient(router) };
 }
