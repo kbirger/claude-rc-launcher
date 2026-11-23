@@ -46,6 +46,8 @@ import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
 import { WatchFlag } from "./sessionwatch";
 import { sseResponse, trackStreams } from "./sse";
+import { sshNodeApi, unsupportedSshApi } from "./sshnodeapi";
+import type { SshNodeOptions } from "./sshnodeapi";
 import { isPwaFile } from "./static";
 import type { NodeEvents } from "./updateevents";
 import type { UpdateHistory } from "./updatehistory";
@@ -387,6 +389,8 @@ export function createNodeApp(deps: {
   sessionSource?: ChangeSource;
   watchTimers?: Timers;
   sessions?: SessionCatalog;
+  /** The SSH grant routes. Without it (a Windows node) every route under `/ssh` answers 501. */
+  ssh?: SshNodeOptions;
 }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
@@ -476,6 +480,7 @@ export function createNodeApp(deps: {
     watch.beat();
     return context.body(null, 204);
   });
+  api.route("/ssh", deps.ssh ? sshNodeApi(deps.ssh) : unsupportedSshApi());
   api.route(
     "/",
     instanceApi({

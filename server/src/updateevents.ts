@@ -6,6 +6,8 @@ export type StepName =
 export type NodeEvent =
   | { type: "step"; step: StepName; to?: string; client?: string; detail?: string }
   | { type: "log"; line: string; at: string }
+  | { type: "ssh.request"; requestId: string; instanceId: string; targetId: string; minutes?: number; reason?: string }
+  | { type: "ssh.sign"; signId: string; grantId: string; keyBlob: string; data: string; flags: number }
   | SessionsEvent;
 
 export interface UpdateHooks {
@@ -47,6 +49,8 @@ export class NodeEvents {
     if (nodeEvent.type === "sessions") {
       const { type: _type, ...payload } = nodeEvent;
       this.sessions = payload;
+    } else if (nodeEvent.type === "ssh.request" || nodeEvent.type === "ssh.sign") {
+      // These are for the hub only. The node keeps no state for them.
     } else if (nodeEvent.type === "log") {
       this.buffer.push({ line: nodeEvent.line, at: nodeEvent.at });
       if (this.buffer.length > this.maxLines) this.buffer.splice(0, this.buffer.length - this.maxLines);
