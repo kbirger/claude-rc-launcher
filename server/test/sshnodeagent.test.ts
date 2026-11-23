@@ -253,7 +253,11 @@ describe("GrantAgent", () => {
       gid: 2 ** 32,
     });
     const path = join(dir, "g2.sock");
-    await expect(failing.start()).rejects.toThrow();
+    const failed = await failing.start().then(
+      () => false,
+      () => true,
+    );
+    expect(failed).toBe(true);
     expect(await Bun.file(path).exists()).toBe(false);
     const refused = await connect(path).then(
       () => false,
