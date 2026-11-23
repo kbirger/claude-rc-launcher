@@ -546,7 +546,8 @@ function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions[
   return async (account, { shell, script }) => {
     if (shell === "powershell")
       return runWithStdin("powershell", ["-NoProfile", "-NonInteractive", "-Command", "-"], script);
-    if (!identityFor) return runWithStdin("sh", ["-s"], script);
+    // Fail closed: without a user switch the script would write to the home of the node's own user.
+    if (!identityFor) throw new HttpError(501, "the node has no user switch");
     // identityFor rejects an unknown account with a 400.
     const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
     return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env);
@@ -599,7 +600,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
 
     const script = provisionScript(systemType, line, systemType === "windows" ? { account } : {});
     const { code, stderr } = await runAs(account, script);
-    if (code !== 0) throw new HttpError(500, stderr.trim() || `the script exited with code ${code}`);
+    const failure = stderr.trim();
+    if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
+    if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
     return context.body(null, 204);
   });
 
