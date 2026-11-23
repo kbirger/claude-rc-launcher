@@ -29,6 +29,8 @@ export interface Flags {
   "no-create-session"?: boolean;
   spawn?: string;
   yes?: boolean;
+  minutes?: string;
+  reason?: string;
   help?: boolean;
   version?: boolean;
 }
@@ -67,6 +69,8 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         "no-create-session": { type: "boolean" },
         spawn: { type: "string" },
         yes: { type: "boolean" },
+        minutes: { type: "string" },
+        reason: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },
