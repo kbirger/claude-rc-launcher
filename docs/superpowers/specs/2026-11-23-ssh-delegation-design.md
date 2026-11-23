@@ -164,7 +164,7 @@ The command runs these steps:
 2. Wait for the key. If the unlock method is a passphrase, the command asks for it. If the method is a passkey, the command prints a link to the web UI and waits until the owner unlocks there.
 3. Pin the host key. For a managed target, the hub reads the host key from the target node. The hub already trusts that node, so no compare is needed. For an external target, an allowed node scans the host key. The command prints the fingerprint. The owner types `y`, or passes `--fingerprint SHA256:<value>` in advance.
 4. Install the key. For a managed target, the hub asks the target node to add the line to the `authorized_keys` file of the account. For an external target, the command connects with `--identity` and runs a short script for the system type. The script adds the line once and sets the file permissions.
-5. Run the test grant with the same unlock as step 2. The option `--no-test` skips this step.
+5. Run the test grant. It needs a new unlock of the same kind as step 2, because every grant needs a new unlock. The option `--no-test` skips this step.
 
 The key from `--identity` stays on the machine that runs the command. The command never sends it to the hub. For the connection in step 4, the command trusts only the host key that it pinned in step 3. The command only adds targets. The web UI does every other change.
 
