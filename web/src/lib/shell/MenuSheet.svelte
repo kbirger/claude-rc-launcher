@@ -10,7 +10,10 @@
   import LogOut from "@tabler/icons-svelte/icons/logout";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { resolve } from "$app/paths";
+  import { Badge } from "#lib/components/ui/badge/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { grantsQuery, statusQuery } from "#lib/features/ssh";
+  import { createQuery } from "@tanstack/svelte-query";
   import Avatar from "./Avatar.svelte";
   import { getShell } from "./context";
   import { REPO_URL } from "./links";
@@ -27,7 +30,25 @@
     { href: resolve("/appearance"), label: "Appearance", icon: Palette },
   ];
   // Only an admin sets up and approves SSH access. The hub refuses everyone else anyway: this hides what would be refused.
-  const shown = $derived(shell.can("admin") ? [...items, sshItem] : items);
+  const isAdmin = $derived(shell.can("admin"));
+  const shown = $derived(isAdmin ? [...items, sshItem] : items);
+  // The badge on SSH access counts the requests that wait for the owner. The menu is on every page, so the reads are
+  // light: the status is read once in a while, and the grants only for an admin when SSH is set up. TanStack stops the
+  // 15 second timer in a hidden tab.
+  const SSH_STATUS_STALE_MS = 300_000;
+  const SSH_BADGE_POLL_MS = 15_000;
+  const status = createQuery(() => ({
+    ...statusQuery(),
+    staleTime: SSH_STATUS_STALE_MS,
+    refetchOnWindowFocus: false,
+    enabled: isAdmin,
+  }));
+  const grants = createQuery(() => ({
+    ...grantsQuery(),
+    refetchInterval: SSH_BADGE_POLL_MS,
+    enabled: isAdmin && status.data?.setUp === true,
+  }));
+  const pending = $derived(grants.data?.filter((grant) => grant.state === "pending").length ?? 0);
 </script>
 
 <Sheet.Root bind:open>
@@ -55,6 +76,9 @@
           onclick={() => (open = false)}
         >
           <it.icon size={20} aria-hidden="true" />{it.label}
+          {#if it === sshItem && pending > 0}
+            <Badge data-pending-grants class="ml-auto" aria-label="{pending} pending requests">{pending}</Badge>
+          {/if}
         </Button>
       {/each}
       <Button

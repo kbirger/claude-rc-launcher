@@ -41,19 +41,24 @@ export {
   testTarget,
 } from "./api";
 export {
+  approveGrantMutation,
   authorizeManagedMutation,
   createKeyMutation,
   createTargetMutation,
   deleteTargetMutation,
+  denyGrantMutation,
   patchTargetMutation,
   pinHostKeyMutation,
   pinManagedMutation,
   putNodeMutation,
+  revokeGrantMutation,
   scanHostKeyMutation,
   setupMutation,
   testTargetMutation,
 } from "./mutations";
 export { grantsQuery, SSH_KEY, statusQuery, targetsQuery } from "./queries";
+export { default as ApproveSheet } from "./ApproveSheet.svelte";
+export { default as GrantList } from "./GrantList.svelte";
 export { default as NodeAccessList } from "./NodeAccess.svelte";
 export { default as SetupForm } from "./SetupForm.svelte";
 export { default as SshPage } from "./SshPage.svelte";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SETTINGS, SETTINGS_HELP, argsWith, settingsFromArgs } from "../src/instancesettings";
+import { DEFAULT_SETTINGS, SETTINGS_HELP, argsWith, settingsFromArgs, settingsHelpFor } from "../src/instancesettings";
 import { defined } from "./support";
 
 describe("sshRequests", () => {
@@ -12,6 +12,15 @@ describe("sshRequests", () => {
     expect(entry.label).toBe("Allow SSH requests");
     expect(entry.values.map((value) => value.value)).toEqual([false, true]);
     for (const value of entry.values) expect(value.explanation.length).toBeGreaterThan(0);
+  });
+});
+
+describe("settingsHelpFor", () => {
+  test("a Linux node offers the SSH setting", () => {
+    expect(settingsHelpFor("linux")).toEqual(SETTINGS_HELP);
+  });
+  test("a Windows node leaves the SSH setting out, because the hub refuses it there", () => {
+    expect(settingsHelpFor("win32").settings.map((setting) => setting.key)).toEqual(["createSession", "spawnMode"]);
   });
 });
 
