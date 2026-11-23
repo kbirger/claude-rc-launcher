@@ -47,7 +47,7 @@ A shared secret is the weaker second method for a node. It is long-lived and sym
 SSH delegation lets a session use an SSH key that the hub holds. Read [SSH delegation](ssh-delegation.md) for the setup. These are the security rules:
 
 - The hub makes one Ed25519 key for each target. The private key never leaves the hub. A node stores no key and no secret that opens one.
-- The hub stores each key encrypted in `<state_dir>/ssh/keys.json` with mode 600. A passkey with the PRF extension or a passphrase unlocks it. A recovery code, which the hub does not keep, opens a second copy.
+- The hub stores each key encrypted in `<state_dir>/ssh/keys.json` with mode 600. A passkey with the PRF extension or a passphrase unlocks it. A recovery code, which the hub does not keep, opens a second copy. A recovery with the code chooses a new unlock method, ends every active grant, and needs one re-lock for each target. Without the code, the only way is to delete the SSH folder and add the targets again.
 - Only an `admin` can set up SSH access, add a target, approve a grant, unlock a key or revoke a grant. A `write` user can list the status, the targets and the grants.
 - Every grant needs a new unlock. The hub holds a key in memory only while a grant is active. A stolen login cannot approve a grant, because the approval needs the unlock too.
 - A grant lasts 60 minutes by default and 480 minutes at most. A grant cannot be extended. A hub restart ends all grants.

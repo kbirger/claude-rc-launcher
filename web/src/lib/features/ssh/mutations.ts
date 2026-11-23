@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/svelte-query";
 import {
   approveGrant,
   authorizeManaged,
+  beginRecovery,
   createKey,
   createTarget,
   deleteTarget,
@@ -11,6 +12,7 @@ import {
   pinManaged,
   putNode,
   revokeGrant,
+  rewrapTarget,
   scanHostKey,
   setup,
   testTarget,
@@ -120,4 +122,24 @@ export const revokeGrantMutation = (client: QueryClient) => ({
   mutationKey: [...SSH_KEY, "revoke-grant"] as const,
   mutationFn: (id: string) => revokeGrant(id),
   onSettled: () => refreshGrants(client),
+});
+
+// The recovery calls carry the recovery code and an unlock, so they keep no data: `gcTime: 0` drops the mutation as
+// soon as nothing watches it, and the caller resets it in a `finally`, so that the secret in the variables lives only
+// for the call. Each call refetches the status, because the status holds the method and the targets that wait.
+const refreshStatus = (client: QueryClient) => client.invalidateQueries({ queryKey: [...SSH_KEY, "status"] });
+
+export const beginRecoveryMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "begin-recovery"] as const,
+  mutationFn: (body: { code: string; method: UnlockMethod; credentialId?: string }) => beginRecovery(body),
+  gcTime: 0,
+  onSettled: () => refreshStatus(client),
+});
+
+export const rewrapTargetMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "rewrap-target"] as const,
+  mutationFn: ({ id, code, unlock }: { id: string; code: string; unlock: Unlock }) =>
+    rewrapTarget(id, { code, unlock }),
+  gcTime: 0,
+  onSettled: () => refreshStatus(client),
 });

@@ -65,6 +65,20 @@ test("each function calls its route with the right method and path", async () =>
   expect(calls).toHaveLength(table.length);
 });
 
+test("api: beginRecovery and rewrapTarget call their routes with the right bodies", async () => {
+  stub(200, { targets: ["nas"] });
+  await api.beginRecovery({ code: "ABCD-EFGH", method: "prf", credentialId: "cred" });
+  expect([last().init?.method, last().url]).toEqual(["POST", "/api/ssh/recovery/begin"]);
+  expect(sent()).toEqual({ code: "ABCD-EFGH", method: "prf", credentialId: "cred" });
+
+  await api.beginRecovery({ code: "ABCD-EFGH", method: "passphrase" });
+  expect(sent()).toEqual({ code: "ABCD-EFGH", method: "passphrase" });
+
+  await api.rewrapTarget("a/b", { code: "ABCD-EFGH", unlock });
+  expect([last().init?.method, last().url]).toEqual(["POST", "/api/ssh/targets/a%2Fb/rewrap"]);
+  expect(sent()).toEqual({ code: "ABCD-EFGH", unlock });
+});
+
 test("an error answer throws an ApiError with its status and text", async () => {
   stub(409, { error: "SSH access is not set up" });
   const error = await api.listTargets().catch((caught) => caught);
