@@ -1,3 +1,4 @@
+import path from "node:path";
 import { createApp, sessionCatalogFor } from "./app";
 import type { CliDeps, Updater } from "./app";
 import { createOidcClient, oidcUserAuth } from "./auth";
@@ -23,7 +24,7 @@ import { proxyJwtUserAuth } from "./proxyauth";
 import type { PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
 import { createReleaseList } from "./releaselist";
-import { rolesFrom } from "./roles";
+import { logToken, rolesFrom } from "./roles";
 import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
@@ -32,6 +33,10 @@ import { SessionIndex } from "./sessionindex";
 import { SessionsStore } from "./sessionsstore";
 import { WatchFlag } from "./sessionwatch";
 import { stopServer } from "./sse";
+import { GrantStore } from "./sshgrants";
+import { SshKeyStore } from "./sshkeystore";
+import { SshService } from "./sshservice";
+import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
 import type { UpdateHooks } from "./updateevents";
 import { UpdateHistory } from "./updatehistory";
@@ -244,6 +249,26 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     store.set("local", event);
   });
   sessionIndex.start();
+  // SSH delegation. The grant store ends grants through the service, and the service needs the store: the hook is set
+  // right after both exist. No grant can end before that, because a grant starts only from a request of a node.
+  const sshDir = path.join(cfg.stateDir, "ssh");
+  const sshKeys = new SshKeyStore(path.join(sshDir, "keys.json"));
+  const sshTargets = new TargetStore(path.join(sshDir, "targets.json"));
+
+  const sshAudit = (line: string) => {
+    console.log(line);
+  };
+
+  const sshHook: { service?: SshService } = {};
+  const sshGrants = new GrantStore({ audit: sshAudit, onEnd: (grant) => sshHook.service?.onGrantEnd(grant) });
+  const ssh = new SshService({
+    keys: sshKeys,
+    targets: sshTargets,
+    grants: sshGrants,
+    client: (hostId) => hosts.get(hostId)?.client,
+    audit: sshAudit,
+  });
+  sshHook.service = ssh;
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,
@@ -261,6 +286,17 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     onStep: writeStep,
     onSessions: (host, payload) => {
       store.set(host, payload);
+    },
+    onSsh: (host, event, data) => {
+      ssh.onNodeEvent(host, event, data);
+    },
+    onOnline: (host) => {
+      ssh.onNodeOnline(host).catch((error: unknown) => {
+        sshAudit(`audit ssh event=online node=${logToken(host)} failed=${logToken(String(error))}`);
+      });
+    },
+    onOffline: (host) => {
+      ssh.onNodeOffline(host);
     },
     ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
     ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
@@ -293,6 +329,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     sessionIndex,
     sessionsStore: store,
     beatLoop,
+    ssh: { service: ssh, keys: sshKeys, targets: sshTargets, grants: sshGrants },
     ...(cloner ? { cloner } : {}),
     ...(cli ? { cli } : {}),
   });
@@ -313,6 +350,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   return {
     port,
     stop: () => {
+      // The grant store holds unlocked keys: end every grant, so that the keys are destroyed.
+      sshGrants.endWhere(() => true, "hub-restart");
       offRecord();
       watchers.stop();
       beatLoop.stop();

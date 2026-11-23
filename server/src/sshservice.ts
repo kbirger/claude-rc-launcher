@@ -24,6 +24,14 @@ const PROBE_TIMEOUT_MS = 60_000;
 const SCAN_TIMEOUT_MS = 30_000;
 const SCRIPT_TIMEOUT_MS = 90_000;
 
+/** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
+export class NodeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NodeError";
+  }
+}
+
 export interface HostKeyLine {
   line: string;
   fingerprint: string;
@@ -147,24 +155,22 @@ export class SshService {
   async scanHostKey(targetId: string, hostId: string): Promise<HostKeyLine[]> {
     const target = this.needTarget(targetId);
     if (!target.nodes.includes(hostId)) throw new TargetError(409, "the node is not listed for this target");
-    const reply = await this.nodeCall(
+    const reply = await this.nodeReply(
       hostId,
       "POST",
       "/scan",
       { address: target.address, port: target.port },
       SCAN_TIMEOUT_MS,
     );
-    if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
     return keysOf(reply.body);
   }
 
   /** Reads the host key of a managed target from its own node and pins it. */
   async pinManaged(targetId: string): Promise<HostKeyLine[]> {
     const target = this.needManaged(targetId);
-    const reply = await this.nodeCall(target.managedHost, "GET", "/hostkey");
-    if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
+    const reply = await this.nodeReply(target.managedHost, "GET", "/hostkey");
     const found = keysOf(reply.body);
-    if (found.length === 0) throw new Error("the node returned no host key");
+    if (found.length === 0) throw new NodeError("the node returned no host key");
     await this.deps.targets.setHostKey(targetId, found[0].line);
     return found;
   }
@@ -180,14 +186,13 @@ export class SshService {
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
     const line = authorizedKeysLine(keys.publicLine(targetId), sources);
-    const reply = await this.nodeCall(
+    await this.nodeReply(
       target.managedHost,
       "POST",
       "/authorize",
       { account: target.account, systemType: target.systemType, line },
       SCRIPT_TIMEOUT_MS,
     );
-    if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
   }
 
   /**
@@ -366,6 +371,26 @@ export class SshService {
     const target = this.needTarget(targetId);
     if (target.managedHost === undefined) throw new TargetError(409, "the target is not a managed target");
     return { ...target, managedHost: target.managedHost };
+  }
+
+  /** A call that must succeed: a node that cannot be reached, or that answers with an error, is a `NodeError`. */
+  private async nodeReply(
+    hostId: string,
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    path: string,
+    json?: unknown,
+    timeoutMs?: number,
+  ): Promise<{ status: number; body: unknown }> {
+    let reply: { status: number; body: unknown };
+
+    try {
+      reply = await this.nodeCall(hostId, method, path, json, timeoutMs);
+    } catch (error) {
+      throw new NodeError(message(error));
+    }
+
+    if (!isOk(reply.status)) throw new NodeError(errorText(reply.body, reply.status));
+    return reply;
   }
 
   /** One call to a node route below `/api/ssh`. It rejects when the node is not known or cannot be reached. */

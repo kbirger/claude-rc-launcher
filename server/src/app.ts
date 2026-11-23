@@ -46,8 +46,13 @@ import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
 import { WatchFlag } from "./sessionwatch";
 import { sseResponse, trackStreams } from "./sse";
+import { sshApi } from "./sshapi";
+import type { GrantStore } from "./sshgrants";
+import type { SshKeyStore } from "./sshkeystore";
 import { sshManagedApi, sshNodeApi, unsupportedSshApi } from "./sshnodeapi";
 import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
+import type { SshService } from "./sshservice";
+import type { TargetStore } from "./sshtargets";
 import { isPwaFile } from "./static";
 import type { NodeEvents } from "./updateevents";
 import type { UpdateHistory } from "./updatehistory";
@@ -103,6 +108,8 @@ export interface Deps {
   watchTimers?: Timers;
   /** The hub passes the beat loop it built, so that its stop() can end it. */
   beatLoop?: BeatLoop;
+  /** SSH delegation. The routes are mounted at `/ssh` of the browser API and of the CLI API when this is set. */
+  ssh?: { service: SshService; keys: SshKeyStore; targets: TargetStore; grants: GrantStore };
 }
 
 const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
@@ -641,6 +648,31 @@ export function createApp(deps: Deps): Hono {
   );
   api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
+
+  const ssh = () => {
+    const { ssh: parts } = deps;
+    if (!parts) return undefined;
+    return sshApi({
+      ...parts,
+      hostAddress: (hostId) => {
+        const url = registry.get(hostId)?.host.url;
+
+        try {
+          return url ? new URL(url).hostname.replace(/^\[|\]$/g, "") : undefined;
+        } catch {
+          return undefined;
+        }
+      },
+      hostIds: () => registry.list().map((entry) => entry.host.id),
+      user: (context) => {
+        const current = context.get("user" as never) as User | undefined;
+        return current?.username ?? current?.sub ?? "unknown";
+      },
+    });
+  };
+
+  const sshRoutes = ssh();
+  if (sshRoutes) api.route("/ssh", sshRoutes);
   api.get("/updates/history", (context) =>
     deps.history ? context.json(deps.history.list()) : context.json({ error: "update history not available" }, 501),
   );
@@ -731,6 +763,8 @@ export function createApp(deps: Deps): Hono {
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());
+    const cliSsh = ssh();
+    if (cliSsh) cliApi.route("/ssh", cliSsh);
     cliApi.all("*", (context) => context.json({ error: "not found" }, 404));
     app.route("/cli/api", cliApi);
     app.all("/cli/*", (context) => context.json({ error: "not found" }, 404));
