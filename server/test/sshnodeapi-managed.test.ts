@@ -11,6 +11,7 @@ import { keyFingerprint } from "../src/sshagentproto";
 import { sshManagedApi } from "../src/sshnodeapi";
 import type { SshManagedOptions } from "../src/sshnodeapi";
 import type { Script } from "../src/sshprovision";
+import { isAccount } from "../src/sshtargets";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;
 const instances = { list: () => Promise.resolve([]) } as unknown as Instances;
@@ -108,12 +109,19 @@ describe("managed SSH targets on the node", () => {
     expect(calls[0]?.script.script).toContain("bob");
   });
 
-  test("POST /authorize rejects an account with a slash or a space with 400", async () => {
-    for (const account of ["a/b", "a b", "", "-x", "a".repeat(33), "../x"]) {
+  test("POST /authorize rejects an account that the target store refuses with 400", async () => {
+    for (const account of ["a b", "", "-x", 'a"b', "a'b", "a,b", "a\\b", "a".repeat(129)]) {
       expect((await authorize({ account })).status).toBe(400);
     }
 
     expect(calls).toHaveLength(0);
+  });
+
+  test("POST /authorize accepts every account that the target store accepts, user@domain too", async () => {
+    for (const account of ["kir@example.com", "first.last", "a".repeat(128)]) {
+      expect([account, (await authorize({ account, systemType: "windows" })).status]).toEqual([account, 204]);
+      expect(isAccount(account)).toBe(true);
+    }
   });
 
   test("POST /authorize rejects a bad system type with 400", async () => {
@@ -187,6 +195,23 @@ describe("managed SSH targets on the node", () => {
     const response = await authorize({ systemType: "windows", account: "bob" });
     expect(response.status).toBe(400);
     expect(await response.text()).toContain("no profile for account");
+  });
+
+  test("under test the default runAs refuses to run the provision script", async () => {
+    // HOME is a folder of the test: a run that the guard misses still writes nowhere else.
+    const standalone = sshManagedApi({
+      hostKeyFile: keyFile,
+      identityFor: () => Promise.resolve({ home: dir, path: "/usr/bin:/bin" }),
+    });
+    standalone.onError(onError);
+    const response = await standalone.request("/authorize", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ account: "alice", systemType: "linux", line: LINE }),
+    });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toContain("inject runAs");
+    expect(await Bun.file(join(dir, ".ssh", "authorized_keys")).exists()).toBe(false);
   });
 
   test("sshManagedApi works on its own", async () => {

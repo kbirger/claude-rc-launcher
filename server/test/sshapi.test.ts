@@ -557,6 +557,8 @@ describe("host key and install", () => {
       "ssh-ed25519 AAAA\nssh-rsa BBBB",
       "ssh-ed25519  AAAA",
       "",
+      // The node takes a key type of at most 64 characters: the hub must not pin a longer one.
+      `${"a".repeat(65)} AAAA`,
     ])
       expect([hostKey, (await call("POST", "/targets/nas/pin", "admin", { hostKey })).status]).toEqual([hostKey, 400]);
 

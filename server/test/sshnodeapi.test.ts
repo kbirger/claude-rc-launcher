@@ -16,6 +16,7 @@ import {
 } from "../src/sshagentproto";
 import { SshBroker, grantConfig, knownHostsLine, sshNodeApi, unsupportedSshApi } from "../src/sshnodeapi";
 import type { SshNodeOptions } from "../src/sshnodeapi";
+import { HOST_KEY_RE } from "../src/sshtargets";
 import { NodeEvents } from "../src/updateevents";
 import type { NodeEvent } from "../src/updateevents";
 
@@ -354,6 +355,27 @@ describe("ssh node routes", () => {
     expect(await waiting).toEqual({ socket: created.socket, config: created.config, endsAt: 1_900_000_000_000 });
   });
 
+  test("POST /grants with a requestId that no request waits for gives 409 and starts no agent", async () => {
+    const response = await call("POST", "/grants", grantBody({ requestId: "gone" }));
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { error: string }).error).toBe("no request waits for this answer");
+    expect(await exists(join(dir, "inst1", "g1.sock"))).toBe(false);
+    expect(await exists(join(dir, "inst1", "g1.config"))).toBe(false);
+  });
+
+  test("a request that ends while the agent starts gives 409 and the grant is removed", async () => {
+    const waiting = broker.request({ instanceId: "inst1", targetId: "web1" });
+    waiting.catch(noop);
+    const { requestId } = seen.find((event) => event.type === "ssh.request") as { requestId: string };
+    // The request ends between the check and the answer (a timeout, for example).
+    broker.activate = () => false;
+    const response = await call("POST", "/grants", grantBody({ requestId }));
+    expect(response.status).toBe(409);
+    for (const suffix of [".sock", ".config", ".known_hosts", ".pub"])
+      expect(await exists(join(dir, "inst1", `g1${suffix}`))).toBe(false);
+    expect((await call("POST", "/grants", grantBody())).status).toBe(200);
+  });
+
   test("POST /requests/:id/reject makes the waiting request fail with the reason", async () => {
     const waiting = broker.request({ instanceId: "inst1", targetId: "web1" });
     const caught = waiting.catch((error: unknown) => error);
@@ -470,6 +492,15 @@ describe("ssh node routes: validation", () => {
       expect(await exists(join(dir, "inst1", "g1.known_hosts"))).toBe(false);
     });
   }
+
+  test("a host key that the hub can pin is accepted: the hub and the node share one pattern", async () => {
+    const hostKey = `Sk_Ssh-Ed25519@OpenSSH.com ${HOST_KEY.split(" ")[1] ?? ""}`;
+    expect(HOST_KEY_RE.test(hostKey)).toBe(true);
+    expect((await call("POST", "/grants", grantBody({ hostKey }))).status).toBe(200);
+    expect(
+      (await call("POST", "/grants", grantBody({ grantId: "g2", hostKey: `${"a".repeat(65)} AAAA` }))).status,
+    ).toBe(400);
+  });
 
   test("a NUL in a text field gives 400", async () => {
     for (const field of ["address", "account", "hostKey"])
