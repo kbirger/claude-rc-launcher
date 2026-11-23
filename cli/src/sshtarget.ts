@@ -132,8 +132,6 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   out(`target ${id} created`);
 
   // The key.
-  let unlock: Unlock | undefined;
-
   if (method === "passphrase") {
     const typed = await step("reading the passphrase", () => options.readSecret("Passphrase for the SSH keys: "));
     if (!typed)
@@ -141,8 +139,7 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
         `reading the passphrase failed: no passphrase. The target ${id} stays in draft on the hub`,
         1,
       );
-    unlock = { method, secret: Buffer.from(typed, "utf8").toString("base64url") };
-    const secret = unlock;
+    const secret: Unlock = { method, secret: Buffer.from(typed, "utf8").toString("base64url") };
     const made = await step("creating the key", () =>
       hub.request<{ fingerprint: string }>("POST", `${target}/key`, { unlock: secret }),
     );

@@ -9,6 +9,7 @@ import { HttpError } from "../src/instances";
 import type { Instance, Instances } from "../src/instances";
 import { accountIdentity, createNodeSsh, removeGrantFiles } from "../src/sshnodewiring";
 import { NodeEvents } from "../src/updateevents";
+import type { NodeEvent } from "../src/updateevents";
 import type { SystemUser, UserDirectory } from "../src/users";
 import { defined, rejection } from "./support";
 
@@ -157,6 +158,27 @@ describe("the SSH parts of a node on Linux", () => {
     expect(existsSync(socketOf(ID2))).toBe(false);
     expect(state.calls).toEqual([`update ${ID1}`, `update ${ID1}`, `stop ${ID2}`]);
     await ssh.stop();
+  });
+
+  test("a control that the reconcile stops emits ssh.instance-off, and a node stop emits nothing", async () => {
+    const events = new NodeEvents();
+    const seen: NodeEvent[] = [];
+    events.subscribe((event) => seen.push(event));
+    const { ssh } = build([instance(ID1, true, "alice"), instance(ID2, true, "alice")], { events });
+    await ssh.start();
+    await ssh.instances.update?.(ID1, { sshRequests: false });
+    expect(seen).toEqual([{ type: "ssh.instance-off", instanceId: ID1 }]);
+    await ssh.instances.stop(ID2);
+    expect(seen).toEqual([
+      { type: "ssh.instance-off", instanceId: ID1 },
+      { type: "ssh.instance-off", instanceId: ID2 },
+    ]);
+    // The event is for the hub only: it does not touch the update state of the node.
+    expect(events.snapshotUpdate()).toBeNull();
+    await ssh.instances.update?.(ID1, { sshRequests: true });
+    seen.length = 0;
+    await ssh.stop();
+    expect(seen).toEqual([]);
   });
 
   test("a failing reconcile logs one line and never throws", async () => {

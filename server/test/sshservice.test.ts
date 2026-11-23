@@ -58,7 +58,8 @@ async function setup(
   const audit: string[] = [];
   const nodes = options.nodes ?? { node1: fakeNode() };
   const keys = new SshKeyStore();
-  await keys.setup({ method: "passphrase", recoveryPublicKey: newRecovery().publicKey });
+  const recovery = newRecovery();
+  await keys.setup({ method: "passphrase", recoveryPublicKey: recovery.publicKey });
   await keys.create("nas", unlock);
   const targets = new TargetStore();
   await targets.add({
@@ -88,7 +89,7 @@ async function setup(
     audit: (line) => audit.push(line),
   });
   hook.service = service;
-  return { service, keys, targets, grants, nodes, audit, timers, node: nodes.node1 };
+  return { service, keys, targets, grants, nodes, audit, timers, recovery, node: nodes.node1 };
 }
 
 const request = (extra: Record<string, unknown> = {}) => ({
@@ -354,10 +355,8 @@ describe("SshService node presence", () => {
     await ctx.service.onNodeOnline("node1");
     expect(ctx.node.paths()).toEqual(["POST /api/ssh/reset", "PUT /api/ssh/targets"]);
     expect(ctx.node.calls[1].json).toEqual({
-      targets: [
-        { id: "nas", account: "root", address: "10.0.0.5" },
-        { id: "pi", account: "pi", address: "pi.lan" },
-      ],
+      // "pi" is a draft: only a target that passed its test can be requested.
+      targets: [{ id: "nas", account: "root", address: "10.0.0.5" }],
     });
   });
 
@@ -421,7 +420,9 @@ describe("SshService test", () => {
     const paths = ctx.node.paths();
     expect(paths[0]).toBe("POST /api/ssh/grants");
     expect(paths[1]).toBe(`POST /api/ssh/grants/${grant.id}/probe`);
-    expect(paths[2]).toBe(`DELETE /api/ssh/grants/${grant.id}`);
+    // The target is ready now: the node gets the new list of targets, and then the grant ends.
+    expect(paths[2]).toBe("PUT /api/ssh/targets");
+    expect(paths[3]).toBe(`DELETE /api/ssh/grants/${grant.id}`);
     expect((ctx.node.calls[0].json as { instanceId: string }).instanceId).toBe("test");
     expect(ctx.node.calls[0].json as Record<string, unknown>).not.toHaveProperty("requestId");
   });
@@ -595,5 +596,196 @@ describe("SshService managed targets", () => {
     const ctx = await setup({ nodes });
     expect(await ctx.service.scanHostKey("nas", "node1")).toEqual(keys);
     expect(ctx.node.calls[0].json).toEqual({ address: "10.0.0.5", port: 2222 });
+  });
+});
+
+describe("SshService ends grants when a node or an instance goes away", () => {
+  test("onNodeRemoved ends the active and the pending grants of that node with node-lost", async () => {
+    const ctx = await setup();
+    const active = ctx.grants.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    await ctx.service.approve(active.id, "alice", unlock);
+    const pending = ctx.grants.request({ nodeId: "node1", instanceId: "inst2", targetId: "nas" });
+    const other = ctx.grants.request({ nodeId: "node2", instanceId: "inst1", targetId: "nas" });
+    ctx.service.onNodeRemoved("node1");
+    expect(ctx.grants.get(active.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
+    expect(ctx.grants.get(pending.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
+    expect(ctx.grants.get(other.id)?.state).toBe("pending");
+  });
+
+  test("an ssh.instance-off event ends the grants of that instance with revoked and tells the node", async () => {
+    const ctx = await setup();
+    ctx.service.onNodeEvent("node1", "ssh.request", request({ requestId: "r1" }));
+    ctx.service.onNodeEvent("node1", "ssh.request", request({ requestId: "r2", instanceId: "inst2" }));
+    await flush();
+    const first = ctx.grants.list().find((grant) => grant.requestId === "r1");
+    await ctx.service.approve(first?.id ?? "", "alice", unlock);
+    const pending = ctx.grants.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas", requestId: "r3" });
+    ctx.service.onNodeEvent("node1", "ssh.instance-off", { instanceId: "inst1" });
+    await flush();
+    expect(ctx.grants.get(first?.id ?? "")).toMatchObject({ state: "ended", endReason: "revoked" });
+    expect(ctx.grants.get(pending.id)).toMatchObject({ state: "ended", endReason: "revoked" });
+    expect(ctx.grants.list().find((grant) => grant.requestId === "r2")?.state).toBe("pending");
+    expect(ctx.node.paths()).toContain(`DELETE /api/ssh/grants/${first?.id ?? ""}`);
+    expect(ctx.node.paths()).toContain("POST /api/ssh/requests/r3/reject");
+  });
+
+  test("an ssh.instance-off event from another node ends nothing", async () => {
+    const ctx = await setup({ nodes: { node1: fakeNode(), node2: fakeNode() } });
+    const pending = ctx.grants.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    ctx.service.onNodeEvent("node2", "ssh.instance-off", { instanceId: "inst1" });
+    ctx.service.onNodeEvent("node1", "ssh.instance-off", { instanceId: 5 });
+    await flush();
+    expect(ctx.grants.get(pending.id)?.state).toBe("pending");
+  });
+});
+
+describe("SshService approve races", () => {
+  /** Holds `keys.open` until `release` runs, and records every key that it gives out. */
+  function slowOpen(ctx: Awaited<ReturnType<typeof setup>>) {
+    const opened: { sign: (data: Uint8Array) => Uint8Array }[] = [];
+
+    let release: () => void = () => {};
+
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const realOpen = ctx.keys.open.bind(ctx.keys);
+
+    ctx.keys.open = async (targetId, secret) => {
+      const key = await realOpen(targetId, secret);
+      opened.push(key);
+      await gate;
+      return key;
+    };
+
+    return {
+      opened,
+      release: () => {
+        release();
+      },
+    };
+  }
+
+  async function race(during: (ctx: Awaited<ReturnType<typeof setup>>) => Promise<void>) {
+    const ctx = await setup();
+    const grant = ctx.grants.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas", requestId: "r1" });
+    const slow = slowOpen(ctx);
+    const approving = ctx.service.approve(grant.id, "alice", unlock).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    await flush();
+    await during(ctx);
+    slow.release();
+    const error = await approving;
+    return { ctx, grant, error, opened: slow.opened };
+  }
+
+  const expectRefused = (result: Awaited<ReturnType<typeof race>>, text: string) => {
+    expect(result.error).toBeInstanceOf(TargetError);
+    expect((result.error as TargetError).status).toBe(409);
+    expect((result.error as TargetError).message).toBe(text);
+    expect(result.ctx.grants.list().some((grant) => grant.state === "active")).toBe(false);
+    expect(result.opened).toHaveLength(1);
+    expect(() => result.opened[0]?.sign(new Uint8Array(1))).toThrow();
+    expect(result.ctx.node.paths()).not.toContain("POST /api/ssh/grants");
+  };
+
+  test("a disable during the derive gives 409, holds no key and leaves no active grant", async () => {
+    expectRefused(await race((ctx) => ctx.targets.setState("nas", "disabled")), "the target is disabled");
+  });
+
+  test("a retire during the derive gives 409, holds no key and leaves no active grant", async () => {
+    expectRefused(await race((ctx) => ctx.targets.setState("nas", "retired")), "the target is retired");
+  });
+
+  test("a recovery begin during the derive gives 409, holds no key and leaves no active grant", async () => {
+    const result = await race(async (ctx) => {
+      await ctx.keys.beginRecovery({ code: ctx.recovery.code, method: "passphrase" });
+    });
+    expectRefused(result, "this target needs its key to be recovered");
+  });
+
+  test("a revoke while POST /grants is in flight sends DELETE after the POST", async () => {
+    const hook: { revoke?: () => void } = {};
+    const node = fakeNode({
+      "POST /api/ssh/grants": () => {
+        hook.revoke?.();
+        return { status: 200, body: { socket: "/s", config: "/c" } };
+      },
+    });
+    const ctx = await setup({ nodes: { node1: node } });
+    const grant = ctx.grants.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    hook.revoke = () => ctx.grants.revoke(grant.id, "bob");
+    await ctx.service.approve(grant.id, "alice", unlock);
+    await flush();
+    const paths = node.paths();
+    // One DELETE from the revoke, which can reach the node before the grant exists there, and one after the POST.
+    expect(paths.filter((path) => path === `DELETE /api/ssh/grants/${grant.id}`)).toHaveLength(2);
+    expect(paths.at(-1)).toBe(`DELETE /api/ssh/grants/${grant.id}`);
+  });
+});
+
+describe("SshService drafts and source addresses", () => {
+  test("an ssh.request for a draft target is refused and the node is told", async () => {
+    const ctx = await setup({ state: "draft" });
+    ctx.service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    expect(ctx.grants.list()).toHaveLength(0);
+    expect(ctx.node.paths()).toEqual(["POST /api/ssh/requests/req1/reject"]);
+    expect(ctx.node.calls[0]?.json).toEqual({ reason: "the target is draft" });
+  });
+
+  test("approve refuses a real grant for a draft target; only the test grant may use it", async () => {
+    const ctx = await setup({ state: "draft" });
+    const grant = ctx.grants.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    const error = await ctx.service.approve(grant.id, "alice", unlock).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(TargetError);
+    expect((error as TargetError).message).toBe("the target is draft");
+    expect(ctx.grants.get(grant.id)?.state).toBe("pending");
+    expect(ctx.node.calls).toHaveLength(0);
+  });
+
+  test("pushTargets lists only ready targets, and a test that passes pushes the new ready target", async () => {
+    const ctx = await setup({
+      nodes: { node1: fakeNode({ "POST /api/ssh/grants/:id/probe": { status: 200, body: { code: 0, stderr: "" } } }) },
+      state: "draft",
+    });
+    await ctx.service.pushTargets("node1");
+    expect(ctx.node.calls[0]?.json).toEqual({ targets: [] });
+    expect(await ctx.service.test("nas", "node1", "alice", unlock)).toEqual({ ok: true });
+    await flush();
+    const pushes = ctx.node.calls.filter((call) => call.method === "PUT");
+    expect(pushes.at(-1)?.json).toEqual({ targets: [{ id: "nas", account: "root", address: "10.0.0.5" }] });
+  });
+
+  test("a failed reject reply of a refused request is audited", async () => {
+    const node = fakeNode({ "POST /api/ssh/requests/:id/reject": { status: 500, body: { error: "broken" } } });
+    const ctx = await setup({ nodes: { node1: node }, state: "disabled" });
+    ctx.service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    expect(ctx.audit.some((line) => line.includes("reject failed") && line.includes("broken"))).toBe(true);
+  });
+
+  test("authorizeManaged with an enabled node that has no source address is a 409 with the usual text", async () => {
+    const ctx = await setup();
+    await ctx.targets.add({
+      id: "self",
+      address: "10.0.0.9",
+      port: 22,
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "node1",
+    });
+    ctx.targets.nodeAccess = () => ({ enabled: true, sourceAddress: "" });
+    const error = await ctx.service.authorizeManaged("self").then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(TargetError);
+    expect((error as TargetError).status).toBe(409);
+    expect((error as TargetError).message).toBe("no node of this target has access enabled with a source address");
   });
 });

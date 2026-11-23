@@ -235,6 +235,21 @@ export class TargetStore {
     return access ? { ...access } : undefined;
   }
 
+  /**
+   * The addresses that the target sees: those of its nodes that have access on and a source address, without
+   * duplicates. The `from=` limit of the key line holds them. An empty list means that no node can reach the target.
+   */
+  sourcesOf(target: Pick<Target, "nodes">): string[] {
+    const found = new Set<string>();
+
+    for (const hostId of target.nodes) {
+      const access = this.nodeAccess(hostId);
+      if (access?.enabled === true && access.sourceAddress) found.add(access.sourceAddress);
+    }
+
+    return [...found];
+  }
+
   /** An enabled node needs a source address, because the line for the target limits the key to these addresses. */
   async setNodeAccess(hostId: string, access: NodeAccess): Promise<void> {
     if (!HOST_ID_RE.test(hostId)) throw new TargetError(400, "the host id is not valid");

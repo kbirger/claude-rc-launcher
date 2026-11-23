@@ -68,6 +68,23 @@ function encrypt(key: Uint8Array, plain: Uint8Array, aad: string): { iv: Buffer;
   return { iv, ct };
 }
 
+/**
+ * Joins the parts into a fresh array and zeroes each part. The parts of a decipher hold the plain text (a seed), and a
+ * small Buffer can sit in the shared Buffer pool, so the result is never a view over them.
+ */
+export function joinAndWipe(parts: Uint8Array[]): Uint8Array {
+  const joined = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+
+  for (const part of parts) {
+    joined.set(part, at);
+    at += part.length;
+    part.fill(0);
+  }
+
+  return joined;
+}
+
 function decrypt(key: Uint8Array, iv: Buffer, ct: Buffer, aad: string): Uint8Array {
   if (key.length !== KEY_LEN || iv.length !== IV_LEN || ct.length < TAG_LEN)
     throw new WrapError("sealed value is damaged");
@@ -76,7 +93,7 @@ function decrypt(key: Uint8Array, iv: Buffer, ct: Buffer, aad: string): Uint8Arr
     const decipher = createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAAD(Buffer.from(aad));
     decipher.setAuthTag(ct.subarray(ct.length - TAG_LEN));
-    return new Uint8Array(Buffer.concat([decipher.update(ct.subarray(0, ct.length - TAG_LEN)), decipher.final()]));
+    return joinAndWipe([decipher.update(ct.subarray(0, ct.length - TAG_LEN)), decipher.final()]);
   } catch {
     throw new WrapError("wrong key or changed data");
   }

@@ -67,6 +67,7 @@ export class SshService {
     try {
       if (event === "ssh.request") work = this.onRequest(hostId, data);
       else if (event === "ssh.sign") work = this.onSign(hostId, data);
+      else if (event === "ssh.instance-off") this.onInstanceOff(hostId, data);
     } catch (error) {
       this.note(`event=${logToken(event)} node=${logToken(hostId)} failed=${logToken(message(error))}`);
     }
@@ -96,18 +97,21 @@ export class SshService {
     this.deps.grants.endWhere((grant) => grant.nodeId === hostId && grant.state === "active", "node-lost");
   }
 
+  /** The node was removed from the hub: all its grants end, the pending ones too, because it never comes back. */
+  onNodeRemoved(hostId: string): void {
+    this.deps.grants.endWhere((grant) => grant.nodeId === hostId, "node-lost");
+  }
+
   /**
    * Opens the key with the unlock, starts the grant and gives it to the node. A wrong unlock leaves the grant pending
    * (403). A node that cannot take the grant ends it with `node-lost`, and the call fails with 409.
    */
   async approve(grantId: string, by: string, unlock: UnlockSecret, minutes?: number): Promise<Grant> {
-    const { grants, keys, targets } = this.deps;
+    const { grants, keys } = this.deps;
     const grant = grants.get(grantId);
     if (!grant) throw new GrantError(404, "no such grant");
     if (grant.state !== "pending") throw new GrantError(409, `grant is ${grant.state}`);
-    const target = targets.get(grant.targetId);
-    if (!target) throw new TargetError(404, "no such target");
-    if (target.state !== "ready" && target.state !== "draft") throw new TargetError(409, `target is ${target.state}`);
+    const target = this.usableTarget(grant);
     if (!target.hostKey) throw new TargetError(409, "the host key of the target is not pinned");
 
     let key;
@@ -117,6 +121,16 @@ export class SshService {
     } catch (error) {
       if (error instanceof KeyError && error.code === "wrong-unlock")
         throw new GrantError(403, "the unlock does not open the key");
+      throw error;
+    }
+
+    // The derive takes a while: a disable, a retire or a recovery begin can land meanwhile. Read the target again.
+    try {
+      this.usableTarget(grant);
+      if (keys.pendingRewraps().includes(grant.targetId))
+        throw new TargetError(409, "this target needs its key to be recovered");
+    } catch (error) {
+      key.destroy();
       throw error;
     }
 
@@ -143,7 +157,27 @@ export class SshService {
       throw error instanceof GrantError ? error : new GrantError(409, message(error));
     }
 
+    // The grant ended while the POST was in flight: its DELETE may have reached the node before the grant existed
+    // there, and the node has no timer of its own. Tell the node again.
+    if (grants.get(grantId)?.state !== "active") {
+      void this.nodeCall(active.nodeId, "DELETE", `/grants/${active.id}`).catch((error: unknown) => {
+        this.failed(active, message(error));
+      });
+    }
+
     return grants.get(grantId) ?? active;
+  }
+
+  /**
+   * The target of a grant, if a grant may use it now: a `ready` target, or a `draft` target for the test grant that the
+   * hub makes (`test`). A real grant never uses a target that has not passed its test.
+   */
+  private usableTarget(grant: Grant): Target {
+    const target = this.deps.targets.get(grant.targetId);
+    if (!target) throw new TargetError(404, "no such target");
+    if (target.state !== "ready" && !(target.state === "draft" && grant.test))
+      throw new TargetError(409, `the target is ${target.state}`);
+    return target;
   }
 
   /** Ends an active grant. The node is told by `onGrantEnd`. */
@@ -179,10 +213,7 @@ export class SshService {
   async authorizeManaged(targetId: string): Promise<void> {
     const target = this.needManaged(targetId);
     const { keys, targets } = this.deps;
-    const sources = target.nodes
-      .map((hostId) => targets.nodeAccess(hostId))
-      .filter((access) => access?.enabled === true)
-      .map((access) => access?.sourceAddress ?? "");
+    const sources = targets.sourcesOf(target);
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
     const line = authorizedKeysLine(keys.publicLine(targetId), sources);
@@ -232,6 +263,8 @@ export class SshService {
 
       if (code === 0) {
         await targets.setState(targetId, "ready");
+        // The nodes list only ready targets: tell them that this one can be requested now.
+        await this.pushAll(target.nodes);
         return { ok: true };
       }
 
@@ -244,11 +277,11 @@ export class SshService {
     }
   }
 
-  /** Sends the id, account and address of each `ready` or `draft` target that lists the host. */
+  /** Sends the id, account and address of each `ready` target that lists the host. A draft is not requestable. */
   async pushTargets(hostId: string): Promise<void> {
     const targets = this.deps.targets
       .list()
-      .filter((target) => target.nodes.includes(hostId) && (target.state === "ready" || target.state === "draft"))
+      .filter((target) => target.nodes.includes(hostId) && target.state === "ready")
       .map((target) => ({ id: target.id, account: target.account, address: target.address }));
     const reply = await this.nodeCall(hostId, "PUT", "/targets", { targets });
     if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
@@ -285,6 +318,28 @@ export class SshService {
     }
   }
 
+  /** Pushes the targets to each node. A node that cannot be reached is audited: the change itself stands. */
+  private async pushAll(hostIds: string[]): Promise<void> {
+    for (const hostId of new Set(hostIds)) {
+      try {
+        await this.pushTargets(hostId);
+      } catch (error) {
+        this.note(`node=${logToken(hostId)} push failed=${logToken(message(error))}`);
+      }
+    }
+  }
+
+  /** The node stopped the control socket of an instance (it opted out, or it was deleted): its grants end. */
+  private onInstanceOff(hostId: string, data: unknown): void {
+    if (!isObject(data) || typeof data.instanceId !== "string") {
+      this.note(`dropped instance-off node=${logToken(hostId)} bad event`);
+      return;
+    }
+
+    const { instanceId } = data;
+    this.deps.grants.endWhere((grant) => grant.nodeId === hostId && grant.instanceId === instanceId, "revoked");
+  }
+
   private failed(grant: Grant, why: string): void {
     this.note(`grant=${logToken(grant.id)} node=${logToken(grant.nodeId)} node call failed=${logToken(why)}`);
   }
@@ -308,12 +363,14 @@ export class SshService {
       const reply = await this.nodeCall(hostId, "POST", `/requests/${encodeURIComponent(requestId)}/reject`, {
         reason: why,
       });
-      reply;
+      if (!isOk(reply.status))
+        this.note(`reject failed node=${logToken(hostId)} failed=${logToken(errorText(reply.body, reply.status))}`);
     };
 
     if (!target) return refuse("no such target");
     if (!target.nodes.includes(hostId)) return refuse("the node is not listed for the target");
-    if (target.state !== "ready" && target.state !== "draft") return refuse(`the target is ${target.state}`);
+    // Only a target that passed its test can be requested. A draft is for the test grant of the hub alone.
+    if (target.state !== "ready") return refuse(`the target is ${target.state}`);
 
     try {
       this.deps.grants.request({

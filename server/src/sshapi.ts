@@ -78,14 +78,33 @@ export function sshApi(options: SshApiOptions): Hono {
   const hono = new Hono();
   let settingUp = false;
 
-  const parseUnlock = (value: unknown): UnlockSecret => {
+  /** The bytes of each unlock of a request. The `wipeUnlocks` middleware zeroes them when the request ends. */
+  const unlocks = new WeakMap<Request, Uint8Array[]>();
+
+  const parseUnlock = (context: Context, value: unknown): UnlockSecret => {
     if (!isObject(value)) throw new HttpError(400, "unlock is required");
     const { method, secret } = value;
     if (method !== "prf" && method !== "passphrase") throw new HttpError(400, "unlock.method is not valid");
     if (typeof secret !== "string" || !B64URL_RE.test(secret) || secret.length > MAX_SECRET_CHARS)
       throw new HttpError(400, "unlock.secret must be base64url text");
     if (method !== keys.method()) throw new HttpError(400, "the unlock method is not the one of this hub");
-    return { method, secret: new Uint8Array(Buffer.from(secret, "base64url")) };
+    const decoded = Buffer.from(secret, "base64url");
+    const bytes = new Uint8Array(decoded);
+    decoded.fill(0);
+    unlocks.get(context.req.raw)?.push(bytes);
+    return { method, secret: bytes };
+  };
+
+  const wipeUnlocks: MiddlewareHandler = async (context, next) => {
+    const list: Uint8Array[] = [];
+    unlocks.set(context.req.raw, list);
+
+    try {
+      await next();
+    } finally {
+      for (const bytes of list) bytes.fill(0);
+      unlocks.delete(context.req.raw);
+    }
   };
 
   const needTarget = (context: Context): Target => {
@@ -108,17 +127,7 @@ export function sshApi(options: SshApiOptions): Hono {
     }
   };
 
-  /** The addresses that the target sees: those of the nodes that have access on. */
-  const sourcesOf = (target: Target): string[] => {
-    const found = new Set<string>();
-
-    for (const hostId of target.nodes) {
-      const access = targets.nodeAccess(hostId);
-      if (access?.enabled === true && access.sourceAddress) found.add(access.sourceAddress);
-    }
-
-    return [...found];
-  };
+  const sourcesOf = (target: Target): string[] => targets.sourcesOf(target);
 
   const installLine = (target: Target): string => {
     const sources = sourcesOf(target);
@@ -143,8 +152,8 @@ export function sshApi(options: SshApiOptions): Hono {
     return all;
   };
 
-  const endGrantsOf = (targetId: string) =>
-    grants.endWhere((grant) => grant.targetId === targetId && grant.state === "active", "target-disabled");
+  /** A disable or a retire ends the active grants and refuses the pending ones: the node tells the waiting session. */
+  const endGrantsOf = (targetId: string) => grants.endWhere((grant) => grant.targetId === targetId, "target-disabled");
 
   hono.onError((error, context) => {
     let status = 500;
@@ -184,6 +193,7 @@ export function sshApi(options: SshApiOptions): Hono {
   };
 
   hono.use("*", auditWrites);
+  hono.use("*", wipeUnlocks);
   for (const path of ["/recovery/*", "/nodes/*", "/targets", "/targets/*", "/grants", "/grants/*"])
     hono.use(path, needSetUp);
 
@@ -340,7 +350,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const body = await readObject(context);
     const code = text(body, "code");
     if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
-    const unlock = parseUnlock(body.unlock);
+    const unlock = parseUnlock(context, body.unlock);
     if (!keys.pendingRewraps().includes(target.id)) throw new TargetError(409, "this target does not need a re-wrap");
     await keys.rewrapWithRecovery(target.id, code, unlock);
     audit(`audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}`);
@@ -350,7 +360,7 @@ export function sshApi(options: SshApiOptions): Hono {
   hono.post("/targets/:id/key", async (context) => {
     const target = needLive(needTarget(context));
     const body = await readObject(context);
-    const unlock = parseUnlock(body.unlock);
+    const unlock = parseUnlock(context, body.unlock);
     if (hasKey(target.id)) throw new TargetError(409, "the target has a key already");
     const sources = sourcesOf(target);
     if (sources.length === 0)
@@ -412,7 +422,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const target = needLive(needTarget(context));
     const body = await readObject(context);
     const node = text(body, "node");
-    const unlock = parseUnlock(body.unlock);
+    const unlock = parseUnlock(context, body.unlock);
     return context.json(await service.test(target.id, node, options.user(context), unlock));
   });
 
@@ -420,7 +430,7 @@ export function sshApi(options: SshApiOptions): Hono {
 
   hono.post("/grants/:id/approve", async (context) => {
     const body = await readObject(context);
-    const unlock = parseUnlock(body.unlock);
+    const unlock = parseUnlock(context, body.unlock);
     if (body.minutes !== undefined && typeof body.minutes !== "number")
       throw new HttpError(400, "minutes must be a number");
     const grant = await service.approve(context.req.param("id"), options.user(context), unlock, body.minutes);

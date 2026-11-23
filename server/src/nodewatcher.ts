@@ -86,6 +86,8 @@ export function createNodeWatchers(options: {
   onOnline?(host: string): void;
   /** The host was `online` and is not any more. */
   onOffline?(host: string): void;
+  /** The host was removed from the registry, whatever its presence was. */
+  onRemoved?(host: string): void;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -388,6 +390,10 @@ export function createNodeWatchers(options: {
     enders.delete(id);
     options.log.clear(id);
     presence.delete(id);
+
+    safe(() => {
+      options.onRemoved?.(id);
+    });
   };
 
   // A rename keeps the id and the client, so the stream stays open.

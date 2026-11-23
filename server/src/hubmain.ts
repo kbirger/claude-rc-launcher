@@ -309,7 +309,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const offLocalSsh = localSsh.client
     ? localEvents.subscribe((event) => {
         const { type, ...data } = event;
-        if (type === "ssh.request" || type === "ssh.sign") ssh.onNodeEvent(LOCAL_HOST, type, data);
+        if (type === "ssh.request" || type === "ssh.sign" || type === "ssh.instance-off")
+          ssh.onNodeEvent(LOCAL_HOST, type, data);
       })
     : () => {};
 
@@ -341,6 +342,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     },
     onOffline: (host) => {
       ssh.onNodeOffline(host);
+    },
+    onRemoved: (host) => {
+      ssh.onNodeRemoved(host);
     },
     ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
     ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
@@ -412,7 +416,8 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
       // The grant store holds unlocked keys: end every grant, so that the keys are destroyed.
       sshGrants.endWhere(() => true, "hub-restart");
       offLocalSsh();
-      void localSsh.stop();
+      // It resets the grant routes of `local` (every agent socket closes), then closes the control sockets.
+      void localSsh.stop().catch(() => {});
       offRecord();
       watchers.stop();
       beatLoop.stop();
