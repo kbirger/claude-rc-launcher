@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createPublicKey, verify } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KeyError, SshKeyStore } from "../src/sshkeystore";
@@ -33,6 +33,13 @@ interface Stored {
 }
 
 const readJson = async () => JSON.parse(await readFile(file, "utf8")) as Stored;
+
+/** The reason a promise rejects with, or undefined when it resolves. */
+const rejection = (promise: Promise<unknown>): Promise<unknown> =>
+  promise.then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
 
 /** The error that a promise rejects with. Fails the test when it resolves. */
 async function failure(promise: Promise<unknown>): Promise<KeyError> {
@@ -174,9 +181,20 @@ describe("sshkeystore", () => {
 
   test("create refuses an existing key and keeps the old one", async () => {
     const store = await ready();
+    const { fingerprint } = await store.create("web", secret);
+    expect(await rejection(store.create("web", secret))).toBeInstanceOf(Error);
+    expect((await store.open("web", secret)).fingerprint).toBe(fingerprint);
+  });
+
+  test("a failed write leaves the state as it was", async () => {
+    const store = await ready();
     await store.create("web", secret);
-    expect(store.create("web", secret)).rejects.toThrow();
+    const next = { method: "prf" as const, secret: new Uint8Array(32).fill(9) };
+    // A directory in the place of the temporary file makes the write fail.
+    await mkdir(`${file}.tmp`);
+    expect(await rejection(store.rewrapWithRecovery("web", recovery.code, next))).toBeInstanceOf(Error);
     await store.open("web", secret);
+    expect((await failure(store.open("web", next))).code).toBe("wrong-unlock");
   });
 });
 
