@@ -114,4 +114,64 @@ describe("provisionScript", () => {
       expect({ code: await proc.exited, out }).toEqual({ code: 0, out: "" });
     }
   });
+
+  /** Run a script the way Tasks 9 and 13 deliver it: on stdin, `-Command -`. */
+  async function runPwsh(
+    script: string,
+    env: Record<string, string>,
+  ): Promise<{ code: number; out: string; err: string }> {
+    const proc = Bun.spawn(["pwsh", "-NoProfile", "-NonInteractive", "-Command", "-"], {
+      stdin: new Blob([script]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { PATH: process.env.PATH ?? "", HOME: "/tmp", TERM: "dumb", ...env },
+    });
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    return { code: await proc.exited, out, err };
+  }
+
+  test.skipIf(!hasPwsh)("a typographic single quote cannot break out of the PowerShell string", async () => {
+    const nasty = 'x\u2019; Write-Output INJECTED; \u2018 y\u201A \u201B z\' $x `n "q"';
+    // The full script needs Windows, so run only its assignment of the line and print the value.
+    const { script } = provisionScript("windows", nasty, { account: nasty });
+    const assignments = script.split("\n").filter((text) => /^\s*\$(line|sid) = /.test(text));
+    expect(assignments.length).toBeGreaterThan(0);
+    const probe = `${assignments[0].trim()}\n[Console]::Out.Write($line)\n`;
+    const result = await runPwsh(probe, {});
+    expect(result).toEqual({ code: 0, out: nasty, err: "" });
+    // The account name is quoted by the same function.
+    expect(script).not.toContain("INJECTED; \u2018 y\u201A \u201B z' $x");
+  });
+
+  test.skipIf(!hasPwsh)("a failing step gives a non-zero exit code in stdin mode", async () => {
+    for (const options of [{}, { account: "nobody-here" }]) {
+      const { script } = provisionScript("windows", LINE, options);
+      const result = await runPwsh(script, {});
+      expect(result.code).not.toBe(0);
+      expect(result.err).not.toBe("");
+    }
+  });
+
+  test("the windows script ends with a blank line and wraps its body in try and catch", () => {
+    const { script } = provisionScript("windows", LINE);
+    expect(script.endsWith("\n\n")).toBe(true);
+    expect(script).toContain("try {");
+    expect(script).toContain("exit 1");
+  });
+
+  test("the windows script uses the profile of the current user when there is no account", () => {
+    const { script } = provisionScript("windows", LINE);
+    expect(script).toContain("$env:USERPROFILE");
+    expect(script).not.toContain("ProfileList");
+  });
+
+  test("the windows script resolves the profile of the account by SID and checks the Administrators group", () => {
+    const { script } = provisionScript("windows", LINE, { account: "dev.user-1" });
+    expect(script).toContain("'dev.user-1'");
+    expect(script).toContain("ProfileList");
+    expect(script).toContain("ProfileImagePath");
+    expect(script).toContain("S-1-5-32-544");
+    expect(script).toContain("administrators_authorized_keys");
+    expect(script).not.toContain("Split-Path -Parent $env:USERPROFILE");
+  });
 });
