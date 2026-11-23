@@ -70,7 +70,7 @@ export class SshService {
 
   /** The node came online: it forgets what it holds (the hub holds no grant for it any more), then it gets its targets. */
   async onNodeOnline(hostId: string): Promise<void> {
-    this.deps.grants.endWhere((grant) => grant.nodeId === hostId, "node-lost");
+    this.deps.grants.endWhere((grant) => grant.nodeId === hostId && grant.state === "active", "node-lost");
 
     try {
       const reply = await this.nodeCall(hostId, "POST", "/reset");
@@ -83,9 +83,9 @@ export class SshService {
     }
   }
 
-  /** The node lost its stream: every grant of it ends, because the node cannot be told to stop them. */
+  /** The node lost its stream: its active grants end, because the node cannot be told to stop them. */
   onNodeOffline(hostId: string): void {
-    this.deps.grants.endWhere((grant) => grant.nodeId === hostId, "node-lost");
+    this.deps.grants.endWhere((grant) => grant.nodeId === hostId && grant.state === "active", "node-lost");
   }
 
   /**
