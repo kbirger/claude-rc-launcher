@@ -2,11 +2,25 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_SETTINGS, SETTINGS_HELP, argsWith, settingsFromArgs } from "../src/instancesettings";
 import { defined } from "./support";
 
+describe("sshRequests", () => {
+  test("default settings have sshRequests false", () => {
+    expect(DEFAULT_SETTINGS.sshRequests).toBe(false);
+    expect(settingsFromArgs([]).sshRequests).toBe(false);
+  });
+  test("the help entry has the label and explains both values", () => {
+    const entry = defined(SETTINGS_HELP.settings.find((setting) => setting.key === "sshRequests"));
+    expect(entry.label).toBe("Allow SSH requests");
+    expect(entry.values.map((value) => value.value)).toEqual([false, true]);
+    for (const value of entry.values) expect(value.explanation.length).toBeGreaterThan(0);
+  });
+});
+
 describe("settingsFromArgs", () => {
   test("reads both flags", () => {
     expect(settingsFromArgs(["--spawn", "same-dir", "--no-create-session-in-dir"])).toEqual({
       createSession: false,
       spawnMode: "same-dir",
+      sshRequests: false,
     });
   });
   test("defaults", () => {
@@ -23,11 +37,12 @@ describe("argsWith", () => {
       argsWith(["--spawn", "same-dir", "--no-create-session-in-dir", "--permission-mode", "plan"], {
         createSession: true,
         spawnMode: "worktree",
+        sshRequests: false,
       }),
     ).toEqual(["--permission-mode", "plan", "--spawn", "worktree"]);
   });
   test("adds flags to an empty list", () => {
-    expect(argsWith([], { createSession: false, spawnMode: "same-dir" })).toEqual([
+    expect(argsWith([], { createSession: false, spawnMode: "same-dir", sshRequests: false })).toEqual([
       "--spawn",
       "same-dir",
       "--no-create-session-in-dir",
@@ -43,8 +58,8 @@ describe("argsWith", () => {
 });
 
 describe("SETTINGS_HELP", () => {
-  test("describes both settings", () => {
-    expect(SETTINGS_HELP.settings.length).toBe(2);
+  test("describes every setting", () => {
+    expect(SETTINGS_HELP.settings.length).toBe(3);
     for (const setting of SETTINGS_HELP.settings)
       for (const value of setting.values) expect(value.explanation.length).toBeGreaterThan(0);
   });

@@ -147,7 +147,7 @@ describe("start", () => {
       name: "one",
       state: "active",
       startedAt: "2026-11-08T12:00:00.000Z",
-      settings: { createSession: true, spawnMode: "same-dir" },
+      settings: { createSession: true, spawnMode: "same-dir", sshRequests: false },
     });
     expect(await winInstances.list()).toEqual([inst]);
   });
@@ -729,7 +729,7 @@ describe("instance settings", () => {
     const winInstances = make();
     const inst = await winInstances.start({ path: P1, settings: { createSession: false } });
     expect(procs[0].args).toEqual(NO_SESSION);
-    expect(inst.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(inst.settings).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
     expect(await fileRecord()).toEqual({
       id: instanceId(P1),
       path: P1,
@@ -737,7 +737,11 @@ describe("instance settings", () => {
       createSession: false,
       spawnMode: "same-dir",
     });
-    expect((await winInstances.list())[0].settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect((await winInstances.list())[0].settings).toEqual({
+      createSession: false,
+      spawnMode: "same-dir",
+      sshRequests: false,
+    });
   });
 
   test("start: worktree in a folder that is not a repository is 400, a bad value is 400, nothing starts", async () => {
@@ -754,7 +758,7 @@ describe("instance settings", () => {
   test("the operator list gives the defaults and the instance values replace its managed flags", async () => {
     const winInstances = make({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir", "--verbose"] });
     const inst = await winInstances.start({ path: P1, settings: { createSession: true } });
-    expect(inst.settings).toEqual({ createSession: true, spawnMode: "worktree" });
+    expect(inst.settings).toEqual({ createSession: true, spawnMode: "worktree", sshRequests: false });
     expect(procs[0].args).toEqual(["remote-control", "--name", "one", "--verbose", "--spawn", "worktree"]);
   });
 
@@ -767,9 +771,13 @@ describe("instance settings", () => {
     expect(await winInstances.restore()).toBe(1);
     await flush();
     expect(procs[0].args).toEqual(DEFAULT_ARGS);
-    expect((await winInstances.list())[0].settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect((await winInstances.list())[0].settings).toEqual({
+      createSession: true,
+      spawnMode: "same-dir",
+      sshRequests: false,
+    });
     const updateResult = await settle(winInstances.update(instanceId(P1), { createSession: false }));
-    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
     expect(updateResult.applied).toBe(true);
     expect(await fileRecord()).toEqual({
       id: instanceId(P1),
@@ -799,7 +807,11 @@ describe("instance settings", () => {
       "worktree",
       "--no-create-session-in-dir",
     ]);
-    expect((await winInstances.list())[0].settings).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect((await winInstances.list())[0].settings).toEqual({
+      createSession: false,
+      spawnMode: "worktree",
+      sshRequests: false,
+    });
   });
 
   test("update kills the tree once, starts the new settings at once and keeps them when the server stays up", async () => {
@@ -812,8 +824,8 @@ describe("instance settings", () => {
     expect(procs[1].args).toEqual(NO_SESSION);
     expect(sleeps).toHaveLength(0); // no restart delay
     const updateResult = await settle(update);
-    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
-    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
     expect(updateResult.instance.state).toBe("active");
     expect((await fileRecord()).createSession).toBe(false);
     expect(procs).toHaveLength(2);
@@ -844,7 +856,10 @@ describe("instance settings", () => {
     procs[1].exit(69);
     const err = await errOf(settle(update));
     expect(err.status).toBe(409);
-    expect(err.extra).toEqual({ code: "settings_refused", settings: { createSession: true, spawnMode: "same-dir" } });
+    expect(err.extra).toEqual({
+      code: "settings_refused",
+      settings: { createSession: true, spawnMode: "same-dir", sshRequests: false },
+    });
     expect(procs).toHaveLength(3);
     expect(procs[2].args).toEqual(DEFAULT_ARGS);
     expect(await fileRecord()).toEqual({
@@ -855,7 +870,7 @@ describe("instance settings", () => {
       spawnMode: "same-dir",
     });
     const now = (await winInstances.list())[0];
-    expect(now.settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(now.settings).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
     expect(now.state).toBe("active");
     // the lock is free again
     expect(await status(settle(winInstances.update(inst.id, { spawnMode: "worktree" })))).toBe("ok");
@@ -882,7 +897,10 @@ describe("instance settings", () => {
     procs[1].exit(1);
     const err = await errOf(settle(update));
     expect(err.status).toBe(409);
-    expect(err.extra).toEqual({ code: "settings_failed", settings: { createSession: true, spawnMode: "same-dir" } });
+    expect(err.extra).toEqual({
+      code: "settings_failed",
+      settings: { createSession: true, spawnMode: "same-dir", sshRequests: false },
+    });
     expect(defined(procs.at(-1)).args).toEqual(DEFAULT_ARGS);
   });
 
@@ -893,7 +911,7 @@ describe("instance settings", () => {
     await flush();
     expect(sleeps).toHaveLength(1);
     const updateResult = await settle(winInstances.update(inst.id, { createSession: false }));
-    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
     expect(procs).toHaveLength(2);
     expect(procs[1].args).toEqual(NO_SESSION);
   });
@@ -917,18 +935,35 @@ describe("instance settings", () => {
     expect(second.status).toBe(409);
     expect(second.message).toBe("change in progress");
     const updateResult = await settle(first);
-    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
     expect(procs).toHaveLength(2);
   });
 
   test("a patch equal to the current settings does nothing", async () => {
     const winInstances = make();
     const inst = await winInstances.start({ path: P1 });
-    const updateResult = await winInstances.update(inst.id, { createSession: true, spawnMode: "same-dir" });
-    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    const updateResult = await winInstances.update(inst.id, {
+      createSession: true,
+      spawnMode: "same-dir",
+      sshRequests: false,
+    });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
     expect(updateResult.instance.settings).toEqual(updateResult.previous);
     expect(killed).toEqual([]);
     expect(procs).toHaveLength(1);
+  });
+
+  test("SSH requests are refused on a Windows node with 400, on start and on update", async () => {
+    const winInstances = make();
+    expect(await status(winInstances.start({ path: P1, settings: { sshRequests: true } }))).toBe(400);
+    expect(procs.length).toBe(0);
+    const inst = await winInstances.start({ path: P1 });
+    const refused = (await rejection(winInstances.update(inst.id, { sshRequests: true }))) as HttpError;
+    expect(refused.status).toBe(400);
+    expect(refused.message).toBe("SSH requests need a Linux node");
+    expect(killed).toEqual([]);
+    // A false value is no change and works.
+    expect(await status(settle(winInstances.update(inst.id, { sshRequests: false })))).toBe("ok");
   });
 
   test("bad input changes nothing and always frees the lock", async () => {
@@ -952,7 +987,11 @@ describe("instance settings", () => {
     expect(err.extra).toMatchObject({ code: "settings_failed" });
     expect(err.message).toContain("access denied");
     expect(await fileRecord()).toMatchObject({ createSession: true });
-    expect((await winInstances.list())[0].settings).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect((await winInstances.list())[0].settings).toEqual({
+      createSession: true,
+      spawnMode: "same-dir",
+      sshRequests: false,
+    });
     expect(procs).toHaveLength(1); // the old process runs on
     killError = null;
     expect(await status(settle(winInstances.update(inst.id, { createSession: false })))).toBe("ok");

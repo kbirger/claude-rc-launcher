@@ -123,7 +123,10 @@ describe("settings", () => {
     const config = cfg({ claudeRcArgs: ["--spawn", "worktree", "--no-create-session-in-dir"] });
     await writeFile(join(dir, unitName(id)), renderUnit(config, "/srv/proj", "my"));
     const [inst] = await svc({ claudeRcArgs: [] }).list();
-    expect(inst).toMatchObject({ name: "my", settings: { createSession: false, spawnMode: "worktree" } });
+    expect(inst).toMatchObject({
+      name: "my",
+      settings: { createSession: false, spawnMode: "worktree", sshRequests: false },
+    });
   });
 });
 
@@ -234,7 +237,7 @@ describe("list", () => {
         path: "/srv/a",
         name: "alpha",
         user: "root",
-        settings: { createSession: true, spawnMode: "same-dir" },
+        settings: { createSession: true, spawnMode: "same-dir", sshRequests: false },
         state: "active",
         startedAt: "2024-11-06T10:00:00.000Z",
       },
@@ -749,7 +752,7 @@ describe("start with settings", () => {
       path: "/srv/proj",
       settings: { spawnMode: "worktree", createSession: false },
     });
-    expect(inst.settings).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(inst.settings).toEqual({ createSession: false, spawnMode: "worktree", sshRequests: false });
     const content = await readFile(join(dir, unitName(inst.id)), "utf8");
     expect(content).toContain("--spawn worktree --no-create-session-in-dir");
   });
@@ -806,17 +809,21 @@ describe("update", () => {
   test("a healthy change rewrites the unit, reloads, restarts and returns the old settings", async () => {
     const id = await seed("/srv/a", "alpha");
     const updateResult = await svc({}, noSleep).update(id, { createSession: false });
-    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
     expect(updateResult.instance).toMatchObject({
       id,
       name: "alpha",
-      settings: { createSession: false, spawnMode: "same-dir" },
+      settings: { createSession: false, spawnMode: "same-dir", sshRequests: false },
       state: "active",
     });
     expect(updateResult.applied).toBe(true);
     const content = await readFile(join(dir, unitName(id)), "utf8");
     expect(content).toBe(
-      renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }),
+      renderUnit(cfg(), "/srv/a", "alpha", undefined, {
+        createSession: false,
+        spawnMode: "same-dir",
+        sshRequests: false,
+      }),
     );
     expect(calls.filter((call) => call.args[0] !== "show").slice(0, 2)).toEqual([
       sc("daemon-reload"),
@@ -824,6 +831,20 @@ describe("update", () => {
     ]);
     expect(restarts()).toBe(1);
     expect(await readdir(dir)).toEqual([unitName(id)]); // no .tmp file left
+  });
+
+  test("a patch with sshRequests true restarts the instance", async () => {
+    const id = await seed("/srv/a", "alpha");
+    const updateResult = await svc({}, noSleep).update(id, { sshRequests: true });
+    expect(updateResult.previous.sshRequests).toBe(false);
+    expect(updateResult.instance.settings?.sshRequests).toBe(true);
+    expect(restarts()).toBe(1);
+    const content = await readFile(join(dir, unitName(id)), "utf8");
+    expect(content).toContain(`Environment="CLAUDE_RC_SSH_CONTROL=/run/claude-rc-ssh/${id}/control.sock"`);
+    // Back to false: the line goes away and the instance restarts again.
+    await svc({}, noSleep).update(id, { sshRequests: false });
+    expect(restarts()).toBe(2);
+    expect(await readFile(join(dir, unitName(id)), "utf8")).not.toContain("CLAUDE_RC_SSH_CONTROL");
   });
 
   test("createSession off with a recoverable session: exit 69, the change is undone, 409 settings_refused", async () => {
@@ -863,7 +884,7 @@ describe("update", () => {
     expect(defined(err).status).toBe(409);
     expect(defined(err).extra).toEqual({
       code: "settings_refused",
-      settings: { createSession: true, spawnMode: "same-dir" },
+      settings: { createSession: true, spawnMode: "same-dir", sshRequests: false },
     });
     expect(defined(err).message).toContain("69");
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
@@ -951,14 +972,18 @@ describe("update", () => {
         },
       },
     ).update(id, { createSession: false });
-    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
     expect(updateResult.instance).toMatchObject({
-      settings: { createSession: false, spawnMode: "same-dir" },
+      settings: { createSession: false, spawnMode: "same-dir", sshRequests: false },
       state: "inactive",
     });
     expect(updateResult.applied).toBe(false);
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(
-      renderUnit(cfg(), "/srv/a", "alpha", undefined, { createSession: false, spawnMode: "same-dir" }),
+      renderUnit(cfg(), "/srv/a", "alpha", undefined, {
+        createSession: false,
+        spawnMode: "same-dir",
+        sshRequests: false,
+      }),
     );
     expect(calls.some((call) => call.args[0] === "daemon-reload")).toBe(true);
     expect(restarts()).toBe(0);
@@ -988,7 +1013,7 @@ describe("update", () => {
     expect(defined(err).status).toBe(409);
     expect(defined(err).extra).toEqual({
       code: "settings_failed",
-      settings: { createSession: true, spawnMode: "same-dir" },
+      settings: { createSession: true, spawnMode: "same-dir", sshRequests: false },
     });
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
     expect(restarts()).toBe(0);
@@ -1038,7 +1063,7 @@ describe("update", () => {
         },
       },
     ).update(id, { createSession: false });
-    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
     expect(restarts()).toBe(1);
     expect(slept.reduce((total, item) => total + item, 0)).toBe(20_000);
   });
@@ -1088,7 +1113,7 @@ describe("update", () => {
     expect(await status(instanceService.restart(id))).toBe(409);
     release();
     const updateResult = await first;
-    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(updateResult.instance.settings).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
     // the lock is free again
     await instanceService.update(id, { createSession: true });
   });
@@ -1096,8 +1121,12 @@ describe("update", () => {
   test("a patch equal to the current settings does nothing", async () => {
     const id = await seed("/srv/a", "alpha");
     const before = await readFile(join(dir, unitName(id)), "utf8");
-    const updateResult = await svc({}, noSleep).update(id, { createSession: true, spawnMode: "same-dir" });
-    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir" });
+    const updateResult = await svc({}, noSleep).update(id, {
+      createSession: true,
+      spawnMode: "same-dir",
+      sshRequests: false,
+    });
+    expect(updateResult.previous).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
     expect(updateResult.instance.settings).toEqual(updateResult.previous);
     expect(await readFile(join(dir, unitName(id)), "utf8")).toBe(before);
     expect(calls.some((call) => call.args[0] === "restart" || call.args[0] === "daemon-reload")).toBe(false);
@@ -1121,7 +1150,7 @@ describe("update", () => {
     const updateResult = await svc({}, { ...noSleep, repoKind: () => Promise.resolve("github") }).update(id, {
       spawnMode: "worktree",
     });
-    expect(updateResult.instance.settings).toEqual({ createSession: true, spawnMode: "worktree" });
+    expect(updateResult.instance.settings).toEqual({ createSession: true, spawnMode: "worktree", sshRequests: false });
   });
 
   test("bad values are 400 and an unknown id is 404", async () => {

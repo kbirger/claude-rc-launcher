@@ -257,10 +257,11 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
         throw new HttpError(409, "a clone is still running in that folder");
     }
 
-    const { createSession, spawnMode, ...rest } = input;
+    const { createSession, spawnMode, sshRequests, ...rest } = input;
     const settings = {
       ...(createSession === undefined ? {} : { createSession }),
       ...(spawnMode === undefined ? {} : { spawnMode }),
+      ...(sshRequests === undefined ? {} : { sshRequests }),
     };
     return context.json(
       await instances.start({ ...rest, ...(Object.keys(settings).length > 0 ? { settings } : {}) }),

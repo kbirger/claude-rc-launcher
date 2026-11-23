@@ -8,6 +8,10 @@ import type { SystemUser } from "./users";
 const MARKER = "# managed-by: claude-rc-launcher path=";
 const NAME_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/; // no leading "-": it would be parsed as a CLI flag
 
+/** The top folder of the node for SSH sockets and grant files. Each instance has a folder of its own in it. */
+export const SSH_RUN_DIR = "/run/claude-rc-ssh";
+const SSH_CONTROL_KEY = "CLAUDE_RC_SSH_CONTROL";
+
 const CONTROL_RE = /[\p{Cc}\u2028\u2029]/u;
 
 export function instanceId(absPath: string): string {
@@ -113,6 +117,7 @@ export function renderUnit(
     envLine("PATH", runAs.path),
   ];
   if (cfg.sshAuthSock) lines.push(envLine("SSH_AUTH_SOCK", cfg.sshAuthSock));
+  if (settings?.sshRequests) lines.push(envLine(SSH_CONTROL_KEY, `${SSH_RUN_DIR}/${instanceId(absPath)}/control.sock`));
   const exec = [
     runAs.claudeBin,
     "remote-control",
@@ -182,5 +187,7 @@ export function parseUnitSettings(content: string): InstanceSettings {
   const match = /^ExecStart=(.*)$/m.exec(content);
   const words = match ? execWords(match[1]) : [];
   const position = words.indexOf("--name");
-  return settingsFromArgs(position >= 0 ? words.slice(position + 2) : []);
+  const fromArgs = settingsFromArgs(position >= 0 ? words.slice(position + 2) : []);
+  // A unit from before the setting has no such line and reads as off.
+  return { ...fromArgs, sshRequests: new RegExp(`^Environment="${SSH_CONTROL_KEY}=`, "m").test(content) };
 }
