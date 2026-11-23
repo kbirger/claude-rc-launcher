@@ -6,6 +6,15 @@
         "shadcn@latest",
         "mcp"
       ]
+    },
+    "svelte": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@sveltejs/mcp"
+      ],
+      "env": {}
     }
   }
 }
