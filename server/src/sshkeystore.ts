@@ -223,6 +223,11 @@ export class SshKeyStore {
     }
   }
 
+  /** The line for authorized_keys (without options) of the key of a target. It needs no unlock, because the public key is stored in the clear. Throws `KeyError` `no-key` for an unknown target. */
+  publicLine(targetId: string): string {
+    return publicKeyLine(unb64(this.record(targetId).publicKey), `claude-rc:${targetId}`);
+  }
+
   /** Decrypts the key into memory. Throws `KeyError`: `wrong-unlock` for a wrong secret, `no-key` for an unknown target. */
   async open(targetId: string, unlock: UnlockSecret): Promise<UnlockedKey> {
     this.needSetup();

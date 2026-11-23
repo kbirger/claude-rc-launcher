@@ -66,6 +66,15 @@ describe("sshkeystore", () => {
     key.destroy();
   });
 
+  test("publicLine gives the line of the key without an unlock, and no-key for an unknown target", async () => {
+    const store = await ready();
+    const { publicLine } = await store.create("web", secret);
+    expect(store.publicLine("web")).toBe(publicLine);
+    expect((await rejection(Promise.resolve().then(() => store.publicLine("nope")))) as KeyError).toBeInstanceOf(
+      KeyError,
+    );
+  });
+
   test("open with a wrong secret throws wrong-unlock and returns no key", async () => {
     const store = await ready();
     await store.create("web", secret);

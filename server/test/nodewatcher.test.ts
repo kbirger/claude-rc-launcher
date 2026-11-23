@@ -124,7 +124,7 @@ function fakeRegistry() {
   };
 }
 
-function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void } = {}) {
+function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void; onSsh?: (h: string, e: string, d: unknown) => void; onOnline?: (h: string) => void; onOffline?: (h: string) => void } = {}) {
   const clock = new Clock();
   const reg = fakeRegistry();
   const nodes: Record<string, FakeNode> = {};
@@ -149,6 +149,9 @@ function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h:
       steps.push([h, e]);
       o.onStep?.(h, e);
     },
+    ...(o.onSsh ? { onSsh: o.onSsh } : {}),
+    ...(o.onOnline ? { onOnline: o.onOnline } : {}),
+    ...(o.onOffline ? { onOffline: o.onOffline } : {}),
     now: clock.now,
     sleep: clock.sleep,
     random: o.random ?? (() => 0),
@@ -385,6 +388,30 @@ describe("createNodeWatchers events", () => {
     await flush();
     expect(s.log.get("nas").map((l) => l.line)).toEqual(["hello"]);
     expect(s.steps).toEqual([["nas", { step: "verifying", to: "2.0.0", client: "/x", detail: "d" }]]);
+  });
+
+  test("ssh events reach onSsh and offline reaches onOffline", async () => {
+    const seen: string[] = [];
+    const s = setup(["nas"], {
+      onSsh: (h, e, d) => seen.push(`${h} ${e} ${JSON.stringify(d)}`),
+      onOnline: (h) => seen.push(`online ${h}`),
+      onOffline: (h) => seen.push(`offline ${h}`),
+    });
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot();
+    c.push("ssh.request", { requestId: "r1", instanceId: "i1", targetId: "nas" });
+    c.push("ssh.sign", { signId: "s1" });
+    c.push("ssh.broken", "not an object");
+    await flush();
+    c.close();
+    await flush();
+    expect(seen).toEqual([
+      "online nas",
+      'nas ssh.request {"requestId":"r1","instanceId":"i1","targetId":"nas"}',
+      'nas ssh.sign {"signId":"s1"}',
+      "offline nas",
+    ]);
   });
 
   test("a downloading step clears the lines of that host first", async () => {
