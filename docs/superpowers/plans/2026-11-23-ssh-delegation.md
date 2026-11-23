@@ -570,6 +570,40 @@ Server files are flat in `server/src`, with the prefix `ssh`, as the existing co
 
 ---
 
+### Task 14b: Hub-local SSH support
+
+**Why:** Task 14 wired the node side (broker, grant routes, per-instance control sockets, opt-in setting) only into `startNode`. The hub also runs instances itself, on its built-in `local` host, and on the owner's machine the hub and the Claude sessions often share one host. Today an instance of the `local` host can switch `sshRequests` on (the setting is accepted through `/api/hosts/local/instances`) but gets an environment variable that points at a control socket that never exists. This task gives the `local` host the same SSH wiring, in the hub process.
+
+**Files:**
+- Modify: `server/src/hubmain.ts`, `server/src/sshnodewiring.ts` (reuse `createNodeSsh`; read it first), `server/src/sshservice.ts` only if the local host needs a hook there, `server/src/app.ts` only if the hub app needs the new wiring passed in.
+- Test: `server/test/sshlocal.test.ts` (new).
+
+**Interfaces and rules:**
+- The hub builds the node-side SSH wiring for the host id `local` with the same pieces as a node: one `SshBroker`, the per-instance `SshControl` reconcile for the hub's own `Instances` object, the start-up cleanup of leftover grant files, the base folder `/run/claude-rc-ssh` (a test override option, as in `startNode`), and the `sshManaged` routes with a fail-closed `identityFor`. Linux only, with the same explicit `process.platform !== "win32"` guard; on Windows the hub-local backend refuses `sshRequests` like a Windows node does (400 `SSH requests need a Linux node`; check that the hub-local backend already does).
+- No network and no node auth in between: the hub reaches its own SSH routes through an in-process `HostClient` (a small object with the same `call` method as HostClient in `server/src/hostclient.ts`) that dispatches to the local router with `router.request(...)` and returns `{ status, body }` exactly as a remote call would. `SshService` gets this client for host id `local` through the same `client(hostId)` function it uses for remote hosts (extend that function in hubmain.ts; a remote host id still uses the remote client).
+- Node events from the local broker (`ssh.request`, `ssh.sign`) go straight to `service.onNodeEvent("local", event, data)` (the `NodeEvents` subscription of the local broker), with no network stream. `SshService.onNodeOnline("local")` runs once at hub start after the local wiring is ready (reset and push of the targets), and `onNodeOffline("local")` is not needed.
+- Node access for the host `local`: the `PUT /ssh/nodes/:host` route and the `hostIds` option must accept `local` as a host id. Check that `GET /ssh/status` lists `local` among the nodes, and that a target can list `local` in `nodes`.
+- Hub shutdown (`stop()`) also stops the local controls and agents (use what `createNodeSsh` returns).
+- The `identityFor` and the owner lookup are the same as on a node: do not copy them; import the helpers from `server/src/sshnodewiring.ts` (export them if needed).
+- Never create `/run/claude-rc-ssh` in a test: use the folder override. Never write outside a temporary folder.
+
+- [ ] **Step 1: Write the failing tests.**
+  Test names:
+  - `the hub builds the SSH wiring for the local host on Linux`
+  - `an ssh.request event from the local broker creates a pending grant for node local`
+  - `approve activates the grant through the in-process client and the local agent socket answers identities`
+  - `a remote host id still uses the remote client`
+  - `PUT /ssh/nodes/local is accepted and pushes the targets to the local broker`
+  - `a target can list local in nodes`
+  - `stop ends the local controls and removes their sockets`
+  - `the Windows guard leaves the local host without grant routes`
+- [ ] **Step 2: Run** `bun test server/test/sshlocal.test.ts`. Expect FAIL.
+- [ ] **Step 3: Implement** as described.
+- [ ] **Step 4: Run** `bun test server ./cli`, `bun run typecheck` and eslint on the changed files. Expect 0 failures; check any failure against main (040a5d2) before you call it old.
+- [ ] **Step 5: Commit** `feat: SSH support for the hub-local host`.
+
+---
+
 ## Phase D: web UI
 
 ### Task 15: Passkey helper
