@@ -7,6 +7,7 @@
   import GrantList from "./GrantList.svelte";
   import { statusQuery } from "./queries";
   import NodeAccess from "./NodeAccess.svelte";
+  import RecoveryFlow from "./RecoveryFlow.svelte";
   import SetupForm from "./SetupForm.svelte";
   import TargetList from "./TargetList.svelte";
   import TargetWizard from "./TargetWizard.svelte";
@@ -33,6 +34,9 @@
   // The approval sheet is outside the branches too, for the same reason. It holds the grant as it was when the owner
   // opened it.
   let approving = $state<Grant | null>(null);
+  // The recovery flow is outside the branches too: it holds the recovery code, so a failed refetch must not drop it.
+  let recovering = $state(false);
+  const pending = $derived(query.data?.pendingRewrap ?? []);
   const nodeCount = $derived(query.data?.nodes.length ?? 0);
 </script>
 
@@ -50,6 +54,20 @@
     Unlock method: {query.data.method === "prf" ? "passkey" : "passphrase"}. {nodeCount}
     {nodeCount === 1 ? "node" : "nodes"}.
   </p>
+  <div class="mt-2">
+    <Button variant="outline" size="touch" onclick={() => (recovering = true)}>Lost your passkey? Recover</Button>
+  </div>
+  {#if pending.length > 0}
+    <Alert.Root class="mt-3" role="status">
+      <Alert.Description class="flex flex-wrap items-center justify-between gap-3">
+        <span>
+          {pending.length}
+          {pending.length === 1 ? "target needs its key recovered." : "targets need their keys recovered."}
+        </span>
+        <Button size="touch" onclick={() => (recovering = true)}>Recover keys</Button>
+      </Alert.Description>
+    </Alert.Root>
+  {/if}
   <div class="mt-4 grid gap-6">
     <GrantList onapprove={(grant) => (approving = grant)} />
     <NodeAccess nodes={query.data.nodes} />
@@ -63,6 +81,9 @@
   {#key wizard.id ?? ""}
     <TargetWizard targetId={wizard.id} status={query.data} onclose={closeWizard} />
   {/key}
+{/if}
+{#if recovering && query.data?.setUp && !holding}
+  <RecoveryFlow status={query.data} onclose={() => (recovering = false)} />
 {/if}
 {#if approving && query.data?.setUp && !holding}
   {#key approving.id}

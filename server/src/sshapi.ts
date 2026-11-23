@@ -249,6 +249,8 @@ export function sshApi(options: SshApiOptions): Hono {
       method,
       ...(typeof credentialId === "string" ? { credentialId } : {}),
     });
+    // A recovery follows a lost or stolen unlock: a grant that it approved must not outlive it.
+    grants.endWhere((grant) => grant.state === "active", "revoked");
     audit(`audit ssh recovery user=${logToken(options.user(context))} method=${method} targets=${pending.length}`);
     return context.json({ targets: pending });
   });

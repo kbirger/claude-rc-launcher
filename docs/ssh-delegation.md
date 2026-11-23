@@ -160,7 +160,7 @@ Tap Deny to refuse a request. Tap Revoke on an active grant to end it at once.
 
 ## Unlock methods
 
-You choose one method at the hub setup. You cannot change it later.
+You choose one method at the hub setup. To change it later, run a recovery with the recovery code.
 
 A passkey must support the WebAuthn PRF extension. This extension lets the passkey return a stable secret. The hub uses a different salt for each target, so one unlock opens one key. A test on 2026-11-23 had these results:
 
@@ -178,7 +178,23 @@ The recovery code is the second way to open the keys. The hub makes it at the se
 
 Keep the code away from the hub. Without it and without your unlock method, nobody can open the keys.
 
-This version has no screen or command that uses the recovery code. If you lose your phone or your passphrase, you cannot unlock the keys. To start again, stop the hub and delete the folder `<state_dir>/ssh`. Start the hub and run the setup again. Then add each target again, and remove the old lines from each target.
+### Recover with the recovery code
+
+Use the recovery code when you lose your passkey or forget your passphrase. A recovery chooses a new unlock method. It keeps the keys, the targets and the lines on the targets.
+
+1. Open the SSH access page, and tap Lost your passkey? Recover.
+2. Type the recovery code.
+3. Choose the new unlock method. For a passkey, the browser registers it and asks for one test unlock. If the passkey gives no secret, the page offers the passphrase.
+4. For a passphrase, type it twice. The two must match, because a typo locks every key under a passphrase that nobody knows.
+5. Tap Continue. The hub switches to the new method and ends every active grant.
+6. Tap Re-lock for each target in the list. A target shows Done when its key is locked under the new method.
+7. When no target is left, the page shows `Recovery is complete.` Tap Close.
+
+A recovery ends all active grants, because a lost or stolen phone must not leave grants alive. Every target needs one re-lock. Until you re-lock a target, the hub refuses to approve a grant for it.
+
+If you reload the page before the last re-lock, the page shows a banner that says how many targets wait. Tap its button and start at step 2 again. The hub accepts the recovery code a second time.
+
+The recovery needs the recovery code. If you lost the code too, you cannot recover. Stop the hub and delete the folder `<state_dir>/ssh`. Start the hub and run the setup again. Then add each target again, and remove the old lines from each target.
 
 ## End access
 
@@ -222,6 +238,8 @@ The files `<state_dir>/ssh/keys.json` and `<state_dir>/ssh/targets.json` hold al
 - `no answer from the hub`: nobody approved the request in 10 minutes. Ask again, and approve it sooner.
 - `the node has no user switch`: the node cannot run the install script as the account of the target. Install the line by hand.
 - `the unlock secret does not open this key`: the passphrase or the passkey is wrong. Unlock again.
+- `The recovery code does not belong to this hub.` (route text `wrong recovery code`): the code is wrong. Make sure that you type the code of this hub. Each hub has its own code.
+- `this target needs its key to be recovered`: a recovery started, and this target has no re-lock yet. Open the SSH access page, tap the banner button, and tap Re-lock for the target.
 - `no node of this target has access enabled with a source address`: turn on a node of the target on the SSH access page.
 
 Read [Security](security.md#ssh-delegation) for the risks of this feature.

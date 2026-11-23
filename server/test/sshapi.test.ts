@@ -783,6 +783,22 @@ describe("recovery", () => {
     expect(keys.credentialId()).toBe("cred2");
   });
 
+  test("recovery begin ends the active grants and a wrong code ends nothing", async () => {
+    const { call, readyTarget, request, recovery, grants } = await setup();
+    await readyTarget();
+    const active = await request("nas", "req-active");
+    expect((await call("POST", `/grants/${active.id}/approve`, "admin", { unlock })).status).toBe(200);
+    const pending = await request("nas", "req-pending");
+
+    expect((await call("POST", "/recovery/begin", "admin", begin(newRecovery()))).status).toBe(403);
+    expect(grants.get(active.id)?.state).toBe("active");
+
+    expect((await call("POST", "/recovery/begin", "admin", begin(recovery))).status).toBe(200);
+    expect(grants.get(active.id)?.state).toBe("ended");
+    expect(grants.get(active.id)?.endReason).toBe("revoked");
+    expect(grants.get(pending.id)?.state).toBe("pending");
+  });
+
   test("POST /targets/:id/rewrap re-wraps one target and the new unlock then approves a grant", async () => {
     const { call, readyTarget, request, recovery, grants, keys } = await setup();
     await readyTarget();

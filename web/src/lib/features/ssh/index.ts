@@ -21,6 +21,7 @@ export type {
 export {
   approveGrant,
   authorizeManaged,
+  beginRecovery,
   createKey,
   createTarget,
   deleteTarget,
@@ -35,6 +36,7 @@ export {
   pinManaged,
   putNode,
   revokeGrant,
+  rewrapTarget,
   denyGrant,
   scanHostKey,
   setup,
@@ -43,6 +45,7 @@ export {
 export {
   approveGrantMutation,
   authorizeManagedMutation,
+  beginRecoveryMutation,
   createKeyMutation,
   createTargetMutation,
   deleteTargetMutation,
@@ -52,6 +55,7 @@ export {
   pinManagedMutation,
   putNodeMutation,
   revokeGrantMutation,
+  rewrapTargetMutation,
   scanHostKeyMutation,
   setupMutation,
   testTargetMutation,
@@ -60,6 +64,7 @@ export { grantsQuery, SSH_KEY, statusQuery, targetsQuery } from "./queries";
 export { default as ApproveSheet } from "./ApproveSheet.svelte";
 export { default as GrantList } from "./GrantList.svelte";
 export { default as NodeAccessList } from "./NodeAccess.svelte";
+export { default as RecoveryFlow } from "./RecoveryFlow.svelte";
 export { default as SetupForm } from "./SetupForm.svelte";
 export { default as SshPage } from "./SshPage.svelte";
 export { default as TargetList } from "./TargetList.svelte";

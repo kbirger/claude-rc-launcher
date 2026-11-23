@@ -361,12 +361,13 @@ The Nodes page shows one card for each host:
 
 An admin sees the entry SSH access in the menu. A badge on the entry counts the requests that wait for you. Read [SSH delegation](ssh-delegation.md) for the whole setup.
 
-On the first visit, the page asks you to choose an unlock method, a passkey or a passphrase. It then shows the recovery code once. After the setup, the page has four parts:
+On the first visit, the page asks you to choose an unlock method, a passkey or a passphrase. It then shows the recovery code once. After the setup, the page has these parts:
 
 - Access requests. Each request shows the target, the node, the instance and the time. A pending request has Approve and Deny buttons. An active grant has a Revoke button. The list refreshes every 5 seconds.
 - Nodes. A switch turns SSH access on for a node. Enter the source address that targets see when the node connects.
 - Targets. Each target shows its state: `draft`, `ready`, `disabled` or `retired`. The buttons are Continue setup, Disable, Enable and Retire.
 - Add target. This opens a wizard with these steps: the form, the key, the host key, the install and the test.
+- Lost your passkey? Recover. This button starts a recovery with the recovery code. When targets wait for a re-lock, a banner names how many, and its button opens the same flow. Read [SSH delegation](ssh-delegation.md#recover-with-the-recovery-code).
 
 Approve opens a sheet. The sheet shows the node, the instance, the target, the account and a warning about the power of the account. The instance name is a claim of the session. Set the minutes, from 1 to 480, and unlock with your passkey or passphrase.
 

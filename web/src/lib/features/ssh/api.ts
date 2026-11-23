@@ -13,7 +13,14 @@ export type EndReason = "expired" | "revoked" | "denied" | "node-lost" | "target
 export type Unlock = { method: UnlockMethod; secret: string };
 
 export type NodeStatus = { host: string; enabled: boolean; sourceAddress: string };
-export type SshStatus = { setUp: boolean; method?: UnlockMethod; credentialId?: string; nodes: NodeStatus[] };
+export type SshStatus = {
+  setUp: boolean;
+  method?: UnlockMethod;
+  credentialId?: string;
+  /** Ids of the targets whose key needs one re-lock after a recovery. */
+  pendingRewrap: string[];
+  nodes: NodeStatus[];
+};
 
 export type Target = {
   id: string;
@@ -72,6 +79,13 @@ export const getStatus = () => request<SshStatus>("GET", `${BASE}/status`);
 export const setup = (body: { method: UnlockMethod; credentialId?: string }) =>
   request<{ recoveryCode: string }>("POST", `${BASE}/setup`, body);
 
+/**
+ * Starts a recovery with the recovery code: the hub switches to the new unlock method and answers with the targets
+ * that need a re-lock. It also ends every active grant.
+ */
+export const beginRecovery = (body: { code: string; method: UnlockMethod; credentialId?: string }) =>
+  request<{ targets: string[] }>("POST", `${BASE}/recovery/begin`, body);
+
 export const putNode = (host: string, body: { enabled: boolean; sourceAddress: string }) =>
   request<NodeAccess>("PUT", `${BASE}/nodes/${encodeURIComponent(host)}`, body);
 
@@ -83,6 +97,9 @@ export const patchTarget = (id: string, state: "disabled" | "draft") =>
 export const deleteTarget = (id: string) => request<Target & { comment: string }>("DELETE", targetUrl(id));
 
 export const getSalt = (id: string) => request<TargetSalt>("GET", `${targetUrl(id)}/salt`);
+/** Re-locks the key of one target under the new unlock. The code is the recovery code. */
+export const rewrapTarget = (id: string, body: { code: string; unlock: Unlock }) =>
+  request<void>("POST", `${targetUrl(id)}/rewrap`, body);
 export const createKey = (id: string, unlock: Unlock) => request<KeyResult>("POST", `${targetUrl(id)}/key`, { unlock });
 export const scanHostKey = (id: string, node: string) =>
   request<{ keys: HostKeyLine[] }>("POST", `${targetUrl(id)}/scan`, { node });
