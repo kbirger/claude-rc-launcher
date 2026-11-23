@@ -69,9 +69,11 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   const address = flags.address;
   const identity = flags.identity;
   const sshAddress = address ?? "";
-  const keyFile = identity ?? "";
+  // An absolute path cannot start with a dash, so ssh never reads it as an option.
+  const keyFile = identity ? path.resolve(identity) : "";
 
   if (isManaged && identity !== undefined) throw usage("--managed does not take --identity");
+  if (identity === "") throw usage("--identity is empty");
   if (!ID_RE.test(id)) throw usage("the target id is not valid");
   if (type === undefined || account === undefined || flags.node === undefined) throw usage();
   if (!isManaged && (address === undefined || identity === undefined)) throw usage();
@@ -247,8 +249,15 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   // The test.
   if (flags["no-test"]) return;
 
-  if (method === "passphrase" && unlock) {
-    const secret = unlock;
+  if (method === "passphrase") {
+    // Every grant needs a new unlock, and the test grant is a grant.
+    const typed = await step("reading the passphrase", () => options.readSecret("Passphrase for the SSH keys: "));
+    if (!typed)
+      throw new ExitError(
+        `reading the passphrase failed: no passphrase. The target ${id} stays in draft on the hub`,
+        1,
+      );
+    const secret: Unlock = { method, secret: Buffer.from(typed, "utf8").toString("base64url") };
     const result = await step("testing the target", () =>
       hub.request<{ ok: boolean; error?: string }>("POST", `${target}/test`, { node, unlock: secret }),
     );

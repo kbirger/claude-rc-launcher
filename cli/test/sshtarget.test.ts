@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import type { Flags } from "../src/args";
 import { ExitError } from "../src/creds";
 import { HubError } from "../src/hub";
@@ -89,7 +90,7 @@ function rig(
       readSecret: (prompt) => {
         prompts.push(prompt);
         secrets.push(prompt);
-        return Promise.resolve("correct horse");
+        return Promise.resolve(secrets.length === 1 ? "correct horse" : "second horse");
       },
       runLocal: (argv, stdin) => {
         const option = argv.find((item) => item.startsWith("UserKnownHostsFile="));
@@ -176,6 +177,22 @@ describe("sshTargetAdd usage", () => {
 });
 
 describe("sshTargetAdd external", () => {
+  test("an identity that starts with a dash goes to ssh as an absolute path", async () => {
+    const rg = rig({});
+    await rg.run({ ...external, identity: "-x" });
+    const argv = rg.ssh[0]?.argv ?? [];
+    expect(argv).not.toContain("-x");
+    expect(argv[argv.indexOf("-i") + 1]).toBe(path.resolve("-x"));
+    expect(path.isAbsolute(argv[argv.indexOf("-i") + 1] ?? "")).toBe(true);
+  });
+
+  test("the ssh error text hides the absolute identity path only", async () => {
+    const rg = rig({}, { sshCode: 255, sshStderr: `no such file ${path.resolve("-x")} and -x stays` });
+    const error = await rejection(rg.run({ ...external, identity: "-x" }));
+    expect(error.message).not.toContain(path.resolve("-x"));
+    expect(error.message).toContain("<identity>");
+  });
+
   test("an external add runs ssh with the identity and the provision script on stdin", async () => {
     const rg = rig({});
     await rg.run({ ...external, port: "2222" });
@@ -303,10 +320,19 @@ describe("sshTargetAdd unlock", () => {
     expect(key?.body).toEqual({
       unlock: { method: "passphrase", secret: Buffer.from("correct horse", "utf8").toString("base64url") },
     });
-    expect(rg.secrets).toHaveLength(1);
-    const test = rg.calls.find((call) => call.path.endsWith("/test"));
-    expect(test?.body).toEqual({ node: "pi", unlock: bodyOf(key).unlock });
+    expect(rg.secrets).toHaveLength(2);
     expect(rg.out.join("\n")).not.toContain("correct horse");
+  });
+
+  test("the test step asks again and sends the new unlock, which may differ from the first", async () => {
+    const rg = rig({}, { method: "passphrase" });
+    await rg.run(external);
+    const test = rg.calls.find((call) => call.path.endsWith("/test"));
+    expect(test?.body).toEqual({
+      node: "pi",
+      unlock: { method: "passphrase", secret: Buffer.from("second horse", "utf8").toString("base64url") },
+    });
+    expect(bodyOf(test).unlock).not.toEqual(bodyOf(rg.calls.find((call) => call.path.endsWith("/key"))).unlock);
   });
 
   test("with the passkey method the command prints the link and polls until the key exists", async () => {
