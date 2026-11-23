@@ -110,6 +110,8 @@ const RULES: Rule[] = [
   ...rows("admin", "GET", ["/ssh/targets/:id", "/ssh/targets/:id/salt", "/ssh/targets/:id/provision"]),
   ...rows("admin", "POST", [
     "/ssh/setup",
+    "/ssh/recovery/begin",
+    "/ssh/targets/:id/rewrap",
     "/ssh/targets",
     "/ssh/targets/:id/key",
     "/ssh/targets/:id/scan",

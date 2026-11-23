@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { deriveWrapKey, newRecovery, openWithRecovery, seal, sealToRecovery, unseal, WrapError } from "../src/sshwrap";
+import {
+  deriveWrapKey,
+  newRecovery,
+  openWithRecovery,
+  recoveryPublicKeyOf,
+  seal,
+  sealToRecovery,
+  unseal,
+  WrapError,
+} from "../src/sshwrap";
 
 const plain = new TextEncoder().encode("private key bytes");
 const secret = new Uint8Array(32).fill(7);
@@ -60,5 +69,20 @@ describe("sshwrap", () => {
     expect(seal(key, plain, "a")).not.toEqual(seal(key, plain, "a"));
     const { publicKey } = newRecovery();
     expect(sealToRecovery(publicKey, plain, "a")).not.toBe(sealToRecovery(publicKey, plain, "a"));
+  });
+
+  test("recoveryPublicKeyOf matches the public key that newRecovery returned", () => {
+    for (let round = 0; round < 5; round++) {
+      const { publicKey, code } = newRecovery();
+      expect(recoveryPublicKeyOf(code)).toBe(publicKey);
+      expect(recoveryPublicKeyOf(code.toLowerCase().replaceAll("-", " "))).toBe(publicKey);
+    }
+  });
+
+  test("recoveryPublicKeyOf throws WrapError for a bad code", () => {
+    const { code } = newRecovery();
+    expect(() => recoveryPublicKeyOf("")).toThrow(WrapError);
+    expect(() => recoveryPublicKeyOf("1!!!")).toThrow(WrapError);
+    expect(() => recoveryPublicKeyOf(code.slice(0, 20))).toThrow(WrapError);
   });
 });
