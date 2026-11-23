@@ -77,6 +77,13 @@ test('unlockWithPasskey throws UnlockError with the text "This passkey does not 
   expect(err.message).toBe("This passkey does not return a PRF secret");
 });
 
+test("unlockWithPasskey throws the same UnlockError for a PRF result of zero bytes", async () => {
+  get.mockResolvedValue(credential([1], { results: { first: new ArrayBuffer(0) } }));
+  const err = await unlockWithPasskey("-_8B", SALT).catch((error) => error);
+  expect(err).toBeInstanceOf(UnlockError);
+  expect(err.message).toBe("This passkey does not return a PRF secret");
+});
+
 test('unlockWithPasskey maps NotAllowedError to UnlockError "The passkey prompt was cancelled"', async () => {
   get.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
   const err = await unlockWithPasskey("-_8B", SALT).catch((error) => error);

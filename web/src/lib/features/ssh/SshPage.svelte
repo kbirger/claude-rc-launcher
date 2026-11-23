@@ -55,7 +55,9 @@
     {nodeCount === 1 ? "node" : "nodes"}.
   </p>
   <div class="mt-2">
-    <Button variant="outline" size="touch" onclick={() => (recovering = true)}>Lost your passkey? Recover</Button>
+    <Button variant="outline" size="touch" onclick={() => (recovering = true)}>
+      {query.data.method === "passphrase" ? "Forgot your passphrase? Recover" : "Lost your passkey? Recover"}
+    </Button>
   </div>
   {#if pending.length > 0}
     <Alert.Root class="mt-3" role="status">

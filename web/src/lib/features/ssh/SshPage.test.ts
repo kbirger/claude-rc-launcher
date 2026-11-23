@@ -200,7 +200,7 @@ function showWith(status: unknown) {
 test("the page shows the banner when targets are pending and the Recover button for an admin", async () => {
   showWith(PENDING);
   await vi.waitFor(() => expect(squashed()).toContain("2 targets need their keys recovered."));
-  expect(button("Lost your passkey? Recover")).toBeDefined();
+  expect(button("Forgot your passphrase? Recover")).toBeDefined();
   expect(document.body.textContent).not.toContain("Recover SSH access");
 
   button("Recover keys").click();
@@ -210,9 +210,9 @@ test("the page shows the banner when targets are pending and the Recover button 
 
 test("the page shows no banner when no target is pending, and the Recover button opens the flow", async () => {
   showWith({ ...PENDING, pendingRewrap: [] });
-  await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
+  await vi.waitFor(() => expect(button("Forgot your passphrase? Recover")).toBeDefined());
   expect(document.body.textContent).not.toContain("need their keys recovered");
-  button("Lost your passkey? Recover").click();
+  button("Forgot your passphrase? Recover").click();
   await vi.waitFor(() => expect(document.body.textContent).toContain("Recover SSH access"));
 });
 
@@ -230,4 +230,15 @@ test("a failed status refetch leaves an open recovery flow mounted", async () =>
   expect(client.getQueryState([...SSH_KEY, "status"])?.status).toBe("error");
   expect(document.body.textContent).toContain("Recover SSH access");
   expect(document.querySelector<HTMLInputElement>('input[type="text"]')!.value).toBe(CODE);
+});
+
+test("the Recover button names the passphrase when the method is passphrase", async () => {
+  showWith({ ...PENDING, method: "passphrase", pendingRewrap: [] });
+  await vi.waitFor(() => expect(button("Forgot your passphrase? Recover")).toBeDefined());
+  expect(document.body.textContent).not.toContain("Lost your passkey");
+});
+
+test("the Recover button names the passkey when the method is prf", async () => {
+  showWith({ ...PENDING, method: "prf", credentialId: "-_8B", pendingRewrap: [] });
+  await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
 });

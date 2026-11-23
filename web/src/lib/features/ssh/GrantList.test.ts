@@ -18,15 +18,25 @@ const GRANTS: Grant[] = [
 let calls: Call[];
 let grants: Grant[];
 let approved: Grant[];
+let grantsFail = false;
+let hold: Promise<void> | undefined;
 const open: Array<() => void> = [];
 
 beforeEach(() => {
   calls = [];
   approved = [];
   grants = GRANTS;
+  grantsFail = false;
+  hold = undefined;
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     calls.push({ method: init?.method ?? "GET", url: path });
+    if (init?.method === "POST" && hold) await hold;
+    if (path === "/api/ssh/grants" && grantsFail)
+      return new Response(JSON.stringify({ error: "hub down" }), {
+        status: 502,
+        headers: { "content-type": "application/json" },
+      });
     const body = path === "/api/ssh/grants" ? grants : path === "/api/hosts" ? [] : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   });
@@ -102,4 +112,47 @@ test("the list refetches every 5 seconds while it is open", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("a failed refetch keeps the list and its Revoke buttons, with the error above it", async () => {
+  const client = show();
+  client.setDefaultOptions({ queries: { retry: false } });
+  await vi.waitFor(() => expect(rows().length).toBe(5));
+  grantsFail = true;
+  await client.refetchQueries({ queryKey: ["ssh"] });
+  flushSync();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Could not load requests"));
+  expect(rows().length).toBe(5);
+  expect(button(rows()[1]!, "Revoke")).toBeDefined();
+});
+
+test("Deny is disabled while its call runs, so a double tap sends one call", async () => {
+  let release: () => void = () => {};
+
+  hold = new Promise<void>((resolve) => (release = resolve));
+  show();
+  await vi.waitFor(() => expect(rows().length).toBe(5));
+  const deny = button(rows()[0]!, "Deny");
+  deny.click();
+  flushSync();
+  await vi.waitFor(() => expect(button(rows()[0]!, "Deny").disabled).toBe(true));
+  button(rows()[0]!, "Deny").click();
+  flushSync();
+  release();
+  await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith("/deny"))).toHaveLength(1));
+});
+
+test("Revoke is disabled while its call runs", async () => {
+  let release: () => void = () => {};
+
+  hold = new Promise<void>((resolve) => (release = resolve));
+  show();
+  await vi.waitFor(() => expect(rows().length).toBe(5));
+  button(rows()[1]!, "Revoke").click();
+  flushSync();
+  await vi.waitFor(() => expect(document.querySelector("[data-slot=alert-dialog-action]")).not.toBeNull());
+  document.querySelector<HTMLButtonElement>("[data-slot=alert-dialog-action]")!.click();
+  await vi.waitFor(() => expect(button(rows()[1]!, "Revoke").disabled).toBe(true));
+  release();
+  await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith("/revoke"))).toHaveLength(1));
 });
