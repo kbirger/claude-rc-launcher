@@ -1,11 +1,16 @@
 import { Hono } from "hono";
-import { chmod, chown as chownDefault, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, chown as chownDefault, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { asUser } from "./asuser";
+import type { IdentityFor } from "./asuser";
 import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
 import { GrantAgent } from "./sshnodeagent";
+import { provisionScript } from "./sshprovision";
+import type { Script } from "./sshprovision";
+import { isSystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
@@ -14,6 +19,10 @@ import type { NodeEvents } from "./updateevents";
 // The broker is the other way round: the node CLI asks for access, the node tells the hub with an `ssh.request` event,
 // and the hub answers through `POST /grants` (with the request id) or `POST /requests/:id/reject`.
 // A Windows node has no grant routes: `createNodeApp` mounts `unsupportedSshApi` there.
+// The managed routes (`sshManagedApi`) are a separate router. A managed target is a machine that runs the launcher as a
+// node of this hub. The hub reads the sshd host key of the node and asks the node to add a key line to the
+// `authorized_keys` list of an account, so the owner needs no SSH key of their own. These routes also work on a
+// Windows node.
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
@@ -480,6 +489,118 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
     });
 
     return context.json({ keys });
+  });
+
+  return app;
+}
+
+const ACCOUNT_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$/;
+const MAX_LINE = 2000;
+const SCRIPT_TIMEOUT_MS = 60_000;
+
+export interface SshManagedOptions {
+  /** The sshd host key file. Default: the Ed25519 key of sshd on Linux and on Windows. */
+  hostKeyFile?: string;
+  /** Runs a provisioning script as the account. For tests. The default runs `sh -s` or PowerShell with the script on stdin. */
+  runAs?: (account: string, script: Script) => Promise<{ code: number; stderr: string }>;
+  /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
+  identityFor?: IdentityFor;
+}
+
+const defaultHostKeyFile = () =>
+  process.platform === "win32" ? "C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub" : "/etc/ssh/ssh_host_ed25519_key.pub";
+
+/** Runs a command with the script on stdin. A command that cannot start gives code 127. */
+async function runWithStdin(
+  cmd: string,
+  args: string[],
+  script: string,
+  env?: Record<string, string>,
+): Promise<{ code: number; stderr: string }> {
+  let child: ReturnType<typeof Bun.spawn>;
+
+  try {
+    child = Bun.spawn([cmd, ...args], {
+      stdin: new Blob([script]),
+      stdout: "ignore",
+      stderr: "pipe",
+      ...(env ? { env } : {}),
+    });
+  } catch (error) {
+    return { code: 127, stderr: error instanceof Error ? error.message : String(error) };
+  }
+
+  const timer = setTimeout(() => {
+    child.kill();
+  }, SCRIPT_TIMEOUT_MS);
+
+  try {
+    const [stderr, code] = await Promise.all([new Response(child.stderr as ReadableStream).text(), child.exited]);
+    return { code, stderr };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions["runAs"]> {
+  return async (account, { shell, script }) => {
+    if (shell === "powershell")
+      return runWithStdin("powershell", ["-NoProfile", "-NonInteractive", "-Command", "-"], script);
+    if (!identityFor) return runWithStdin("sh", ["-s"], script);
+    // identityFor rejects an unknown account with a 400.
+    const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
+    return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env);
+  };
+}
+
+/** The first line of the host key file as `<type> <base64>`, without the comment. */
+async function readHostKey(file: string): Promise<string> {
+  let text: string;
+
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    throw new HttpError(404, "sshd has no ed25519 host key");
+  }
+
+  const [type, key] = (text.split("\n")[0] ?? "").trim().split(/\s+/);
+  if (type !== "ssh-ed25519" || !key) throw new HttpError(404, "sshd has no ed25519 host key");
+  return `${type} ${key}`;
+}
+
+function authorizeLine(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_LINE ||
+    /[\r\n\0]/.test(value) ||
+    !(value.startsWith('from="') || value.startsWith("ssh-ed25519 "))
+  )
+    throw new HttpError(400, 'line must be one line of at most 2000 characters that starts with from=" or ssh-ed25519');
+  return value;
+}
+
+/** The managed target routes: `GET /hostkey` and `POST /authorize`. They work on every node. */
+export function sshManagedApi(options: SshManagedOptions = {}): Hono {
+  const runAs = options.runAs ?? defaultRunAs(options.identityFor);
+  const app = new Hono();
+
+  app.get("/hostkey", async (context) => {
+    const line = await readHostKey(options.hostKeyFile ?? defaultHostKeyFile());
+    const blob = Buffer.from(line.split(" ")[1] ?? "", "base64");
+    return context.json({ keys: [{ line, fingerprint: keyFingerprint(new Uint8Array(blob)) }] });
+  });
+
+  app.post("/authorize", async (context) => {
+    const body = await readObject(context);
+    const { account, systemType } = body;
+    if (typeof account !== "string" || !ACCOUNT_RE.test(account)) throw new HttpError(400, "account is not valid");
+    if (!isSystemType(systemType)) throw new HttpError(400, "systemType is not valid");
+    const line = authorizeLine(body.line);
+
+    const script = provisionScript(systemType, line, systemType === "windows" ? { account } : {});
+    const { code, stderr } = await runAs(account, script);
+    if (code !== 0) throw new HttpError(500, stderr.trim() || `the script exited with code ${code}`);
+    return context.body(null, 204);
   });
 
   return app;

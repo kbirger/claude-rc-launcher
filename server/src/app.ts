@@ -46,8 +46,8 @@ import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
 import { WatchFlag } from "./sessionwatch";
 import { sseResponse, trackStreams } from "./sse";
-import { sshNodeApi, unsupportedSshApi } from "./sshnodeapi";
-import type { SshNodeOptions } from "./sshnodeapi";
+import { sshManagedApi, sshNodeApi, unsupportedSshApi } from "./sshnodeapi";
+import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
 import { isPwaFile } from "./static";
 import type { NodeEvents } from "./updateevents";
 import type { UpdateHistory } from "./updatehistory";
@@ -391,6 +391,8 @@ export function createNodeApp(deps: {
   sessions?: SessionCatalog;
   /** The SSH grant routes. Without it (a Windows node) every route under `/ssh` answers 501. */
   ssh?: SshNodeOptions;
+  /** The managed target routes (`/ssh/hostkey`, `/ssh/authorize`). They work on a Windows node too. */
+  sshManaged?: SshManagedOptions;
 }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
@@ -480,6 +482,8 @@ export function createNodeApp(deps: {
     watch.beat();
     return context.body(null, 204);
   });
+  // The managed routes come first. A path they do not know falls through to the grant router.
+  if (deps.sshManaged) api.route("/ssh", sshManagedApi(deps.sshManaged));
   api.route("/ssh", deps.ssh ? sshNodeApi(deps.ssh) : unsupportedSshApi());
   api.route(
     "/",
