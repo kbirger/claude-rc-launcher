@@ -185,7 +185,7 @@ export class TargetStore {
     return target ? copy(target) : undefined;
   }
 
-  /** Adds a draft target. Throws `TargetError`: 400 for bad input, 409 for an id that exists. */
+  /** Adds a draft target. A retired target with the same id is replaced. Throws `TargetError`: 400 for bad input, 409 for an id that exists. */
   async add(input: Omit<Target, "state" | "hostKey" | "keyFingerprint">): Promise<Target> {
     const bad = problem(input);
     if (bad) throw new TargetError(400, bad);
@@ -201,8 +201,10 @@ export class TargetStore {
     if (input.managedHost !== undefined) target.managedHost = input.managedHost;
 
     await this.mutate((draft) => {
-      if (draft.targets.has(target.id)) throw new TargetError(409, "a target with this id exists already");
-      if (draft.targets.size >= MAX_TARGETS) throw new TargetError(400, "too many targets");
+      // A retired target has no key any more, so its id can be used again.
+      const existing = draft.targets.get(target.id);
+      if (existing && existing.state !== "retired") throw new TargetError(409, "a target with this id exists already");
+      if (!existing && draft.targets.size >= MAX_TARGETS) throw new TargetError(400, "too many targets");
       draft.targets.set(target.id, target);
     });
     return copy(target);
