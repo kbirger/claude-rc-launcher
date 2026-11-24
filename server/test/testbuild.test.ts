@@ -46,6 +46,16 @@ describe("testBuildTag", () => {
     expect(testBuildTag("0.1.0", "main", "ABCDEF0123456")).toBe("v0.1.0-test.main.abcdef0");
   });
 
+  test("a sha of exactly 7 characters is accepted", () => {
+    expect(testBuildTag("0.1.0", "main", "abcdef0")).toBe("v0.1.0-test.main.abcdef0");
+  });
+
+  test("a cut in a run of dots leaves no trailing dot", () => {
+    const tag = testBuildTag("0.1.0", `${"a".repeat(29)}///////b`, sha);
+    expect(tag).toBe(`v0.1.0-test.${"a".repeat(29)}.5bf4ca1`);
+    expectValid(tag);
+  });
+
   test("bad next is refused", () => {
     for (const next of ["", "1.2", "1.2.3.4", "1.2.3-rc.1", "x.y.z", "vv1.2.3", "1.2.3 "]) {
       expect(() => testBuildTag(next, "main", sha)).toThrow();
