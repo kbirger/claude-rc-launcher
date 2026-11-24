@@ -1062,6 +1062,44 @@ describe("passphrase length", () => {
     ).toBe(204);
   });
 
+  test("with every other key pending a re-wrap, status says no keys and a short passphrase on a new key is refused", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    expect((await call("GET", "/status")).body.hasKeys).toBe(true);
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "passphrase" });
+    expect((await call("GET", "/status")).body.hasKeys).toBe(false);
+    await call("POST", "/targets", "admin", {
+      id: "web",
+      address: "10.0.0.6",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    const short = await call("POST", "/targets/web/key", "admin", { unlock: pass("elevenchars") });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect((await call("POST", "/targets/web/key", "admin", { unlock: pass("twelve chars") })).status).toBe(200);
+  });
+
+  test("a rewrap refuses a short passphrase even when the old passphrase was short", async () => {
+    const { call, keys, targets, recovery } = await setup();
+    await addTarget(call, "nas");
+    await keys.create("nas", { method: "passphrase", secret: new TextEncoder().encode("abcd") });
+    await targets.setKeyFingerprint("nas", "SHA256:x");
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "passphrase" });
+    const short = await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: pass("abcd") });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect(keys.pendingRewraps()).toEqual(["nas"]);
+  });
+
+  test("a leading byte order mark is not counted, as the hub decodes it away", async () => {
+    const { call } = await setup();
+    await addTarget(call, "nas");
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass("\uFEFFelevenchars") })).status).toBe(400);
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass("\uFEFFtwelve chars") })).status).toBe(200);
+  });
+
   test("GET /status tells whether a key exists", async () => {
     const { call, readyTarget } = await setup();
     expect((await call("GET", "/status")).body.hasKeys).toBe(false);
