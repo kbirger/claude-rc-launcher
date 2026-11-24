@@ -101,8 +101,9 @@ export function sshApi(options: SshApiOptions): Hono {
   /** A passphrase that is set (not typed to unlock) needs at least MIN_PASSPHRASE characters (code points). The text is never echoed. */
   const needLongPassphrase = (unlock: UnlockSecret): void => {
     if (unlock.method !== "passphrase") return;
-    if ([...new TextDecoder().decode(unlock.secret)].length < MIN_PASSPHRASE)
-      throw new HttpError(400, `the passphrase needs at least ${MIN_PASSPHRASE} characters`);
+    let count = 0;
+    for (const point of new TextDecoder().decode(unlock.secret)) count += point.length > 0 ? 1 : 0;
+    if (count < MIN_PASSPHRASE) throw new HttpError(400, `the passphrase needs at least ${MIN_PASSPHRASE} characters`);
   };
 
   const wipeUnlocks: MiddlewareHandler = async (context, next) => {
