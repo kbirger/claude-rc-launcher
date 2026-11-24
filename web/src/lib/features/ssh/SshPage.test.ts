@@ -5,11 +5,16 @@ import { createQueryClient } from "#lib/shared/query";
 import SshPageHarness from "./SshPageHarness.svelte";
 import { SSH_KEY } from "./queries";
 
+const prf = vi.hoisted(() => ({ registerPasskey: vi.fn(), unlockWithPasskey: vi.fn() }));
+vi.mock("./prf", async (importActual) => ({ ...(await importActual<typeof import("./prf")>()), ...prf }));
+import { UnlockError } from "./prf";
+
 const CODE = "ABCD-EFGH-IJKL-MNOP";
 let statusAnswer: { status: number; body: unknown };
 const open: Array<() => void> = [];
 
 beforeEach(() => {
+  prf.unlockWithPasskey.mockReset();
   statusAnswer = { status: 200, body: { setUp: false, nodes: [] } };
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const answer =
@@ -241,4 +246,110 @@ test("the Recover button names the passphrase when the method is passphrase", as
 test("the Recover button names the passkey when the method is prf", async () => {
   showWith({ ...PENDING, method: "prf", credentialId: "-_8B", pendingRewrap: [] });
   await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
+});
+
+const PRF_STATUS = { setUp: true, method: "prf", credentialId: "-_8B", pendingRewrap: [], nodes: [] };
+const CHECK = "Check my passkey";
+
+function showCheck(status: unknown, canAdmin = true) {
+  const seen: string[] = [];
+  let answer = status;
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
+    const path = String(url);
+    seen.push(path);
+    if (path === "/api/ssh/status" && answer === null) return new Response("{}", { status: 500 });
+    const body =
+      path === "/api/ssh/status"
+        ? answer
+        : path === "/api/ssh/targets" || path === "/api/ssh/grants" || path === "/api/hosts"
+          ? []
+          : {};
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const client = createQueryClient();
+  const target = document.createElement("div");
+  document.body.append(target);
+  const mounted = mount(SshPageHarness, { target, props: { client, canAdmin } });
+  open.push(() => unmount(mounted));
+  return { client, seen, fail: () => (answer = null) };
+}
+
+const region = () => document.querySelector('[aria-live="polite"]')?.textContent?.replace(/\s+/g, " ").trim();
+
+test("the check button is absent for a non-admin and for the passphrase method", async () => {
+  showCheck(PRF_STATUS, false);
+  await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
+  expect(button(CHECK)).toBeUndefined();
+  for (const helper of open.splice(0)) helper();
+  document.body.innerHTML = "";
+  showCheck({ ...PRF_STATUS, method: "passphrase", credentialId: undefined });
+  await vi.waitFor(() => expect(button("Forgot your passphrase? Recover")).toBeDefined());
+  expect(button(CHECK)).toBeUndefined();
+});
+
+test("a tap runs one unlock with a random 43 character salt and sends nothing to the hub", async () => {
+  const { seen } = showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(button(CHECK)).toBeDefined());
+  prf.unlockWithPasskey.mockResolvedValue("c2VjcmV0LXZhbHVlLWRpc2NhcmRlZA");
+  const before = seen.length;
+  button(CHECK).click();
+  await vi.waitFor(() => expect(region()).toBe("Your passkey returned a PRF secret. It works."));
+  expect(prf.unlockWithPasskey).toHaveBeenCalledTimes(1);
+  const [id, salt] = prf.unlockWithPasskey.mock.calls[0]!;
+  expect(id).toBe("-_8B");
+  expect(salt).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(seen.slice(before).filter((path) => path.includes("passkey") || path.includes("unlock"))).toEqual([]);
+  expect(seen.slice(before)).not.toContain("/api/ssh/unlock");
+  expect(document.body.innerHTML).not.toContain("c2VjcmV0LXZhbHVl");
+  expect(JSON.stringify({ ...localStorage })).not.toContain("c2VjcmV0");
+  expect(JSON.stringify({ ...sessionStorage })).not.toContain("c2VjcmV0");
+  expect(JSON.stringify(document.cookie)).not.toContain("c2VjcmV0");
+  button(CHECK).click();
+  await vi.waitFor(() => expect(prf.unlockWithPasskey).toHaveBeenCalledTimes(2));
+  expect(prf.unlockWithPasskey.mock.calls[1]![1]).not.toBe(salt);
+});
+
+test("a failed check shows the message, and the hint unless the passkey lacks PRF", async () => {
+  showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(button(CHECK)).toBeDefined());
+  prf.unlockWithPasskey.mockRejectedValue(new UnlockError("The passkey prompt was cancelled"));
+  button(CHECK).click();
+  await vi.waitFor(() =>
+    expect(region()).toBe(
+      "The passkey prompt was cancelled If the phone showed no passkey to pick, wait a few seconds and try again.",
+    ),
+  );
+  prf.unlockWithPasskey.mockRejectedValue(new UnlockError("This passkey does not return a PRF secret"));
+  button(CHECK).click();
+  await vi.waitFor(() => expect(region()).toBe("This passkey does not return a PRF secret"));
+});
+
+test("the button reads Checking... and is disabled while the check runs", async () => {
+  showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(button(CHECK)).toBeDefined());
+
+  let finish: (value: string) => void = () => {};
+
+  prf.unlockWithPasskey.mockReturnValue(new Promise<string>((resolve) => (finish = resolve)));
+  button(CHECK).click();
+  await vi.waitFor(() => expect(button("Checking...")).toBeDefined());
+  expect(button("Checking...").disabled).toBe(true);
+  button("Checking...").click();
+  expect(prf.unlockWithPasskey).toHaveBeenCalledTimes(1);
+  finish("c2VjcmV0");
+  await vi.waitFor(() => expect(button(CHECK).disabled).toBe(false));
+});
+
+test("a failed status refetch keeps the button and the result", async () => {
+  const { client, fail } = showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(button(CHECK)).toBeDefined());
+  prf.unlockWithPasskey.mockResolvedValue("c2VjcmV0");
+  button(CHECK).click();
+  await vi.waitFor(() => expect(region()).toContain("It works."));
+  fail();
+  await client.refetchQueries({ queryKey: [...SSH_KEY, "status"] });
+  flushSync();
+  expect(client.getQueryState([...SSH_KEY, "status"])?.status).toBe("error");
+  expect(button(CHECK)).toBeDefined();
+  expect(region()).toContain("It works.");
 });

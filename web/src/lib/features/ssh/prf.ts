@@ -10,6 +10,9 @@ export class UnlockError extends Error {
   }
 }
 
+/** The message of the failure that says the passkey itself has no PRF secret. */
+export const PRF_MISSING = "This passkey does not return a PRF secret";
+
 export function toBase64Url(bytes: ArrayBuffer | Uint8Array): string {
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = "";
@@ -111,6 +114,6 @@ export async function unlockWithPasskey(credentialId: string, salt: string): Pro
 
   const first = got ? prfOf(got as PublicKeyCredential)?.results?.first : undefined;
   // A result of zero bytes is no secret either.
-  if (!first || first.byteLength === 0) throw new UnlockError("This passkey does not return a PRF secret");
+  if (!first || first.byteLength === 0) throw new UnlockError(PRF_MISSING);
   return toBase64Url(first);
 }
