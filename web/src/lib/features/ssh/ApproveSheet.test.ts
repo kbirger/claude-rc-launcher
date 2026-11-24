@@ -150,3 +150,17 @@ test("minutes outside 1 to 480 are not sent", async () => {
   expect(approves()).toEqual([]);
   expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
 });
+
+test("the passphrase field is a current password with one visible-to-managers user name field", async () => {
+  show(PASSPHRASE);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  const field = document.querySelector<HTMLInputElement>('input[type="password"]')!;
+  expect(field.autocomplete).toBe("current-password");
+  expect(field.name).toBe("claude-rc-ssh-passphrase");
+  const users = document.querySelectorAll<HTMLInputElement>('input[autocomplete="username"]');
+  expect(users).toHaveLength(1);
+  expect(users[0]!.value).toBe("claude-rc-ssh");
+  expect(users[0]!.hidden).toBe(false);
+  expect(users[0]!.type).toBe("text");
+  expect(users[0]!.classList.contains("sr-only")).toBe(true);
+});
