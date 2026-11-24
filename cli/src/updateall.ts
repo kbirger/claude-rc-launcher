@@ -29,16 +29,33 @@ export interface UpdateRow {
 const OK = new Set(["updated", "up-to-date"]);
 
 /** `--binary` cannot go to other machines: each one downloads its own release build. */
-export function checkAllNodesFlags(flags: Flags): void {
+export function checkAllNodesFlags(flags: Flags, form = "--all-nodes"): void {
   if (flags.binary)
     throw new ExitError(
-      "--binary does not apply to update --all-nodes: every machine downloads its build from the release. Use --release <tag>",
+      `--binary does not apply to update ${form}: every machine downloads its build from the release. Use --release <tag>`,
       1,
     );
 
   if (flags.release !== undefined && !RELEASE_TAG_RE.test(flags.release)) {
     throw new ExitError(`--release must be a version tag such as v1.2.3 (got "${flags.release}")`, 1);
   }
+}
+
+/**
+ * The ids of `--node a,b` in the order given. An empty list or id, a duplicate, and `--all-nodes` together with
+ * `--node` are usage errors. Whether an id exists is checked later against the host list of the hub.
+ */
+export function parseNodeIds(flags: Flags): string[] {
+  if (flags["all-nodes"]) throw new ExitError("--node and --all-nodes cannot be used together. Use one of them", 1);
+  const ids = (flags.node ?? "").split(",").map((id) => id.trim());
+
+  if (ids.some((id) => id === "")) {
+    throw new ExitError("--node needs node ids separated by commas without empty parts, for example --node a,b", 1);
+  }
+
+  const repeated = ids.find((id, index) => ids.indexOf(id) !== index);
+  if (repeated !== undefined) throw new ExitError(`the node id "${repeated}" is named more than once in --node`, 1);
+  return ids;
 }
 
 const hostPath = (id: string) => `/cli/api/hosts/${encodeURIComponent(id)}`;
@@ -226,23 +243,62 @@ export async function watchLogs(
   }
 }
 
-/**
- * `claude-rc update --all-nodes`: updates every remote host the hub knows, then the hub itself (`local`, which
- * restarts and drops the connection), then this client. One failed machine does not stop the others.
- */
-export async function updateAll(options: {
+interface UpdateOptions {
   flags: Flags;
   hub: HubClient;
   out: (line: string) => void;
   err?: (line: string) => void;
   sys?: Sys;
-}): Promise<void> {
+}
+
+/**
+ * `claude-rc update --all-nodes`: updates every remote host the hub knows, then the hub itself (`local`, which
+ * restarts and drops the connection), then this client. One failed machine does not stop the others.
+ */
+export async function updateAll(options: UpdateOptions): Promise<void> {
+  checkAllNodesFlags(options.flags);
+  await runUpdates(options, undefined);
+}
+
+/**
+ * `claude-rc update --node a,b`: updates only the named remote nodes, in the order given. The hub and this client are
+ * not touched. Every id is checked against the host list before the first update starts.
+ */
+export async function updateNodes(options: UpdateOptions): Promise<void> {
+  const ids = parseNodeIds(options.flags);
+  checkAllNodesFlags(options.flags, "--node");
+  await runUpdates(options, ids);
+}
+
+async function runUpdates(options: UpdateOptions, nodeIds: string[] | undefined): Promise<void> {
   const { flags, hub, out } = options;
   const sys = options.sys ?? realSys;
-  checkAllNodesFlags(flags);
   const progress = flags.json ? () => {} : out;
 
   const hosts = await hub.request<HostInfo[]>("GET", "/cli/api/hosts");
+  let selected: HostInfo[] | undefined;
+
+  if (nodeIds) {
+    if (nodeIds.includes("local")) {
+      throw new ExitError(
+        "the hub (local) cannot be named in --node: the hub updates itself only through update --all-nodes",
+        1,
+      );
+    }
+
+    const unknown = nodeIds.filter((id) => !hosts.some((hostInfo) => hostInfo.id === id));
+
+    if (unknown.length > 0) {
+      const known = hosts.filter((hostInfo) => hostInfo.id !== "local").map((hostInfo) => hostInfo.id);
+      throw new ExitError(
+        `unknown node id${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. Known nodes: ${known.join(", ") || "none"}`,
+        1,
+      );
+    }
+
+    selected = nodeIds.map((id) => hosts.find((hostInfo) => hostInfo.id === id) as HostInfo);
+  }
+
   const local = hosts.find((hostInfo) => hostInfo.id === "local") ?? {
     id: "local",
     name: "local",
@@ -276,10 +332,13 @@ export async function updateAll(options: {
   try {
     // The GET is sent but not answered at once: wait for the first event so the first lines are not lost.
     await Promise.race([opened, sys.sleep(STREAM_READY_MS)]);
-    for (const hostInfo of hosts.filter((host) => host.id !== "local")) rows.push(await update(hostInfo));
-    rows.push(await update(local));
-    progress("updating this client ...");
-    rows.push(await updateClient(flags, sys));
+    for (const hostInfo of selected ?? hosts.filter((host) => host.id !== "local")) rows.push(await update(hostInfo));
+
+    if (!selected) {
+      rows.push(await update(local));
+      progress("updating this client ...");
+      rows.push(await updateClient(flags, sys));
+    }
   } finally {
     stop.abort();
   }
