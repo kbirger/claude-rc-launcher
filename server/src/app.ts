@@ -11,11 +11,12 @@ import { listDirs, makeDir, resolveChecked } from "./fsapi";
 import type { DirOwner } from "./fsapi";
 import { hostAdminApi, renameHandler } from "./hostadmin";
 import type { HostClient, HostConfig } from "./hostclient";
+import { LOCAL_HOST } from "./hostid";
 import { HostRegistry } from "./hostregistry";
 import { hostsApi } from "./hosts";
 import { HttpError } from "./instances";
 import type { Instances } from "./instances";
-import { SETTINGS_HELP, settingsFromArgs } from "./instancesettings";
+import { settingsFromArgs, settingsHelpFor } from "./instancesettings";
 import { LatestError } from "./latest";
 import type { createLatestRelease } from "./latest";
 import type { Presence } from "./nodewatcher";
@@ -46,6 +47,13 @@ import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
 import { WatchFlag } from "./sessionwatch";
 import { sseResponse, trackStreams } from "./sse";
+import { sshApi } from "./sshapi";
+import type { GrantStore } from "./sshgrants";
+import type { SshKeyStore } from "./sshkeystore";
+import { sshManagedApi, sshNodeApi, unsupportedSshApi } from "./sshnodeapi";
+import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
+import type { SshService } from "./sshservice";
+import type { TargetStore } from "./sshtargets";
 import { isPwaFile } from "./static";
 import type { NodeEvents } from "./updateevents";
 import type { UpdateHistory } from "./updatehistory";
@@ -101,6 +109,15 @@ export interface Deps {
   watchTimers?: Timers;
   /** The hub passes the beat loop it built, so that its stop() can end it. */
   beatLoop?: BeatLoop;
+  /** SSH delegation. The routes are mounted at `/ssh` of the browser API and of the CLI API when this is set. */
+  ssh?: {
+    service: SshService;
+    keys: SshKeyStore;
+    targets: TargetStore;
+    grants: GrantStore;
+    /** The address of the hub host `local`, when it has SSH wiring. Without it `local` is not a host of the SSH routes. */
+    localAddress?: string;
+  };
 }
 
 const NO_PRESENCE = { list: (): Presence[] => [], onChange: () => () => {} };
@@ -248,10 +265,11 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
         throw new HttpError(409, "a clone is still running in that folder");
     }
 
-    const { createSession, spawnMode, ...rest } = input;
+    const { createSession, spawnMode, sshRequests, ...rest } = input;
     const settings = {
       ...(createSession === undefined ? {} : { createSession }),
       ...(spawnMode === undefined ? {} : { spawnMode }),
+      ...(sshRequests === undefined ? {} : { sshRequests }),
     };
     return context.json(
       await instances.start({ ...rest, ...(Object.keys(settings).length > 0 ? { settings } : {}) }),
@@ -280,7 +298,7 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
   });
   // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
   hono.get("/instance-settings", (context) =>
-    context.json({ ...SETTINGS_HELP, defaults: settingsFromArgs(cfg.claudeRcArgs) }),
+    context.json({ ...settingsHelpFor(process.platform), defaults: settingsFromArgs(cfg.claudeRcArgs) }),
   );
   hono.patch("/instances/:id", async (context) => {
     const id = context.req.param("id");
@@ -387,6 +405,10 @@ export function createNodeApp(deps: {
   sessionSource?: ChangeSource;
   watchTimers?: Timers;
   sessions?: SessionCatalog;
+  /** The SSH grant routes. Without it (a Windows node) every route under `/ssh` answers 501. */
+  ssh?: SshNodeOptions;
+  /** The managed target routes (`/ssh/hostkey`, `/ssh/authorize`). They work on a Windows node too. */
+  sshManaged?: SshManagedOptions;
 }): Hono {
   const { cfg, instances, auth, dirOwner, update, cloner, clientVersions, events } = deps;
   const app = new Hono();
@@ -476,6 +498,9 @@ export function createNodeApp(deps: {
     watch.beat();
     return context.body(null, 204);
   });
+  // The managed routes come first. A path they do not know falls through to the grant router.
+  if (deps.sshManaged) api.route("/ssh", sshManagedApi(deps.sshManaged));
+  api.route("/ssh", deps.ssh ? sshNodeApi(deps.ssh) : unsupportedSshApi());
   api.route(
     "/",
     instanceApi({
@@ -632,6 +657,36 @@ export function createApp(deps: Deps): Hono {
   );
   api.route("/sessions", allSessions);
   api.route("/hosts", forwarding());
+
+  const ssh = () => {
+    const { ssh: parts } = deps;
+    if (!parts) return undefined;
+    const { localAddress, ...rest } = parts;
+    return sshApi({
+      ...rest,
+      hostAddress: (hostId) => {
+        if (hostId === LOCAL_HOST && localAddress !== undefined) return localAddress;
+        const url = registry.get(hostId)?.host.url;
+
+        try {
+          return url ? new URL(url).hostname.replace(/^\[|\]$/g, "") : undefined;
+        } catch {
+          return undefined;
+        }
+      },
+      hostIds: () => [
+        ...(localAddress !== undefined ? [LOCAL_HOST] : []),
+        ...registry.list().map((entry) => entry.host.id),
+      ],
+      user: (context) => {
+        const current = context.get("user" as never) as User | undefined;
+        return current?.username ?? current?.sub ?? "unknown";
+      },
+    });
+  };
+
+  const sshRoutes = ssh();
+  if (sshRoutes) api.route("/ssh", sshRoutes);
   api.get("/updates/history", (context) =>
     deps.history ? context.json(deps.history.list()) : context.json({ error: "update history not available" }, 501),
   );
@@ -722,6 +777,8 @@ export function createApp(deps: Deps): Hono {
     // Host management first, so that `probe` is never read as a host id by the forwarding routes.
     cliApi.route("/hosts", hostAdminApi({ registry, makeClient: cli.makeClient }));
     cliApi.route("/hosts", forwarding());
+    // The same router as the browser API, so that both mounts share one setup guard.
+    if (sshRoutes) cliApi.route("/ssh", sshRoutes);
     cliApi.all("*", (context) => context.json({ error: "not found" }, 404));
     app.route("/cli/api", cliApi);
     app.all("/cli/*", (context) => context.json({ error: "not found" }, 404));

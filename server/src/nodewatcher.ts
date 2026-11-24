@@ -80,6 +80,14 @@ export function createNodeWatchers(options: {
   onPresence(presence: Presence): void;
   onStep(host: string, stepEvent: StepEvent): void;
   onSessions?(host: string, payload: SessionsPayload): void;
+  /** Every event of the node whose name starts with `ssh.`, with its parsed data. */
+  onSsh?(host: string, event: string, data: Record<string, unknown>): void;
+  /** The host turned `online` (from any other presence, or from none). */
+  onOnline?(host: string): void;
+  /** The host was `online` and is not any more. */
+  onOffline?(host: string): void;
+  /** The host was removed from the registry, whatever its presence was. */
+  onRemoved?(host: string): void;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -138,6 +146,14 @@ export function createNodeWatchers(options: {
     safe(() => {
       options.onPresence(entry);
     });
+    if (status === "online" && old?.status !== "online")
+      safe(() => {
+        options.onOnline?.(id);
+      });
+    else if (status !== "online" && old?.status === "online")
+      safe(() => {
+        options.onOffline?.(id);
+      });
   };
 
   async function watch(id: string, ctl: AbortController): Promise<void> {
@@ -284,6 +300,12 @@ export function createNodeWatchers(options: {
           } else if (ev.event === "sessions") {
             const list = asSessions(parse(ev.data));
             if (list) safe(() => options.onSessions?.(id, list));
+          } else if (ev.event.startsWith("ssh.")) {
+            const record = parse(ev.data);
+            if (record)
+              safe(() => {
+                options.onSsh?.(id, ev.event, record);
+              });
           } else if (ev.event === "step") {
             const record = parse(ev.data);
             if (!record || !isStep(record.step)) continue;
@@ -368,6 +390,10 @@ export function createNodeWatchers(options: {
     enders.delete(id);
     options.log.clear(id);
     presence.delete(id);
+
+    safe(() => {
+      options.onRemoved?.(id);
+    });
   };
 
   // A rename keeps the id and the client, so the stream stays open.

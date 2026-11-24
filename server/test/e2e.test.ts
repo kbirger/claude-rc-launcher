@@ -60,7 +60,7 @@ async function setup() {
     ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [nodeRoot], hosts: [],
     node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [], secretHashes: [sec.sha256] } },
   } as unknown as Config;
-  const node = await quiet(() => startNode(nodeCfg, { instances: nodeFake.svc }));
+  const node = await quiet(() => startNode(nodeCfg, { sshDir: path.join(tmp(), "ssh"), instances: nodeFake.svc }));
   stoppers.push(node.stop);
   const certPem = readFileSync(path.join(stateDir, "node-cert.pem"), "utf8");
 
@@ -70,7 +70,7 @@ async function setup() {
     userAuth: { mode: "oidc", sessionSecret: "s3cret-s3cret-s3cret", oidc: { issuer: "https://idp", clientId: "c", clientSecret: "s", allowInsecure: false }, roles: { ...DEFAULT_ROLES, defaultRole: "admin" } },
     hosts: [{ id: "nas", name: "NAS", url: `https://localhost:${node.port}`, ca: certPem, auth: { type: "secret", secret: sec.secret } }],
   } as unknown as Config;
-  const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc }));
+  const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh") }));
   stoppers.push(hub.stop);
   const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
   const h = (extra: Record<string, string> = {}) => ({ cookie, "content-type": "application/json", ...extra });
@@ -154,7 +154,7 @@ describe("hub key enrollment end to end", () => {
       hosts: [],
     } as unknown as Config;
     const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
-    const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, cliVerify }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: hubFake.svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify }));
     stoppers.push(hub.stop);
     const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -168,7 +168,7 @@ describe("hub key enrollment end to end", () => {
       ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
       node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [enr.hub_keys[0]!.public_key], secretHashes: [] } },
     } as unknown as Config;
-    const node = await quiet(() => startNode(nodeCfg, { instances: nodeFake.svc }));
+    const node = await quiet(() => startNode(nodeCfg, { sshDir: path.join(tmp(), "ssh"), instances: nodeFake.svc }));
     stoppers.push(node.stop);
     const fp = certFingerprint(readFileSync(path.join(stateDir, "node-cert.pem"), "utf8"));
 
@@ -199,7 +199,7 @@ describe("update end to end", () => {
       hosts: [],
     } as unknown as Config;
     const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify, update: hubUp.update }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify, update: hubUp.update }));
     stoppers.push(hub.stop);
     const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -210,7 +210,7 @@ describe("update end to end", () => {
       ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
       node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [enr.hub_keys[0]!.public_key], secretHashes: [] } },
     } as unknown as Config;
-    const node = await quiet(() => startNode(nodeCfg, { instances: fakeInstances("pi").svc, update: nodeUp.update }));
+    const node = await quiet(() => startNode(nodeCfg, { sshDir: path.join(tmp(), "ssh"), instances: fakeInstances("pi").svc, update: nodeUp.update }));
     stoppers.push(node.stop);
     const fp = certFingerprint(readFileSync(path.join(stateDir, "node-cert.pem"), "utf8"));
     const add = await quiet(() => fetch(hubUrl("/cli/api/hosts"), { method: "POST", headers: cliH, body: JSON.stringify({ id: "pi", url: `https://localhost:${node.port}`, fingerprint: fp }) }));
@@ -245,7 +245,7 @@ describe("a slow update end to end", () => {
       hosts: [],
     } as unknown as Config;
     const cliVerify = async () => ({ sub: "u1", name: "Ann", preferred_username: "kir", exp: Math.floor(Date.now() / 1000) + 300 });
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify, update: slow, limits }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify, update: slow, limits }));
     stoppers.push(hub.stop);
     const cliH = { authorization: "Bearer cli-token", "content-type": "application/json" };
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -255,7 +255,7 @@ describe("a slow update end to end", () => {
       ...common, mode: "node", name: "pi", port: 0, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
       node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [enr.hub_keys[0]!.public_key], secretHashes: [sec.sha256] } },
     } as unknown as Config;
-    const node = await quiet(() => startNode(nodeCfg, { instances: fakeInstances("pi").svc, update: slow, limits }));
+    const node = await quiet(() => startNode(nodeCfg, { sshDir: path.join(tmp(), "ssh"), instances: fakeInstances("pi").svc, update: slow, limits }));
     stoppers.push(node.stop);
     const fp = certFingerprint(readFileSync(path.join(stateDir, "node-cert.pem"), "utf8"));
     await quiet(() => fetch(hubUrl("/cli/api/hosts"), { method: "POST", headers: cliH, body: JSON.stringify({ id: "pi", url: `https://localhost:${node.port}`, fingerprint: fp }) }));
@@ -286,7 +286,7 @@ describe("hub stop and the beat loop", () => {
       hosts: [],
     } as unknown as Config;
     const timers = fakeTimers();
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watchTimers: timers }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), watchTimers: timers }));
     let stopped = false;
     stoppers.push(() => void (stopped || hub.stop()));
     const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
@@ -316,7 +316,7 @@ describe("hub key log line", () => {
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));
     let hub: Awaited<ReturnType<typeof startHub>>;
     try {
-      hub = await startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, cliVerify });
+      hub = await startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), cliVerify });
     } finally {
       console.log = log;
     }
@@ -343,9 +343,9 @@ describe("entry points", () => {
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));
     let a, b;
     try {
-      a = await startNode(cfg, { instances: fakeInstances("x").svc });
+      a = await startNode(cfg, { sshDir: path.join(tmp(), "ssh"), instances: fakeInstances("x").svc });
       a.stop();
-      b = await startNode(cfg, { instances: fakeInstances("x").svc });
+      b = await startNode(cfg, { sshDir: path.join(tmp(), "ssh"), instances: fakeInstances("x").svc });
       b.stop();
     } finally {
       console.log = log;
@@ -435,7 +435,7 @@ describe("node events end to end", () => {
         ...common, mode: "node", name: "pi", port, host: "127.0.0.1", publicUrl: "", roots: [tmp()], hosts: [],
         node: { tls: { stateDir, names: ["localhost", "127.0.0.1"] }, auth: { hubKeys: [], secretHashes: [sec.sha256] } },
       }) as unknown as Config;
-    let node = await quiet(() => startNode(nodeCfg(0), { instances: fakeInstances("pi").svc, update, events }));
+    let node = await quiet(() => startNode(nodeCfg(0), { sshDir: path.join(tmp(), "ssh"), instances: fakeInstances("pi").svc, update, events }));
     stoppers.push(() => node.stop());
     const port = node.port;
     const certPem = readFileSync(path.join(stateDir, "node-cert.pem"), "utf8");
@@ -446,7 +446,7 @@ describe("node events end to end", () => {
     } as unknown as Config;
     // Short reconnect waits stand in for the real 1 to 30 seconds.
     const watcher = { sleep: (ms: number) => Bun.sleep(Math.min(ms, 20)), random: () => 0 };
-    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, watcher }));
+    const hub = await quiet(() => startHub(hubCfg, { instances: fakeInstances("hub").svc, oidc: stubOidc, sshDir: path.join(tmp(), "ssh"), watcher }));
     stoppers.push(hub.stop);
     const cookie = await mintSessionCookie(hubCfg, user, Date.now() + 3600_000);
     const hubUrl = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
@@ -458,7 +458,7 @@ describe("node events end to end", () => {
     const startUpdate = () =>
       fetch(hubUrl("/api/hosts/nas/update"), { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" });
     const restartNode = async () => {
-      node = await quiet(() => startNode(nodeCfg(port), { instances: fakeInstances("pi").svc, update, events }));
+      node = await quiet(() => startNode(nodeCfg(port), { sshDir: path.join(tmp(), "ssh"), instances: fakeInstances("pi").svc, update, events }));
     };
     return { events, gates, node: () => node, hubUrl, sub, startUpdate, restartNode, cookie };
   }
