@@ -854,7 +854,11 @@ describe("updateNodes (update --node)", () => {
   });
 
   test("an offline node is skipped and gives exit 1 like --all-nodes", async () => {
-    const outcome = await runNodes({ node: "alpha,beta" }, [host("local"), host("alpha", "1.0.0", "offline"), host("beta")]);
+    const outcome = await runNodes({ node: "alpha,beta" }, [
+      host("local"),
+      host("alpha", "1.0.0", "offline"),
+      host("beta"),
+    ]);
     expect(posts(outcome)).toEqual(["/cli/api/hosts/beta/update"]);
     expect(outcome.row("alpha")).toContain("skipped (offline");
     expect(outcome.error?.message).toBe("1 of 2 machines were not updated");
@@ -872,9 +876,9 @@ describe("updateNodes (update --node)", () => {
 
   test("--json prints only the rows of the named nodes", async () => {
     const outcome = await runNodes({ node: "beta", json: true });
-    const rows = JSON.parse(defined(outcome.out.at(-1)));
-    expect(rows.map((row: { machine: string }) => row.machine)).toEqual(["beta"]);
-    expect(rows[0].status).toBe("updated");
+    const rows = JSON.parse(defined(outcome.out.at(-1))) as { machine: string; status: string }[];
+    expect(rows.map((row) => row.machine)).toEqual(["beta"]);
+    expect(rows[0]?.status).toBe("updated");
   });
 });
 
@@ -884,6 +888,7 @@ describe("index: update --node", () => {
     open: async () => {},
     readLine: () => Promise.resolve(""),
   });
+
   const attempt = async (...argv: string[]) => {
     const err: string[] = [];
     const code = await main(argv, { out: () => {}, err: (line) => err.push(line) }, env());

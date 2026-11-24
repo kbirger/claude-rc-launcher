@@ -1,10 +1,27 @@
 // Same rules as server/src/versions.ts (the web page cannot import the server).
 const KNOWN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const TEST_BUILD = /^(\d+\.\d+\.\d+)-test\.[0-9A-Za-z.]+$/;
 const LOCAL_BUILD = /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\+[0-9A-Za-z.-]+$/;
 
-/** The release a version is, or is based on: `0.12.4` is itself, a local build `0.12.4+branch.sha` is based on `0.12.4`, `dev` has none. */
+/** True for a test build such as `0.33.1-test.ssh.5bf4ca1` (an unreviewed build of a branch). */
+export function isTestBuild(value?: string): boolean {
+  return value !== undefined && TEST_BUILD.test(value);
+}
+
+/** The text for a version: a test build shows as `0.33.1 (test build)`, any other version as it is. */
+export function versionLabel(value: string): string {
+  const base = TEST_BUILD.exec(value)?.[1];
+  return base ? `${base} (test build)` : value;
+}
+
+/**
+ * The release a version is, or is based on: `0.12.4` is itself, a local build `0.12.4+branch.sha` and a test build
+ * `0.12.4-test.branch.sha` are based on `0.12.4`, `dev` has none.
+ */
 export function releaseOf(value?: string): string | undefined {
   if (!value) return undefined;
+  const test = TEST_BUILD.exec(value);
+  if (test) return test[1];
   return KNOWN.test(value) ? value : LOCAL_BUILD.exec(value)?.[1];
 }
 

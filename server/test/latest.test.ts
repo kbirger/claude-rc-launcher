@@ -62,6 +62,16 @@ describe("createLatestRelease", () => {
     expect(await harness.latest.get()).toEqual(first);
   });
 
+  test("a test build named as latest is refused and the last good value stays", async () => {
+    const harness = setup("v0.8.3");
+    const good = await harness.latest.get();
+    harness.advance(400_000);
+    harness.set("v0.8.4-test.ssh.5bf4ca1");
+    expect(await harness.latest.get()).toEqual(good);
+    const fresh = setup("v0.8.4-test.ssh.5bf4ca1");
+    expect(await rejection(fresh.latest.get())).toBeInstanceOf(LatestError);
+  });
+
   test("a failure with no value throws LatestError", async () => {
     const harness = setup(new Error("offline"));
     expect(await rejection(harness.latest.get())).toBeInstanceOf(LatestError);

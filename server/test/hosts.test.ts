@@ -818,6 +818,23 @@ describe("host list stale flags", () => {
     expect(l[1].stale).toBe(false);
     expect("target" in l[1]).toBe(false);
   });
+  test("a hub that runs a test build is not stale and is no target for its nodes", async () => {
+    const l = await list({ version: "0.33.1-test.ssh.5bf4ca1", latest: latest("0.33.0"), nodes: { nas: fakeNode(nodeBody("0.32.0")) } });
+    expect(l[0]).toMatchObject({ id: "local", stale: false, target: "0.33.0" });
+    expect(l[1].stale).toBe(false);
+    expect("target" in l[1]).toBe(false);
+  });
+  test("a node that runs a test build is judged by its base against the hub release", async () => {
+    const nodes = { new: fakeNode(nodeBody("0.33.1-test.ssh.5bf4ca1")), same: fakeNode(nodeBody("0.33.0-test.ssh.5bf4ca1")), old: fakeNode(nodeBody("0.32.0-test.ssh.5bf4ca1")) };
+    const l = await list({ version: "0.33.0", nodes });
+    expect(l.find((h) => h.id === "new")).toMatchObject({ stale: false, target: "0.33.0" });
+    expect(l.find((h) => h.id === "same")).toMatchObject({ stale: false, target: "0.33.0" });
+    expect(l.find((h) => h.id === "old")).toMatchObject({ stale: true, target: "0.33.0" });
+  });
+  test("a hub and a client that run test builds are not stale against the latest release", async () => {
+    const l = await list({ version: "0.33.1-test.ssh.5bf4ca1", latest: latest("0.33.0"), localClients: [{ version: "0.33.1-test.ssh.5bf4ca1" }] });
+    expect(l[0].stale).toBe(false);
+  });
   test("a node older than the hub is stale with the hub's version as target", async () => {
     const l = await list({ version: "0.8.3", nodes: { nas: fakeNode(nodeBody("0.8.1")) } });
     expect(l[1]).toMatchObject({ id: "nas", stale: true, target: "0.8.3" });

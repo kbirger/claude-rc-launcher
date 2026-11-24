@@ -296,7 +296,7 @@ async function runUpdates(options: UpdateOptions, nodeIds: string[] | undefined)
       );
     }
 
-    selected = nodeIds.map((id) => hosts.find((hostInfo) => hostInfo.id === id) as HostInfo);
+    selected = nodeIds.flatMap((id) => hosts.filter((hostInfo) => hostInfo.id === id));
   }
 
   const local = hosts.find((hostInfo) => hostInfo.id === "local") ?? {
