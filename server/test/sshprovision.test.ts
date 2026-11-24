@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir, chmod } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { provisionScript } from "../src/sshprovision";
+import { deprovisionScript, provisionScript } from "../src/sshprovision";
 
 const LINE = 'from="192.168.1.103",restrict ssh-ed25519 AAAAC3Nza claude-rc:nas';
 const made: string[] = [];
@@ -173,5 +173,131 @@ describe("provisionScript", () => {
     expect(script).toContain("S-1-5-32-544");
     expect(script).toContain("administrators_authorized_keys");
     expect(script).not.toContain("Split-Path -Parent $env:USERPROFILE");
+  });
+});
+
+describe("deprovisionScript", () => {
+  const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIAAA";
+  const OTHER = "AAAAC3NzaC1lZDI1NTE5AAAAIBBB";
+  const mine = `from="10.0.0.1",restrict ssh-ed25519 ${BLOB} claude-rc:nas`;
+  const mineOld = `ssh-ed25519 ${BLOB} claude-rc:nas`;
+  const otherId = `ssh-ed25519 ${BLOB} claude-rc:other`;
+  const commentOnly = `ssh-ed25519 ${OTHER} claude-rc:nas`;
+  const blobOnly = `ssh-ed25519 ${BLOB} laptop`;
+  const script = deprovisionScript("linux", BLOB, "nas").script;
+
+  async function setFile(dir: string, text: string, fileMode = 0o600): Promise<void> {
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await writeFile(keys(dir), text, { mode: fileMode });
+    await chmod(keys(dir), fileMode);
+  }
+
+  test("it removes exactly the lines with the blob and the comment, and prints removed", async () => {
+    const dir = await home();
+    await setFile(
+      dir,
+      ["ssh-rsa OLD one", mine, commentOnly, blobOnly, otherId, mineOld, "ssh-rsa OLD two", ""].join("\n"),
+    );
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe(
+      ["ssh-rsa OLD one", commentOnly, blobOnly, otherId, "ssh-rsa OLD two", ""].join("\n"),
+    );
+  });
+
+  test("it keeps the mode of the file and is safe to run twice", async () => {
+    const dir = await home();
+    await setFile(dir, `${mine}\nssh-rsa KEEP x\n`, 0o640);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await mode(keys(dir))).toBe(0o640);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "not-found\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe("ssh-rsa KEEP x\n");
+    expect(await mode(keys(dir))).toBe(0o640);
+  });
+
+  test("it works on a file without a newline at the end and leaves no temporary file", async () => {
+    const dir = await home();
+    await setFile(dir, `ssh-rsa KEEP x\n${mine}`);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe("ssh-rsa KEEP x\n");
+    expect(await readdir(join(dir, ".ssh"))).toEqual(["authorized_keys"]);
+  });
+
+  test("it prints not-found and changes nothing when no line matches", async () => {
+    const dir = await home();
+    const text = [commentOnly, blobOnly, otherId, ""].join("\n");
+    await setFile(dir, text);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "not-found\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe(text);
+  });
+
+  test("it prints not-found for a missing file and does not create one", async () => {
+    const dir = await home();
+    expect(await run(script, dir)).toEqual({ code: 0, out: "not-found\n" });
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  test("it removes the last line and leaves an empty file", async () => {
+    const dir = await home();
+    await setFile(dir, `${mine}\n`);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe("");
+  });
+
+  test("it exits non-zero when it cannot rewrite the file", async () => {
+    const dir = await home();
+    await setFile(dir, `${mine}\n`, 0o400);
+    await chmod(join(dir, ".ssh"), 0o500);
+    const result = await run(script, dir);
+    await chmod(join(dir, ".ssh"), 0o700);
+    // Root ignores the modes: then the removal works, and that is fine too.
+    if (process.getuid?.() !== 0) expect(result.code).not.toBe(0);
+  });
+
+  test("a hostile id and blob arrive as data and remove nothing else", async () => {
+    const hostile = ["a'b", "$(touch PWNED)", "`touch PWNED`", "a\nb", "it\u2019s", "\\n", '"; touch PWNED; "'];
+
+    for (const text of hostile) {
+      const dir = await home();
+      await setFile(dir, `${mine}\n${blobOnly}\n`);
+
+      for (const [blob, id] of [
+        [text, "nas"],
+        [BLOB, text],
+      ] as const) {
+        const out = await run(deprovisionScript("linux", blob, id).script, dir);
+        expect(out.code).toBe(0);
+        expect(out.out).toBe("not-found\n");
+      }
+
+      expect(await readFile(keys(dir), "utf8")).toBe(`${mine}\n${blobOnly}\n`);
+      expect(await readdir(dir)).toEqual([".ssh"]);
+    }
+  });
+
+  test("the windows script quotes its values, wraps the body in try and catch and ends with a blank line", () => {
+    const { shell, script: ps } = deprovisionScript("windows", "AAAA\u2019'x", "n\u2018'y", { account: "o\u2019'z" });
+    expect(shell).toBe("powershell");
+    expect(ps).toContain("'AAAA\u2019\u2019''x'");
+    expect(ps).toContain("'claude-rc:n\u2018\u2018''y'");
+    expect(ps).toContain("'o\u2019\u2019''z'");
+    expect(ps).toContain("catch");
+    expect(ps).toContain("exit 1");
+    expect(ps).toContain("administrators_authorized_keys");
+    expect(ps.endsWith("\n\n")).toBe(true);
+  });
+
+  test.skipIf(Bun.which("pwsh") === null)("the windows script parses under pwsh", async () => {
+    const dir = await home();
+    const file = join(dir, "check.ps1");
+    await writeFile(file, deprovisionScript("windows", BLOB, "nas", { account: "alice" }).script);
+    const parse =
+      "$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:PS_FILE, [ref]$null, [ref]$e); if ($e.Count -gt 0) { $e | ForEach-Object { $_.ToString() }; exit 1 }";
+    const proc = Bun.spawn(["pwsh", "-NoProfile", "-NonInteractive", "-Command", parse], {
+      env: { ...process.env, PS_FILE: file },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect({ code: await proc.exited, out: out + err }).toEqual({ code: 0, out: "" });
   });
 });
