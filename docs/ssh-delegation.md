@@ -94,12 +94,11 @@ from="<node addresses>",restrict ssh-ed25519 <key> claude-rc:<target id>
 
 The `from=` option limits the key to the source addresses of the nodes. The `restrict` option turns off port forwarding, agent forwarding and X11 forwarding. The comment `claude-rc:<target id>` helps you find the line later.
 
-A target has four states:
+A target has three states:
 
 - `draft`: the key exists, and the test has not passed.
 - `ready`: the test passed.
 - `disabled`: the hub refuses new grants and ends the active ones.
-- `retired`: the hub deleted the key.
 
 If a wizard stops before the end, the target stays in `draft`. Tap Continue setup on the target to go on.
 
@@ -234,7 +233,7 @@ Access ends in these ways:
 - It expires at the end time.
 - You tap Revoke.
 - You disable a target. The hub ends its active grants and refuses its pending requests.
-- You retire a target. The hub deletes the key, ends its active grants and refuses its pending requests. The page then names the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the target.
+- You retire a target. The hub ends its active grants, refuses its pending requests, and deletes the target and its key at once.
 - The hub restarts. This ends all grants, because grants live in memory only.
 - A node loses its event stream to the hub. The hub ends the active grants of that node.
 - You remove a node from the hub. The hub ends all grants of that node, also the pending requests.
@@ -242,7 +241,23 @@ Access ends in these ways:
 
 Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again. A session cannot request a `draft` target, so the target is not usable until the test passes.
 
-A retired target stays in the list. You can use its id again. The new target replaces the retired one and starts in `draft`. A target in `draft`, `ready` or `disabled` keeps its id, and the hub refuses a second target with that id.
+### Retire a target
+
+A retire deletes the target and its key. The target does not stay in the list, and the hub keeps no record of it. The audit log still shows who retired the target.
+
+The old key line on the machine is harmless, because the private key is gone. Nobody can use the line any more.
+
+- For a managed target, the hub also asks the node of the target to remove the key line. This works when the node is reachable.
+- For an external target, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
+
+After a retire, the page shows one notice with the result. The result is one of these:
+
+- The key line was removed from the machine.
+- The key line was not on the machine.
+- The hub failed to remove the key line. The notice gives the reason. Remove the line yourself.
+- The target is external. Remove the line yourself.
+
+A failed removal never stops the retire. The id is free after a retire. You can add a target with the same id again, and it starts in `draft`. A target in `draft`, `ready` or `disabled` keeps its id, and the hub refuses a second target with that id.
 
 ## What it does not do
 
