@@ -37,6 +37,7 @@ import { stopServer } from "./sse";
 import { GrantStore } from "./sshgrants";
 import { SshKeyStore } from "./sshkeystore";
 import { createLocalSsh } from "./sshnodewiring";
+import type { NodeSshOptions } from "./sshnodewiring";
 import { SshService } from "./sshservice";
 import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
@@ -65,6 +66,8 @@ export interface HubDeps {
   sshDir?: string;
   /** Default: `process.platform`. A `win32` hub has no SSH grants for the host `local`. */
   platform?: NodeJS.Platform;
+  /** Puts the `ssh-access` skill into a home. Tests give one, because the default writes into a real home. */
+  deploySkill?: NodeSshOptions["deploySkill"];
 }
 
 /** The client that the SSH service uses for a host: the in-process one for `local`, the client of the registry for any other id. */
@@ -292,6 +295,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     events: localEvents,
     ...(deps.sshDir ? { dir: deps.sshDir } : {}),
     ...(deps.platform ? { platform: deps.platform } : {}),
+    ...(deps.deploySkill ? { deploySkill: deps.deploySkill } : {}),
   });
 
   const sshHook: { service?: SshService } = {};

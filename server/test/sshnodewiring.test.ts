@@ -11,7 +11,7 @@ import { accountIdentity, createNodeSsh, removeGrantFiles } from "../src/sshnode
 import { NodeEvents } from "../src/updateevents";
 import type { NodeEvent } from "../src/updateevents";
 import type { SystemUser, UserDirectory } from "../src/users";
-import { defined, rejection } from "./support";
+import { defined, noSkill, rejection } from "./support";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"], scope: "system", serviceUser: "svc" } as unknown as Config;
 const ID1 = "0123456789ab";
@@ -97,6 +97,7 @@ function build(
     users,
     isRoot: () => true,
     platform: "linux",
+    deploySkill: noSkill,
     chown: (path, uid, gid) => {
       chowns.push([path, uid, gid]);
       return Promise.resolve();
@@ -377,5 +378,199 @@ describe("removeGrantFiles", () => {
     });
     socket.end();
     await ssh.stop();
+  });
+});
+
+describe("the skill of the node", () => {
+  interface SkillCall {
+    name: string;
+    home: string;
+    uid?: number;
+    gid?: number;
+  }
+
+  function skillBuild(
+    initial: Instance[],
+    deploy?: (user: SkillCall) => Promise<"written" | "unchanged" | "kept-foreign" | "failed">,
+  ) {
+    const calls: SkillCall[] = [];
+    const built = build(initial, {
+      deploySkill: async (user) => {
+        calls.push({
+          name: user.name,
+          home: user.home,
+          ...(user.uid !== undefined ? { uid: user.uid } : {}),
+          ...(user.gid !== undefined ? { gid: user.gid } : {}),
+        });
+        return deploy ? deploy(user) : "written";
+      },
+    });
+
+    return { ...built, calls };
+  }
+
+  test("a start deploys for the service user and for each instance user once, as that user", async () => {
+    const { ssh, calls } = skillBuild([instance(ID1, false, "alice"), instance(ID2, false)]);
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(calls.map((call) => call.name).sort()).toEqual(["alice", "svc"]);
+    expect(calls).toContainEqual({ name: "alice", home: "/home/alice", uid: 1000, gid: 1001 });
+    expect(calls.find((call) => call.name === "svc")?.uid).toBe(999);
+    await ssh.stop();
+  });
+
+  test("it runs in the background: start does not wait for a slow deployer", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { ssh, calls } = skillBuild([], async () => {
+      await gate;
+      return "written";
+    });
+    await ssh.start();
+    // start returned while the deployer still waits.
+    expect(calls).toHaveLength(1);
+    let settled = false;
+    void ssh.skillsSettled().then(() => {
+      settled = true;
+    });
+    await Bun.sleep(20);
+    expect(settled).toBe(false);
+    release();
+    await ssh.skillsSettled();
+    expect(settled).toBe(true);
+    await ssh.stop();
+  });
+
+  test("a reconcile after a change deploys for a new user only, and not again for the same user", async () => {
+    const { ssh, state, calls } = skillBuild([instance(ID1, true, "alice")]);
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(calls).toHaveLength(2);
+    state.list = [...state.list, instance(ID2, false, "root")];
+    await ssh.instances.update?.(ID1, {});
+    await ssh.skillsSettled();
+    expect(calls.map((call) => call.name).sort()).toEqual(["alice", "root", "svc"]);
+    await ssh.stop();
+  });
+
+  test("a failing deployer does not stop the start or the reconcile, and is tried again at the next reconcile", async () => {
+    let attempts = 0;
+    const { ssh, calls } = skillBuild([instance(ID1, true, "alice")], (user) => {
+      if (user.name === "alice") {
+        attempts += 1;
+        return Promise.reject(new Error("disk full"));
+      }
+
+      return Promise.resolve("failed");
+    });
+    await ssh.start();
+    await ssh.skillsSettled();
+    // The control socket still came up.
+    expect(existsSync(socketOf(ID1))).toBe(true);
+    expect(logged.some((line) => line.includes("ssh skill for alice") && line.includes("disk full"))).toBe(true);
+    expect(attempts).toBe(1);
+    await ssh.instances.update?.(ID1, {});
+    await ssh.skillsSettled();
+    expect(attempts).toBe(2);
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    await ssh.stop();
+  });
+
+  test("a changed skill text is deployed again", async () => {
+    let text = "one";
+    const names: string[] = [];
+    const { ssh } = build([instance(ID1, false, "alice")], {
+      skillContent: () => text,
+      deploySkill: (user) => {
+        names.push(user.name);
+        return Promise.resolve("written");
+      },
+    });
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(names.sort()).toEqual(["alice", "svc"]);
+    text = "two";
+    await ssh.instances.update?.(ID1, {});
+    await ssh.skillsSettled();
+    expect(names).toHaveLength(4);
+    await ssh.stop();
+  });
+
+  test("a list that fails still deploys for the service user", async () => {
+    const { ssh, state, calls } = skillBuild([]);
+    state.fail = true;
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(calls.map((call) => call.name)).toEqual(["svc"]);
+    await ssh.stop();
+  });
+
+  test("install_skill = false deploys nothing", async () => {
+    const calls: string[] = [];
+    const fake = fakeInstances([instance(ID1, false, "alice")]);
+    const ssh = createNodeSsh({
+      cfg: { ...cfg, installSkill: false },
+      instances: fake.instances,
+      events: new NodeEvents(),
+      dir,
+      users,
+      isRoot: () => true,
+      platform: "linux",
+      deploySkill: (user) => {
+        calls.push(user.name);
+        return Promise.resolve("written");
+      },
+    });
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(calls).toEqual([]);
+    await ssh.stop();
+  });
+
+  test("a node user scope deploys for the home of the node user", async () => {
+    const calls: { name: string; home: string; uid?: number }[] = [];
+    const fake = fakeInstances([]);
+    const ssh = createNodeSsh({
+      cfg: { ...cfg, scope: "user", serviceHome: "/home/me", servicePath: "/bin" },
+      instances: fake.instances,
+      events: new NodeEvents(),
+      dir,
+      users,
+      isRoot: () => false,
+      platform: "linux",
+      deploySkill: (user) => {
+        calls.push({ name: user.name, home: user.home, ...(user.uid !== undefined ? { uid: user.uid } : {}) });
+        return Promise.resolve("written");
+      },
+    });
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(calls).toEqual([{ name: "the node user", home: "/home/me" }]);
+    await ssh.stop();
+  });
+
+  test("a Windows node deploys nothing", async () => {
+    const calls: string[] = [];
+    const ssh = createNodeSsh({
+      cfg,
+      instances: fakeInstances([instance(ID1, false, "alice")]).instances,
+      events: new NodeEvents(),
+      platform: "win32",
+      deploySkill: (user) => {
+        calls.push(user.name);
+        return Promise.resolve("written");
+      },
+    });
+    await ssh.start();
+    await ssh.skillsSettled();
+    expect(calls).toEqual([]);
+  });
+
+  test("under test the default deployer is refused, so that no test writes into a real home", () => {
+    expect(() =>
+      createNodeSsh({ cfg, instances: fakeInstances([]).instances, events: new NodeEvents(), dir, platform: "linux" }),
+    ).toThrow("needs a deploySkill under test");
   });
 });

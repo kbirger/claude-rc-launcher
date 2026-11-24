@@ -9,9 +9,12 @@ import type { HostClient } from "./hostclient";
 import { LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
 import type { Instance, Instances } from "./instances";
+import { bunRunner } from "./runner";
 import { SshBroker, sshManagedApi, sshNodeApi } from "./sshnodeapi";
 import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
 import { SshControl } from "./sshnodecontrol";
+import { SSH_SKILL, ensureSkill, skillVersion } from "./sshskill";
+import type { SkillResult, SkillUser } from "./sshskill";
 import { SSH_RUN_DIR, runAsFor } from "./unit";
 import type { NodeEvents } from "./updateevents";
 import { passwdDirectory } from "./users";
@@ -45,6 +48,13 @@ export interface NodeSshOptions {
   chown?: (path: string, uid: number, gid: number) => Promise<void>;
   /** One line for each failure. Default: `console.error`. */
   log?: (line: string) => void;
+  /**
+   * Puts the `ssh-access` skill into the home of a user. Default: `ensureSkill` with the real runner. Under test it has
+   * no default, because the default writes into a real home. `skillContent` names its version, for tests.
+   */
+  deploySkill?: (user: SkillUser) => Promise<SkillResult>;
+  /** The text of the skill. A change makes the node deploy it again. Default: the skill of the launcher. */
+  skillContent?: () => string;
 }
 
 export interface NodeSsh {
@@ -58,6 +68,8 @@ export interface NodeSsh {
   start(): Promise<void>;
   /** Closes the control sockets. */
   stop(): Promise<void>;
+  /** Resolves when the skill deployments that are queued now are done. For tests and shutdown. */
+  skillsSettled(): Promise<void>;
 }
 
 /** The identity of an account of the machine: its home and a uid and gid that are always set. Rejects an unknown account with a 400. */
@@ -110,6 +122,14 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
   // `start` removes grant files below the folder. A test that forgets the folder would reach the live one of the machine.
   if (process.env.NODE_ENV === "test" && options.dir === undefined && options.platform !== "win32")
     throw new Error("createNodeSsh needs a dir under test: the default folder is the live one of the machine");
+  // The default deployer writes into the home of a real user. A test that forgets to inject one would reach it.
+  if (
+    process.env.NODE_ENV === "test" &&
+    options.deploySkill === undefined &&
+    options.platform !== "win32" &&
+    options.cfg.installSkill !== false
+  )
+    throw new Error("createNodeSsh needs a deploySkill under test: the default writes into a real home");
   const { cfg, events } = options;
   const platform = options.platform ?? process.platform;
   const dir = options.dir ?? SSH_RUN_DIR;
@@ -127,12 +147,26 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     : {};
 
   if (!linux)
-    return { sshManaged, instances: options.instances, start: () => Promise.resolve(), stop: () => Promise.resolve() };
+    return {
+      sshManaged,
+      instances: options.instances,
+      start: () => Promise.resolve(),
+      stop: () => Promise.resolve(),
+      skillsSettled: () => Promise.resolve(),
+    };
 
   const broker = new SshBroker({ events });
   const owners = new Map<string, { uid: number; gid: number }>();
   const controls = new Map<string, SshControl>();
   let chain: Promise<void> = Promise.resolve();
+  let skillChain: Promise<void> = Promise.resolve();
+  /** The version of the skill that each user got in this process. A failure is not recorded, so the next reconcile tries again. */
+  const skillDone = new Map<string, string>();
+  const skillText = options.skillContent ?? (() => SSH_SKILL);
+  const deploySkill =
+    options.deploySkill ??
+    ((user: SkillUser) => ensureSkill(user, { run: bunRunner, platform, log, content: skillText() }));
+  const identityOf = accountIdentity(cfg, users, isRoot, () => process.getuid?.());
 
   /** The uid and gid of the user that an instance runs as. Undefined when the account is not in the passwd file. */
   async function ownerOf(instance: Instance): Promise<{ uid: number; gid: number } | undefined> {
@@ -148,8 +182,39 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     return systemUser ? { uid: systemUser.uid, gid: systemUser.gid } : undefined;
   }
 
+  /**
+   * Queues the skill for the default user and for the user of each instance, in the background. A user that has the
+   * current version gets nothing. It never throws and never blocks: a failure is one log line with the user name.
+   */
+  function scheduleSkills(list: Instance[]): void {
+    if (cfg.installSkill === false) return;
+    const accounts = new Set<string | undefined>([cfg.scope === "user" ? undefined : cfg.serviceUser]);
+    for (const instance of list) accounts.add(instance.user ?? (cfg.scope === "user" ? undefined : cfg.serviceUser));
+    const version = skillVersion(skillText());
+
+    for (const account of accounts) {
+      const name = account ?? "the node user";
+      if (skillDone.get(name) === version) continue;
+      // Marked at once: a second reconcile does not queue the same user again. A failure removes the mark.
+      skillDone.set(name, version);
+
+      skillChain = skillChain.then(async () => {
+        try {
+          const identity =
+            account === undefined ? { home: cfg.serviceHome, path: cfg.servicePath } : await identityOf(account);
+          const result = await deploySkill({ ...identity, name });
+          if (result === "failed") skillDone.delete(name);
+        } catch (error) {
+          skillDone.delete(name);
+          log(`ssh skill for ${name}: cannot install: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
+    }
+  }
+
   async function reconcile(): Promise<void> {
     const list = await options.instances.list();
+    scheduleSkills(list);
     owners.clear();
     const wanted = new Map<string, Instance>();
 
@@ -241,7 +306,11 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     ssh,
     sshManaged,
     instances,
+    skillsSettled: () => skillChain,
     async start() {
+      // The default user gets the skill also when the list of instances fails.
+      scheduleSkills([]);
+
       try {
         await removeGrantFiles(dir);
       } catch (error) {
