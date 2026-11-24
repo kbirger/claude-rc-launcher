@@ -48,6 +48,22 @@ describe("TargetStore", () => {
     expect(store.list()).toHaveLength(1);
   });
 
+  test("add replaces a retired target and still refuses the other states", async () => {
+    const store = new TargetStore();
+    await store.add({ ...input, address: "10.0.0.1" });
+    await store.setKeyFingerprint("nas", "SHA256:old");
+    await store.setState("nas", "retired");
+    const again = await store.add({ ...input, address: "10.0.0.2" });
+    expect(again).toMatchObject({ id: "nas", address: "10.0.0.2", state: "draft" });
+    expect(store.get("nas")?.keyFingerprint).toBeUndefined();
+    expect(store.list()).toHaveLength(1);
+
+    for (const state of ["draft", "ready", "disabled"] as const) {
+      await store.setState("nas", state);
+      expect(await status(store.add(input))).toBe(409);
+    }
+  });
+
   test("add rejects a port outside 1 to 65535", async () => {
     const store = new TargetStore();
 
