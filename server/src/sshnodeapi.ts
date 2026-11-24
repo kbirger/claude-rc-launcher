@@ -532,12 +532,18 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
+// The hub waits 10 seconds for a removal. The script stops sooner, so a slow machine never shows a failure and removes the line later.
+const DEAUTHORIZE_TIMEOUT_MS = 8_000;
 
 export interface SshManagedOptions {
   /** The sshd host key file. Default: the Ed25519 key of sshd on Linux and on Windows. */
   hostKeyFile?: string;
   /** Runs a provisioning script as the account. For tests. The default runs `sh -s` or PowerShell with the script on stdin. */
-  runAs?: (account: string, script: Script) => Promise<{ code: number; stderr: string; stdout?: string }>;
+  runAs?: (
+    account: string,
+    script: Script,
+    timeoutMs?: number,
+  ) => Promise<{ code: number; stderr: string; stdout?: string }>;
   /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
   identityFor?: IdentityFor;
 }
@@ -551,6 +557,7 @@ async function runWithStdin(
   args: string[],
   script: string,
   env?: Record<string, string>,
+  timeoutMs: number = SCRIPT_TIMEOUT_MS,
 ): Promise<{ code: number; stderr: string; stdout: string }> {
   let child: ReturnType<typeof Bun.spawn>;
 
@@ -567,7 +574,7 @@ async function runWithStdin(
 
   const timer = setTimeout(() => {
     child.kill();
-  }, SCRIPT_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
     const [stdout, stderr, code] = await Promise.all([
@@ -588,10 +595,16 @@ function refuseUnderTest(): void {
 }
 
 function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions["runAs"]> {
-  return async (account, { shell, script }) => {
+  return async (account, { shell, script }, timeoutMs) => {
     if (shell === "powershell") {
       refuseUnderTest();
-      return runWithStdin("powershell", ["-NoProfile", "-NonInteractive", "-Command", "-"], script);
+      return runWithStdin(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-Command", "-"],
+        script,
+        undefined,
+        timeoutMs,
+      );
     }
 
     // Fail closed: without a user switch the script would write to the home of the node's own user.
@@ -599,7 +612,7 @@ function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions[
     // identityFor rejects an unknown account with a 400.
     const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
     refuseUnderTest();
-    return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env);
+    return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env, timeoutMs);
   };
 }
 
@@ -646,7 +659,23 @@ function deauthorizeKey(value: unknown): string {
 
 /** The managed target routes: `GET /hostkey`, `POST /authorize` and `POST /deauthorize`. They work on every node. */
 export function sshManagedApi(options: SshManagedOptions = {}): Hono {
-  const runAs = options.runAs ?? defaultRunAs(options.identityFor);
+  const runUnserialized = options.runAs ?? defaultRunAs(options.identityFor);
+  // Two scripts for one account would read and rewrite the same authorized_keys file, and one could lose the change of
+  // the other. They run one after the other. A failure does not stop the next one.
+  const tails = new Map<string, Promise<unknown>>();
+
+  const runAs: typeof runUnserialized = (account, script, timeoutMs) => {
+    const run = (tails.get(account) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => runUnserialized(account, script, timeoutMs));
+    const tail = run.catch(() => undefined);
+    tails.set(account, tail);
+    void tail.then(() => {
+      if (tails.get(account) === tail) tails.delete(account);
+    });
+    return run;
+  };
+
   const app = new Hono();
 
   app.get("/hostkey", async (context) => {
@@ -681,7 +710,7 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const key = deauthorizeKey(body.key);
 
     const script = deprovisionScript(systemType, key, id, systemType === "windows" ? { account } : {});
-    const { code, stderr, stdout } = await runAs(account, script);
+    const { code, stderr, stdout } = await runAs(account, script, DEAUTHORIZE_TIMEOUT_MS);
     const failure = stderr.trim();
     if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
     if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);

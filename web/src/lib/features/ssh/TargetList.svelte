@@ -47,7 +47,7 @@
   const askRetire = (target: Target) =>
     (ask = {
       title: `Retire ${target.id}?`,
-      body: "The hub ends the grants of this target and deletes the target and its key. For a managed target, the hub also removes the key line from the machine. To use the target again, add it as a new target.",
+      body: "The hub ends the grants of this target and deletes the target and its key. For a managed target, the hub also tries to remove the key line from the machine. To use the target again, add it as a new target.",
       label: "Retire",
       destructive: true,
       run: () =>

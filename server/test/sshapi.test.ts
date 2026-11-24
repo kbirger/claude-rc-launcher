@@ -658,6 +658,48 @@ describe("targets", () => {
       });
     });
 
+    test("a request that arrives during the slow removal is refused, and a second retire gives 409", async () => {
+      const ctx = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } });
+      const { call, keys, node1, node2, grants, service, targets } = ctx;
+      const gate: { release: () => void } = { release: () => {} };
+      const wait = new Promise<void>((resolve) => (gate.release = resolve));
+      const original = node2.client.call.bind(node2.client);
+
+      node2.client.call = async (method, path, options) => {
+        if (path.endsWith("/deauthorize")) await wait;
+        return original(method, path, options);
+      };
+
+      const first = call("DELETE", "/targets/self");
+      await flush();
+      expect(targets.get("self")?.state).toBe("disabled");
+      service.onNodeEvent("node1", "ssh.request", { requestId: "late", instanceId: "i9", targetId: "self" });
+      await flush();
+      expect(grants.list().filter((grant) => grant.requestId === "late")).toEqual([]);
+      expect(node1.paths()).toContain("POST /api/ssh/requests/late/reject");
+      const second = await call("DELETE", "/targets/self");
+      expect(second.status).toBe(409);
+      expect(second.body.error).toBe("this target is being retired");
+      gate.release();
+      expect((await first).status).toBe(200);
+      expect(grants.list().filter((grant) => grant.state === "pending" || grant.state === "active")).toEqual([]);
+      expect(() => keys.publicLine("self")).toThrow();
+      expect(targets.get("self")).toBeUndefined();
+    });
+
+    test("a failed first step leaves the target as it was, and a later retire works", async () => {
+      const ctx = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } });
+      const { call, keys, node2, targets } = ctx;
+      const original = targets.setState.bind(targets);
+      targets.setState = () => Promise.reject(new Error("disk full"));
+      expect((await call("DELETE", "/targets/self")).status).toBe(500);
+      expect(targets.get("self")?.state).toBe("ready");
+      expect(() => keys.publicLine("self")).not.toThrow();
+      expect(node2.paths()).not.toContain("POST /api/ssh/deauthorize");
+      targets.setState = original;
+      expect((await call("DELETE", "/targets/self")).status).toBe(200);
+    });
+
     test("it answers 404 for an unknown target", async () => {
       const { call } = await setup();
       expect((await call("DELETE", "/targets/nope")).status).toBe(404);

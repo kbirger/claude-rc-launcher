@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile, mkdir, chmod } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile, mkdir, chmod, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deprovisionScript, provisionScript } from "../src/sshprovision";
@@ -184,7 +184,21 @@ describe("deprovisionScript", () => {
   const otherId = `ssh-ed25519 ${BLOB} claude-rc:other`;
   const commentOnly = `ssh-ed25519 ${OTHER} claude-rc:nas`;
   const blobOnly = `ssh-ed25519 ${BLOB} laptop`;
+  const inOptions = `command="echo ${BLOB} y" ssh-ed25519 ${OTHER} claude-rc:nas`;
   const script = deprovisionScript("linux", BLOB, "nas").script;
+  const sshFiles = async (dir: string) =>
+    (await readdir(join(dir, ".ssh"))).filter((name) => name !== ".claude-rc.lock");
+
+  async function runWith(text: string, dir: string, path: string): Promise<{ code: number; out: string }> {
+    const proc = Bun.spawn(["sh", "-s"], {
+      stdin: new Blob([text]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { PATH: path, HOME: dir },
+    });
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    return { code: await proc.exited, out: out + err };
+  }
 
   async function setFile(dir: string, text: string, fileMode = 0o600): Promise<void> {
     await mkdir(join(dir, ".ssh"), { mode: 0o700 });
@@ -196,11 +210,11 @@ describe("deprovisionScript", () => {
     const dir = await home();
     await setFile(
       dir,
-      ["ssh-rsa OLD one", mine, commentOnly, blobOnly, otherId, mineOld, "ssh-rsa OLD two", ""].join("\n"),
+      ["ssh-rsa OLD one", mine, commentOnly, blobOnly, inOptions, otherId, mineOld, "ssh-rsa OLD two", ""].join("\n"),
     );
     expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
     expect(await readFile(keys(dir), "utf8")).toBe(
-      ["ssh-rsa OLD one", commentOnly, blobOnly, otherId, "ssh-rsa OLD two", ""].join("\n"),
+      ["ssh-rsa OLD one", commentOnly, blobOnly, inOptions, otherId, "ssh-rsa OLD two", ""].join("\n"),
     );
   });
 
@@ -219,7 +233,7 @@ describe("deprovisionScript", () => {
     await setFile(dir, `ssh-rsa KEEP x\n${mine}`);
     expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
     expect(await readFile(keys(dir), "utf8")).toBe("ssh-rsa KEEP x\n");
-    expect(await readdir(join(dir, ".ssh"))).toEqual(["authorized_keys"]);
+    expect(await sshFiles(dir)).toEqual(["authorized_keys"]);
   });
 
   test("it prints not-found and changes nothing when no line matches", async () => {
@@ -243,14 +257,81 @@ describe("deprovisionScript", () => {
     expect(await readFile(keys(dir), "utf8")).toBe("");
   });
 
-  test("it exits non-zero when it cannot rewrite the file", async () => {
+  test("it exits non-zero, keeps the file and does not truncate it when no temporary file can be made", async () => {
     const dir = await home();
-    await setFile(dir, `${mine}\n`, 0o400);
-    await chmod(join(dir, ".ssh"), 0o500);
-    const result = await run(script, dir);
-    await chmod(join(dir, ".ssh"), 0o700);
-    // Root ignores the modes: then the removal works, and that is fine too.
-    if (process.getuid?.() !== 0) expect(result.code).not.toBe(0);
+    const text = `${mine}\nssh-rsa KEEP x\n`;
+    await setFile(dir, text);
+    const fake = await home();
+    await writeFile(join(fake, "cp"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const real = process.env.PATH ?? "";
+    const result = await runWith(script, dir, `${fake}:${real}`);
+    expect(result.code).not.toBe(0);
+    expect(await readFile(keys(dir), "utf8")).toBe(text);
+    expect(await sshFiles(dir)).toEqual(["authorized_keys"]);
+  });
+
+  test("it refuses a symbolic link as the file and as the folder, and changes nothing", async () => {
+    const dir = await home();
+    const elsewhere = await home();
+    await writeFile(join(elsewhere, "real"), `${mine}\n`);
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await symlink(join(elsewhere, "real"), keys(dir));
+    const linked = await run(script, dir);
+    expect(linked.code).not.toBe(0);
+    expect(linked.out).toContain("symbolic link");
+    expect((await lstat(keys(dir))).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(elsewhere, "real"), "utf8")).toBe(`${mine}\n`);
+
+    const other = await home();
+    await mkdir(join(elsewhere, "folder"));
+    await writeFile(join(elsewhere, "folder", "authorized_keys"), `${mine}\n`);
+    await symlink(join(elsewhere, "folder"), join(other, ".ssh"));
+    const folder = await run(script, other);
+    expect(folder.code).not.toBe(0);
+    expect(folder.out).toContain("symbolic link");
+    expect(await readFile(join(elsewhere, "folder", "authorized_keys"), "utf8")).toBe(`${mine}\n`);
+  });
+
+  test("it matches the structure of the line: type, blob, comment, and nothing else", async () => {
+    const dir = await home();
+    const kept = [
+      inOptions,
+      `ssh-ed25519 ${BLOB} claude-rc:nas-lan`,
+      `ssh-ed25519 ${BLOB}xyz claude-rc:nas`,
+      `ssh-ed25519 x${BLOB} claude-rc:nas`,
+      `# ssh-ed25519 ${BLOB} claude-rc:nas`,
+      `#ssh-ed25519 ${BLOB} claude-rc:nas`,
+      `ssh-rsa ${BLOB} claude-rc:nas`,
+      `${BLOB} claude-rc:nas`,
+    ];
+    await setFile(dir, [...kept, `  \t ssh-ed25519\t${BLOB}  claude-rc:nas`, ""].join("\n"));
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe([...kept, ""].join("\n"));
+  });
+
+  test("it handles CRLF lines and keeps the original bytes of the kept lines", async () => {
+    const dir = await home();
+    await setFile(dir, `ssh-rsa A one\r\n${mine}\r\n${inOptions}\r\nssh-rsa B two\r\n`);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe(`ssh-rsa A one\r\n${inOptions}\r\nssh-rsa B two\r\n`);
+  });
+
+  test("it keeps a missing final newline, and does not add one when the last line goes", async () => {
+    const dir = await home();
+    await setFile(dir, `ssh-rsa A one\n${mine}\nssh-rsa B two`);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(dir), "utf8")).toBe("ssh-rsa A one\nssh-rsa B two");
+
+    const other = await home();
+    await setFile(other, `ssh-rsa A one\n${mine}`);
+    expect(await run(script, other)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(keys(other), "utf8")).toBe("ssh-rsa A one\n");
+  });
+
+  test("the sh scripts take a lock with flock when it exists", () => {
+    expect(script).toContain("flock");
+    expect(script).toContain(".claude-rc.lock");
+    expect(provisionScript("linux", LINE).script).toContain("flock");
   });
 
   test("a hostile id and blob arrive as data and remove nothing else", async () => {
@@ -258,7 +339,7 @@ describe("deprovisionScript", () => {
 
     for (const text of hostile) {
       const dir = await home();
-      await setFile(dir, `${mine}\n${blobOnly}\n`);
+      await setFile(dir, `${mine}\n${blobOnly}\n${inOptions}\n`);
 
       for (const [blob, id] of [
         [text, "nas"],
@@ -269,8 +350,9 @@ describe("deprovisionScript", () => {
         expect(out.out).toBe("not-found\n");
       }
 
-      expect(await readFile(keys(dir), "utf8")).toBe(`${mine}\n${blobOnly}\n`);
+      expect(await readFile(keys(dir), "utf8")).toBe(`${mine}\n${blobOnly}\n${inOptions}\n`);
       expect(await readdir(dir)).toEqual([".ssh"]);
+      expect(await sshFiles(dir)).toEqual(["authorized_keys"]);
     }
   });
 
@@ -283,6 +365,10 @@ describe("deprovisionScript", () => {
     expect(ps).toContain("catch");
     expect(ps).toContain("exit 1");
     expect(ps).toContain("administrators_authorized_keys");
+    expect(ps).toContain("-ceq 'ssh-ed25519'");
+    expect(ps).toContain("[IO.File]::Replace");
+    expect(ps).toContain("icacls.exe");
+    expect(ps).not.toContain("WriteAllText($file");
     expect(ps.endsWith("\n\n")).toBe(true);
   });
 

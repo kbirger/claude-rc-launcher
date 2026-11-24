@@ -34,6 +34,16 @@ function psQuote(value: string): string {
   return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
 }
 
+// Two scripts on one account at the same time could lose a line. With flock, they wait for each other. The lock file is
+// in the `.ssh` folder and belongs to the account. Without flock, or when the lock file cannot be made, the script runs
+// without a lock. The node also runs the scripts of one account one after the other.
+const LOCK_LINES = [
+  'if command -v flock >/dev/null 2>&1 && ( : >> "$dir/.claude-rc.lock" ) 2>/dev/null; then',
+  '  exec 9>> "$dir/.claude-rc.lock"',
+  "  flock 9",
+  "fi",
+];
+
 function shScript(line: string, synology: boolean): string {
   return [
     "set -eu",
@@ -44,6 +54,7 @@ function shScript(line: string, synology: boolean): string {
     ...(synology ? ['chmod go-w "$HOME"'] : []),
     'mkdir -p "$dir"',
     'chmod 700 "$dir"',
+    ...LOCK_LINES,
     'touch "$file"',
     'chmod 600 "$file"',
     'if ! grep -qxF -- "$line" "$file"; then',
@@ -125,12 +136,18 @@ export function provisionScript(systemType: SystemType, line: string, options: P
 // The script prints `removed` or `not-found`, and it is safe to run twice. The values are data: they are quoted like in
 // the install scripts, and the shell script hands them to awk through the environment, so awk does not read escapes.
 
+// A line goes only when its last three fields are `ssh-ed25519`, the blob and the comment. So a blob inside the options
+// of another key does not match. A first field that starts with `#` is a comment line and stays. A CR at the end of the
+// last field (CRLF file) is ignored for the match, and the kept lines keep their bytes. A missing final newline stays
+// missing, unless the last line goes.
 const AWK_PROGRAM = [
-  "{ hit = 0",
-  '  if ($NF == ENVIRON["RC_COMMENT"]) for (i = 1; i < NF; i++) if ($i == ENVIRON["RC_BLOB"]) hit = 1',
+  '{ c = $NF; sub(/\\r$/, "", c); hit = 0',
+  '  if (NF >= 3 && substr($1, 1, 1) != "#" && c == ENVIRON["RC_COMMENT"] && $(NF - 1) == ENVIRON["RC_BLOB"] && $(NF - 2) == "ssh-ed25519") hit = 1',
   '  if (ENVIRON["RC_MODE"] == "count") n += hit',
-  "  else if (!hit) print }",
-  'END { if (ENVIRON["RC_MODE"] == "count") print n + 0 }',
+  "  else if (hit) kept = 0",
+  '  else { if (have) printf "\\n"; printf "%s", $0; have = 1; kept = 1 } }',
+  'END { if (ENVIRON["RC_MODE"] == "count") print n + 0',
+  '  else if (have && !(ENVIRON["RC_NONL"] == "1" && kept)) printf "\\n" }',
 ].join("\n");
 
 function shRemoveScript(blob: string, comment: string): string {
@@ -140,20 +157,24 @@ function shRemoveScript(blob: string, comment: string): string {
     `RC_BLOB=${shQuote(blob)}`,
     `RC_COMMENT=${shQuote(comment)}`,
     "export RC_BLOB RC_COMMENT",
-    'file="$HOME/.ssh/authorized_keys"',
+    'dir="$HOME/.ssh"',
+    'file="$dir/authorized_keys"',
+    // A link would be replaced by a plain file, and the target of the link would stay as it was.
+    'if [ -L "$dir" ] || [ -L "$file" ]; then echo "authorized_keys or its folder is a symbolic link" >&2; exit 1; fi',
     'if [ ! -f "$file" ]; then echo not-found; exit 0; fi',
+    ...LOCK_LINES,
     `prog=${shQuote(AWK_PROGRAM)}`,
     'count=$(RC_MODE=count awk "$prog" "$file")',
     'if [ "$count" = 0 ]; then echo not-found; exit 0; fi',
-    // The same folder and a rename keep the write atomic. cp -p keeps the mode of the file. A folder that the account
-    // cannot write to gets an in-place rewrite of the file, which keeps the inode and the owner.
+    "RC_NONL=0",
+    'if [ -n "$(tail -c 1 "$file")" ]; then RC_NONL=1; fi',
+    "export RC_NONL",
+    // A temporary file in the same folder and a rename keep the write atomic. cp -p keeps the mode of the file. A non-root
+    // account keeps its own owner. When the folder is not writable, the script stops: it never rewrites the file in place,
+    // because a failed write could leave a cut-off file.
     'tmp="$file.tmp.$$"',
-    'if cp -p "$file" "$tmp" 2>/dev/null; then',
-    '  if RC_MODE=keep awk "$prog" "$file" > "$tmp" && mv -f "$tmp" "$file"; then :; else rm -f "$tmp"; exit 1; fi',
-    "else",
-    '  tmp=$(mktemp "${TMPDIR:-/tmp}/rc-keys.XXXXXX")',
-    '  if RC_MODE=keep awk "$prog" "$file" > "$tmp" && cat "$tmp" > "$file"; then rm -f "$tmp"; else rm -f "$tmp"; exit 1; fi',
-    "fi",
+    'if ! cp -p "$file" "$tmp" 2>/dev/null; then echo "cannot make a temporary file in $dir" >&2; exit 1; fi',
+    'if RC_MODE=keep awk "$prog" "$file" > "$tmp" && mv -f "$tmp" "$file"; then :; else rm -f "$tmp"; exit 1; fi',
     "echo removed",
     "",
   ].join("\n");
@@ -178,6 +199,7 @@ function powershellRemoveScript(blob: string, comment: string, account: string |
     "try {",
     `  $blob = ${psQuote(blob)}`,
     `  $comment = ${psQuote(comment)}`,
+    "  $tmp = $null",
     ...body.map((text) => `  ${text}`),
     "  if ($admin) {",
     "    $file = Join-Path $env:ProgramData 'ssh\\administrators_authorized_keys'",
@@ -189,17 +211,27 @@ function powershellRemoveScript(blob: string, comment: string, account: string |
     "  $kept = @()",
     "  foreach ($entryLine in $lines) {",
     "    $fields = @($entryLine.Trim() -split '\\s+')",
-    "    if ($fields.Count -gt 1 -and $fields[-1] -ceq $comment -and ($fields[0..($fields.Count - 2)] -ccontains $blob)) { continue }",
+    "    if ($fields.Count -ge 3 -and -not $fields[0].StartsWith('#') -and $fields[-1] -ceq $comment -and $fields[-2] -ceq $blob -and $fields[-3] -ceq 'ssh-ed25519') { continue }",
     "    $kept += $entryLine",
     "  }",
     "  if ($kept.Count -eq $lines.Count) { [Console]::Out.WriteLine('not-found'); exit 0 }",
     "  $utf8 = New-Object System.Text.UTF8Encoding $false",
-    // WriteAllText on the existing file keeps its permissions: the ACL stays.
     "  $text = ''",
     '  if ($kept.Count -gt 0) { $text = ($kept -join "`r`n") + "`r`n" }',
-    "  [IO.File]::WriteAllText($file, $text, $utf8)",
+    // A temporary file in the same folder and a replace keep the write atomic. The ACL of the old file goes to the new one,
+    // and the administrator file gets the same permissions as the install script gives.
+    "  $tmp = $file + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'",
+    "  [IO.File]::WriteAllText($tmp, $text, $utf8)",
+    "  Set-Acl -LiteralPath $tmp -AclObject (Get-Acl -LiteralPath $file)",
+    "  [IO.File]::Replace($tmp, $file, $null)",
+    "  $tmp = $null",
+    "  if ($admin) {",
+    "    icacls.exe $file /inheritance:r /grant '*S-1-5-18:(F)' /grant '*S-1-5-32-544:(F)' | Out-Null",
+    "    if ($LASTEXITCODE -ne 0) { throw 'icacls failed' }",
+    "  }",
     "  [Console]::Out.WriteLine('removed')",
     "} catch {",
+    "  if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }",
     "  [Console]::Error.WriteLine($_)",
     "  exit 1",
     "}",
