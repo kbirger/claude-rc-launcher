@@ -69,6 +69,8 @@ function text(body: Record<string, unknown>, name: string): string {
   return value;
 }
 
+const MIN_PASSPHRASE = 12;
+
 export function sshApi(options: SshApiOptions): Hono {
   const { service, keys, targets, grants, hostAddress } = options;
   const audit =
@@ -94,6 +96,13 @@ export function sshApi(options: SshApiOptions): Hono {
     decoded.fill(0);
     unlocks.get(context.req.raw)?.push(bytes);
     return { method, secret: bytes };
+  };
+
+  /** A passphrase that is set (not typed to unlock) needs at least MIN_PASSPHRASE characters (code points). The text is never echoed. */
+  const needLongPassphrase = (unlock: UnlockSecret): void => {
+    if (unlock.method !== "passphrase") return;
+    if ([...new TextDecoder().decode(unlock.secret)].length < MIN_PASSPHRASE)
+      throw new HttpError(400, `the passphrase needs at least ${MIN_PASSPHRASE} characters`);
   };
 
   const wipeUnlocks: MiddlewareHandler = async (context, next) => {
@@ -210,6 +219,7 @@ export function sshApi(options: SshApiOptions): Hono {
       ...(method ? { method } : {}),
       ...(credentialId ? { credentialId } : {}),
       pendingRewrap: keys.pendingRewraps(),
+      hasKeys: targets.list().some((item) => hasKey(item.id)),
       nodes,
     });
   });
@@ -360,6 +370,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const code = text(body, "code");
     if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
     const unlock = parseUnlock(context, body.unlock);
+    needLongPassphrase(unlock);
     if (!keys.pendingRewraps().includes(target.id)) throw new TargetError(409, "this target does not need a re-wrap");
     await keys.rewrapWithRecovery(target.id, code, unlock);
     audit(`audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}`);
@@ -385,6 +396,7 @@ export function sshApi(options: SshApiOptions): Hono {
         : undefined;
 
     if (other) (await keys.open(other.id, unlock)).destroy();
+    else needLongPassphrase(unlock);
 
     const made = await keys.create(target.id, unlock);
     await targets.setKeyFingerprint(target.id, made.fingerprint);
