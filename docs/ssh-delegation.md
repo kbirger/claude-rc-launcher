@@ -248,7 +248,7 @@ A retire deletes the target and its key. The target does not stay in the list, a
 The old key line on the machine is harmless, because the private key is gone. Nobody can use the line any more.
 
 - For a managed target, the hub also asks the node of the target to remove the key line. This works when the node is reachable.
-- The node removes only a line that ends with the key and the comment `claude-rc:<target id>`. It keeps every other line, and it keeps the mode and the owner of the file. An account that is not root keeps its own ownership.
+- The node removes only a line that ends with the key and the comment `claude-rc:<target id>`. It keeps every other line. The file keeps its mode. A run as root keeps the owner. When the account is not root, the file belongs to the account.
 - The node refuses to change an `authorized_keys` file or a `.ssh` folder that is a symbolic link. The notice then shows a failed removal.
 - For an external target, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
 

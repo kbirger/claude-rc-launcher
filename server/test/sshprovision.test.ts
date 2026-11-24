@@ -368,6 +368,7 @@ describe("deprovisionScript", () => {
     expect(ps).toContain("-ceq 'ssh-ed25519'");
     expect(ps).toContain("[IO.File]::Replace");
     expect(ps).toContain("icacls.exe");
+    expect(ps).not.toContain("Set-Acl");
     expect(ps).not.toContain("WriteAllText($file");
     expect(ps.endsWith("\n\n")).toBe(true);
   });
