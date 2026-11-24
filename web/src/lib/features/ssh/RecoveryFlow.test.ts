@@ -174,6 +174,56 @@ test("a failed passkey test shows the message and the hint, keeps the button and
   expect(prf.registerPasskey).toHaveBeenCalledTimes(1);
 });
 
+test("switching to the passphrase after an unproven passkey brings Continue and its checks back", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true, proved: false });
+  show();
+  typeCode();
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  pick("passphrase");
+  expect(buttons("Test your passkey")).toHaveLength(0);
+  expect(document.body.textContent).not.toContain("Tap to test the passkey");
+  typePassphrases(PASS, "other");
+  press("Continue");
+  await waitText("The two passphrases do not match.");
+  typePassphrases();
+  press("Continue");
+  await waitText("Each target needs one re-lock");
+  expect(posts("/recovery/begin")[0]!.body).toEqual({ code: CODE, method: "passphrase" });
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
+});
+
+test("the test button with an empty code does not prompt and shows the empty-code message", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true, proved: false });
+  show();
+  typeCode();
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  type('input[type="text"]', "");
+  press("Test your passkey");
+  await waitText("Type the recovery code.");
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
+  expect(calls).toEqual([]);
+  expect(buttons("Test your passkey")).toHaveLength(1);
+});
+
+test("the passphrase offer after a failed passkey test works", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true, proved: false });
+  prf.unlockWithPasskey.mockRejectedValue(new UnlockError("This passkey does not return a PRF secret"));
+  show();
+  typeCode();
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  press("Test your passkey");
+  await waitText("This passkey does not return a PRF secret");
+  press("Use a passphrase instead");
+  expect(buttons("Test your passkey")).toHaveLength(0);
+  typePassphrases();
+  press("Continue");
+  await waitText("Each target needs one re-lock");
+  expect(posts("/recovery/begin")[0]!.body).toEqual({ code: CODE, method: "passphrase" });
+});
+
 test("a wrong recovery code shows the message and stays on the first step", async () => {
   answers["POST /api/ssh/recovery/begin"] = { status: 403, body: { error: "wrong recovery code" } };
   show();

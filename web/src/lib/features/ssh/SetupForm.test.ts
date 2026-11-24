@@ -137,6 +137,21 @@ test("a failed test shows the message and the hint, keeps the button and the pas
   expect(posts()).toHaveLength(1);
 });
 
+test("switching to the passphrase after an unproven passkey brings Continue back", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: false });
+  show();
+  pick("prf");
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  pick("passphrase");
+  expect(button("Test your passkey")).toBeUndefined();
+  expect(document.body.textContent).not.toContain("Tap to test the passkey");
+  press("Continue");
+  await waitText(CODE);
+  expect(posts()[0]!.body).toEqual({ method: "passphrase" });
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
+});
+
 test("the passphrase offer after a failed test works", async () => {
   prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: false });
   prf.unlockWithPasskey.mockRejectedValue(new UnlockError("This passkey does not return a PRF secret"));

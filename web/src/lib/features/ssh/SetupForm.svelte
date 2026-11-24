@@ -45,6 +45,14 @@
     step = "code";
   }
 
+  // A passkey that waits for its test is dropped when the owner changes the method, so Continue returns.
+  function forgetPasskey() {
+    untested = "";
+    note = "";
+    hint = false;
+    problem = "";
+  }
+
   const randomSalt = () => toBase64Url(crypto.getRandomValues(new Uint8Array(SALT_BYTES)));
 
   function fail(error: unknown, method: UnlockMethod) {
@@ -136,7 +144,7 @@
     <fieldset class="grid gap-2" disabled={busy}>
       <legend class="sr-only">Unlock method</legend>
       <Label class="flex min-h-11 items-start gap-3 rounded-lg border p-3">
-        <input type="radio" name="{uid}-method" value="prf" bind:group={choice} class="mt-1" />
+        <input type="radio" name="{uid}-method" value="prf" bind:group={choice} onchange={forgetPasskey} class="mt-1" />
         <span class="grid gap-0.5">
           <span class="font-medium">Passkey</span>
           <span class="text-xs font-normal text-muted-foreground">
@@ -145,7 +153,14 @@
         </span>
       </Label>
       <Label class="flex min-h-11 items-start gap-3 rounded-lg border p-3">
-        <input type="radio" name="{uid}-method" value="passphrase" bind:group={choice} class="mt-1" />
+        <input
+          type="radio"
+          name="{uid}-method"
+          value="passphrase"
+          bind:group={choice}
+          onchange={forgetPasskey}
+          class="mt-1"
+        />
         <span class="grid gap-0.5">
           <span class="font-medium">Passphrase</span>
           <span class="text-xs font-normal text-muted-foreground">
