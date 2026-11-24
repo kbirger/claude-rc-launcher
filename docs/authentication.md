@@ -75,8 +75,10 @@ and the hub signs each request with the user and the role that it acts for. The 
 | Role | Can do |
 |---|---|
 | `read` | See instances, logs, files, the event stream, and update status |
-| `write` | Everything in `read`. Also create, stop, pause, resume and restart instances, change their settings, make folders, clone repositories, list GitHub repositories, change permission rules, and rename a node |
-| `admin` | Everything in `write`. Also register and remove nodes, run updates, start a GitHub login on a host, and start an instance or a folder as another user or as root |
+| `write` | Everything in `read`. Also create, stop, pause, resume and restart instances, change their settings, make folders, clone repositories, list GitHub repositories, change permission rules, rename a node, and list SSH status, targets and grants |
+| `admin` | Everything in `write`. Also register and remove nodes, run updates, start a GitHub login on a host, start an instance or a folder as another user or as root, and manage SSH delegation |
+
+SSH delegation uses two levels. A `write` user can list the status, the targets and the grants. Only an `admin` can set it up, add or change a target, unlock a key, and approve, deny or revoke a grant. Read [SSH delegation](ssh-delegation.md).
 
 A claim value of `none` refuses the person with 403. A value that is not a role name gives `read`. If the claim is a
 list, the hub uses the highest role in it. A request that names a `user` other than the default `service_user` of

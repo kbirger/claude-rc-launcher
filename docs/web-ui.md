@@ -17,7 +17,7 @@ The header has two parts:
 
 On a phone (480 px wide or less) the header is hidden to give the lists more room. The bottom bar has Sessions, and the menu sheet shows your name and has Log out. The thin line that shows a refresh moves to the top edge of the screen.
 
-The bar at the bottom has three buttons: Sessions, the Menu button in the middle, and Instances. The menu opens a sheet with these entries: Sessions, Instances, Nodes, Updates, Appearance, a link to the GitHub repository, and Log out with your name.
+The bar at the bottom has three buttons: Sessions, the Menu button in the middle, and Instances. The menu opens a sheet with these entries: Sessions, Instances, Nodes, Updates, Appearance, SSH access (for an admin only), a link to the GitHub repository, and Log out with your name.
 
 <img src="images/screens/menu.png" alt="The menu sheet" width="300">
 
@@ -192,10 +192,12 @@ Open the More menu of a card and choose Settings.
 
 <img src="images/screens/instance-settings.png" alt="The settings dialog of an instance" width="300">
 
-Two settings control how the server starts:
+Three settings control the server. Two control how it starts:
 
 - "Create a session at start" (`createSession`). On is the default. The server makes one empty session at start, and it brings back its recorded sessions after a crash or a restart. Off starts the server with no session.
 - "Session folders" (`spawnMode`). "Same folder" is the default: every session works in the same folder, so two sessions can change the same files. "Worktree" gives each new session its own git worktree (a separate checkout of the same repository). The folder must be a git repository.
+
+A third setting, "Allow SSH requests" (`sshRequests`), is off by default. When it is on, a session of the instance can ask for SSH access with `claude-rc ssh request`. It needs a Linux node. Read [SSH delegation](ssh-delegation.md).
 
 Press Apply to save the change. If the instance runs, the change restarts its server. If the server does not stay up with the new settings, the node puts the old settings back and the dialog shows the reason. If the instance is paused, the change is only saved. It starts at the next resume.
 
@@ -354,6 +356,22 @@ The Nodes page shows one card for each host:
 - Rename changes the display name. The id stays.
 - Update updates that node. Read [Updates](updates.md).
 - Show instances opens the Instances view for that host only. The title reads "Instances on <host>" and there is no node filter. The node filter of the other views does not change. A host that is not running shows a disabled Unavailable button.
+
+## SSH access
+
+An admin sees the entry SSH access in the menu. A badge on the entry counts the requests that wait for you. Read [SSH delegation](ssh-delegation.md) for the whole setup.
+
+On the first visit, the page asks you to choose an unlock method, a passkey or a passphrase. It then shows the recovery code once. After the setup, the page has these parts:
+
+- Access requests. Each request shows the target, the node, the instance and the time. A pending request has Approve and Deny buttons. An active grant has a Revoke button. The list refreshes every 5 seconds.
+- Nodes. A switch turns SSH access on for a node. Enter the source address that targets see when the node connects.
+- Targets. Each target shows its state: `draft`, `ready`, `disabled` or `retired`. The buttons are Continue setup, Disable, Enable and Retire.
+- Add target. This opens a wizard with these steps: the form, the key, the host key, the install and the test.
+- Lost your passkey? Recover. This button starts a recovery with the recovery code. When targets wait for a re-lock, a banner names how many, and its button opens the same flow. Read [SSH delegation](ssh-delegation.md#recover-with-the-recovery-code).
+
+Approve opens a sheet. The sheet shows the node, the instance, the target, the account and a warning about the power of the account. The instance name is a claim of the session. Set the minutes, from 1 to 480, and unlock with your passkey or passphrase.
+
+Only an `admin` can use this page.
 
 ## Updates
 

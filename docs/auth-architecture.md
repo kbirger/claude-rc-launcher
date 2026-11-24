@@ -123,8 +123,8 @@ The hub has three roles. Each role includes the roles that come before it in thi
 | Role | Can do |
 |---|---|
 | read | See instances, logs, files, the event stream, and update status |
-| write | Everything in read, plus create, stop, pause, and resume instances, make folders, clone repositories, list GitHub repositories, and rename a node. A new instance runs as the default `service_user` of its node |
-| admin | Everything in write. Also register and remove nodes, and run updates. Also start the GitHub login for a service user. Also start an instance as another user or as root |
+| write | Everything in read, plus create, stop, pause, and resume instances, make folders, clone repositories, list GitHub repositories, and rename a node. Also list SSH status, targets and grants. A new instance runs as the default `service_user` of its node |
+| admin | Everything in write. Also manage SSH delegation. Also register and remove nodes, and run updates. Also start the GitHub login for a service user. Also start an instance as another user or as root |
 
 Planned: every route on the hub declares its minimum role. The test walks the route table. If a route has no declared role, the test fails. This prevents a new route from shipping with no check.
 

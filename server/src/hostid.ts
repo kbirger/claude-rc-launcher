@@ -4,3 +4,6 @@
  * imports on purpose, so the CLI can read it without pulling in the server.
  */
 export const HOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** The id of the host that the hub itself runs. A configured host cannot use it. */
+export const LOCAL_HOST = "local";

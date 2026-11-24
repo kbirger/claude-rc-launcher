@@ -65,14 +65,19 @@ export class ChangeLock {
 /** True if each field of the patch is missing or has an allowed value. */
 export function isValidPatch(value: unknown): value is SettingsPatch {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const { createSession, spawnMode } = value as Record<string, unknown>;
+  const { createSession, spawnMode, sshRequests } = value as Record<string, unknown>;
   if (createSession !== undefined && typeof createSession !== "boolean") return false;
   if (spawnMode !== undefined && spawnMode !== "same-dir" && spawnMode !== "worktree") return false;
+  if (sshRequests !== undefined && typeof sshRequests !== "boolean") return false;
   return true;
 }
 
 export function sameSettings(instanceSettings: InstanceSettings, right: InstanceSettings): boolean {
-  return instanceSettings.createSession === right.createSession && instanceSettings.spawnMode === right.spawnMode;
+  return (
+    instanceSettings.createSession === right.createSession &&
+    instanceSettings.spawnMode === right.spawnMode &&
+    instanceSettings.sshRequests === right.sshRequests
+  );
 }
 
 /** The text for a change that did not settle. */

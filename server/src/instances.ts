@@ -141,6 +141,7 @@ function definedFields(settingsPatch: SettingsPatch): SettingsPatch {
   const out: SettingsPatch = {};
   if (settingsPatch.createSession !== undefined) out.createSession = settingsPatch.createSession;
   if (settingsPatch.spawnMode !== undefined) out.spawnMode = settingsPatch.spawnMode;
+  if (settingsPatch.sshRequests !== undefined) out.sshRequests = settingsPatch.sshRequests;
   return out;
 }
 

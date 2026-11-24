@@ -42,6 +42,28 @@ The consequences:
 
 A shared secret is the weaker second method for a node. It is long-lived and symmetric, with no revocation and no audit. Use one secret for each node.
 
+## SSH delegation
+
+SSH delegation lets a session use an SSH key that the hub holds. Read [SSH delegation](ssh-delegation.md) for the setup. These are the security rules:
+
+- The hub makes one Ed25519 key for each target. The private key never leaves the hub process. A node stores no key and no secret that opens one. The host `local` is an exception: read the limits below.
+- The hub stores each key encrypted in `<state_dir>/ssh/keys.json` with mode 600. A passkey with the PRF extension or a passphrase unlocks it. A recovery code, which the hub does not keep, opens a second copy. A recovery with the code chooses a new unlock method, ends every active grant, and needs one re-lock for each target. Without the code, the only way is to delete the SSH folder and add the targets again.
+- Only an `admin` can set up SSH access, add a target, approve a grant, unlock a key or revoke a grant. A `write` user can list the status, the targets and the grants. A `write` user can also turn on Allow SSH requests for an instance, because that is an instance option.
+- Every grant needs a new unlock. The hub holds a key in memory only while a grant is active. A stolen login cannot approve a grant, because the approval needs the unlock too.
+- A grant lasts 60 minutes by default and 480 minutes at most. A grant cannot be extended. A hub restart ends all grants.
+- The hub pins the SSH host key of each target. A session cannot be sent to another machine.
+- The line in `authorized_keys` limits the key to the source addresses of the allowed nodes. It also turns off forwarding.
+- The hub writes one audit line for each step of a grant. A signature line holds the key fingerprint and never the signed data.
+
+These limits remain:
+
+- A grant gives the full power of the account on the target. A target cannot limit it to read-only.
+- A root session on a node can use the socket of a grant while the grant is active.
+- Sessions on the own host of the hub (the host `local`) run with the trust of the hub. During an active grant, a root session there can read the open key from the memory of the hub and read the unlock in transit. It can also read `keys.json` and `hub-key.pem`. If you allow requests from instances of `local`, you give up the "cannot copy the key" guarantee for root sessions there. On a separate node the guarantee holds.
+- If an SSH connection is open when a grant ends, it keeps working.
+- The instance name on a request is a claim of the node, not proof.
+- The hub is a larger target, because it holds the keys. Keep `<state_dir>/ssh` in your backup, and protect it like `hub-key.pem`.
+
 ## All security notes
 
 - The launcher typically runs as **root** (it must write unit files to `/etc/systemd/system`).

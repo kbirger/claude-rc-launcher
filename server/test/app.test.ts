@@ -247,7 +247,7 @@ describe("instances", () => {
     const { app } = mk();
     const r = await app.request("/api/hosts/local/instance-settings", { headers: H() });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ ...SETTINGS_HELP, defaults: { createSession: true, spawnMode: "same-dir" } });
+    expect(await r.json()).toEqual({ ...SETTINGS_HELP, defaults: { createSession: true, spawnMode: "same-dir", sshRequests: false } });
   });
   test("GET instance-settings returns the node defaults from the operator list", async () => {
     const get = async (claudeRcArgs: string[]) => {
@@ -255,8 +255,8 @@ describe("instances", () => {
       const app = createApp({ cfg: local, instances: fake().svc, userAuth: oidcUserAuth(local, oidc) });
       return (await (await app.request("/api/hosts/local/instance-settings", { headers: H() })).json()).defaults;
     };
-    expect(await get(["--no-create-session-in-dir", "--spawn", "worktree"])).toEqual({ createSession: false, spawnMode: "worktree" });
-    expect(await get(["--spawn", "same-dir"])).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(await get(["--no-create-session-in-dir", "--spawn", "worktree"])).toEqual({ createSession: false, spawnMode: "worktree", sshRequests: false });
+    expect(await get(["--spawn", "same-dir"])).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
   });
   test("POST start passes the sent settings to the backend and none when absent", async () => {
     const { app, calls } = mk();

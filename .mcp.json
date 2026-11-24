@@ -19,6 +19,15 @@
         "--context=claude-code",
         "--project-from-cwd"
       ]
+    },
+    "svelte": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@sveltejs/mcp"
+      ],
+      "env": {}
     }
   }
 }

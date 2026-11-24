@@ -2,14 +2,20 @@ export type SpawnMode = "same-dir" | "worktree";
 export interface InstanceSettings {
   createSession: boolean;
   spawnMode: SpawnMode;
+  /** Whether a session of the instance may ask the hub for SSH access. Needs a Linux node. */
+  sshRequests: boolean;
 }
 export type SettingsPatch = Partial<InstanceSettings>;
 
-export const DEFAULT_SETTINGS: InstanceSettings = { createSession: true, spawnMode: "same-dir" };
+export const DEFAULT_SETTINGS: InstanceSettings = {
+  createSession: true,
+  spawnMode: "same-dir",
+  sshRequests: false,
+};
 
 export interface SettingsHelp {
   settings: {
-    key: "createSession" | "spawnMode";
+    key: "createSession" | "spawnMode" | "sshRequests";
     label: string;
     values: { value: boolean | string; label: string; explanation: string }[];
     limits?: string;
@@ -32,7 +38,7 @@ export function settingsFromArgs(args: string[]): InstanceSettings {
     if (value === "same-dir" || value === "worktree") spawnMode = value;
   }
 
-  return { createSession, spawnMode };
+  return { createSession, spawnMode, sshRequests: DEFAULT_SETTINGS.sshRequests };
 }
 
 export function argsWith(base: string[], instanceSettings: InstanceSettings): string[] {
@@ -92,5 +98,30 @@ export const SETTINGS_HELP: SettingsHelp = {
       limits:
         "A change restarts a running instance and checks that it stays up. A paused instance only saves the change. The worktree mode needs a git repository.",
     },
+    {
+      key: "sshRequests",
+      label: "Allow SSH requests",
+      values: [
+        {
+          value: false,
+          label: "Off",
+          explanation: "The sessions of this instance cannot ask for SSH access to a target.",
+        },
+        {
+          value: true,
+          label: "On",
+          explanation:
+            "A session can ask for SSH access to a target with claude-rc ssh request. An admin must approve each request on the hub.",
+        },
+      ],
+      limits:
+        "A change restarts a running instance and checks that it stays up. A paused instance only saves the change. This needs a Linux node.",
+    },
   ],
 };
+
+/** The help of a node on this platform. A Windows node cannot hold an SSH grant, so its help has no SSH setting and the UI never offers it. */
+export function settingsHelpFor(platform: NodeJS.Platform): SettingsHelp {
+  if (platform !== "win32") return SETTINGS_HELP;
+  return { ...SETTINGS_HELP, settings: SETTINGS_HELP.settings.filter((setting) => setting.key !== "sshRequests") };
+}

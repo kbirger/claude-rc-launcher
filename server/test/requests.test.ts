@@ -152,6 +152,15 @@ describe("the request helpers have a single definition", () => {
   });
 });
 
+describe("sshRequests in a request", () => {
+  test("the patch and the start request accept a boolean and refuse anything else", () => {
+    expect(parseSettingsPatch({ sshRequests: true })).toEqual({ sshRequests: true });
+    expect(rejects(() => parseSettingsPatch({ sshRequests: "yes" })).status).toBe(400);
+    expect(parseStartRequest({ path: "/srv/a", sshRequests: false })).toMatchObject({ sshRequests: false });
+    expect(rejects(() => parseStartRequest({ path: "/srv/a", sshRequests: 1 })).status).toBe(400);
+  });
+});
+
 describe("parseSettingsPatch and the start settings", () => {
   test("a valid patch keeps only the sent fields", () => {
     expect(parseSettingsPatch({ createSession: false })).toEqual({ createSession: false });

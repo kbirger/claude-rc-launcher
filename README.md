@@ -21,6 +21,7 @@ Start, watch and stop Claude Code Remote Control servers on your own machines, f
 - Choose per instance whether the server makes a session at start, and whether each session gets its own git worktree.
 - See the sessions of an instance, the files that Claude touched, the files that git shows as changed, and the whole folder. Markdown files show rendered and code shows with colors.
 - See the tool calls that Claude Code blocked, and add an allow, ask or deny rule from your phone. The session can then try again at once.
+- Let a session log in to another machine over SSH. You approve each request on your phone, and the key stays on the hub. Read [SSH delegation](docs/ssh-delegation.md).
 - Manage many machines from one hub: Linux nodes and Windows nodes.
 - Update the hub, every node and every client from the web UI or with one command.
 - Log in with any OIDC provider, or behind a forward-auth proxy that sends a signed JWT. Three roles: `read`, `write` and `admin`.
