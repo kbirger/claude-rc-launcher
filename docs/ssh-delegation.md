@@ -147,15 +147,21 @@ The node finds the instance from the systemd unit of the calling process. A root
 
 ### The ssh-access skill
 
-A session does not know about `claude-rc ssh` by itself. The node installs a Claude Code skill that teaches it. The skill is named `ssh-access`. It tells the session to list the targets, to ask for one target with the shortest time that works, and to run the `ssh -F` line that the request prints. It also tells the session to stop when the owner denies a request.
+A session does not know about `claude-rc ssh` by itself. The node installs a Claude Code skill that teaches it. The skill is named `ssh-access`.
+
+The skill tells the session to list the targets first. Then it asks for one target with the shortest time that works. It runs the `ssh -F` line that the request prints. It stops when the owner denies a request.
 
 The node writes the skill to `~/.claude/skills/ssh-access/SKILL.md`. The home is the home of the user that the instances run as. This is the `instance.service_user` of the node, and the user of each instance that runs as another user. The hub does the same for the instances of its own host.
 
 The node installs the skill at each start. Every update and every restart of the node refreshes it. A change to the instances also installs it for a new user. A node on Windows does nothing.
 
-The first line of the file after the frontmatter says that the launcher manages it. The line holds a hash of the content. The node replaces a file with that line when the content differs. The node never overwrites a file without that line. If you or someone else made a skill with the same name, the node leaves it as it is and logs one line.
+The file has a managed line right after the frontmatter. The line holds a hash of the rest of the file. The node uses this line to decide what to do:
 
-The node does the work as the target user, not as root. It refuses a symbolic link at each part of the path.
+- If the line is there and the hash matches the file, nobody edited it. The node replaces it when a new version exists.
+- If the line is there and the hash does not match, someone edited the file. The node keeps it and logs one line. Delete the file to get the current version at the next start.
+- If the line is missing, the launcher did not make the file. The node never touches it and logs one line.
+
+The node does the work as the target user and not as root. It refuses a symbolic link at each part of the path. If the node runs as root and has no user to switch to, it does not write the skill.
 
 To turn this off, set `install_skill = false` in the `[instance]` table of `config.toml`. The node then leaves the skill files as they are. Delete them yourself if you no longer want them. See [Configuration](configuration.md).
 

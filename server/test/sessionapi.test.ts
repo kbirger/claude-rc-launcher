@@ -174,7 +174,7 @@ describe("files", () => {
     // setpriv switches to the instance user, and git is told not to run a program that the repository names.
     expect(
       calls.every(
-        (call) => call.cmd === "setpriv" && call.args.includes("1001") && call.args.includes("core.fsmonitor=false"),
+        (call) => call.cmd.endsWith("/setpriv") && call.args.includes("1001") && call.args.includes("core.fsmonitor=false"),
       ),
     ).toBe(true);
     expect(calls.every((call) => call.cwd === calls[0].cwd && defined(call.cwd).endsWith("work"))).toBe(true);
