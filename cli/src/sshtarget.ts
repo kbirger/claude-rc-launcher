@@ -16,7 +16,7 @@ const POLL_LIMIT_MS = 10 * 60 * 1000;
 const BASE = "/cli/api/ssh";
 
 export const SSH_TARGET_USAGE =
-  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--fingerprint <f>] [--no-test]";
+  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--fingerprint <f>] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it";
 
 interface Unlock {
   method: "prf" | "passphrase";

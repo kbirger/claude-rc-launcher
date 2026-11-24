@@ -23,6 +23,8 @@ const MAX_BLOB_CHARS = 100_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const SCAN_TIMEOUT_MS = 30_000;
 const SCRIPT_TIMEOUT_MS = 90_000;
+const DEAUTHORIZE_TIMEOUT_MS = 10_000;
+const MAX_DETAIL = 200;
 
 /** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
 export class NodeError extends Error {
@@ -224,6 +226,41 @@ export class SshService {
       { account: target.account, systemType: target.systemType, line },
       SCRIPT_TIMEOUT_MS,
     );
+  }
+
+  /**
+   * Asks the node that is the target to remove the key line of the target. The line is found by key blob and comment.
+   * Call it before the key is deleted. It never throws: a node that cannot be reached, or a script that fails, is `failed`
+   * with a short text. A target without a key has no line.
+   */
+  async deauthorizeManaged(targetId: string): Promise<{ line: "removed" | "not-found" | "failed"; detail?: string }> {
+    let target: Target & { managedHost: string };
+    let blob: string | undefined;
+
+    try {
+      target = this.needManaged(targetId);
+
+      try {
+        blob = this.deps.keys.publicLine(targetId).split(" ")[1];
+      } catch (error) {
+        if (!(error instanceof KeyError && error.code === "no-key")) throw error;
+        return { line: "not-found" };
+      }
+
+      if (!blob) return failed("the public key has no blob");
+      const reply = await this.nodeReply(
+        target.managedHost,
+        "POST",
+        "/deauthorize",
+        { account: target.account, systemType: target.systemType, key: blob, id: targetId },
+        DEAUTHORIZE_TIMEOUT_MS,
+      );
+      const result = isObject(reply.body) ? reply.body.result : undefined;
+      if (result === "removed" || result === "not-found") return { line: result };
+      return failed("the node gave no result");
+    } catch (error) {
+      return failed(message(error));
+    }
   }
 
   /**
@@ -469,6 +506,12 @@ export class SshService {
   private note(text: string): void {
     this.deps.audit(`audit ssh ${text}`);
   }
+}
+
+/** A failed removal. The detail is one short line of text. */
+function failed(text: string): { line: "failed"; detail: string } {
+  const detail = text.replace(/\s+/g, " ").trim().slice(0, MAX_DETAIL);
+  return { line: "failed", detail: detail || "the removal failed" };
 }
 
 /** The `{ line, fingerprint }` entries of the answer of `/scan` and `/hostkey`. */

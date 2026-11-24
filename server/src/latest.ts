@@ -1,5 +1,5 @@
 import { RELEASE_REPO } from "./release";
-import { normalizeVersion } from "./versions";
+import { isTestBuild, normalizeVersion } from "./versions";
 
 export interface LatestRelease {
   version: string;
@@ -57,6 +57,7 @@ export function createLatestRelease(options: {
     }
 
     if (typeof tag !== "string" || !tag) throw new LatestError("GitHub sent no release tag");
+    if (isTestBuild(normalizeVersion(tag))) throw new LatestError("GitHub named a test build as the latest release");
     const at = now();
     const value = { version: normalizeVersion(tag), checkedAt: new Date(at).toISOString() };
     cached = { value, at };

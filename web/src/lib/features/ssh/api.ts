@@ -5,7 +5,7 @@ import { request } from "../../shared/http";
 
 export type UnlockMethod = "prf" | "passphrase";
 export type SystemType = "linux" | "windows" | "synology" | "dropbear";
-export type TargetState = "draft" | "ready" | "disabled" | "retired";
+export type TargetState = "draft" | "ready" | "disabled";
 export type GrantState = "pending" | "active" | "ended";
 export type EndReason = "expired" | "revoked" | "denied" | "node-lost" | "target-disabled" | "hub-restart";
 
@@ -19,6 +19,8 @@ export type SshStatus = {
   credentialId?: string;
   /** Ids of the targets whose key needs one re-lock after a recovery. */
   pendingRewrap: string[];
+  /** False when no target has a key yet: the next passphrase is a new one. */
+  hasKeys?: boolean;
   nodes: NodeStatus[];
 };
 
@@ -94,7 +96,19 @@ export const createTarget = (body: NewTarget) => request<Target>("POST", `${BASE
 export const getTarget = (id: string) => request<TargetDetail>("GET", targetUrl(id));
 export const patchTarget = (id: string, state: "disabled" | "draft") =>
   request<Target>("PATCH", targetUrl(id), { state });
-export const deleteTarget = (id: string) => request<Target & { comment: string }>("DELETE", targetUrl(id));
+/** What a retire did to the key line on the target: removed, not on the target, not removable (failed) or external (manual). */
+export type RetireLine = "removed" | "not-found" | "failed" | "manual";
+export type RetireResult = {
+  id: string;
+  account: string;
+  address: string;
+  port: number;
+  systemType: SystemType;
+  managed: boolean;
+  line: RetireLine;
+  detail?: string;
+};
+export const deleteTarget = (id: string) => request<RetireResult>("DELETE", targetUrl(id));
 
 export const getSalt = (id: string) => request<TargetSalt>("GET", `${targetUrl(id)}/salt`);
 /** Re-locks the key of one target under the new unlock. The code is the recovery code. */

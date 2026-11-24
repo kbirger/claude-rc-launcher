@@ -24,7 +24,7 @@ import type { UpdateRecord } from "./updaterecord";
 import type { UpdateTracker } from "./updatetracker";
 import type { User } from "./userauth";
 import { VERSION } from "./version";
-import { isStale, normalizeVersion, releaseOf, stalestVersion } from "./versions";
+import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "./versions";
 
 /** Reads at most `max` bytes of a small body and cancels the rest. */
 async function readSmall(body: ReadableStream<Uint8Array> | null, max: number): Promise<string> {
@@ -156,7 +156,8 @@ export function hostsApi(options: {
     if (options.latest && (!cachedLatest || Date.now() - Date.parse(cachedLatest.checkedAt) > LATEST_MAX_AGE_MS))
       void options.latest.get().catch(() => {});
     // A node can only install a release, so a local-build hub is the target through the release it is based on.
-    const hubTarget = releaseOf(hubVersion);
+    // A test-build hub is no target: its base can be a release that is not published yet.
+    const hubTarget = installableRelease(hubVersion);
     const probed = await Promise.all(
       options.registry.list().map(async ({ host: hostConfig, client, source }): Promise<HostInfo> => {
         try {

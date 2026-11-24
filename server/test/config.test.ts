@@ -92,6 +92,15 @@ describe("parseConfig", () => {
     });
   });
 
+  test("instance.install_skill is on by default, can be turned off, and must be a boolean", () => {
+    expect(parseConfig(base(), io).installSkill).toBe(true);
+    expect(parseConfig({ ...base(), instance: { install_skill: false } }, io).installSkill).toBe(false);
+    expect(parseConfig({ ...base(), instance: { install_skill: true } }, io).installSkill).toBe(true);
+    expect(problems({ ...base(), instance: { install_skill: "no" } })).toContain(
+      "instance.install_skill must be true or false",
+    );
+  });
+
   test("unknown keys are errors naming the dotted path", () => {
     expect(problems({ ...base(), instance: { rootz: ["/a"] } })).toContain("instance.rootz");
     expect(problems({ ...base(), trust_proxy: true })).toContain("trust_proxy");

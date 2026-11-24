@@ -4,7 +4,7 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import * as Table from "#lib/components/ui/table/index.js";
   import ArrowUp from "@tabler/icons-svelte/icons/circle-arrow-up";
-  import { isBehind } from "../../shared/version";
+  import { isBehind, versionLabel } from "../../shared/version";
   import { cn } from "#lib/utils.js";
   import { onMount } from "svelte";
   import XIcon from "@tabler/icons-svelte/icons/x-filled";
@@ -286,12 +286,16 @@
                     isBehind(host.version, latest) && "text-warning",
                   )}
                 >
-                  {host.version ?? "unknown"}
+                  {host.version === undefined ? "unknown" : versionLabel(host.version)}
                 </Table.Cell>
                 <Table.Cell
                   class={cn("align-top whitespace-nowrap", isBehind(host.clientVersion, latest) && "text-warning")}
                 >
-                  {host.clientVersion ?? (host.noClient ? "none" : "not reported")}
+                  {host.clientVersion === undefined
+                    ? host.noClient
+                      ? "none"
+                      : "not reported"
+                    : versionLabel(host.clientVersion)}
                 </Table.Cell>
               {:else}
                 <Table.Cell colspan={2} class="align-top">{host.status}</Table.Cell>

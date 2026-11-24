@@ -137,6 +137,7 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 |---|---|
 | `update [--release <tag>]` | Update this `claude-rc` binary. |
 | `update --all-nodes [--release <tag>] [--json]` | Update every node, then the hub, then this binary. |
+| `update --node <id>[,<id>...] [--release <tag>] [--json]` | Update only the named nodes, in that order. |
 
 ## Examples
 
@@ -187,6 +188,8 @@ A managed target runs the launcher as a node of this hub. Use `--managed` with i
 ```sh
 claude-rc ssh target add slon --managed slon --type linux --account root --node local
 ```
+
+For a remote host, the address is the host name from its URL. For the host `local`, add `--address` with the LAN address of this machine as the other nodes see it. The hub never derives it from `public_url`.
 
 These flags apply:
 
@@ -448,6 +451,18 @@ is the machine named `local`. The hub restarts, and the command waits for it to 
 client copy that runs the command. One failed machine does not stop the others. The nodes come first because the hub
 watches each node through its event route. A node without that route shows as `error (bad response)` until you update
 it.
+
+To update only some nodes, name them with `--node`:
+
+```sh
+claude-rc update --node nas,pi --release v1.2.3
+```
+
+The command updates the named nodes in the order given, to the release tag or to the latest release. It does not update
+the hub, the other nodes or this client. `--node` and `--all-nodes` cannot be used together. `--binary` is an error here
+too. The command stops before it updates anything when an id is unknown, is named twice or is `local`. The hub updates
+itself only through `--all-nodes`. An offline node is skipped, and the exit code follows the same rules as for
+`--all-nodes`. With `--json`, the rows hold only the named nodes.
 
 While the command runs, it shows the live output of each update. Each line starts with the machine name, as in
 `[a] downloading`. The lines come from the hub, in the order it receives them. The command prints only the lines of

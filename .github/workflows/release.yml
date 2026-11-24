@@ -4,6 +4,8 @@ name: Release
 # command-line client, Windows node and its installer) and publish them as a GitHub release. git-cliff works out the
 # next version and writes the release notes. Run it with dry_run first: it prints the version and the notes and
 # creates nothing. Pushing a tag like v0.1.0 still works as a fallback.
+# With test_build on, the workflow can run from any branch. It publishes an unreviewed pre-release named
+# vX.Y.Z-test.<branch>.<sha7>. Hubs never offer it as an update, because it is not the latest release.
 on:
   push:
     tags: ["v*"]
@@ -17,6 +19,10 @@ on:
         description: Optional. Overrides the computed version, for example 1.0.0
         type: string
         required: false
+      test_build:
+        description: Publish an unreviewed test build of this branch as a pre-release. Leave the version empty.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Refuse a run from a branch other than main
-        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && inputs.test_build != true
         env:
           REF: ${{ github.ref }}
         run: |
@@ -45,11 +51,59 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TEST_BUILD: ${{ inputs.test_build }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           notes="$RUNNER_TEMP/notes.md"
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          test_build=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_TEST_BUILD" = "true" ]; then
+            test_build=true
+          fi
+          if [ "$test_build" = "true" ]; then
+            if [ "${GITHUB_REF_TYPE:-}" != "branch" ]; then
+              echo "::error::A test build needs a branch. This run uses the ${GITHUB_REF_TYPE:-unknown} $GITHUB_REF_NAME."
+              exit 1
+            fi
+            if [ -n "$INPUT_VERSION" ]; then
+              echo "::error::Leave the version input empty for a test build."
+              exit 1
+            fi
+            bumped="$(bunx git-cliff --config cliff.toml --bumped-version)"
+            tag="$(bun scripts/testbuild.ts "${bumped#v}" "$GITHUB_REF_NAME" "$GITHUB_SHA")"
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::error::The tag $tag exists already."
+              exit 1
+            fi
+            # The nearest v* tag that is an ancestor of this commit. Earlier test builds do not count.
+            prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' 2>/dev/null || true)"
+            if [ -n "$prev" ]; then
+              log="$(git log --oneline "$prev..HEAD" | head -n 30 || true)"
+            else
+              log="$(git log --oneline -n 30 || true)"
+            fi
+            {
+              printf 'Unreviewed test build of branch %s at %s. Not for production.\n\n' "$GITHUB_REF_NAME" "$GITHUB_SHA"
+              printf 'Install it with `claude-rc update --node <id> --release %s` or, on the machine itself, `claude-rc node update --release %s`.\n\n' "$tag" "$tag"
+              printf 'Commits since %s (at most 30):\n\n' "${prev:-the start of the history}"
+              printf '%s\n' "$log"
+            } > "$notes"
+            echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+            {
+              echo "## Test build $tag"
+              echo
+              cat "$notes"
+            } | tee -a "$summary"
+            if [ "$INPUT_DRY_RUN" != "false" ]; then
+              echo "Dry run: nothing is built or published."
+              echo "Dry run: nothing is built or published." >> "$summary"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             if [ -n "$INPUT_VERSION" ]; then
               if ! printf '%s' "$INPUT_VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
@@ -60,7 +114,7 @@ jobs:
             else
               bumped="$(bunx git-cliff --config cliff.toml --bumped-version)"
               tag="v${bumped#v}"
-              latest="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+              latest="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' 2>/dev/null || true)"
               if [ "$tag" = "$latest" ]; then
                 echo "Nothing to release since $latest."
                 echo "Nothing to release since $latest." >> "$summary"
@@ -72,11 +126,11 @@ jobs:
               echo "::error::The tag $tag exists already."
               exit 1
             fi
-            prev="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+            prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' 2>/dev/null || true)"
             cliff_args=(--unreleased --tag "$tag")
           else
             tag="$GITHUB_REF_NAME"
-            prev="$(git describe --tags --abbrev=0 --match 'v*' "$tag^" 2>/dev/null || true)"
+            prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' "$tag^" 2>/dev/null || true)"
             cliff_args=(--current)
           fi
           if out="$(bunx git-cliff --config cliff.toml "${cliff_args[@]}")"; then
@@ -141,7 +195,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         # On a dispatch run the tag does not exist yet. gh creates it at this commit.
-        # A version with a hyphen (1.0.0-rc.1) is a pre-release. It must not become the latest release, because every hub reads releases/latest.
+        # A version with a hyphen (1.0.0-rc.1 or a test build 1.0.0-test.branch.sha) is a pre-release. It must not become the latest release, because every hub reads releases/latest.
         run: |
           flags=()
           case "$RELEASE_TAG" in

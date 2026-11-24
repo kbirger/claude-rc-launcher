@@ -34,7 +34,7 @@ interface Call {
 type Ident = typeof id & { uid?: number; gid?: number };
 /** The command behind a setpriv wrapper. */
 const inner = (cmd: string, args: string[]) =>
-  cmd === "setpriv" ? { cmd: args[args.indexOf("--") + 1], args: args.slice(args.indexOf("--") + 2) } : { cmd, args };
+  cmd.endsWith("/setpriv") ? { cmd: args[args.indexOf("--") + 1], args: args.slice(args.indexOf("--") + 2) } : { cmd, args };
 
 function setup(
   res: RunResult | ((target: string) => Promise<RunResult>),
@@ -220,7 +220,7 @@ describe("clone", () => {
     expect(calls).toHaveLength(1);
     const target = join(root, "owned");
     expect(chowns).toEqual([[target, 1001, 1002]]);
-    expect(calls[0].cmd).toBe("setpriv");
+    expect(calls[0].cmd).toMatch(/\/setpriv$/);
   });
 
   test("parent outside roots gives 403", async () => {
@@ -423,7 +423,7 @@ describe("clone", () => {
     expect(clone.state).toBe("failed");
     const rms = rmCalls();
     expect(rms).toHaveLength(1);
-    expect(rms[0].cmd).toBe("setpriv");
+    expect(rms[0].cmd).toMatch(/\/setpriv$/);
     expect(rms[0].args).toEqual([
       "--reuid",
       "1001",

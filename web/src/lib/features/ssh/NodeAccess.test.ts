@@ -118,3 +118,8 @@ test("NodeAccess shows no Save for a node that is off", async () => {
   type(address(target), "192.168.1.10");
   expect(saveButton(target)).toBeUndefined();
 });
+
+test("the source address field keeps autocomplete off", async () => {
+  const target = await show([{ host: "node1", enabled: false, sourceAddress: "" }]);
+  expect(address(target).autocomplete).toBe("off");
+});

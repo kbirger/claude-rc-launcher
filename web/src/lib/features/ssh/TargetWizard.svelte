@@ -20,7 +20,9 @@
   } from "./mutations";
   import { toBase64Url, unlockWithPasskey } from "./prf";
   import { SSH_KEY } from "./queries";
+  import { longEnough, MIN_PASSPHRASE, PASSPHRASE_NAME, TOO_SHORT } from "./passphrase";
   import TargetForm from "./TargetForm.svelte";
+  import UsernameHint from "./UsernameHint.svelte";
 
   // Adds a target and walks it through the key, the host key, the install and the test. Mount it fresh for each use: it
   // reads `targetId` once. With a `targetId` it loads that target and starts at the first step that is not done.
@@ -122,7 +124,9 @@
 
   // A new unlock for one call. The secret is in this call and its caller only. The passphrase field is cleared when
   // the call ends, whatever the answer.
-  async function withUnlock<T>(use: (unlock: Unlock) => Promise<T>): Promise<T> {
+  async function withUnlock<T>(use: (unlock: Unlock) => Promise<T>, isNew = false): Promise<T> {
+    if (status.method !== "prf" && isNew && !longEnough(passphrase)) throw new Error(TOO_SHORT);
+
     try {
       if (status.method === "prf") {
         if (!status.credentialId) throw new Error("The hub has no passkey on record.");
@@ -146,7 +150,10 @@
   const makeKey = () =>
     act(async () => {
       try {
-        const made = await withUnlock((unlock) => keyCall.mutateAsync({ id: target!.id, unlock }));
+        const made = await withUnlock(
+          (unlock) => keyCall.mutateAsync({ id: target!.id, unlock }),
+          status.hasKeys === false,
+        );
         installLine = made.installLine;
         notes = made.notes;
         step = "hostkey";
@@ -207,21 +214,28 @@
   }
 </script>
 
-{#snippet unlockField()}
+{#snippet unlockField(isNew: boolean)}
   {#if status.method === "prf"}
     <p class="text-sm text-muted-foreground">The passkey asks you to confirm.</p>
   {:else}
     <div class="grid gap-1">
       <Label for="{uid}-pass">Passphrase</Label>
+      <UsernameHint />
       <Input
         id="{uid}-pass"
+        name={PASSPHRASE_NAME}
         type="password"
         class="h-11"
-        autocomplete="off"
+        autocomplete={isNew ? "new-password" : "current-password"}
         autocapitalize="off"
         spellcheck={false}
         bind:value={passphrase}
       />
+      {#if isNew}
+        <p class="text-xs text-muted-foreground">
+          Use at least {MIN_PASSPHRASE} characters. A password manager can make and save one.
+        </p>
+      {/if}
     </div>
   {/if}
 {/snippet}
@@ -257,6 +271,7 @@
           hosts={hosts.data}
           {busy}
           {problem}
+          localAddress={status.nodes.find((item) => item.host === "local")?.sourceAddress ?? ""}
           onsubmit={submitForm}
         />
       {:else}
@@ -266,7 +281,7 @@
               ? "passkey"
               : "passphrase"}.
           </p>
-          {@render unlockField()}
+          {@render unlockField(status.hasKeys === false)}
         {:else if step === "hostkey"}
           {#if external}
             <p class="text-sm">
@@ -365,7 +380,7 @@
               </select>
             </div>
           {/if}
-          {@render unlockField()}
+          {@render unlockField(false)}
           {#if testFailure}
             <Alert.Root variant="destructive" role="alert">
               <Alert.Description class="font-mono text-xs {wrap}">{testFailure}</Alert.Description>

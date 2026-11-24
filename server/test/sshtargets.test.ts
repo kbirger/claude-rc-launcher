@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TargetError, TargetStore, authorizedKeysLine, installNotes } from "../src/sshtargets";
@@ -46,6 +46,57 @@ describe("TargetStore", () => {
     await store.add(input);
     expect(await status(store.add(input))).toBe(409);
     expect(store.list()).toHaveLength(1);
+  });
+
+  test("add refuses an id in every state, and the id is free again after remove", async () => {
+    const store = new TargetStore();
+    await store.add({ ...input, address: "10.0.0.1" });
+
+    for (const state of ["draft", "ready", "disabled"] as const) {
+      await store.setState("nas", state);
+      expect(await status(store.add(input))).toBe(409);
+    }
+
+    await store.setKeyFingerprint("nas", "SHA256:old");
+    await store.remove("nas");
+    const again = await store.add({ ...input, address: "10.0.0.2" });
+    expect(again).toMatchObject({ id: "nas", address: "10.0.0.2", state: "draft" });
+    expect(store.get("nas")?.keyFingerprint).toBeUndefined();
+    expect(store.list()).toHaveLength(1);
+  });
+
+  test("the state retired does not exist any more", async () => {
+    const store = new TargetStore();
+    await store.add(input);
+    expect(await status(store.setState("nas", "retired" as never))).toBe(400);
+  });
+
+  test("records with the old state retired are dropped when the store loads", async () => {
+    const record = (id: string, state: string) => ({
+      id,
+      address: "10.0.0.5",
+      port: 22,
+      account: "root",
+      systemType: "linux",
+      nodes: ["pve"],
+      state,
+    });
+    await mkdir(join(dir, "ssh"), { recursive: true });
+    await Bun.write(
+      file,
+      JSON.stringify({
+        version: 1,
+        targets: { old: record("old", "retired"), keep: record("keep", "ready") },
+        nodes: {},
+      }),
+    );
+    const store = new TargetStore(file);
+    expect(store.list().map((target) => target.id)).toEqual(["keep"]);
+    expect(store.get("old")).toBeUndefined();
+    // The id is free, and the next write drops the old record from the file.
+    await store.add({ ...input, id: "old" });
+    const saved = JSON.parse(await readFile(file, "utf8")) as { targets: Record<string, { state: string }> };
+    expect(saved.targets.old.state).toBe("draft");
   });
 
   test("add rejects a port outside 1 to 65535", async () => {

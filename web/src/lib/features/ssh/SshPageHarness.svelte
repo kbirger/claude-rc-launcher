@@ -7,9 +7,10 @@
     client,
     target = null,
     onclose,
-  }: { client: QueryClient; target?: string | null; onclose?: () => void } = $props();
+    canAdmin,
+  }: { client: QueryClient; target?: string | null; onclose?: () => void; canAdmin?: boolean } = $props();
 </script>
 
 <QueryClientProvider {client}>
-  <SshPage {target} {onclose} />
+  <SshPage {target} {onclose} {canAdmin} />
 </QueryClientProvider>

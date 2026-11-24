@@ -380,3 +380,62 @@ test("Cancel on the first step closes the flow without a call", () => {
   expect(closed).toBe(1);
   expect(calls).toEqual([]);
 });
+
+test("both new passphrase fields are new passwords, the code field stays off, and one user name field exists", () => {
+  show();
+  typeCode();
+  const code = document.querySelector<HTMLInputElement>('input[type="text"]')!;
+  expect(code.autocomplete).toBe("off");
+  expect(code.getAttribute("spellcheck")).toBe("false");
+  pick("passphrase");
+  const fields = document.querySelectorAll<HTMLInputElement>('input[type="password"]');
+  expect(fields).toHaveLength(2);
+  for (const field of fields) expect(field.autocomplete).toBe("new-password");
+  expect(fields[0]!.name).toBe("claude-rc-ssh-passphrase");
+  const users = document.querySelectorAll<HTMLInputElement>('input[autocomplete="username"]');
+  expect(users).toHaveLength(1);
+  expect(users[0]!.hidden).toBe(false);
+  expect(document.body.textContent).toContain("at least 12 characters");
+});
+
+test("a passphrase of 11 characters is refused before any call and 12 is sent", async () => {
+  show();
+  typeCode();
+  pick("passphrase");
+  typePassphrases("elevenchars", "elevenchars");
+  press("Continue");
+  await waitText("The passphrase needs at least 12 characters.");
+  expect(calls).toEqual([]);
+  typePassphrases("twelve chars", "twelve chars");
+  press("Continue");
+  await waitText("Each target needs one re-lock");
+});
+
+test("sending the form from the confirmation field continues, so a manager can save the passphrase", async () => {
+  show();
+  typeCode();
+  pick("passphrase");
+  typePassphrases();
+  const again = document.querySelectorAll<HTMLInputElement>('input[type="password"]')[1]!;
+  const form = again.closest("form")!;
+  expect(form).not.toBeNull();
+  expect(form.querySelector('input[type="password"]')).not.toBeNull();
+  expect(document.querySelector<HTMLButtonElement>(`button[form="${form.id}"][type="submit"]`)?.textContent).toContain(
+    "Continue",
+  );
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await waitText("Each target needs one re-lock");
+});
+
+test("a leading byte order mark is not counted, as the hub decodes it away", async () => {
+  show();
+  typeCode();
+  pick("passphrase");
+  typePassphrases("﻿elevenchars", "﻿elevenchars");
+  press("Continue");
+  await waitText("The passphrase needs at least 12 characters.");
+  expect(calls).toEqual([]);
+  typePassphrases("﻿twelve chars", "﻿twelve chars");
+  press("Continue");
+  await waitText("Each target needs one re-lock");
+});

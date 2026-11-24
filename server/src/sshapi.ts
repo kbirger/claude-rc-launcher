@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
+import { LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { logToken } from "./roles";
@@ -31,7 +32,7 @@ export interface SshApiOptions {
   keys: SshKeyStore;
   targets: TargetStore;
   grants: GrantStore;
-  /** The host name of the URL of a node, or `undefined` for an id that is not a host. */
+  /** The host name of the URL of a remote node, or `undefined` for `local` and for an id that is not a host. */
   hostAddress: (hostId: string) => string | undefined;
   /** The ids of all hosts, for the node list of `GET /status`. */
   hostIds: () => string[];
@@ -68,6 +69,8 @@ function text(body: Record<string, unknown>, name: string): string {
   return value;
 }
 
+const MIN_PASSPHRASE = 12;
+
 export function sshApi(options: SshApiOptions): Hono {
   const { service, keys, targets, grants, hostAddress } = options;
   const audit =
@@ -95,6 +98,15 @@ export function sshApi(options: SshApiOptions): Hono {
     return { method, secret: bytes };
   };
 
+  /** A passphrase that is set (not typed to unlock) needs at least MIN_PASSPHRASE characters (code points). The text is never echoed. */
+  const needLongPassphrase = (unlock: UnlockSecret): void => {
+    if (unlock.method !== "passphrase") return;
+    // The decoder drops a leading byte order mark (U+FEFF), so it is not counted. The web counts the same way.
+    let count = 0;
+    for (const _point of new TextDecoder().decode(unlock.secret)) count++;
+    if (count < MIN_PASSPHRASE) throw new HttpError(400, `the passphrase needs at least ${MIN_PASSPHRASE} characters`);
+  };
+
   const wipeUnlocks: MiddlewareHandler = async (context, next) => {
     const list: Uint8Array[] = [];
     unlocks.set(context.req.raw, list);
@@ -113,10 +125,8 @@ export function sshApi(options: SshApiOptions): Hono {
     return target;
   };
 
-  const needLive = (target: Target): Target => {
-    if (target.state === "retired") throw new TargetError(409, "the target is retired");
-    return target;
-  };
+  /** A key that a passphrase can be checked against: it exists and a recovery has not made it wait for a re-wrap. */
+  const hasOpenKey = (targetId: string): boolean => hasKey(targetId) && !keys.pendingRewraps().includes(targetId);
 
   const hasKey = (targetId: string): boolean => {
     try {
@@ -209,6 +219,7 @@ export function sshApi(options: SshApiOptions): Hono {
       ...(method ? { method } : {}),
       ...(credentialId ? { credentialId } : {}),
       pendingRewrap: keys.pendingRewraps(),
+      hasKeys: targets.list().some((item) => hasOpenKey(item.id)),
       nodes,
     });
   });
@@ -268,7 +279,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const body = await readObject(context);
     if (typeof body.enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
     if (typeof body.sourceAddress !== "string") throw new HttpError(400, "sourceAddress is required");
-    if (hostAddress(host) === undefined) throw new HttpError(404, "no such host");
+    if (!options.hostIds().includes(host)) throw new HttpError(404, "no such host");
     await targets.setNodeAccess(host, { enabled: body.enabled, sourceAddress: body.sourceAddress });
     const pushed = await push([host]);
     return context.json({ host, enabled: body.enabled, sourceAddress: body.sourceAddress, pushed });
@@ -288,7 +299,15 @@ export function sshApi(options: SshApiOptions): Hono {
     if (body.address !== undefined && typeof body.address !== "string")
       throw new HttpError(400, "address must be text");
     if (body.port !== undefined && typeof body.port !== "number") throw new HttpError(400, "port must be a number");
-    const address = body.address ?? (body.managedHost !== undefined ? hostAddress(body.managedHost) : undefined);
+    let address = body.address;
+
+    if (address === undefined && body.managedHost === LOCAL_HOST) {
+      // The hub cannot tell how the other nodes see its own host, and the public URL names another machine.
+      const known = targets.nodeAccess(LOCAL_HOST)?.sourceAddress;
+      if (!known) throw new HttpError(400, "give the address of this host: the hub cannot tell it");
+      address = known;
+    } else if (address === undefined && body.managedHost !== undefined) address = hostAddress(body.managedHost);
+
     if (address === undefined) throw new HttpError(400, "address is required");
 
     const target = await targets.add({
@@ -310,7 +329,7 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.patch("/targets/:id", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     if (body.state !== "disabled" && body.state !== "draft")
       throw new HttpError(400, "state must be disabled or draft");
@@ -321,21 +340,44 @@ export function sshApi(options: SshApiOptions): Hono {
     return context.json(targets.get(target.id));
   });
 
+  // A retire deletes the target: the grants end, a managed node removes the key line, then the key and the record go.
+  // The removal can take a few seconds. The target is disabled first, so that no request and no approval gets a key
+  // meanwhile, and the grants end again after the delete. A second retire of the same id gets 409 while the first runs.
+  const retiring = new Set<string>();
+
   hono.delete("/targets/:id", async (context) => {
     const target = needTarget(context);
+    if (retiring.has(target.id)) throw new TargetError(409, "this target is being retired");
+    retiring.add(target.id);
 
-    if (target.state !== "retired") {
+    try {
+      await targets.setState(target.id, "disabled");
       endGrantsOf(target.id);
+      // The key line is read before the key is deleted. A failed removal never stops the retire.
+      const removal: { line: "removed" | "not-found" | "failed" | "manual"; detail?: string } =
+        target.managedHost === undefined ? { line: "manual" } : await service.deauthorizeManaged(target.id);
       await keys.remove(target.id);
-      await targets.setState(target.id, "retired");
+      await targets.remove(target.id);
+      endGrantsOf(target.id);
       await push(target.nodes);
+      audit(`audit ssh target=${logToken(target.id)} retired line=${removal.line}`);
+      return context.json({
+        id: target.id,
+        account: target.account,
+        address: target.address,
+        port: target.port,
+        systemType: target.systemType,
+        managed: target.managedHost !== undefined,
+        line: removal.line,
+        ...(removal.detail !== undefined ? { detail: removal.detail } : {}),
+      });
+    } finally {
+      retiring.delete(target.id);
     }
-
-    return context.json({ ...targets.get(target.id), comment: `claude-rc:${target.id}` });
   });
 
   hono.get("/targets/:id/salt", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const method = keys.method();
     const credentialId = keys.credentialId();
     return context.json({
@@ -351,6 +393,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const code = text(body, "code");
     if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
     const unlock = parseUnlock(context, body.unlock);
+    needLongPassphrase(unlock);
     if (!keys.pendingRewraps().includes(target.id)) throw new TargetError(409, "this target does not need a re-wrap");
     await keys.rewrapWithRecovery(target.id, code, unlock);
     audit(`audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}`);
@@ -358,7 +401,7 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.post("/targets/:id/key", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     const unlock = parseUnlock(context, body.unlock);
     if (hasKey(target.id)) throw new TargetError(409, "the target has a key already");
@@ -370,12 +413,11 @@ export function sshApi(options: SshApiOptions): Hono {
     // A passkey makes another secret for each target (each has its own salt), so there is nothing to check against.
     const other =
       keys.method() === "passphrase"
-        ? targets
-            .list()
-            .find((item) => item.id !== target.id && hasKey(item.id) && !keys.pendingRewraps().includes(item.id))
+        ? targets.list().find((item) => item.id !== target.id && hasOpenKey(item.id))
         : undefined;
 
     if (other) (await keys.open(other.id, unlock)).destroy();
+    else needLongPassphrase(unlock);
 
     const made = await keys.create(target.id, unlock);
     await targets.setKeyFingerprint(target.id, made.fingerprint);
@@ -388,13 +430,13 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.post("/targets/:id/scan", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     return context.json({ keys: await service.scanHostKey(target.id, text(body, "node")) });
   });
 
   hono.post("/targets/:id/pin", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     const hostKey = text(body, "hostKey");
     if (!HOST_KEY_RE.test(hostKey)) throw new HttpError(400, "hostKey must be `<type> <base64>`");
@@ -403,23 +445,23 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.post("/targets/:id/pin-managed", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     return context.json({ keys: await service.pinManaged(target.id) });
   });
 
   hono.get("/targets/:id/provision", (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     return context.json(provisionScript(target.systemType, installLine(target), { account: target.account }));
   });
 
   hono.post("/targets/:id/authorize", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     await service.authorizeManaged(target.id);
     return context.json({ ok: true });
   });
 
   hono.post("/targets/:id/test", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     const node = text(body, "node");
     const unlock = parseUnlock(context, body.unlock);
