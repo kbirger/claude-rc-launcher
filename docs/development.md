@@ -40,6 +40,8 @@ published as a separate asset, because the one-line Windows install
 (`irm .../releases/latest/download/install.ps1 | iex`) downloads it by that name.
 
 A version with a hyphen, such as `1.0.0-rc.1`, is published as a pre-release and not as the latest release, so hubs do not offer it as an update.
+Use `rc`, `alpha` or `beta` for the pre-release name, such as `1.0.0-beta.2`. Only these names count as a release for git-cliff.
+A tag with another pre-release name does not start a new range of commits in the notes. Test build tags never count.
 
 [git-cliff](https://git-cliff.org) works out the version and the notes from the commit messages since the last tag.
 The rules are in `cliff.toml`.
@@ -70,8 +72,11 @@ A test build is an unreviewed build of any branch. Use it to try a branch on a r
 3. Run it with `dry_run` on first. The run prints the tag and the notes and builds nothing.
 4. Read the tag and the notes. If they are right, run the workflow again with `dry_run` off.
 
+If no commit needs a new version, the test build is based on the latest released version and not on a next version.
+
 The tag looks like `v0.33.1-test.feat.ssh.delegation.5bf4ca1`. It has the next version, the word `test`, the branch name, and
-the first seven characters of the commit. The branch name is lower case. Every other character becomes a dot, and the name is cut to 30 characters.
+the first seven characters of the commit. The branch name is lower case. Each group of characters that are not letters or digits becomes one dot. The name is cut to 30 characters.
+A name with no letters or digits becomes `branch`.
 The run stops if the tag exists already. The notes start with a line that says the build is unreviewed. Then they show how to install it and
 the commits since the latest release tag.
 
