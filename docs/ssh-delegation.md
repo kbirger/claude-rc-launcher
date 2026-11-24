@@ -195,7 +195,7 @@ A passkey must support the WebAuthn PRF extension. This extension lets the passk
 
 A passphrase works on any device. The hub derives a wrapping key from the passphrase and a salt for each target. All keys use the same passphrase. When you add a second key, the hub first checks your passphrase against an existing key.
 
-A password manager can generate, save and fill the passphrase. It can fill the passphrase field on the first key, on the test step, on each approval and on a recovery. It does not fill the recovery code or the target fields. A passphrase needs at least 12 characters when you set it. The hub counts characters, not bytes. An older shorter passphrase keeps working until you recover and set a new one.
+A password manager can generate, save and fill the passphrase. It can fill the passphrase field on the first key and on the test step. It can also fill it on each approval and on a recovery. It does not fill the recovery code or the target fields. A passphrase needs at least 12 characters when you set it. The hub counts characters, not bytes. An older shorter passphrase keeps working until you recover and set a new one.
 
 With a passkey, the SSH access page has a `Check my passkey` button for admins. A tap asks the passkey for one secret and sends nothing to the hub. A good result proves that the passkey returns a PRF secret now. It does not make sure that the hub keys open.
 
