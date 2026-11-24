@@ -2,7 +2,7 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import { toBase64Url, UnlockError, unlockWithPasskey, PRF_MISSING } from "./prf";
 
-  let { credentialId }: { credentialId: string } = $props();
+  let { credentialId, busy = false }: { credentialId: string; busy?: boolean } = $props();
 
   const HINT = "If the phone showed no passkey to pick, wait a few seconds and try again.";
   let running = $state(false);
@@ -16,11 +16,9 @@
     result = null;
 
     try {
-      const secret = await unlockWithPasskey(credentialId, toBase64Url(crypto.getRandomValues(new Uint8Array(32))));
-      result =
-        secret.length > 0
-          ? { ok: true, text: "Your passkey returned a PRF secret. It works.", hint: false }
-          : { ok: false, text: PRF_MISSING, hint: false };
+      // unlockWithPasskey throws when no secret comes back, so a return means success. The value is discarded.
+      await unlockWithPasskey(credentialId, toBase64Url(crypto.getRandomValues(new Uint8Array(32))));
+      result = { ok: true, text: "Your passkey returned a PRF secret. It works.", hint: false };
     } catch (error) {
       const text = error instanceof UnlockError ? error.message : "The passkey check failed";
       result = { ok: false, text, hint: text !== PRF_MISSING };
@@ -31,7 +29,7 @@
 </script>
 
 <div class="mt-2">
-  <Button variant="outline" size="touch" disabled={running} onclick={check}>
+  <Button variant="outline" size="touch" disabled={running || busy} onclick={check}>
     {running ? "Checking..." : "Check my passkey"}
   </Button>
   <p class="mt-2 text-sm" aria-live="polite">

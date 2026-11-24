@@ -18,7 +18,7 @@
   let {
     target = null,
     onclose,
-    canAdmin = true,
+    canAdmin = false,
   }: { target?: string | null; onclose?: () => void; canAdmin?: boolean } = $props();
 
   const query = createQuery(() => statusQuery());
@@ -48,7 +48,7 @@
 <h2 class="font-heading mb-3 text-lg font-bold">SSH access</h2>
 <!-- The passkey check is outside the branches below, so that a failed refetch of the status cannot drop its result. -->
 {#if canAdmin && !holding && query.data?.setUp && query.data.method === "prf" && query.data.credentialId}
-  <CheckPasskey credentialId={query.data.credentialId} />
+  <CheckPasskey credentialId={query.data.credentialId} busy={recovering || !!wizard || !!approving} />
 {/if}
 {#if holding || (query.data && !query.data.setUp)}
   <SetupForm bind:holding />

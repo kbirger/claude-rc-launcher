@@ -192,7 +192,7 @@ A passkey must support the WebAuthn PRF extension. This extension lets the passk
 
 A passphrase works on any device. The hub derives a wrapping key from the passphrase and a salt for each target. All keys use the same passphrase. When you add a second key, the hub first checks your passphrase against an existing key.
 
-With a passkey, the SSH access page has a `Check my passkey` button for admins. A tap asks the passkey for one secret and sends nothing to the hub. A pass proves that the passkey returns a PRF secret now. It does not make sure that the hub keys open.
+With a passkey, the SSH access page has a `Check my passkey` button for admins. A tap asks the passkey for one secret and sends nothing to the hub. A good result proves that the passkey returns a PRF secret now. It does not make sure that the hub keys open.
 
 A wrong unlock fails with `the unlock does not open the key`. No grant is lost. Try again.
 
