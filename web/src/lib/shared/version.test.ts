@@ -39,3 +39,28 @@ test("versionLabel shows a test build as its base plus (test build) and leaves o
   expect(versionLabel("0.12.4+x.abc")).toBe("0.12.4+x.abc");
   expect(versionLabel("dev")).toBe("dev");
 });
+
+test("a local build on top of a test tag is a test build based on the release", () => {
+  const value = "0.33.1-test.ssh.5bf4ca1+branch.sha";
+  expect(isTestBuild(value)).toBe(true);
+  expect(releaseOf(value)).toBe("0.33.1");
+  expect(isBehind(value, "0.33.1")).toBe(false);
+  expect(isBehind("0.33.0-test.ssh.5bf4ca1+branch.sha", "0.33.1")).toBe(true);
+  expect(versionLabel(value)).toBe("0.33.1 (test build)");
+});
+
+test("results for local builds, dev and releases are unchanged", () => {
+  expect(releaseOf("0.8.3+branch.sha")).toBe("0.8.3");
+  expect(isTestBuild("0.8.3+branch.sha")).toBe(false);
+  expect(versionLabel("0.8.3+branch.sha")).toBe("0.8.3+branch.sha");
+  expect(releaseOf("dev")).toBeUndefined();
+  expect(releaseOf("0.8.3-rc.1")).toBe("0.8.3-rc.1");
+});
+
+test("edge cases of the test build form", () => {
+  expect(isTestBuild("0.33.1-test.")).toBe(false);
+  expect(isTestBuild("0.33.1-test..")).toBe(false);
+  expect(isTestBuild("0.33.1-test.a..b")).toBe(false);
+  expect(isTestBuild("0.33.1-test.a-b")).toBe(false);
+  expect(isTestBuild("0.33.1-test.a")).toBe(true);
+});

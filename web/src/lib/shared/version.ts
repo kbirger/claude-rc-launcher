@@ -1,6 +1,6 @@
 // Same rules as server/src/versions.ts (the web page cannot import the server).
 const KNOWN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const TEST_BUILD = /^(\d+\.\d+\.\d+)-test\.[0-9A-Za-z.]+$/;
+const TEST_BUILD = /^(\d+\.\d+\.\d+)-test\.[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*(?:\+[0-9A-Za-z.-]+)?$/;
 const LOCAL_BUILD = /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\+[0-9A-Za-z.-]+$/;
 
 /** True for a test build such as `0.33.1-test.ssh.5bf4ca1` (an unreviewed build of a branch). */

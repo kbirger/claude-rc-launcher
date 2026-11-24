@@ -13,7 +13,7 @@ export function isKnownVersion(value: string | undefined): value is string {
 }
 
 /** A test build: an unreviewed build of a branch, `X.Y.Z-test.<branch>.<sha>`. It is published as a GitHub pre-release. */
-const TEST_BUILD = /^(\d+\.\d+\.\d+)-test\.[0-9A-Za-z.]+$/;
+const TEST_BUILD = /^(\d+\.\d+\.\d+)-test\.[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*(?:\+[0-9A-Za-z.-]+)?$/;
 
 /** True for a test build such as `0.33.1-test.ssh.5bf4ca1`. */
 export function isTestBuild(value: string | undefined): boolean {
