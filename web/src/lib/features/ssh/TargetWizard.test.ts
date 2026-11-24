@@ -545,3 +545,9 @@ test("the target form fields keep autocomplete off", () => {
   expect(fields.length).toBeGreaterThan(0);
   for (const field of fields) expect(field.autocomplete).toBe("off");
 });
+
+test("a status without hasKeys asks for the current password and shows no rule", async () => {
+  await resumeAt({}, PASSPHRASE);
+  expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.autocomplete).toBe("current-password");
+  expect(document.body.textContent).not.toContain("at least 12 characters");
+});

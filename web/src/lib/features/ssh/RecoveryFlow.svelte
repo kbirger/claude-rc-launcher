@@ -228,7 +228,14 @@
       <Sheet.Title>Recover SSH access</Sheet.Title>
       <Sheet.Description class="sr-only">Use the recovery code to choose a new unlock method.</Sheet.Description>
     </Sheet.Header>
-    <div class="grid min-w-0 gap-3 px-4">
+    <form
+      id="{uid}-form"
+      class="grid min-w-0 gap-3 px-4"
+      onsubmit={(event) => {
+        event.preventDefault();
+        if (step === "code" && !untested && !busy) void start();
+      }}
+    >
       {#if note && step === "code"}
         <p class="text-sm text-muted-foreground" role="status">{note}</p>
       {/if}
@@ -363,7 +370,7 @@
       {#if untested && step === "code"}
         <p class="text-sm">Tap to test the passkey you just created.</p>
       {/if}
-    </div>
+    </form>
     <Sheet.Footer class="px-4">
       {#if step === "code"}
         {#if untested}
@@ -371,7 +378,7 @@
             {busy ? "Working..." : "Test your passkey"}
           </Button>
         {:else}
-          <Button type="button" size="touch" disabled={busy} onclick={start}>
+          <Button type="submit" form="{uid}-form" size="touch" disabled={busy}>
             {busy ? "Working..." : "Continue"}
           </Button>
         {/if}
