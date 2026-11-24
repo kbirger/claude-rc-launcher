@@ -101,8 +101,9 @@ export function sshApi(options: SshApiOptions): Hono {
   /** A passphrase that is set (not typed to unlock) needs at least MIN_PASSPHRASE characters (code points). The text is never echoed. */
   const needLongPassphrase = (unlock: UnlockSecret): void => {
     if (unlock.method !== "passphrase") return;
+    // The decoder drops a leading byte order mark (U+FEFF), so it is not counted. The web counts the same way.
     let count = 0;
-    for (const point of new TextDecoder().decode(unlock.secret)) count += point.length > 0 ? 1 : 0;
+    for (const _point of new TextDecoder().decode(unlock.secret)) count++;
     if (count < MIN_PASSPHRASE) throw new HttpError(400, `the passphrase needs at least ${MIN_PASSPHRASE} characters`);
   };
 
@@ -128,6 +129,9 @@ export function sshApi(options: SshApiOptions): Hono {
     if (target.state === "retired") throw new TargetError(409, "the target is retired");
     return target;
   };
+
+  /** A key that a passphrase can be checked against: it exists and a recovery has not made it wait for a re-wrap. */
+  const hasOpenKey = (targetId: string): boolean => hasKey(targetId) && !keys.pendingRewraps().includes(targetId);
 
   const hasKey = (targetId: string): boolean => {
     try {
@@ -220,7 +224,7 @@ export function sshApi(options: SshApiOptions): Hono {
       ...(method ? { method } : {}),
       ...(credentialId ? { credentialId } : {}),
       pendingRewrap: keys.pendingRewraps(),
-      hasKeys: targets.list().some((item) => hasKey(item.id)),
+      hasKeys: targets.list().some((item) => hasOpenKey(item.id)),
       nodes,
     });
   });
@@ -391,9 +395,7 @@ export function sshApi(options: SshApiOptions): Hono {
     // A passkey makes another secret for each target (each has its own salt), so there is nothing to check against.
     const other =
       keys.method() === "passphrase"
-        ? targets
-            .list()
-            .find((item) => item.id !== target.id && hasKey(item.id) && !keys.pendingRewraps().includes(item.id))
+        ? targets.list().find((item) => item.id !== target.id && hasOpenKey(item.id))
         : undefined;
 
     if (other) (await keys.open(other.id, unlock)).destroy();
