@@ -27,7 +27,8 @@ A test build never counts as the latest release. The hub ignores it when it look
 release notes never list it. The hub compares a test build by the release it is based on, as for a local build. The
 suffix does not count. A machine that runs a test build is never stale only because the suffix differs from the latest
 release. The hub never offers a test build as the target of an update. The banner never offers an older release to a
-machine that runs a test build.
+machine that runs a test build. A hub that runs a test build gives its nodes no update target, because the base release
+can be unpublished. Update the nodes with `claude-rc update --node <id> --release <tag>`.
 
 To put a test build on a node, run one of these commands:
 
@@ -51,7 +52,7 @@ A machine is stale in these cases:
 
 - The hub is older than the latest GitHub release. This applies to the service and to the client.
 - A node is older than the hub. This applies to the service and to the client.
-- A local build such as `0.8.3+branch.sha` is compared by the release it is based on (`0.8.3`). The `+branch.sha` part does not count. The page shows it as `0.8.3 (local build)`.
+- A local build such as `0.8.3+branch.sha` is compared by the release it is based on (`0.8.3`). The `+branch.sha` part does not count. The page shows the raw version, for example `0.8.3+branch.sha`.
 - A test build such as `0.33.1-test.ssh.5bf4ca1` is compared by the release it is based on (`0.33.1`). Read [Test builds](#test-builds).
 - A version of `dev` has no release. It is never stale.
 - If a machine has two client copies, the older copy decides.
@@ -77,7 +78,7 @@ wait for the next poll. The hub logs one line when the status or the reason of a
 A machine shows its client in one of four ways:
 
 - The version, for example `0.8.4`, when the node found a client.
-- `client 0.8.4 (local build)`, when the client is a local build. It is compared by the release it is based on. A client of version `dev` shows as `client local build` and is never marked stale.
+- `client 0.8.4+branch.sha`, when the client is a local build. It is compared by the release it is based on. A client of version `dev` shows as `client dev` and is never marked stale.
 - `no client`, when the node looked and found none.
 - `client not reported`, when the node is too old to report clients or the answer is missing.
 
