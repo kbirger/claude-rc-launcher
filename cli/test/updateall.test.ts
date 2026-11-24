@@ -10,7 +10,7 @@ import { HubError } from "../src/hub";
 import type { HubClient } from "../src/hub";
 import { main } from "../src/index";
 import type { Sys } from "../src/nodesetup";
-import { updateAll, watchLogs } from "../src/updateall";
+import { updateAll, updateNodes, watchLogs } from "../src/updateall";
 import { defined } from "./support";
 
 const EXE = "/usr/local/bin/claude-rc";
@@ -756,5 +756,164 @@ describe("updateAll live output: safety and scope", () => {
     });
     expect(harness.count()).toBe(32);
     expect(live(harness)).toEqual(["[local] after restart"]);
+  });
+});
+
+describe("updateNodes (update --node)", () => {
+  async function runNodes(flags: Record<string, unknown>, hosts: Host[] = ALL, nodes: Record<string, Node> = GOOD) {
+    const hub = fakeHub(hosts, nodes);
+    const sys = fakeSys();
+    const out: string[] = [];
+    const err: string[] = [];
+    let error: ExitError | undefined;
+
+    try {
+      await updateNodes({
+        flags,
+        hub: hub.hub,
+        out: (line) => out.push(line),
+        err: (line) => err.push(line),
+        sys: sys.sys,
+      });
+    } catch (caught) {
+      if (!(caught instanceof ExitError)) throw caught;
+      error = caught;
+    }
+
+    const text = out.join("\n");
+    const row = (name: string) => text.split("\n").find((part) => part.startsWith(`${name} `)) ?? "";
+    return { ...hub, sys, out, text, error, row };
+  }
+
+  const posts = (outcome: { calls: Call[] }) =>
+    outcome.calls.filter((call) => call.method === "POST").map((call) => call.path);
+
+  test("updates only the named nodes, in the order given, and not the hub, other nodes or the client", async () => {
+    const outcome = await runNodes({ node: "beta,alpha" });
+    expect(outcome.error).toBeUndefined();
+    expect(posts(outcome)).toEqual(["/cli/api/hosts/beta/update", "/cli/api/hosts/alpha/update"]);
+    expect(outcome.sys.calls).toEqual([]);
+    expect(outcome.row("alpha")).toMatch(/updated$/);
+    expect(outcome.row("beta")).toMatch(/updated$/);
+    expect(outcome.row("local")).toBe("");
+    expect(outcome.row("client")).toBe("");
+  });
+
+  test("--release goes to each named node; without it the body is empty", async () => {
+    const withTag = await runNodes({ node: "alpha", release: "v0.33.1-test.ssh.5bf4ca1" });
+    for (const call of withTag.calls.filter((item) => item.method === "POST"))
+      expect(call.body).toEqual({ release: "v0.33.1-test.ssh.5bf4ca1" });
+    const without = await runNodes({ node: "alpha" });
+    for (const call of without.calls.filter((item) => item.method === "POST")) expect(call.body).toEqual({});
+  });
+
+  test("the id local is refused and the message names --all-nodes", async () => {
+    const outcome = await runNodes({ node: "alpha,local" });
+    expect(posts(outcome)).toEqual([]);
+    expect(outcome.error?.code).toBe(1);
+    expect(outcome.error?.message).toContain("--all-nodes");
+  });
+
+  test("an unknown id is refused before anything runs", async () => {
+    const outcome = await runNodes({ node: "alpha,nope" });
+    expect(posts(outcome)).toEqual([]);
+    expect(outcome.error?.code).toBe(1);
+    expect(outcome.error?.message).toContain("nope");
+  });
+
+  test("a duplicate id is refused before anything runs", async () => {
+    const outcome = await runNodes({ node: "alpha,beta,alpha" });
+    expect(posts(outcome)).toEqual([]);
+    expect(outcome.error?.code).toBe(1);
+    expect(outcome.error?.message).toContain("alpha");
+    expect(outcome.error?.message).toContain("more than once");
+  });
+
+  test("an empty id is refused", async () => {
+    for (const value of ["", "alpha,,beta"]) {
+      const outcome = await runNodes({ node: value });
+      expect(posts(outcome)).toEqual([]);
+      expect(outcome.error?.code).toBe(1);
+    }
+  });
+
+  test("--binary and a bad --release are refused before any request", async () => {
+    const binary = await runNodes({ node: "alpha", binary: "/tmp/x" });
+    expect(binary.calls).toEqual([]);
+    expect(binary.error?.message).toContain("--binary");
+    const tag = await runNodes({ node: "alpha", release: "latest" });
+    expect(tag.calls).toEqual([]);
+    expect(tag.error?.message).toContain("--release");
+  });
+
+  test("--node together with --all-nodes is a usage error", async () => {
+    const outcome = await runNodes({ node: "alpha", "all-nodes": true });
+    expect(outcome.calls).toEqual([]);
+    expect(outcome.error?.code).toBe(1);
+    expect(outcome.error?.message).toContain("--all-nodes");
+  });
+
+  test("an offline node is skipped and gives exit 1 like --all-nodes", async () => {
+    const outcome = await runNodes({ node: "alpha,beta" }, [host("local"), host("alpha", "1.0.0", "offline"), host("beta")]);
+    expect(posts(outcome)).toEqual(["/cli/api/hosts/beta/update"]);
+    expect(outcome.row("alpha")).toContain("skipped (offline");
+    expect(outcome.error?.message).toBe("1 of 2 machines were not updated");
+  });
+
+  test("a node that is too old, and a failed node, behave as in --all-nodes", async () => {
+    const outcome = await runNodes({ node: "alpha,beta" }, ALL, {
+      alpha: { update: new HubError("no route", 404, undefined) },
+      beta: { update: { status: "failed", from: "1.0.0", clients: [], error: "boom" } },
+    });
+    expect(outcome.row("alpha")).toContain(TOO_OLD);
+    expect(outcome.row("beta")).toContain("failed (boom)");
+    expect(outcome.error?.message).toBe("2 of 2 machines were not updated");
+  });
+
+  test("--json prints only the rows of the named nodes", async () => {
+    const outcome = await runNodes({ node: "beta", json: true });
+    const rows = JSON.parse(defined(outcome.out.at(-1)));
+    expect(rows.map((row: { machine: string }) => row.machine)).toEqual(["beta"]);
+    expect(rows[0].status).toBe("updated");
+  });
+});
+
+describe("index: update --node", () => {
+  const env = () => ({
+    credsFile: path.join(mkdtempSync(path.join(os.tmpdir(), "rc-un-")), "credentials.json"),
+    open: async () => {},
+    readLine: () => Promise.resolve(""),
+  });
+  const attempt = async (...argv: string[]) => {
+    const err: string[] = [];
+    const code = await main(argv, { out: () => {}, err: (line) => err.push(line) }, env());
+    return { code, text: err.join("\n") };
+  };
+
+  test("without a login it gives the login message (exit 2)", async () => {
+    const outcome = await attempt("update", "--node", "a");
+    expect(outcome.code).toBe(2);
+    expect(outcome.text).toBe(LOGIN_MESSAGE);
+  });
+
+  test("--node with --all-nodes is a usage error before the login check", async () => {
+    const outcome = await attempt("update", "--node", "a", "--all-nodes");
+    expect(outcome.code).toBe(1);
+    expect(outcome.text).toContain("--node");
+    expect(outcome.text).toContain("--all-nodes");
+  });
+
+  test("--binary and stray flags are refused before the login check", async () => {
+    const binary = await attempt("update", "--node", "a", "--binary", "/tmp/x");
+    expect(binary.code).toBe(1);
+    expect(binary.text).toContain("--binary");
+    const stray = await attempt("update", "--node", "a", "--lines", "3");
+    expect(stray.code).toBe(1);
+    expect(stray.text).toContain("--lines does not apply to update");
+  });
+
+  test("an empty --node is a usage error", async () => {
+    const outcome = await attempt("update", "--node", "");
+    expect(outcome.code).toBe(1);
   });
 });
