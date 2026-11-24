@@ -323,6 +323,37 @@ test("a managed target is sent with its managed host and an optional address", a
   });
 });
 
+const pickLocal = async (status: SshStatus) => {
+  answers["GET /api/hosts"] = () => ({ body: [{ id: "local", name: "Hub", status: "ok" }] });
+  show(status);
+  label("Managed").querySelector("input")!.click();
+  flushSync();
+  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="local"]')).not.toBeNull());
+  typeInto('input[id$="-id"]', "hubhost");
+  choose('select[id$="-host"]', "local");
+  typeInto('input[id$="-account"]', "root");
+  label("node1").querySelector("input")!.click();
+  flushSync();
+};
+
+test("a managed target of local prefills the address from the source address of the node local", async () => {
+  answers["POST /api/ssh/targets"] = () => ({ body: detail({ managedHost: "local" }) });
+  await pickLocal({ ...PRF, nodes: [...PRF.nodes, { host: "local", enabled: false, sourceAddress: "192.168.1.5" }] });
+  expect(document.querySelector<HTMLInputElement>('input[id$="-address"]')!.value).toBe("192.168.1.5");
+  expect(document.body.textContent).toContain("LAN address of this machine as the other nodes see it");
+  press("Create target");
+  await waitText("Step 2 of 6");
+  expect(posts()[0]!.body).toMatchObject({ managedHost: "local", address: "192.168.1.5" });
+});
+
+test("a managed target of local needs an address when the node local has no source address", async () => {
+  await pickLocal(PRF);
+  expect(document.querySelector<HTMLInputElement>('input[id$="-address"]')!.value).toBe("");
+  expect(button("Create target")!.disabled).toBe(true);
+  typeInto('input[id$="-address"]', "192.168.1.9");
+  expect(button("Create target")!.disabled).toBe(false);
+});
+
 const toTest = (extra: Partial<TargetDetail> = {}, status = PRF) =>
   resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, ...extra }, status).then((client) => {
     press("I installed it");

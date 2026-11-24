@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
+import { LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { logToken } from "./roles";
@@ -31,7 +32,7 @@ export interface SshApiOptions {
   keys: SshKeyStore;
   targets: TargetStore;
   grants: GrantStore;
-  /** The host name of the URL of a node, or `undefined` for an id that is not a host. */
+  /** The host name of the URL of a remote node, or `undefined` for `local` and for an id that is not a host. */
   hostAddress: (hostId: string) => string | undefined;
   /** The ids of all hosts, for the node list of `GET /status`. */
   hostIds: () => string[];
@@ -268,7 +269,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const body = await readObject(context);
     if (typeof body.enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
     if (typeof body.sourceAddress !== "string") throw new HttpError(400, "sourceAddress is required");
-    if (hostAddress(host) === undefined) throw new HttpError(404, "no such host");
+    if (!options.hostIds().includes(host)) throw new HttpError(404, "no such host");
     await targets.setNodeAccess(host, { enabled: body.enabled, sourceAddress: body.sourceAddress });
     const pushed = await push([host]);
     return context.json({ host, enabled: body.enabled, sourceAddress: body.sourceAddress, pushed });
@@ -288,7 +289,15 @@ export function sshApi(options: SshApiOptions): Hono {
     if (body.address !== undefined && typeof body.address !== "string")
       throw new HttpError(400, "address must be text");
     if (body.port !== undefined && typeof body.port !== "number") throw new HttpError(400, "port must be a number");
-    const address = body.address ?? (body.managedHost !== undefined ? hostAddress(body.managedHost) : undefined);
+    let address = body.address;
+
+    if (address === undefined && body.managedHost === LOCAL_HOST) {
+      // The hub cannot tell how the other nodes see its own host, and the public URL names another machine.
+      const known = targets.nodeAccess(LOCAL_HOST)?.sourceAddress;
+      if (!known) throw new HttpError(400, "give the address of this host: the hub cannot tell it");
+      address = known;
+    } else if (address === undefined && body.managedHost !== undefined) address = hostAddress(body.managedHost);
+
     if (address === undefined) throw new HttpError(400, "address is required");
 
     const target = await targets.add({

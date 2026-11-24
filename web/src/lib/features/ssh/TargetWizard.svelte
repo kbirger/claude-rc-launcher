@@ -257,6 +257,7 @@
           hosts={hosts.data}
           {busy}
           {problem}
+          localAddress={status.nodes.find((item) => item.host === "local")?.sourceAddress ?? ""}
           onsubmit={submitForm}
         />
       {:else}
