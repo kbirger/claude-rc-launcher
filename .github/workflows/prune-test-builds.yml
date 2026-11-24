@@ -30,22 +30,32 @@ jobs:
         run: |
           set -euo pipefail
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
-          if ! printf '%s' "$INPUT_KEEP" | grep -Eq '^[0-9]+$'; then
-            echo "::error::The keep input must be a whole number of 0 or more."
+          if ! printf '%s' "$INPUT_KEEP" | grep -Eq '^[0-9]{1,6}$'; then
+            echo "::error::The keep input must be a whole number from 0 to 999999."
             exit 1
           fi
           keep=$((10#$INPUT_KEEP))
-          # Only a pre-release whose tag matches the test build pattern is a candidate. The newest come first.
-          gh release list --json tagName,createdAt,isPrerelease --limit 200 > "$RUNNER_TEMP/releases.json"
-          jq -r '[.[] | select(.isPrerelease == true and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test\\.")))]
+          limit=1000
+          # Only a published pre-release whose tag matches the test build pattern is a candidate. The newest come first.
+          gh release list --json tagName,createdAt,isPrerelease,isDraft --limit "$limit" > "$RUNNER_TEMP/releases.json"
+          if [ "$(jq 'length' "$RUNNER_TEMP/releases.json")" -ge "$limit" ]; then
+            echo "::warning::The list reached $limit releases. Older test builds are not listed and are not pruned."
+          fi
+          jq -r '[.[] | select(.isPrerelease == true and .isDraft != true and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test\\.")))]
                  | sort_by(.createdAt) | reverse | .[].tagName' "$RUNNER_TEMP/releases.json" > "$RUNNER_TEMP/all.txt"
           total="$(wc -l < "$RUNNER_TEMP/all.txt")"
           tail -n "+$((keep + 1))" "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/old.txt"
+          candidates="$(wc -l < "$RUNNER_TEMP/old.txt")"
+          done_count=0
+          finish() {
+            if [ "$INPUT_DRY_RUN" = "false" ]; then
+              echo "Deleted $done_count of $candidates ($total test builds found)." | tee -a "$summary"
+            else
+              echo "Dry run: would delete $candidates of $total test builds. Nothing was deleted." | tee -a "$summary"
+            fi
+          }
+          trap finish EXIT
           echo "Test builds found: $total. Kept: the newest $keep." | tee -a "$summary"
-          if [ ! -s "$RUNNER_TEMP/old.txt" ]; then
-            echo "Nothing to delete." | tee -a "$summary"
-            exit 0
-          fi
           while IFS= read -r tag; do
             # Check the pattern again, so that nothing else is ever deleted.
             if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-test\.'; then
@@ -54,11 +64,9 @@ jobs:
             fi
             if [ "$INPUT_DRY_RUN" = "false" ]; then
               gh release delete "$tag" --cleanup-tag --yes
+              done_count=$((done_count + 1))
               echo "Deleted $tag" | tee -a "$summary"
             else
               echo "Would delete $tag" | tee -a "$summary"
             fi
           done < "$RUNNER_TEMP/old.txt"
-          if [ "$INPUT_DRY_RUN" != "false" ]; then
-            echo "Dry run: nothing was deleted." | tee -a "$summary"
-          fi

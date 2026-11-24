@@ -62,6 +62,10 @@ jobs:
             test_build=true
           fi
           if [ "$test_build" = "true" ]; then
+            if [ "${GITHUB_REF_TYPE:-}" != "branch" ]; then
+              echo "::error::A test build needs a branch. This run uses the ${GITHUB_REF_TYPE:-unknown} $GITHUB_REF_NAME."
+              exit 1
+            fi
             if [ -n "$INPUT_VERSION" ]; then
               echo "::error::Leave the version input empty for a test build."
               exit 1
@@ -82,7 +86,7 @@ jobs:
             {
               printf 'Unreviewed test build of branch %s at %s. Not for production.\n\n' "$GITHUB_REF_NAME" "$GITHUB_SHA"
               printf 'Install it with `claude-rc update --node <id> --release %s` or, on the machine itself, `claude-rc node update --release %s`.\n\n' "$tag" "$tag"
-              printf 'Commits since %s:\n\n' "${prev:-the start of the history}"
+              printf 'Commits since %s (at most 30):\n\n' "${prev:-the start of the history}"
               printf '%s\n' "$log"
             } > "$notes"
             echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
@@ -110,7 +114,7 @@ jobs:
             else
               bumped="$(bunx git-cliff --config cliff.toml --bumped-version)"
               tag="v${bumped#v}"
-              latest="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+              latest="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' 2>/dev/null || true)"
               if [ "$tag" = "$latest" ]; then
                 echo "Nothing to release since $latest."
                 echo "Nothing to release since $latest." >> "$summary"
@@ -122,11 +126,11 @@ jobs:
               echo "::error::The tag $tag exists already."
               exit 1
             fi
-            prev="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+            prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' 2>/dev/null || true)"
             cliff_args=(--unreleased --tag "$tag")
           else
             tag="$GITHUB_REF_NAME"
-            prev="$(git describe --tags --abbrev=0 --match 'v*' "$tag^" 2>/dev/null || true)"
+            prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-test.*' "$tag^" 2>/dev/null || true)"
             cliff_args=(--current)
           fi
           if out="$(bunx git-cliff --config cliff.toml "${cliff_args[@]}")"; then
