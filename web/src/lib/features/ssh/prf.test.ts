@@ -29,7 +29,7 @@ afterEach(() => {
 test("registerPasskey asks for the prf extension and reports prf true when enabled", async () => {
   create.mockResolvedValue(credential([251, 255, 1], { enabled: true }));
   const result = await registerPasskey({});
-  expect(result).toEqual({ credentialId: "-_8B", prf: true });
+  expect(result).toEqual({ credentialId: "-_8B", prf: true, proved: false });
   const { publicKey } = create.mock.calls[0]![0] as Options;
   expect(publicKey.rp).toMatchObject({ id: "hub.example.com" });
   expect(publicKey.authenticatorSelection).toMatchObject({ userVerification: "required" });
@@ -55,6 +55,24 @@ test("registerPasskey reports prf false when the extension result is missing", a
   expect((await registerPasskey({})).prf).toBe(false);
   create.mockResolvedValue(credential([1, 2, 3], { enabled: false }));
   expect((await registerPasskey({})).prf).toBe(false);
+});
+
+test("registerPasskey reports proved true only for a non-empty result at creation", async () => {
+  create.mockResolvedValue(credential([1], { enabled: true, results: { first: SECRET_BYTES.buffer } }));
+  expect(await registerPasskey({})).toEqual({ credentialId: "AQ", prf: true, proved: true });
+  create.mockResolvedValue(credential([1], { results: { first: SECRET_BYTES.buffer } }));
+  expect(await registerPasskey({})).toEqual({ credentialId: "AQ", prf: true, proved: true });
+  create.mockResolvedValue(credential([1], { enabled: true }));
+  expect(await registerPasskey({})).toEqual({ credentialId: "AQ", prf: true, proved: false });
+  create.mockResolvedValue(credential([1], { enabled: true, results: { first: new ArrayBuffer(0) } }));
+  expect(await registerPasskey({})).toEqual({ credentialId: "AQ", prf: true, proved: false });
+  create.mockResolvedValue(credential([1], { enabled: false }));
+  expect(await registerPasskey({})).toEqual({ credentialId: "AQ", prf: false, proved: false });
+});
+
+test("registerPasskey never returns the secret of the creation call", async () => {
+  create.mockResolvedValue(credential([1], { enabled: true, results: { first: SECRET_BYTES.buffer } }));
+  expect(JSON.stringify(await registerPasskey({}))).not.toContain(SECRET);
 });
 
 test("unlockWithPasskey passes the salt as eval.first and returns the first result", async () => {

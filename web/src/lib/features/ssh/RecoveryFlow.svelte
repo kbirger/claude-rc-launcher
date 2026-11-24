@@ -31,10 +31,14 @@
   let choice = $state<UnlockMethod>("prf");
   let passphrase = $state("");
   let again = $state("");
-  // The id of the new passkey, once it is registered and has passed the test unlock. A retry after a wrong code reuses it.
+  // The id of the new passkey, once it is registered and has a secret (at creation or from the test unlock). A retry after a wrong code reuses it.
   let credentialId = $state("");
   let method = $state<UnlockMethod>("prf");
   let offerPassphrase = $state(false);
+  // The id of a new passkey whose creation gave no secret. The owner tests it with a separate tap.
+  let untested = $state("");
+  let note = $state("");
+  let hint = $state(false);
   let targets = $state<string[]>([]);
   let done = $state<string[]>([]);
   let busy = $state(false);
@@ -64,9 +68,33 @@
     secret: toBase64Url(new TextEncoder().encode(passphrase)),
   });
 
+  const randomSalt = () => toBase64Url(crypto.getRandomValues(new Uint8Array(SALT_BYTES)));
+
+  function fail(error: unknown) {
+    if (error instanceof ApiError && error.status === 403) problem = WRONG_CODE;
+    else if (error instanceof UnlockError) {
+      problem = error.message;
+      offerPassphrase = choice === "prf";
+    } else problem = error instanceof Error ? error.message : "The recovery failed.";
+  }
+
+  // The hub switches to the new method. For a passkey, `credentialId` already holds a passkey with a secret.
+  async function submit() {
+    const answer = await begin.mutateAsync({
+      code: code.trim(),
+      method: choice,
+      ...(choice === "prf" ? { credentialId } : {}),
+    });
+    method = choice;
+    targets = answer.targets;
+    done = [];
+    step = "relock";
+  }
+
   async function start() {
     problem = "";
     offerPassphrase = false;
+    hint = false;
 
     if (code.trim() === "") {
       problem = "Type the recovery code.";
@@ -89,7 +117,7 @@
 
     try {
       if (choice === "prf" && credentialId === "") {
-        // The passkey must give a PRF secret now, or every later unlock would fail.
+        // The passkey must support PRF, or every later unlock would fail.
         const registered = await registerPasskey({});
 
         if (!registered.prf) {
@@ -98,28 +126,40 @@
           return;
         }
 
-        await unlockWithPasskey(
-          registered.credentialId,
-          toBase64Url(crypto.getRandomValues(new Uint8Array(SALT_BYTES))),
-        );
+        if (!registered.proved) {
+          // Enabled, but no secret came back at creation. The test needs a new tap, so it waits for a button.
+          note = "Passkey created.";
+          untested = registered.credentialId;
+          return;
+        }
+
+        note = "Passkey created. It returns a PRF secret.";
         credentialId = registered.credentialId;
       }
 
-      const answer = await begin.mutateAsync({
-        code: code.trim(),
-        method: choice,
-        ...(choice === "prf" ? { credentialId } : {}),
-      });
-      method = choice;
-      targets = answer.targets;
-      done = [];
-      step = "relock";
+      await submit();
     } catch (error) {
-      if (error instanceof ApiError && error.status === 403) problem = WRONG_CODE;
-      else if (error instanceof UnlockError) {
-        problem = error.message;
-        offerPassphrase = choice === "prf";
-      } else problem = error instanceof Error ? error.message : "The recovery failed.";
+      fail(error);
+    } finally {
+      begin.reset();
+      busy = false;
+    }
+  }
+
+  async function testPasskey() {
+    problem = "";
+    hint = false;
+    offerPassphrase = false;
+    busy = true;
+
+    try {
+      await unlockWithPasskey(untested, randomSalt());
+      credentialId = untested;
+      untested = "";
+      await submit();
+    } catch (error) {
+      fail(error);
+      hint = error instanceof UnlockError;
     } finally {
       begin.reset();
       busy = false;
@@ -168,6 +208,9 @@
       <Sheet.Description class="sr-only">Use the recovery code to choose a new unlock method.</Sheet.Description>
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
+      {#if note && step === "code"}
+        <p class="text-sm text-muted-foreground" role="status">{note}</p>
+      {/if}
       {#if step === "code"}
         <p class="text-sm text-muted-foreground">
           Type the recovery code and choose the new unlock method. This ends every active grant.
@@ -270,13 +313,27 @@
       {/if}
       {#if problem}
         <Alert.Root variant="destructive" role="alert">
-          <Alert.Description class={wrap}>{problem}</Alert.Description>
+          <Alert.Description class={wrap}>
+            {problem}
+            {#if hint}If the phone showed no passkey to pick, wait a few seconds and try again.{/if}
+          </Alert.Description>
         </Alert.Root>
+      {/if}
+      {#if untested && step === "code"}
+        <p class="text-sm">Tap to test the passkey you just created.</p>
       {/if}
     </div>
     <Sheet.Footer class="px-4">
       {#if step === "code"}
-        <Button type="button" size="touch" disabled={busy} onclick={start}>{busy ? "Working..." : "Continue"}</Button>
+        {#if untested}
+          <Button type="button" size="touch" disabled={busy} onclick={testPasskey}>
+            {busy ? "Working..." : "Test your passkey"}
+          </Button>
+        {:else}
+          <Button type="button" size="touch" disabled={busy} onclick={start}>
+            {busy ? "Working..." : "Continue"}
+          </Button>
+        {/if}
         {#if offerPassphrase}
           <Button
             type="button"
@@ -286,6 +343,9 @@
             onclick={() => {
               choice = "passphrase";
               problem = "";
+              hint = false;
+              untested = "";
+              note = "";
               offerPassphrase = false;
             }}
           >

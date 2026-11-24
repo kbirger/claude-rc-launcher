@@ -67,7 +67,7 @@ const waitText = (text: string) => vi.waitFor(() => expect(document.body.textCon
 const posts = () => sent.filter((item) => item.method === "POST");
 
 test("a passkey with no PRF shows the message and offers the passphrase", async () => {
-  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: false });
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: false, proved: false });
   show();
   pick("prf");
   press("Continue");
@@ -81,22 +81,78 @@ test("a passkey with no PRF shows the message and offers the passphrase", async 
   expect(posts()[0]!.body).toEqual({ method: "passphrase" });
 });
 
-test("a test unlock that fails shows its message and does not call the hub", async () => {
-  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true });
-  prf.unlockWithPasskey.mockRejectedValue(new UnlockError("The passkey prompt was cancelled"));
+const HINT = "If the phone showed no passkey to pick, wait a few seconds and try again.";
+
+test("a passkey that returns a secret at creation continues at once without a second prompt", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: true });
   show();
   pick("prf");
   press("Continue");
-  await waitText("The passkey prompt was cancelled");
+  await waitText(CODE);
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
+  expect(button("Test your passkey")).toBeUndefined();
+  expect(posts()).toHaveLength(1);
+  expect(posts()[0]!).toMatchObject({ url: "/api/ssh/setup", body: { method: "prf", credentialId: "cred" } });
+  expect(document.body.textContent).toContain("Passkey created. It returns a PRF secret.");
+});
+
+test("a passkey with PRF enabled but no secret waits for a separate tap before it continues", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: false });
+  prf.unlockWithPasskey.mockResolvedValue("c2VjcmV0");
+  show();
+  pick("prf");
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  expect(button("Test your passkey")).toBeDefined();
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
   expect(sent).toEqual([]);
-  expect(button("Use a passphrase instead")).toBeDefined();
-  const [, salt] = prf.unlockWithPasskey.mock.calls[0]!;
+
+  press("Test your passkey");
+  await waitText(CODE);
+  expect(prf.unlockWithPasskey).toHaveBeenCalledTimes(1);
+  const [credential, salt] = prf.unlockWithPasskey.mock.calls[0]!;
+  expect(credential).toBe("cred");
   expect(salt).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(posts()[0]!).toMatchObject({ url: "/api/ssh/setup", body: { method: "prf", credentialId: "cred" } });
+});
+
+test("a failed test shows the message and the hint, keeps the button and the passphrase offer", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: false });
+  prf.unlockWithPasskey.mockRejectedValueOnce(new UnlockError("The passkey prompt was cancelled"));
+  prf.unlockWithPasskey.mockResolvedValueOnce("c2VjcmV0");
+  show();
+  pick("prf");
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  press("Test your passkey");
+  await waitText("The passkey prompt was cancelled");
+  expect(document.body.textContent).toContain(HINT);
+  expect(sent).toEqual([]);
+  expect(button("Test your passkey")).toBeDefined();
+  expect(button("Use a passphrase instead")).toBeDefined();
+
+  press("Test your passkey");
+  await waitText(CODE);
+  expect(prf.unlockWithPasskey).toHaveBeenCalledTimes(2);
+  expect(posts()).toHaveLength(1);
+});
+
+test("the passphrase offer after a failed test works", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: false });
+  prf.unlockWithPasskey.mockRejectedValue(new UnlockError("This passkey does not return a PRF secret"));
+  show();
+  pick("prf");
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  press("Test your passkey");
+  await waitText("This passkey does not return a PRF secret");
+  press("Use a passphrase instead");
+  await waitText(CODE);
+  expect(posts()[0]!.body).toEqual({ method: "passphrase" });
 });
 
 test("the recovery code is shown once and the form asks for the first group back", async () => {
-  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true });
-  prf.unlockWithPasskey.mockResolvedValue("c2VjcmV0");
+  prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: true, proved: true });
   show();
   pick("prf");
   press("Continue");
