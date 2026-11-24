@@ -251,12 +251,12 @@ test("the Recover button names the passkey when the method is prf", async () => 
 const PRF_STATUS = { setUp: true, method: "prf", credentialId: "-_8B", pendingRewrap: [], nodes: [] };
 const CHECK = "Check my passkey";
 
-function showCheck(status: unknown, canAdmin = true) {
+function showCheck(status: unknown, canAdmin: boolean | "omit" = true) {
   const seen: string[] = [];
   let answer = status;
-  vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
-    seen.push(path);
+    seen.push(`${init?.method ?? "GET"} ${path}`);
     if (path === "/api/ssh/status" && answer === null) return new Response("{}", { status: 500 });
     const body =
       path === "/api/ssh/status"
@@ -269,7 +269,7 @@ function showCheck(status: unknown, canAdmin = true) {
   const client = createQueryClient();
   const target = document.createElement("div");
   document.body.append(target);
-  const mounted = mount(SshPageHarness, { target, props: { client, canAdmin } });
+  const mounted = mount(SshPageHarness, { target, props: canAdmin === "omit" ? { client } : { client, canAdmin } });
   open.push(() => unmount(mounted));
   return { client, seen, fail: () => (answer = null) };
 }
@@ -288,8 +288,10 @@ test("the check button is absent for a non-admin and for the passphrase method",
 });
 
 test("a tap runs one unlock with a random 43 character salt and sends nothing to the hub", async () => {
-  const { seen } = showCheck(PRF_STATUS);
+  const { client, seen } = showCheck(PRF_STATUS);
   await vi.waitFor(() => expect(button(CHECK)).toBeDefined());
+  await vi.waitFor(() => expect(seen).toContain("GET /api/ssh/grants"));
+  await vi.waitFor(() => expect(seen).toContain("GET /api/ssh/targets"));
   prf.unlockWithPasskey.mockResolvedValue("c2VjcmV0LXZhbHVlLWRpc2NhcmRlZA");
   const before = seen.length;
   button(CHECK).click();
@@ -298,12 +300,21 @@ test("a tap runs one unlock with a random 43 character salt and sends nothing to
   const [id, salt] = prf.unlockWithPasskey.mock.calls[0]!;
   expect(id).toBe("-_8B");
   expect(salt).toMatch(/^[A-Za-z0-9_-]{43}$/);
-  expect(seen.slice(before).filter((path) => path.includes("passkey") || path.includes("unlock"))).toEqual([]);
-  expect(seen.slice(before)).not.toContain("/api/ssh/unlock");
+  // The queries are fresh (5 s) and no focus event fires, so any request here would come from the tap.
+  expect(seen.slice(before)).toEqual([]);
   expect(document.body.innerHTML).not.toContain("c2VjcmV0LXZhbHVl");
   expect(JSON.stringify({ ...localStorage })).not.toContain("c2VjcmV0");
   expect(JSON.stringify({ ...sessionStorage })).not.toContain("c2VjcmV0");
   expect(JSON.stringify(document.cookie)).not.toContain("c2VjcmV0");
+  expect(
+    JSON.stringify(
+      client
+        .getQueryCache()
+        .getAll()
+        .map((query) => query.state),
+    ),
+  ).not.toContain("c2VjcmV0");
+  expect(client.getMutationCache().getAll()).toEqual([]);
   button(CHECK).click();
   await vi.waitFor(() => expect(prf.unlockWithPasskey).toHaveBeenCalledTimes(2));
   expect(prf.unlockWithPasskey.mock.calls[1]![1]).not.toBe(salt);
@@ -352,4 +363,19 @@ test("a failed status refetch keeps the button and the result", async () => {
   expect(client.getQueryState([...SSH_KEY, "status"])?.status).toBe("error");
   expect(button(CHECK)).toBeDefined();
   expect(region()).toContain("It works.");
+});
+
+test("the check button is disabled while the recovery flow is open", async () => {
+  showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(button(CHECK)).toBeDefined());
+  expect(button(CHECK).disabled).toBe(false);
+  button("Lost your passkey? Recover").click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Recover SSH access"));
+  expect(button(CHECK).disabled).toBe(true);
+});
+
+test("the check button is absent unless canAdmin is passed", async () => {
+  showCheck(PRF_STATUS, "omit");
+  await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
+  expect(button(CHECK)).toBeUndefined();
 });

@@ -7,7 +7,7 @@
     client,
     target = null,
     onclose,
-    canAdmin = true,
+    canAdmin,
   }: { client: QueryClient; target?: string | null; onclose?: () => void; canAdmin?: boolean } = $props();
 </script>
 
