@@ -329,3 +329,69 @@ describe("POST /deauthorize on the node", () => {
     expect(response.status).toBe(401);
   });
 });
+
+describe("scripts of one account on the node", () => {
+  const KEY = BLOB.toString("base64");
+  const remove = (account = "alice") =>
+    call("POST", "/deauthorize", { account, systemType: "linux", key: KEY, id: "nas" });
+
+  function slowRunner(events: string[], failFirst = false) {
+    let count = 0;
+
+    return (account: string, script: Script, timeoutMs?: number) => {
+      const number = ++count;
+      events.push(`start ${account} ${number}`);
+      calls.push({ account, script });
+      timeoutMs;
+      return new Promise<{ code: number; stderr: string; stdout: string }>((resolve) => {
+        setTimeout(() => {
+          events.push(`end ${account} ${number}`);
+          resolve(
+            failFirst && number === 1
+              ? { code: 1, stderr: "boom", stdout: "" }
+              : { code: 0, stderr: "", stdout: "removed\n" },
+          );
+        }, 30);
+      });
+    };
+  }
+
+  test("two calls for one account run one after the other, an install and a removal too", async () => {
+    const events: string[] = [];
+    build({ runAs: slowRunner(events) });
+    const responses = await Promise.all([authorize(), remove(), remove()]);
+    expect(responses.map((response) => response.status)).toEqual([204, 200, 200]);
+    expect(events).toEqual([
+      "start alice 1",
+      "end alice 1",
+      "start alice 2",
+      "end alice 2",
+      "start alice 3",
+      "end alice 3",
+    ]);
+  });
+
+  test("a failed script does not break the chain, and other accounts run at the same time", async () => {
+    const events: string[] = [];
+    build({ runAs: slowRunner(events, true) });
+    const responses = await Promise.all([remove(), remove()]);
+    expect(responses.map((response) => response.status)).toEqual([500, 200]);
+    expect(events).toEqual(["start alice 1", "end alice 1", "start alice 2", "end alice 2"]);
+
+    events.length = 0;
+    await Promise.all([remove("alice"), remove("bob")]);
+    expect(events.slice(0, 2).every((event) => event.startsWith("start"))).toBe(true);
+  });
+
+  test("the removal script has a time limit of 8 seconds, below the 10 seconds of the hub", async () => {
+    const limits: (number | undefined)[] = [];
+    build({
+      runAs: (_account, _script, timeoutMs) => {
+        limits.push(timeoutMs);
+        return Promise.resolve({ code: 0, stderr: "", stdout: "removed\n" });
+      },
+    });
+    await remove();
+    expect(limits).toEqual([8000]);
+  });
+});

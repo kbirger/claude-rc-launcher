@@ -233,7 +233,7 @@ Access ends in these ways:
 - It expires at the end time.
 - You tap Revoke.
 - You disable a target. The hub ends its active grants and refuses its pending requests.
-- You retire a target. The hub ends its active grants, refuses its pending requests, and deletes the target and its key at once.
+- You retire a target. The hub ends its active grants, refuses its pending requests, and deletes the target and its key. For a managed target, the retire waits a few seconds for the node.
 - The hub restarts. This ends all grants, because grants live in memory only.
 - A node loses its event stream to the hub. The hub ends the active grants of that node.
 - You remove a node from the hub. The hub ends all grants of that node, also the pending requests.
@@ -248,6 +248,8 @@ A retire deletes the target and its key. The target does not stay in the list, a
 The old key line on the machine is harmless, because the private key is gone. Nobody can use the line any more.
 
 - For a managed target, the hub also asks the node of the target to remove the key line. This works when the node is reachable.
+- The node removes only a line that ends with the key and the comment `claude-rc:<target id>`. It keeps every other line, and it keeps the mode and the owner of the file. An account that is not root keeps its own ownership.
+- The node refuses to change an `authorized_keys` file or a `.ssh` folder that is a symbolic link. The notice then shows a failed removal.
 - For an external target, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
 
 After a retire, the page shows one notice with the result. The result is one of these:

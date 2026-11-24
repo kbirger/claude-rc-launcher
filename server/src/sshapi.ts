@@ -341,26 +341,39 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   // A retire deletes the target: the grants end, a managed node removes the key line, then the key and the record go.
+  // The removal can take a few seconds. The target is disabled first, so that no request and no approval gets a key
+  // meanwhile, and the grants end again after the delete. A second retire of the same id waits out the first.
+  const retiring = new Set<string>();
+
   hono.delete("/targets/:id", async (context) => {
     const target = needTarget(context);
-    endGrantsOf(target.id);
-    // The key line is read before the key is deleted. A failed removal never stops the retire.
-    const removal: { line: "removed" | "not-found" | "failed" | "manual"; detail?: string } =
-      target.managedHost === undefined ? { line: "manual" } : await service.deauthorizeManaged(target.id);
-    await keys.remove(target.id);
-    await targets.remove(target.id);
-    await push(target.nodes);
-    audit(`audit ssh target=${logToken(target.id)} retired line=${removal.line}`);
-    return context.json({
-      id: target.id,
-      account: target.account,
-      address: target.address,
-      port: target.port,
-      systemType: target.systemType,
-      managed: target.managedHost !== undefined,
-      line: removal.line,
-      ...(removal.detail !== undefined ? { detail: removal.detail } : {}),
-    });
+    if (retiring.has(target.id)) throw new TargetError(409, "this target is being retired");
+    retiring.add(target.id);
+
+    try {
+      await targets.setState(target.id, "disabled");
+      endGrantsOf(target.id);
+      // The key line is read before the key is deleted. A failed removal never stops the retire.
+      const removal: { line: "removed" | "not-found" | "failed" | "manual"; detail?: string } =
+        target.managedHost === undefined ? { line: "manual" } : await service.deauthorizeManaged(target.id);
+      await keys.remove(target.id);
+      await targets.remove(target.id);
+      endGrantsOf(target.id);
+      await push(target.nodes);
+      audit(`audit ssh target=${logToken(target.id)} retired line=${removal.line}`);
+      return context.json({
+        id: target.id,
+        account: target.account,
+        address: target.address,
+        port: target.port,
+        systemType: target.systemType,
+        managed: target.managedHost !== undefined,
+        line: removal.line,
+        ...(removal.detail !== undefined ? { detail: removal.detail } : {}),
+      });
+    } finally {
+      retiring.delete(target.id);
+    }
   });
 
   hono.get("/targets/:id/salt", async (context) => {

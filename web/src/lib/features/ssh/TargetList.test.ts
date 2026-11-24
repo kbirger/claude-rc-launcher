@@ -92,6 +92,7 @@ test("TargetList Retire asks for a confirmation and then calls DELETE", async ()
     return found as HTMLElement;
   });
   expect(changes()).toHaveLength(0);
+  expect(dialog.textContent).toContain("tries to remove the key line");
   button("Cancel", dialog)!.click();
   flushSync();
   expect(changes()).toHaveLength(0);
