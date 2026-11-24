@@ -693,8 +693,15 @@ describe("SshService approve races", () => {
     expectRefused(await race((ctx) => ctx.targets.setState("nas", "disabled")), "the target is disabled");
   });
 
-  test("a retire during the derive gives 409, holds no key and leaves no active grant", async () => {
-    expectRefused(await race((ctx) => ctx.targets.setState("nas", "retired")), "the target is retired");
+  test("a retire during the derive gives 404, holds no key and leaves no active grant", async () => {
+    const result = await race((ctx) => ctx.targets.remove("nas"));
+    expect(result.error).toBeInstanceOf(TargetError);
+    expect((result.error as TargetError).status).toBe(404);
+    expect((result.error as TargetError).message).toBe("no such target");
+    expect(result.ctx.grants.list().some((grant) => grant.state === "active")).toBe(false);
+    expect(result.opened).toHaveLength(1);
+    expect(() => result.opened[0]?.sign(new Uint8Array(1))).toThrow();
+    expect(result.ctx.node.paths()).not.toContain("POST /api/ssh/grants");
   });
 
   test("a recovery begin during the derive gives 409, holds no key and leaves no active grant", async () => {

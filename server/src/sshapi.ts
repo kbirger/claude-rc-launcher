@@ -125,11 +125,6 @@ export function sshApi(options: SshApiOptions): Hono {
     return target;
   };
 
-  const needLive = (target: Target): Target => {
-    if (target.state === "retired") throw new TargetError(409, "the target is retired");
-    return target;
-  };
-
   /** A key that a passphrase can be checked against: it exists and a recovery has not made it wait for a re-wrap. */
   const hasOpenKey = (targetId: string): boolean => hasKey(targetId) && !keys.pendingRewraps().includes(targetId);
 
@@ -334,7 +329,7 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.patch("/targets/:id", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     if (body.state !== "disabled" && body.state !== "draft")
       throw new HttpError(400, "state must be disabled or draft");
@@ -345,21 +340,31 @@ export function sshApi(options: SshApiOptions): Hono {
     return context.json(targets.get(target.id));
   });
 
+  // A retire deletes the target: the grants end, a managed node removes the key line, then the key and the record go.
   hono.delete("/targets/:id", async (context) => {
     const target = needTarget(context);
-
-    if (target.state !== "retired") {
-      endGrantsOf(target.id);
-      await keys.remove(target.id);
-      await targets.setState(target.id, "retired");
-      await push(target.nodes);
-    }
-
-    return context.json({ ...targets.get(target.id), comment: `claude-rc:${target.id}` });
+    endGrantsOf(target.id);
+    // The key line is read before the key is deleted. A failed removal never stops the retire.
+    const removal: { line: "removed" | "not-found" | "failed" | "manual"; detail?: string } =
+      target.managedHost === undefined ? { line: "manual" } : await service.deauthorizeManaged(target.id);
+    await keys.remove(target.id);
+    await targets.remove(target.id);
+    await push(target.nodes);
+    audit(`audit ssh target=${logToken(target.id)} retired line=${removal.line}`);
+    return context.json({
+      id: target.id,
+      account: target.account,
+      address: target.address,
+      port: target.port,
+      systemType: target.systemType,
+      managed: target.managedHost !== undefined,
+      line: removal.line,
+      ...(removal.detail !== undefined ? { detail: removal.detail } : {}),
+    });
   });
 
   hono.get("/targets/:id/salt", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const method = keys.method();
     const credentialId = keys.credentialId();
     return context.json({
@@ -383,7 +388,7 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.post("/targets/:id/key", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     const unlock = parseUnlock(context, body.unlock);
     if (hasKey(target.id)) throw new TargetError(409, "the target has a key already");
@@ -412,13 +417,13 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.post("/targets/:id/scan", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     return context.json({ keys: await service.scanHostKey(target.id, text(body, "node")) });
   });
 
   hono.post("/targets/:id/pin", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     const hostKey = text(body, "hostKey");
     if (!HOST_KEY_RE.test(hostKey)) throw new HttpError(400, "hostKey must be `<type> <base64>`");
@@ -427,23 +432,23 @@ export function sshApi(options: SshApiOptions): Hono {
   });
 
   hono.post("/targets/:id/pin-managed", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     return context.json({ keys: await service.pinManaged(target.id) });
   });
 
   hono.get("/targets/:id/provision", (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     return context.json(provisionScript(target.systemType, installLine(target), { account: target.account }));
   });
 
   hono.post("/targets/:id/authorize", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     await service.authorizeManaged(target.id);
     return context.json({ ok: true });
   });
 
   hono.post("/targets/:id/test", async (context) => {
-    const target = needLive(needTarget(context));
+    const target = needTarget(context);
     const body = await readObject(context);
     const node = text(body, "node");
     const unlock = parseUnlock(context, body.unlock);

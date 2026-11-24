@@ -17,7 +17,8 @@ const MAX_BYTES = 1024 * 1024;
 const MAX_TEXT = 4096;
 const VERSION = 1;
 const SYSTEM_TYPES: readonly string[] = ["linux", "windows", "synology", "dropbear"];
-const STATES: readonly string[] = ["draft", "ready", "disabled", "retired"];
+// An old file can hold the state `retired` from an earlier version. It is not a state any more, so such a record is dropped on load.
+const STATES: readonly string[] = ["draft", "ready", "disabled"];
 // A host name or an address: it cannot start with "-" (ssh would read it as an option), and has no space, no quote, no comma, so a value cannot add an option to the key line.
 const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
@@ -37,7 +38,7 @@ export function isAccount(value: unknown): value is string {
 }
 
 export type SystemType = "linux" | "windows" | "synology" | "dropbear";
-export type TargetState = "draft" | "ready" | "disabled" | "retired";
+export type TargetState = "draft" | "ready" | "disabled";
 
 export interface Target {
   id: string;
@@ -185,7 +186,7 @@ export class TargetStore {
     return target ? copy(target) : undefined;
   }
 
-  /** Adds a draft target. A retired target with the same id is replaced. Throws `TargetError`: 400 for bad input, 409 for an id that exists. */
+  /** Adds a draft target. Throws `TargetError`: 400 for bad input, 409 for an id that exists. */
   async add(input: Omit<Target, "state" | "hostKey" | "keyFingerprint">): Promise<Target> {
     const bad = problem(input);
     if (bad) throw new TargetError(400, bad);
@@ -201,10 +202,8 @@ export class TargetStore {
     if (input.managedHost !== undefined) target.managedHost = input.managedHost;
 
     await this.mutate((draft) => {
-      // A retired target has no key any more, so its id can be used again.
-      const existing = draft.targets.get(target.id);
-      if (existing && existing.state !== "retired") throw new TargetError(409, "a target with this id exists already");
-      if (!existing && draft.targets.size >= MAX_TARGETS) throw new TargetError(400, "too many targets");
+      if (draft.targets.has(target.id)) throw new TargetError(409, "a target with this id exists already");
+      if (draft.targets.size >= MAX_TARGETS) throw new TargetError(400, "too many targets");
       draft.targets.set(target.id, target);
     });
     return copy(target);

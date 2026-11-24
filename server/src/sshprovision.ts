@@ -118,3 +118,109 @@ export function provisionScript(systemType: SystemType, line: string, options: P
   if (systemType === "windows") return { shell: "powershell", script: powershellScript(line, options.account) };
   return { shell: "sh", script: shScript(line, systemType === "synology") };
 }
+
+// Removal scripts. They take the key line of a target out of the same `authorized_keys` file. A line goes when the key
+// blob is one of its fields and its last field is the comment `claude-rc:<id>`. A line with only the blob or only the
+// comment stays. The match does not use the whole line, because the `from=` part can change after the install.
+// The script prints `removed` or `not-found`, and it is safe to run twice. The values are data: they are quoted like in
+// the install scripts, and the shell script hands them to awk through the environment, so awk does not read escapes.
+
+const AWK_PROGRAM = [
+  "{ hit = 0",
+  '  if ($NF == ENVIRON["RC_COMMENT"]) for (i = 1; i < NF; i++) if ($i == ENVIRON["RC_BLOB"]) hit = 1',
+  '  if (ENVIRON["RC_MODE"] == "count") n += hit',
+  "  else if (!hit) print }",
+  'END { if (ENVIRON["RC_MODE"] == "count") print n + 0 }',
+].join("\n");
+
+function shRemoveScript(blob: string, comment: string): string {
+  return [
+    "set -eu",
+    "umask 077",
+    `RC_BLOB=${shQuote(blob)}`,
+    `RC_COMMENT=${shQuote(comment)}`,
+    "export RC_BLOB RC_COMMENT",
+    'file="$HOME/.ssh/authorized_keys"',
+    'if [ ! -f "$file" ]; then echo not-found; exit 0; fi',
+    `prog=${shQuote(AWK_PROGRAM)}`,
+    'count=$(RC_MODE=count awk "$prog" "$file")',
+    'if [ "$count" = 0 ]; then echo not-found; exit 0; fi',
+    // The same folder and a rename keep the write atomic. cp -p keeps the mode of the file. A folder that the account
+    // cannot write to gets an in-place rewrite of the file, which keeps the inode and the owner.
+    'tmp="$file.tmp.$$"',
+    'if cp -p "$file" "$tmp" 2>/dev/null; then',
+    '  if RC_MODE=keep awk "$prog" "$file" > "$tmp" && mv -f "$tmp" "$file"; then :; else rm -f "$tmp"; exit 1; fi',
+    "else",
+    '  tmp=$(mktemp "${TMPDIR:-/tmp}/rc-keys.XXXXXX")',
+    '  if RC_MODE=keep awk "$prog" "$file" > "$tmp" && cat "$tmp" > "$file"; then rm -f "$tmp"; else rm -f "$tmp"; exit 1; fi',
+    "fi",
+    "echo removed",
+    "",
+  ].join("\n");
+}
+
+function powershellRemoveScript(blob: string, comment: string, account: string | undefined): string {
+  const body =
+    account === undefined
+      ? [
+          "$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+          "$profileDir = $env:USERPROFILE",
+        ]
+      : [
+          `$sid = (New-Object Security.Principal.NTAccount(${psQuote(account)})).Translate([Security.Principal.SecurityIdentifier])`,
+          "$admin = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object { $_.SID.Value }) -contains $sid.Value",
+          '$entry = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\$($sid.Value)"',
+          `if (-not (Test-Path -LiteralPath $entry)) { throw "no profile for account " + ${psQuote(account)} + ": the account has never logged on" }`,
+          "$profileDir = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath $entry).ProfileImagePath)",
+        ];
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "try {",
+    `  $blob = ${psQuote(blob)}`,
+    `  $comment = ${psQuote(comment)}`,
+    ...body.map((text) => `  ${text}`),
+    "  if ($admin) {",
+    "    $file = Join-Path $env:ProgramData 'ssh\\administrators_authorized_keys'",
+    "  } else {",
+    "    $file = Join-Path (Join-Path $profileDir '.ssh') 'authorized_keys'",
+    "  }",
+    "  if (-not (Test-Path -LiteralPath $file)) { [Console]::Out.WriteLine('not-found'); exit 0 }",
+    "  $lines = @([IO.File]::ReadAllLines($file))",
+    "  $kept = @()",
+    "  foreach ($entryLine in $lines) {",
+    "    $fields = @($entryLine.Trim() -split '\\s+')",
+    "    if ($fields.Count -gt 1 -and $fields[-1] -ceq $comment -and ($fields[0..($fields.Count - 2)] -ccontains $blob)) { continue }",
+    "    $kept += $entryLine",
+    "  }",
+    "  if ($kept.Count -eq $lines.Count) { [Console]::Out.WriteLine('not-found'); exit 0 }",
+    "  $utf8 = New-Object System.Text.UTF8Encoding $false",
+    // WriteAllText on the existing file keeps its permissions: the ACL stays.
+    "  $text = ''",
+    '  if ($kept.Count -gt 0) { $text = ($kept -join "`r`n") + "`r`n" }',
+    "  [IO.File]::WriteAllText($file, $text, $utf8)",
+    "  [Console]::Out.WriteLine('removed')",
+    "} catch {",
+    "  [Console]::Error.WriteLine($_)",
+    "  exit 1",
+    "}",
+    "",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Build the script that removes the key line of a target: every line with `keyBlob` as a field and the comment
+ * `claude-rc:<id>` as its last field. It uses the same file as `provisionScript` and the same handling of the Windows
+ * account. It prints `removed` or `not-found` and exits non-zero on an error.
+ */
+export function deprovisionScript(
+  systemType: SystemType,
+  keyBlob: string,
+  id: string,
+  options: ProvisionOptions = {},
+): Script {
+  const comment = `claude-rc:${id}`;
+  if (systemType === "windows")
+    return { shell: "powershell", script: powershellRemoveScript(keyBlob, comment, options.account) };
+  return { shell: "sh", script: shRemoveScript(keyBlob, comment) };
+}
