@@ -218,11 +218,10 @@ function powershellRemoveScript(blob: string, comment: string, account: string |
     "  $utf8 = New-Object System.Text.UTF8Encoding $false",
     "  $text = ''",
     '  if ($kept.Count -gt 0) { $text = ($kept -join "`r`n") + "`r`n" }',
-    // A temporary file in the same folder and a replace keep the write atomic. The ACL of the old file goes to the new one,
-    // and the administrator file gets the same permissions as the install script gives.
+    // A temporary file in the same folder and a replace keep the write atomic. Replace keeps the permissions of the old file (no Set-Acl:
+    // as SYSTEM it can fail on the owner), and the administrator file gets the same permissions as the install script gives.
     "  $tmp = $file + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'",
     "  [IO.File]::WriteAllText($tmp, $text, $utf8)",
-    "  Set-Acl -LiteralPath $tmp -AclObject (Get-Acl -LiteralPath $file)",
     "  [IO.File]::Replace($tmp, $file, $null)",
     "  $tmp = $null",
     "  if ($admin) {",

@@ -532,7 +532,8 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
-// The hub waits 10 seconds for a removal. The script stops sooner, so a slow machine never shows a failure and removes the line later.
+// The hub waits 10 seconds for a removal. The script itself stops sooner. A removal that waits behind another script of
+// the same account can still show `failed` and remove the line later. That is harmless, because the key is deleted already.
 const DEAUTHORIZE_TIMEOUT_MS = 8_000;
 
 export interface SshManagedOptions {

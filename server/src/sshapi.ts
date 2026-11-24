@@ -342,7 +342,7 @@ export function sshApi(options: SshApiOptions): Hono {
 
   // A retire deletes the target: the grants end, a managed node removes the key line, then the key and the record go.
   // The removal can take a few seconds. The target is disabled first, so that no request and no approval gets a key
-  // meanwhile, and the grants end again after the delete. A second retire of the same id waits out the first.
+  // meanwhile, and the grants end again after the delete. A second retire of the same id gets 409 while the first runs.
   const retiring = new Set<string>();
 
   hono.delete("/targets/:id", async (context) => {
