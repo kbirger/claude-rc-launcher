@@ -51,10 +51,13 @@ function mapPromptError(error: unknown): unknown {
 }
 
 /**
- * Makes a passkey for the hub and says whether it supports PRF. The salt asked for here is a throw-away: only the
- * `enabled` flag is read, the secret from this call is not used.
+ * Makes a passkey for the hub and says whether it supports PRF. `proved` is true when the creation answer already
+ * carries a secret, so no second prompt is needed. The salt asked for here is a throw-away: the secret from this call
+ * is never returned or kept.
  */
-export async function registerPasskey(options: { rpId?: string }): Promise<{ credentialId: string; prf: boolean }> {
+export async function registerPasskey(options: {
+  rpId?: string;
+}): Promise<{ credentialId: string; prf: boolean; proved: boolean }> {
   const container = credentials();
   const rpId = options.rpId ?? location.hostname;
 
@@ -81,7 +84,9 @@ export async function registerPasskey(options: { rpId?: string }): Promise<{ cre
   if (!created) throw new UnlockError("The passkey prompt was cancelled");
 
   const credential = created as PublicKeyCredential;
-  return { credentialId: toBase64Url(credential.rawId), prf: prfOf(credential)?.enabled === true };
+  const extension = prfOf(credential);
+  const proved = (extension?.results?.first?.byteLength ?? 0) > 0;
+  return { credentialId: toBase64Url(credential.rawId), prf: proved || extension?.enabled === true, proved };
 }
 
 /** Asks the passkey for the PRF secret of `salt`. The same salt always gives the same 32 bytes. */

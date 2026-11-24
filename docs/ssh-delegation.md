@@ -42,7 +42,7 @@ Do these setups in order. You do the hub setup once. You do the node, target and
 
 1. Open the SSH access page from the menu. The menu shows the entry only to an admin.
 2. Choose the unlock method. You use it for every grant.
-3. For a passkey, tap Continue. The browser registers the passkey. The page then asks for one test unlock. If the passkey gives no secret, the page says so and offers the passphrase.
+3. For a passkey, tap Continue. The browser registers the passkey. If the passkey gave no secret yet, tap Test your passkey. If the passkey has no PRF support, the page offers the passphrase.
 4. Write down the recovery code that the page shows. The hub shows it once.
 5. Type the first group of four characters of the code, and tap Finish.
 
@@ -186,7 +186,7 @@ Use the recovery code when you lose your passkey or forget your passphrase. A re
 
 1. Open the SSH access page. Tap Lost your passkey? Recover, or Forgot your passphrase? Recover.
 2. Type the recovery code.
-3. Choose the new unlock method. For a passkey, the browser registers it and asks for one test unlock. If the passkey gives no secret, the page offers the passphrase.
+3. Choose the new unlock method. For a passkey, the browser registers it. If the passkey gave no secret yet, tap Test your passkey. If the passkey has no PRF support, the page offers the passphrase.
 4. For a passphrase, type it twice. The two must match, because a typo locks every key under a passphrase that nobody knows.
 5. Tap Continue. The hub switches to the new method and ends every active grant.
 6. Tap Re-lock for each target in the list. A target shows Done when its key is locked under the new method.

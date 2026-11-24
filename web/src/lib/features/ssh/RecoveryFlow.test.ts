@@ -7,6 +7,7 @@ import RecoveryFlowHarness from "./RecoveryFlowHarness.svelte";
 
 const prf = vi.hoisted(() => ({ registerPasskey: vi.fn(), unlockWithPasskey: vi.fn() }));
 vi.mock("./prf", async (importActual) => ({ ...(await importActual<typeof import("./prf")>()), ...prf }));
+import { UnlockError } from "./prf";
 
 type Call = { method: string; url: string; body: unknown };
 const CODE = "ABCD-EFGH-IJKL-MNOP";
@@ -25,7 +26,7 @@ beforeEach(() => {
   answers = { "POST /api/ssh/recovery/begin": { status: 200, body: { targets: ["nas", "web"] } } };
   prf.registerPasskey.mockReset();
   prf.unlockWithPasskey.mockReset();
-  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true });
+  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true, proved: true });
   prf.unlockWithPasskey.mockResolvedValue("bmV3c2VjcmV0");
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
@@ -115,9 +116,7 @@ test("the recovery step sends the code, the new method and the credential id to 
   press("Continue");
   await waitText("Each target needs one re-lock");
   expect(prf.registerPasskey).toHaveBeenCalledTimes(1);
-  const [credential, salt] = prf.unlockWithPasskey.mock.calls[0]!;
-  expect(credential).toBe("newcred");
-  expect(salt).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
   expect(posts("/recovery/begin")).toEqual([
     {
       method: "POST",
@@ -135,6 +134,44 @@ test("the recovery step sends the code, the new method and the credential id to 
   press("Continue");
   await waitText("Each target needs one re-lock");
   expect(posts("/recovery/begin")[0]!.body).toEqual({ code: CODE, method: "passphrase" });
+});
+
+const HINT = "If the phone showed no passkey to pick, wait a few seconds and try again.";
+
+test("a passkey with PRF enabled but no secret waits for a separate tap before the begin call", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true, proved: false });
+  show();
+  typeCode();
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  expect(prf.unlockWithPasskey).not.toHaveBeenCalled();
+  expect(calls).toEqual([]);
+
+  press("Test your passkey");
+  await waitText("Each target needs one re-lock");
+  const [credential, salt] = prf.unlockWithPasskey.mock.calls[0]!;
+  expect(credential).toBe("newcred");
+  expect(salt).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(posts("/recovery/begin")[0]!.body).toEqual({ code: CODE, method: "prf", credentialId: "newcred" });
+});
+
+test("a failed passkey test shows the message and the hint, keeps the button and the passphrase offer", async () => {
+  prf.registerPasskey.mockResolvedValue({ credentialId: "newcred", prf: true, proved: false });
+  prf.unlockWithPasskey.mockRejectedValueOnce(new UnlockError("The passkey prompt was cancelled"));
+  show();
+  typeCode();
+  press("Continue");
+  await waitText("Tap to test the passkey you just created.");
+  press("Test your passkey");
+  await waitText("The passkey prompt was cancelled");
+  expect(document.body.textContent).toContain(HINT);
+  expect(calls).toEqual([]);
+  expect(button("Test your passkey")).toBeDefined();
+  expect(button("Use a passphrase instead")).toBeDefined();
+
+  press("Test your passkey");
+  await waitText("Each target needs one re-lock");
+  expect(prf.registerPasskey).toHaveBeenCalledTimes(1);
 });
 
 test("a wrong recovery code shows the message and stays on the first step", async () => {
@@ -155,7 +192,7 @@ test("a wrong recovery code shows the message and stays on the first step", asyn
 });
 
 test("a passkey without PRF shows the message and offers the passphrase", async () => {
-  prf.registerPasskey.mockResolvedValue({ credentialId: "weak", prf: false });
+  prf.registerPasskey.mockResolvedValue({ credentialId: "weak", prf: false, proved: false });
   show();
   typeCode();
   press("Continue");
