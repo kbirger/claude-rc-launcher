@@ -492,3 +492,56 @@ test("the node select of the test step shows the node that the test uses", async
   expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: select.value });
   expect(select.value).toBe("node1");
 });
+
+const checkUsername = () => {
+  const users = document.querySelectorAll<HTMLInputElement>('input[autocomplete="username"]');
+  expect(users).toHaveLength(1);
+  expect(users[0]!.hidden).toBe(false);
+  expect(users[0]!.value).toBe("claude-rc-ssh");
+  expect(users[0]!.classList.contains("sr-only")).toBe(true);
+};
+
+test("the first key of the hub asks for a new password, with the rule and a user name field", async () => {
+  await resumeAt({}, { ...PASSPHRASE, hasKeys: false });
+  const field = document.querySelector<HTMLInputElement>('input[type="password"]')!;
+  expect(field.autocomplete).toBe("new-password");
+  expect(field.name).toBe("claude-rc-ssh-passphrase");
+  expect(document.body.textContent).toContain("at least 12 characters");
+  checkUsername();
+});
+
+test("a later key asks for the current password", async () => {
+  await resumeAt({}, { ...PASSPHRASE, hasKeys: true });
+  expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.autocomplete).toBe("current-password");
+  expect(document.body.textContent).not.toContain("at least 12 characters");
+  checkUsername();
+});
+
+test("the first key is not sent with 11 characters and is sent with 12", async () => {
+  answers["POST /api/ssh/targets/nas/key"] = () => ({ body: { ...KEY_ANSWER, notes: [] } });
+  await resumeAt({}, { ...PASSPHRASE, hasKeys: false });
+  typeInto('input[type="password"]', "elevenchars");
+  press("Create key");
+  await waitText("The passphrase needs at least 12 characters.");
+  expect(posts().filter((call) => call.url.endsWith("/key"))).toHaveLength(0);
+  expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("elevenchars");
+  typeInto('input[type="password"]', "twelve chars");
+  press("Create key");
+  await waitText("Step 3 of 6");
+  expect(posts().filter((call) => call.url.endsWith("/key"))).toHaveLength(1);
+});
+
+test("the test step asks for the current password even when the status says no key", async () => {
+  await toTest({}, { ...PASSPHRASE, hasKeys: false });
+  expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.autocomplete).toBe("current-password");
+  checkUsername();
+});
+
+test("the target form fields keep autocomplete off", () => {
+  show(PASSPHRASE);
+  const fields = document.querySelectorAll<HTMLInputElement>(
+    "input[type='text'], input:not([type]), input[type='number']",
+  );
+  expect(fields.length).toBeGreaterThan(0);
+  for (const field of fields) expect(field.autocomplete).toBe("off");
+});

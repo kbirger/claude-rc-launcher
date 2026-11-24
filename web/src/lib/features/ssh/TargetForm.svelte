@@ -147,6 +147,7 @@
       <Label for="{uid}-port">Port</Label>
       <Input
         id="{uid}-port"
+        autocomplete="off"
         class="h-11 font-mono"
         inputmode="numeric"
         placeholder="22"

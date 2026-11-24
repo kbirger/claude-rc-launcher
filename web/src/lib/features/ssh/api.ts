@@ -19,6 +19,8 @@ export type SshStatus = {
   credentialId?: string;
   /** Ids of the targets whose key needs one re-lock after a recovery. */
   pendingRewrap: string[];
+  /** False when no target has a key yet: the next passphrase is a new one. */
+  hasKeys?: boolean;
   nodes: NodeStatus[];
 };
 
