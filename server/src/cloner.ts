@@ -47,7 +47,8 @@ const REPO_LIST_PARALLEL = 4;
 
 /** Names the tool behind an exit 127. setpriv exits 127 too when it cannot exec its target; a spawn failure of setpriv itself has other text. */
 function missingTool(cmd: string, stderr: string, tool: string): string {
-  return cmd === "setpriv" && /failed to execute/i.test(stderr) ? tool : cmd;
+  const name = cmd.split("/").pop() ?? cmd;
+  return name === "setpriv" && /failed to execute/i.test(stderr) ? tool : name;
 }
 
 const firstLine = (text: string) =>

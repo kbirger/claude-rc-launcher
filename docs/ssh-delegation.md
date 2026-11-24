@@ -72,6 +72,7 @@ Tap Add target on the SSH access page. Fill in the form:
 - The account on the target.
 - The system type: `linux`, `windows`, `synology` or `dropbear`.
 - Whether the target is a managed target. A managed target runs the launcher as a node of this hub.
+- For a managed target of the host `local`, the address is required. Give the LAN address of this machine as the other nodes see it. The hub cannot tell it, and it never takes the address from `public_url`, because that name can lead to another machine. The wizard fills the field with the source address of the node `local` when you entered one.
 - The nodes that can reach the target. Only nodes with access turned on are listed.
 
 An account name has no spaces, quotes, commas or backslashes. It does not start with a dash. For a Windows domain account, use the form `user@domain`.
@@ -93,12 +94,11 @@ from="<node addresses>",restrict ssh-ed25519 <key> claude-rc:<target id>
 
 The `from=` option limits the key to the source addresses of the nodes. The `restrict` option turns off port forwarding, agent forwarding and X11 forwarding. The comment `claude-rc:<target id>` helps you find the line later.
 
-A target has four states:
+A target has three states:
 
 - `draft`: the key exists, and the test has not passed.
 - `ready`: the test passed.
 - `disabled`: the hub refuses new grants and ends the active ones.
-- `retired`: the hub deleted the key.
 
 If a wizard stops before the end, the target stays in `draft`. Tap Continue setup on the target to go on.
 
@@ -117,6 +117,8 @@ For a managed target, name its host id. You need no key of your own:
 ```sh
 claude-rc ssh target add slon --managed slon --type linux --account root --node local
 ```
+
+For a remote managed host, the address is the host name from the URL of that host. For the host `local`, add `--address` with the LAN address of this machine as the other nodes see it. The hub refuses the command without it.
 
 The command works in this order:
 
@@ -145,6 +147,26 @@ A session of the instance can then run `claude-rc ssh`. It sees only the `ready`
 
 The node finds the instance from the systemd unit of the calling process. A root session can fake this. So the approval screen shows the instance name as a claim and not as proof.
 
+### The ssh-access skill
+
+A session does not know about `claude-rc ssh` by itself. The node installs a Claude Code skill that teaches it. The skill is named `ssh-access`.
+
+The skill tells the session to list the targets first. Then it asks for one target with the shortest time that works. It runs the `ssh -F` line that the request prints. It stops when the owner denies a request.
+
+The node writes the skill to `~/.claude/skills/ssh-access/SKILL.md`. The home is the home of the user that the instances run as. This is the `instance.service_user` of the node, and the user of each instance that runs as another user. The hub does the same for the instances of its own host.
+
+The node installs the skill at each start. Every update and every restart of the node refreshes it. A change to the instances also installs it for a new user. A node on Windows does nothing.
+
+The file has a managed line right after the frontmatter. The line holds a hash of the rest of the file. The node uses this line to decide what to do:
+
+- If the line is there and the hash matches the file, nobody edited it. The node replaces it when a new version exists.
+- If the line is there and the hash does not match, someone edited the file. The node keeps it and logs one line. Delete the file to get the current version at the next start.
+- If the line is missing, the launcher did not make the file. The node never touches it and logs one line.
+
+The node does the work as the target user and not as root. It refuses a symbolic link at each part of the path. If the node runs as root and has no user to switch to, it does not write the skill.
+
+To turn this off, set `install_skill = false` in the `[instance]` table of `config.toml`. The node then leaves the skill files as they are. Delete them yourself if you no longer want them. See [Configuration](configuration.md).
+
 ## First use
 
 Inside a session of an enabled instance, do these steps:
@@ -171,6 +193,10 @@ A passkey must support the WebAuthn PRF extension. This extension lets the passk
 - A hardware key was not tested.
 
 A passphrase works on any device. The hub derives a wrapping key from the passphrase and a salt for each target. All keys use the same passphrase. When you add a second key, the hub first checks your passphrase against an existing key.
+
+A password manager can generate, save and fill the passphrase. It can fill the passphrase field on the first key and on the test step. It can also fill it on each approval and on a recovery. It does not fill the recovery code or the target fields. A passphrase needs at least 12 characters when you set it. The hub counts characters, not bytes. An older shorter passphrase keeps working until you recover and set a new one.
+
+With a passkey, the SSH access page has a `Check my passkey` button for admins. A tap asks the passkey for one secret and sends nothing to the hub. A good result proves that the passkey returns a PRF secret now. It does not make sure that the hub keys open.
 
 A wrong unlock fails with `the unlock does not open the key`. No grant is lost. Try again.
 
@@ -207,13 +233,33 @@ Access ends in these ways:
 - It expires at the end time.
 - You tap Revoke.
 - You disable a target. The hub ends its active grants and refuses its pending requests.
-- You retire a target. The hub deletes the key, ends its active grants and refuses its pending requests. The page then names the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the target.
+- You retire a target. The hub ends its active grants, refuses its pending requests, and deletes the target and its key. For a managed target, the retire waits a few seconds for the node.
 - The hub restarts. This ends all grants, because grants live in memory only.
 - A node loses its event stream to the hub. The hub ends the active grants of that node.
 - You remove a node from the hub. The hub ends all grants of that node, also the pending requests.
 - You turn off Allow SSH requests for an instance, or you delete the instance. The node closes the control socket of the instance and tells the hub. The hub ends all grants of that instance with the reason `revoked`.
 
 Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again. A session cannot request a `draft` target, so the target is not usable until the test passes.
+
+### Retire a target
+
+A retire deletes the target and its key. The target does not stay in the list, and the hub keeps no record of it. The audit log still shows who retired the target.
+
+The old key line on the machine is harmless, because the private key is gone. Nobody can use the line any more.
+
+- For a managed target, the hub also asks the node of the target to remove the key line. This works when the node is reachable.
+- The node removes only a line that ends with the key and the comment `claude-rc:<target id>`. It keeps every other line. The file keeps its mode. A run as root keeps the owner. When the account is not root, the file belongs to the account.
+- The node refuses to change an `authorized_keys` file or a `.ssh` folder that is a symbolic link. The notice then shows a failed removal.
+- For an external target, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
+
+After a retire, the page shows one notice with the result. The result is one of these:
+
+- The key line was removed from the machine.
+- The key line was not on the machine.
+- The hub failed to remove the key line. The notice gives the reason. Remove the line yourself.
+- The target is external. Remove the line yourself.
+
+A failed removal never stops the retire. The id is free after a retire. You can add a target with the same id again, and it starts in `draft`. A target in `draft`, `ready` or `disabled` keeps its id, and the hub refuses a second target with that id.
 
 ## What it does not do
 

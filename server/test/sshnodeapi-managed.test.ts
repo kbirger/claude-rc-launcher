@@ -35,7 +35,7 @@ const BLOB = Buffer.concat([
 let dir: string;
 let keyFile: string;
 let calls: { account: string; script: Script }[];
-let result: { code: number; stderr: string };
+let result: { code: number; stderr: string; stdout?: string };
 let app: ReturnType<typeof createNodeApp>;
 
 function build(options: Partial<SshManagedOptions> = {}): void {
@@ -218,5 +218,180 @@ describe("managed SSH targets on the node", () => {
     const standalone = sshManagedApi({ hostKeyFile: keyFile });
     standalone.onError(onError);
     expect((await standalone.request("/hostkey")).status).toBe(200);
+  });
+});
+
+describe("POST /deauthorize on the node", () => {
+  const KEY = BLOB.toString("base64");
+  const deauthorize = (overrides: Record<string, unknown> = {}) =>
+    call("POST", "/deauthorize", { account: "alice", systemType: "linux", key: KEY, id: "nas", ...overrides });
+
+  test("it runs the removal script for the account and answers the result of the script", async () => {
+    result = { code: 0, stderr: "", stdout: "removed\n" };
+    const response = await deauthorize();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ result: "removed" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.account).toBe("alice");
+    expect(calls[0]?.script.shell).toBe("sh");
+    expect(calls[0]?.script.script).toContain(`'${KEY}'`);
+    expect(calls[0]?.script.script).toContain("'claude-rc:nas'");
+
+    result = { code: 0, stderr: "", stdout: "not-found\n" };
+    expect(await (await deauthorize()).json()).toEqual({ result: "not-found" });
+  });
+
+  test("it hands the account to the Windows script", async () => {
+    result = { code: 0, stderr: "", stdout: "removed\n" };
+    await deauthorize({ systemType: "windows", account: "bob" });
+    expect(calls[0]?.script.shell).toBe("powershell");
+    expect(calls[0]?.script.script).toContain("'bob'");
+  });
+
+  test("it rejects bad accounts, system types, ids and keys with 400 and runs nothing", async () => {
+    const bad: Record<string, unknown>[] = [
+      { account: "a b" },
+      { account: "-x" },
+      { systemType: "plan9" },
+      { id: "" },
+      { id: "Nas" },
+      { id: "a'b" },
+      { id: "$(touch x)" },
+      { id: "a\nb" },
+      { id: "it’s" },
+      { key: "" },
+      { key: "AAAA'; touch x; '" },
+      { key: "$(touch x)" },
+      { key: "`touch x`" },
+      { key: `${KEY}\n${KEY}` },
+      { key: "it’s" },
+      { key: "AAAAAAAA" },
+      { key: Buffer.concat([Buffer.from([0, 0, 0, 7]), Buffer.from("ssh-rsa"), Buffer.alloc(40)]).toString("base64") },
+      { key: "A".repeat(201) },
+      { key: 5 },
+      { id: 5 },
+    ];
+
+    for (const overrides of bad) {
+      expect([JSON.stringify(overrides), (await deauthorize(overrides)).status]).toEqual([
+        JSON.stringify(overrides),
+        400,
+      ]);
+    }
+
+    expect(calls).toHaveLength(0);
+  });
+
+  test("it answers 500 with the error text when the script fails or prints something else", async () => {
+    result = { code: 1, stderr: "cannot write", stdout: "" };
+    const failed = await deauthorize();
+    expect(failed.status).toBe(500);
+    expect(await failed.text()).toContain("cannot write");
+    result = { code: 0, stderr: "", stdout: "huh" };
+    expect((await deauthorize()).status).toBe(500);
+  });
+
+  test("it answers 400 for a Windows account without a profile", async () => {
+    result = { code: 1, stderr: "no profile for account 'bob': the account has never logged on", stdout: "" };
+    const response = await deauthorize({ systemType: "windows", account: "bob" });
+    expect(response.status).toBe(400);
+  });
+
+  test("it answers 501 and runs nothing for a shell script when the node has no user switch", async () => {
+    const standalone = sshManagedApi({ hostKeyFile: keyFile });
+    standalone.onError(onError);
+    const response = await standalone.request("/deauthorize", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ account: "alice", systemType: "linux", key: KEY, id: "nas" }),
+    });
+    expect(response.status).toBe(501);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("under test the default runAs refuses to run the removal script", async () => {
+    const standalone = sshManagedApi({
+      hostKeyFile: keyFile,
+      identityFor: () => Promise.resolve({ home: dir, path: "/usr/bin:/bin" }),
+    });
+    standalone.onError(onError);
+    const response = await standalone.request("/deauthorize", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ account: "alice", systemType: "linux", key: KEY, id: "nas" }),
+    });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toContain("inject runAs");
+  });
+
+  test("it needs the node auth", async () => {
+    const response = await app.request("/api/ssh/deauthorize", { method: "POST", body: "{}" });
+    expect(response.status).toBe(401);
+  });
+});
+
+describe("scripts of one account on the node", () => {
+  const KEY = BLOB.toString("base64");
+  const remove = (account = "alice") =>
+    call("POST", "/deauthorize", { account, systemType: "linux", key: KEY, id: "nas" });
+
+  function slowRunner(events: string[], failFirst = false) {
+    let count = 0;
+
+    return (account: string, script: Script, timeoutMs?: number) => {
+      const number = ++count;
+      events.push(`start ${account} ${number}`);
+      calls.push({ account, script });
+      timeoutMs;
+      return new Promise<{ code: number; stderr: string; stdout: string }>((resolve) => {
+        setTimeout(() => {
+          events.push(`end ${account} ${number}`);
+          resolve(
+            failFirst && number === 1
+              ? { code: 1, stderr: "boom", stdout: "" }
+              : { code: 0, stderr: "", stdout: "removed\n" },
+          );
+        }, 30);
+      });
+    };
+  }
+
+  test("two calls for one account run one after the other, an install and a removal too", async () => {
+    const events: string[] = [];
+    build({ runAs: slowRunner(events) });
+    const responses = await Promise.all([authorize(), remove(), remove()]);
+    expect(responses.map((response) => response.status)).toEqual([204, 200, 200]);
+    expect(events).toEqual([
+      "start alice 1",
+      "end alice 1",
+      "start alice 2",
+      "end alice 2",
+      "start alice 3",
+      "end alice 3",
+    ]);
+  });
+
+  test("a failed script does not break the chain, and other accounts run at the same time", async () => {
+    const events: string[] = [];
+    build({ runAs: slowRunner(events, true) });
+    const responses = await Promise.all([remove(), remove()]);
+    expect(responses.map((response) => response.status)).toEqual([500, 200]);
+    expect(events).toEqual(["start alice 1", "end alice 1", "start alice 2", "end alice 2"]);
+
+    events.length = 0;
+    await Promise.all([remove("alice"), remove("bob")]);
+    expect(events.slice(0, 2).every((event) => event.startsWith("start"))).toBe(true);
+  });
+
+  test("the removal script has a time limit of 8 seconds, below the 10 seconds of the hub", async () => {
+    const limits: (number | undefined)[] = [];
+    build({
+      runAs: (_account, _script, timeoutMs) => {
+        limits.push(timeoutMs);
+        return Promise.resolve({ code: 0, stderr: "", stdout: "removed\n" });
+      },
+    });
+    await remove();
+    expect(limits).toEqual([8000]);
   });
 });

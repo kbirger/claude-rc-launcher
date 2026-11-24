@@ -12,6 +12,7 @@ import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { stopServer } from "./sse";
 import { createNodeSsh } from "./sshnodewiring";
+import type { NodeSshOptions } from "./sshnodewiring";
 import { ensureNodeCert } from "./tls";
 import { NodeEvents } from "./updateevents";
 import type { DefinitionStatus } from "./win/definition";
@@ -26,6 +27,8 @@ export interface NodeDeps {
   sshDir?: string;
   /** Default: `process.platform`. A `win32` node has no SSH grants. */
   platform?: NodeJS.Platform;
+  /** Puts the `ssh-access` skill into a home. Tests give one, because the default writes into a real home. */
+  deploySkill?: NodeSshOptions["deploySkill"];
 }
 
 export async function startNode(
@@ -56,6 +59,7 @@ export async function startNode(
     events,
     ...(deps.sshDir ? { dir: deps.sshDir } : {}),
     ...(deps.platform ? { platform: deps.platform } : {}),
+    ...(deps.deploySkill ? { deploySkill: deps.deploySkill } : {}),
   });
   const instances = sshNode.instances;
   // One updater for the process: it holds the lock that refuses a second update while one runs.

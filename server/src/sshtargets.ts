@@ -17,7 +17,8 @@ const MAX_BYTES = 1024 * 1024;
 const MAX_TEXT = 4096;
 const VERSION = 1;
 const SYSTEM_TYPES: readonly string[] = ["linux", "windows", "synology", "dropbear"];
-const STATES: readonly string[] = ["draft", "ready", "disabled", "retired"];
+// An old file can hold the state `retired` from an earlier version. It is not a state any more, so such a record is dropped on load.
+const STATES: readonly string[] = ["draft", "ready", "disabled"];
 // A host name or an address: it cannot start with "-" (ssh would read it as an option), and has no space, no quote, no comma, so a value cannot add an option to the key line.
 const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
@@ -37,7 +38,7 @@ export function isAccount(value: unknown): value is string {
 }
 
 export type SystemType = "linux" | "windows" | "synology" | "dropbear";
-export type TargetState = "draft" | "ready" | "disabled" | "retired";
+export type TargetState = "draft" | "ready" | "disabled";
 
 export interface Target {
   id: string;

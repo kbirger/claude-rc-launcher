@@ -12,16 +12,35 @@ export function isKnownVersion(value: string | undefined): value is string {
   return value !== undefined && KNOWN.test(value);
 }
 
+/** A test build: an unreviewed build of a branch, `X.Y.Z-test.<branch>.<sha>`. It is published as a GitHub pre-release. */
+const TEST_BUILD = /^(\d+\.\d+\.\d+)-test\.[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** True for a test build such as `0.33.1-test.ssh.5bf4ca1`. */
+export function isTestBuild(value: string | undefined): boolean {
+  return value !== undefined && TEST_BUILD.test(value);
+}
+
 const LOCAL_BUILD = /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\+[0-9A-Za-z.-]+$/;
 
 /**
  * The release a version is, or is based on. A release (`X.Y.Z`, optionally `-prerelease`) is its own release. A local build
  * (`X.Y.Z+branch.sha`, the last tag plus build metadata) is based on its tag, and the build metadata does not count in
- * a comparison (semantic versioning ignores it). `dev` and anything else has none.
+ * a comparison (semantic versioning ignores it). A test build (`X.Y.Z-test.branch.sha`) is based on `X.Y.Z` in the same way:
+ * its suffix does not count, so it is never behind the release it is based on. `dev` and anything else has none.
  */
 export function releaseOf(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
+  const test = TEST_BUILD.exec(value);
+  if (test) return test[1];
   return KNOWN.test(value) ? value : LOCAL_BUILD.exec(value)?.[1];
+}
+
+/**
+ * The release that a node can install to match `value`, or undefined. A release and a local build give the release they
+ * are based on. A test build gives none: its base can be a release that is not published yet.
+ */
+export function installableRelease(value: string | undefined): string | undefined {
+  return isTestBuild(value) ? undefined : releaseOf(value);
 }
 
 /** Compares one pre-release identifier list; numbers sort below text. */

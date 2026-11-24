@@ -15,3 +15,6 @@ export function defined<Value>(value: Value | null | undefined): Value {
 
   return value;
 }
+
+/** A skill deployer that does nothing. A test that starts a node or a hub passes it, so that no test writes into a home. */
+export const noSkill = (): Promise<"unchanged"> => Promise.resolve("unchanged");

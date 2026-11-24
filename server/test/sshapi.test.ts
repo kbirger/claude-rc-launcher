@@ -98,11 +98,15 @@ afterEach(() => {
 });
 
 async function setup(
-  options: { setUp?: boolean; replies?: Record<string, { status: number; body?: unknown } | Error> } = {},
+  options: {
+    setUp?: boolean;
+    replies?: Record<string, { status: number; body?: unknown } | Error>;
+    replies2?: Record<string, { status: number; body?: unknown } | Error>;
+  } = {},
 ) {
   const timers = fakeTimers(1_000_000);
   const node1 = fakeNode(options.replies);
-  const node2 = fakeNode();
+  const node2 = fakeNode(options.replies2);
   const nodes: Record<string, ReturnType<typeof fakeNode>> = { node1, node2 };
   const keys = new SshKeyStore();
   const recovery = newRecovery();
@@ -315,6 +319,35 @@ describe("setup", () => {
 });
 
 describe("targets", () => {
+  test("POST /targets for the host local never takes the address from the public URL", async () => {
+    const { call, targets } = await setup();
+    const body = { id: "self", account: "root", systemType: "linux", nodes: ["node1"], managedHost: "local" };
+    const refused = await call("POST", "/targets", "admin", body);
+    expect(refused.status).toBe(400);
+    expect(refused.text).toContain("give the address of this host: the hub cannot tell it");
+    expect(targets.list()).toEqual([]);
+
+    await targets.setNodeAccess("local", { enabled: true, sourceAddress: "192.168.1.5" });
+    const made = await call("POST", "/targets", "admin", body);
+    expect(made.status).toBe(201);
+    expect(made.body).toMatchObject({ address: "192.168.1.5", managedHost: "local" });
+
+    const explicit = await call("POST", "/targets", "admin", { ...body, id: "other", address: "10.1.1.1" });
+    expect(explicit.body).toMatchObject({ address: "10.1.1.1" });
+  });
+
+  test("an id can be added again after a retire", async () => {
+    const { call } = await setup();
+    const body = { id: "nas", address: "10.0.0.5", account: "root", systemType: "linux", nodes: ["node1"] };
+    expect((await call("POST", "/targets", "admin", body)).status).toBe(201);
+    expect((await call("POST", "/targets", "admin", body)).status).toBe(409);
+    expect((await call("DELETE", "/targets/nas")).status).toBe(200);
+    expect((await call("GET", "/targets/nas")).status).toBe(404);
+    const again = await call("POST", "/targets", "admin", { ...body, address: "10.0.0.6" });
+    expect(again.status).toBe(201);
+    expect(again.body).toMatchObject({ address: "10.0.0.6", state: "draft" });
+  });
+
   test("POST /targets with managedHost and no address takes the address from the host", async () => {
     const { call, targets } = await setup();
     const made = await call("POST", "/targets", "admin", {
@@ -493,20 +526,184 @@ describe("targets", () => {
     });
   }
 
-  test("DELETE /targets/:id retires the target, removes the key and keeps the record", async () => {
-    const { call, grants, keys, node1, readyTarget, request } = await setup();
+  test("DELETE /targets/:id of an external target deletes the target and the key and answers manual", async () => {
+    const { call, grants, keys, node1, node2, readyTarget, request } = await setup();
     await readyTarget();
     const grant = await request();
     await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock });
     node1.calls.length = 0;
     const gone = await call("DELETE", "/targets/nas");
     expect(gone.status).toBe(200);
-    expect(gone.body).toMatchObject({ id: "nas", state: "retired", comment: "claude-rc:nas" });
+    expect(gone.body).toEqual({
+      id: "nas",
+      account: "root",
+      address: "10.0.0.5",
+      port: 2222,
+      systemType: "linux",
+      managed: false,
+      line: "manual",
+    });
     expect(grants.get(grant.id)?.endReason).toBe("target-disabled");
     expect(() => keys.publicLine("nas")).toThrow();
-    expect(str((await call("GET", "/targets/nas")).body.state)).toBe("retired");
+    expect((await call("GET", "/targets/nas")).status).toBe(404);
+    expect((await call("GET", "/targets")).body).toEqual([]);
+    expect((await call("GET", "/targets/nas/salt")).status).toBe(404);
     expect(node1.calls.filter((item) => item.method === "PUT").at(-1)?.json).toEqual({ targets: [] });
-    expect((await call("GET", "/targets/nas/salt")).status).toBe(409);
+    expect([...node1.paths(), ...node2.paths()].filter((path) => path.includes("deauthorize"))).toEqual([]);
+  });
+
+  test("the key and the salt of a retired target are gone, and the id starts again with a new key", async () => {
+    const { call, keys } = await setup();
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    const body = { id: "nas", address: "10.0.0.5", account: "root", systemType: "linux", nodes: ["node1"] };
+    await call("POST", "/targets", "admin", body);
+    await call("POST", "/targets/nas/key", "admin", { unlock });
+    const first = keys.publicLine("nas");
+    expect((await call("DELETE", "/targets/nas")).status).toBe(200);
+    expect(() => keys.publicLine("nas")).toThrow();
+    await call("POST", "/targets", "admin", body);
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock })).status).toBe(200);
+    expect(keys.publicLine("nas")).not.toBe(first);
+  });
+
+  describe("DELETE /targets/:id of a managed target", () => {
+    const managed = async (
+      replies2: Record<string, { status: number; body?: unknown } | Error>,
+      systemType = "linux",
+    ) => {
+      const ctx = await setup({ replies2 });
+      await ctx.call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+      await ctx.call("POST", "/targets", "admin", {
+        id: "self",
+        account: "root",
+        systemType,
+        nodes: ["node1"],
+        managedHost: "node2",
+      });
+      await ctx.call("POST", "/targets/self/key", "admin", { unlock });
+      await ctx.targets.setState("self", "ready");
+      return ctx;
+    };
+
+    test("it ends the grants, asks the node with the blob before the key is deleted, and reports removed", async () => {
+      const ctx = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } });
+      const { call, keys, node2, grants } = ctx;
+      const line = keys.publicLine("self");
+      const blob = line.split(" ")[1];
+      const pending = grants.request({ nodeId: "node1", instanceId: "i1", targetId: "self" });
+      const active = grants.request({ nodeId: "node1", instanceId: "i2", targetId: "self" });
+      await call("POST", `/grants/${active.id}/approve`, "admin", { unlock });
+      let keyHeld: boolean | undefined;
+      const original = node2.client.call.bind(node2.client);
+
+      node2.client.call = (method, path, options) => {
+        if (path.endsWith("/deauthorize")) keyHeld = keys.publicLine("self") === line;
+        return original(method, path, options);
+      };
+
+      const gone = await call("DELETE", "/targets/self");
+      expect(gone.status).toBe(200);
+      expect(gone.body).toMatchObject({
+        id: "self",
+        account: "root",
+        managed: true,
+        line: "removed",
+        systemType: "linux",
+      });
+      expect(gone.body.detail).toBeUndefined();
+      expect(keyHeld).toBe(true);
+      const sent = node2.calls.find((item) => item.path === "/api/ssh/deauthorize");
+      expect(sent).toEqual({
+        method: "POST",
+        path: "/api/ssh/deauthorize",
+        json: { account: "root", systemType: "linux", key: blob, id: "self" },
+      });
+      expect(grants.get(pending.id)).toMatchObject({ state: "ended", endReason: "target-disabled" });
+      expect(grants.get(active.id)).toMatchObject({ state: "ended", endReason: "target-disabled" });
+      expect(() => keys.publicLine("self")).toThrow();
+      expect((await call("GET", "/targets/self")).status).toBe(404);
+    });
+
+    test("it reports not-found when the node found no such line", async () => {
+      const { call } = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "not-found" } } });
+      expect((await call("DELETE", "/targets/self")).body).toMatchObject({ managed: true, line: "not-found" });
+    });
+
+    test("it still retires and reports failed when the node answers with an error or is down", async () => {
+      for (const reply of [{ status: 500, body: { error: "cannot write" } }, new Error("connect refused")]) {
+        const { call, keys } = await managed({ "POST /api/ssh/deauthorize": reply });
+        const gone = await call("DELETE", "/targets/self");
+        expect(gone.status).toBe(200);
+        expect(gone.body).toMatchObject({ managed: true, line: "failed" });
+        expect(str(gone.body.detail).length).toBeGreaterThan(0);
+        expect(str(gone.body.detail).length).toBeLessThanOrEqual(200);
+        expect(() => keys.publicLine("self")).toThrow();
+        expect((await call("GET", "/targets/self")).status).toBe(404);
+      }
+    });
+
+    test("it reports failed when the node gives an answer that is not a result", async () => {
+      const { call } = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "weird" } } });
+      expect((await call("DELETE", "/targets/self")).body).toMatchObject({ line: "failed" });
+    });
+
+    test("it sends the system type of a Windows target", async () => {
+      const { call, node2 } = await managed(
+        { "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } },
+        "windows",
+      );
+      await call("DELETE", "/targets/self");
+      expect(node2.calls.find((item) => item.path.endsWith("/deauthorize"))?.json).toMatchObject({
+        systemType: "windows",
+      });
+    });
+
+    test("a request that arrives during the slow removal is refused, and a second retire gives 409", async () => {
+      const ctx = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } });
+      const { call, keys, node1, node2, grants, service, targets } = ctx;
+      const gate: { release: () => void } = { release: () => {} };
+      const wait = new Promise<void>((resolve) => (gate.release = resolve));
+      const original = node2.client.call.bind(node2.client);
+
+      node2.client.call = async (method, path, options) => {
+        if (path.endsWith("/deauthorize")) await wait;
+        return original(method, path, options);
+      };
+
+      const first = call("DELETE", "/targets/self");
+      await flush();
+      expect(targets.get("self")?.state).toBe("disabled");
+      service.onNodeEvent("node1", "ssh.request", { requestId: "late", instanceId: "i9", targetId: "self" });
+      await flush();
+      expect(grants.list().filter((grant) => grant.requestId === "late")).toEqual([]);
+      expect(node1.paths()).toContain("POST /api/ssh/requests/late/reject");
+      const second = await call("DELETE", "/targets/self");
+      expect(second.status).toBe(409);
+      expect(second.body.error).toBe("this target is being retired");
+      gate.release();
+      expect((await first).status).toBe(200);
+      expect(grants.list().filter((grant) => grant.state === "pending" || grant.state === "active")).toEqual([]);
+      expect(() => keys.publicLine("self")).toThrow();
+      expect(targets.get("self")).toBeUndefined();
+    });
+
+    test("a failed first step leaves the target as it was, and a later retire works", async () => {
+      const ctx = await managed({ "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } });
+      const { call, keys, node2, targets } = ctx;
+      const original = targets.setState.bind(targets);
+      targets.setState = () => Promise.reject(new Error("disk full"));
+      expect((await call("DELETE", "/targets/self")).status).toBe(500);
+      expect(targets.get("self")?.state).toBe("ready");
+      expect(() => keys.publicLine("self")).not.toThrow();
+      expect(node2.paths()).not.toContain("POST /api/ssh/deauthorize");
+      targets.setState = original;
+      expect((await call("DELETE", "/targets/self")).status).toBe(200);
+    });
+
+    test("it answers 404 for an unknown target", async () => {
+      const { call } = await setup();
+      expect((await call("DELETE", "/targets/nope")).status).toBe(404);
+    });
   });
 
   test("a change to a target or to node access pushes the targets to the affected nodes", async () => {
@@ -934,5 +1131,150 @@ describe("unlock bytes", () => {
       expect(bytes.length).toBeGreaterThan(0);
       expect(bytes.every((byte) => byte === 0)).toBe(true);
     }
+  });
+});
+
+describe("passphrase length", () => {
+  const pass = (text: string) => ({ method: "passphrase", secret: Buffer.from(text).toString("base64url") });
+  const NEEDS = "the passphrase needs at least 12 characters";
+
+  const addTarget = async (call: Awaited<ReturnType<typeof setup>>["call"], id: string) => {
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", {
+      id,
+      address: "10.0.0.5",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+  };
+
+  test("the first key refuses 11 characters and accepts 12, and the answer and the log never hold the text", async () => {
+    const { call, keys } = await setup();
+    await addTarget(call, "nas");
+    const short = await call("POST", "/targets/nas/key", "admin", { unlock: pass("elevenchars") });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect(short.text).not.toContain("elevenchars");
+    expect(logs.join("\n")).not.toContain("elevenchars");
+    expect(() => keys.publicLine("nas")).toThrow();
+    const long = await call("POST", "/targets/nas/key", "admin", { unlock: pass("twelve chars") });
+    expect(long.status).toBe(200);
+    expect(long.text).not.toContain("twelve chars");
+    expect(logs.join("\n")).not.toContain("twelve chars");
+  });
+
+  test("the length counts characters, not bytes", async () => {
+    const { call } = await setup();
+    await addTarget(call, "nas");
+    const emoji = "\u{1F600}";
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass(emoji.repeat(11)) })).status).toBe(400);
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass(emoji.repeat(12)) })).status).toBe(200);
+    const accent = "é";
+    await call("POST", "/targets", "admin", {
+      id: "web",
+      address: "10.0.0.6",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    // A second key must match the first one, so the accented text is wrong there, not too short.
+    expect((await call("POST", "/targets/web/key", "admin", { unlock: pass(accent.repeat(12)) })).status).toBe(403);
+  });
+
+  test("a later key and an approval accept a short passphrase that the existing keys use", async () => {
+    const { call, keys, targets } = await setup();
+    await addTarget(call, "nas");
+    await keys.create("nas", { method: "passphrase", secret: new TextEncoder().encode("abcd") });
+    await targets.setKeyFingerprint("nas", "SHA256:x");
+    await call("POST", "/targets", "admin", {
+      id: "web",
+      address: "10.0.0.6",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    const second = await call("POST", "/targets/web/key", "admin", { unlock: pass("abcd") });
+    expect(second.status).toBe(200);
+  });
+
+  test("an approval accepts a 4 character passphrase", async () => {
+    const { call, keys, targets, request, grants } = await setup();
+    await addTarget(call, "nas");
+    await keys.create("nas", { method: "passphrase", secret: new TextEncoder().encode("abcd") });
+    await targets.setKeyFingerprint("nas", "SHA256:x");
+    await call("POST", "/targets/nas/pin", "admin", { hostKey: HOST_KEY });
+    await targets.setState("nas", "ready");
+    const grant = await request();
+    expect((await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock: pass("abcd") })).status).toBe(200);
+    expect(grants.get(grant.id)?.state).toBe("active");
+  });
+
+  test("a rewrap with a passphrase needs 12 characters", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    const begin = (method: string) => ({
+      code: recovery.code,
+      method,
+      ...(method === "prf" ? { credentialId: "c" } : {}),
+    });
+    expect((await call("POST", "/recovery/begin", "admin", begin("passphrase"))).status).toBe(200);
+    const short = await call("POST", "/targets/nas/rewrap", "admin", {
+      code: recovery.code,
+      unlock: pass("elevenchars"),
+    });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect(short.text).not.toContain("elevenchars");
+    expect(logs.join("\n")).not.toContain("elevenchars");
+    expect(
+      (await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: pass("twelve chars") }))
+        .status,
+    ).toBe(204);
+  });
+
+  test("with every other key pending a re-wrap, status says no keys and a short passphrase on a new key is refused", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    expect((await call("GET", "/status")).body.hasKeys).toBe(true);
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "passphrase" });
+    expect((await call("GET", "/status")).body.hasKeys).toBe(false);
+    await call("POST", "/targets", "admin", {
+      id: "web",
+      address: "10.0.0.6",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    const short = await call("POST", "/targets/web/key", "admin", { unlock: pass("elevenchars") });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect((await call("POST", "/targets/web/key", "admin", { unlock: pass("twelve chars") })).status).toBe(200);
+  });
+
+  test("a rewrap refuses a short passphrase even when the old passphrase was short", async () => {
+    const { call, keys, targets, recovery } = await setup();
+    await addTarget(call, "nas");
+    await keys.create("nas", { method: "passphrase", secret: new TextEncoder().encode("abcd") });
+    await targets.setKeyFingerprint("nas", "SHA256:x");
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "passphrase" });
+    const short = await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: pass("abcd") });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect(keys.pendingRewraps()).toEqual(["nas"]);
+  });
+
+  test("a leading byte order mark is not counted, as the hub decodes it away", async () => {
+    const { call } = await setup();
+    await addTarget(call, "nas");
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass("\uFEFFelevenchars") })).status).toBe(400);
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass("\uFEFFtwelve chars") })).status).toBe(200);
+  });
+
+  test("GET /status tells whether a key exists", async () => {
+    const { call, readyTarget } = await setup();
+    expect((await call("GET", "/status")).body.hasKeys).toBe(false);
+    await readyTarget();
+    expect((await call("GET", "/status")).body.hasKeys).toBe(true);
   });
 });

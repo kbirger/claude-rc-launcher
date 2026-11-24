@@ -13,6 +13,7 @@
     hosts,
     busy,
     problem,
+    localAddress = "",
     onsubmit,
   }: {
     /** The nodes that have SSH access turned on. */
@@ -20,6 +21,8 @@
     hosts: HostInfo[] | undefined;
     busy: boolean;
     problem: string;
+    /** The source address that the owner entered for the node `local`. Empty when there is none. */
+    localAddress?: string;
     onsubmit: (body: NewTarget) => void;
   } = $props();
 
@@ -40,13 +43,21 @@
   const idOk = $derived(ID_RE.test(id));
   const portOk = $derived(port.trim() === "" || (/^\d+$/.test(port.trim()) && +port >= 1 && +port <= 65535));
   const external = $derived(kind === "external");
+  // The hub cannot tell how the other nodes see its own host, and the public URL names another machine.
+  const isLocal = $derived(!external && managedHost === "local");
   const valid = $derived(
     idOk &&
       portOk &&
       account.trim() !== "" &&
       picked.length > 0 &&
-      (external ? address.trim() !== "" : managedHost !== ""),
+      (external ? address.trim() !== "" : managedHost !== "" && (!isLocal || address.trim() !== "")),
   );
+
+  // Fill the address of `local` from its source address, and take the fill back when the owner picks another host.
+  function pickHost() {
+    if (managedHost === "local" && address.trim() === "") address = localAddress;
+    else if (managedHost !== "local" && address !== "" && address === localAddress) address = "";
+  }
 
   function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -97,7 +108,7 @@
   {#if !external}
     <div class="grid gap-1">
       <Label for="{uid}-host">Managed host</Label>
-      <select id="{uid}-host" class={field} bind:value={managedHost}>
+      <select id="{uid}-host" class={field} bind:value={managedHost} onchange={pickHost}>
         <option value="">Choose a host</option>
         {#each hosts ?? [] as host (host.id)}
           <option value={host.id}>{hostLabel(host.id, hosts)}</option>
@@ -117,7 +128,7 @@
 
   <div class="grid grid-cols-[1fr_6rem] gap-2">
     <div class="grid gap-1">
-      <Label for="{uid}-address">Address{external ? "" : " (optional)"}</Label>
+      <Label for="{uid}-address">Address{external || isLocal ? "" : " (optional)"}</Label>
       <Input
         id="{uid}-address"
         class="h-11 font-mono"
@@ -126,11 +137,17 @@
         autocomplete="off"
         spellcheck={false}
       />
+      {#if isLocal}
+        <p class="text-xs text-muted-foreground">
+          The LAN address of this machine as the other nodes see it. The hub cannot tell it.
+        </p>
+      {/if}
     </div>
     <div class="grid gap-1">
       <Label for="{uid}-port">Port</Label>
       <Input
         id="{uid}-port"
+        autocomplete="off"
         class="h-11 font-mono"
         inputmode="numeric"
         placeholder="22"

@@ -1,5 +1,5 @@
 import { RELEASE_REPO } from "./release";
-import { compareVersions, isKnownVersion, normalizeVersion, releaseOf } from "./versions";
+import { compareVersions, isKnownVersion, isTestBuild, normalizeVersion, releaseOf } from "./versions";
 
 export interface ReleaseNote {
   version: string;
@@ -69,7 +69,7 @@ export function createReleaseList(options: {
       )
         continue;
       const version = normalizeVersion(record.tag_name);
-      if (!isKnownVersion(version)) continue;
+      if (!isKnownVersion(version) || isTestBuild(version)) continue;
       list.push({
         version,
         name: typeof record.name === "string" && record.name ? record.name : version,

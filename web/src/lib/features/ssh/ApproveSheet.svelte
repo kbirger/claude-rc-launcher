@@ -3,6 +3,8 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
+  import UsernameHint from "./UsernameHint.svelte";
+  import { PASSPHRASE_NAME } from "./passphrase";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
@@ -146,11 +148,13 @@
       {:else}
         <div class="grid gap-1">
           <Label for="{uid}-pass">Passphrase</Label>
+          <UsernameHint />
           <Input
             id="{uid}-pass"
+            name={PASSPHRASE_NAME}
             type="password"
             class="h-11"
-            autocomplete="off"
+            autocomplete="current-password"
             autocapitalize="off"
             spellcheck={false}
             disabled={busy}

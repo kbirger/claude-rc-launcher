@@ -23,7 +23,7 @@ function setup(
     cfg: { roots: [] } as unknown as Config,
     run: async (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
-      return handler(cmd === "setpriv" ? args.slice(args.indexOf("--") + 2) : args);
+      return handler(cmd.endsWith("/setpriv") ? args.slice(args.indexOf("--") + 2) : args);
     },
     identityFor: () => Promise.resolve(identity),
   });
@@ -96,7 +96,7 @@ describe("repos", () => {
       gid: 1002,
     });
     await cloner.repos("bob");
-    expect(calls[0].cmd).toBe("setpriv");
+    expect(calls[0].cmd).toMatch(/\/setpriv$/);
     expect(calls[0].args.slice(-5)).toEqual(["gh", "api", "user", "--jq", ".login"]);
   });
 

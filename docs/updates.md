@@ -7,14 +7,40 @@ The hub checks GitHub for new releases. It can update itself, every node, and th
 | Web UI, Updates page | Update the hub, update all nodes, or update one node. |
 | Web UI, Nodes page | Update one node. |
 | `claude-rc update --all-nodes` | Update every node, then the hub, then this client. Read [Update every machine with one command](cli.md#update-every-machine-with-one-command). |
+| `claude-rc update --node <id>[,<id>...]` | Update only the named nodes. Read [Update every machine with one command](cli.md#update-every-machine-with-one-command). |
 | `claude-rc node update` | Run on a node: update its server binary. |
 | `claude-rc update` | Update this client. |
 
-An update through the hub (the web UI and `claude-rc update --all-nodes`) needs the `admin` role. `claude-rc update` and `claude-rc node update` need no login, because they change only the machine where they run.
+An update through the hub (the web UI, `claude-rc update --all-nodes` and `claude-rc update --node`) needs the `admin` role. `claude-rc update` and `claude-rc node update` need no login, because they change only the machine where they run.
 
 When a machine is out of date, a banner on every page of the web UI says so.
 
 <img src="images/screens/update-banner.png" alt="The update banner above the instance list" width="300"> <img src="images/screens/updates.png" alt="The Updates page while a node is out of date" width="300">
+
+## Test builds
+
+A test build is an unreviewed build of a branch. It is not a release. Its version is the next release number with a
+suffix, for example `0.33.1-test.ssh.5bf4ca1`. The suffix has the word `test`, the branch name with dots in place of
+other characters, and the short commit.
+
+A test build never counts as the latest release. The hub ignores it when it looks for the latest release, and the
+release notes never list it. The hub compares a test build by the release it is based on, as for a local build. The
+suffix does not count. A machine that runs a test build is never stale only because the suffix differs from the latest
+release. The hub never offers a test build as the target of an update. The banner never offers an older release to a
+machine that runs a test build. A hub that runs a test build gives its nodes no update target, because the base release
+can be unpublished. Update the nodes with `claude-rc update --node <id> --release <tag>`.
+
+To put a test build on a node, run one of these commands:
+
+```sh
+claude-rc update --node <id> --release v0.33.1-test.ssh.5bf4ca1
+claude-rc node update --release v0.33.1-test.ssh.5bf4ca1
+```
+
+The first command runs on any machine with a login and needs the `admin` role. The second runs on the node itself. To
+leave a test build, update the node to a release with the same commands.
+
+The web UI shows a test build as `0.33.1 (test build)`.
 
 ## Version check and updates in the web UI
 
@@ -26,7 +52,8 @@ A machine is stale in these cases:
 
 - The hub is older than the latest GitHub release. This applies to the service and to the client.
 - A node is older than the hub. This applies to the service and to the client.
-- A local build such as `0.8.3+branch.sha` is compared by the release it is based on (`0.8.3`). The `+branch.sha` part does not count. The page shows it as `0.8.3 (local build)`.
+- A local build such as `0.8.3+branch.sha` is compared by the release it is based on (`0.8.3`). The `+branch.sha` part does not count. The page shows the raw version, for example `0.8.3+branch.sha`.
+- A test build such as `0.33.1-test.ssh.5bf4ca1` is compared by the release it is based on (`0.33.1`). Read [Test builds](#test-builds).
 - A version of `dev` has no release. It is never stale.
 - If a machine has two client copies, the older copy decides.
 
@@ -51,7 +78,7 @@ wait for the next poll. The hub logs one line when the status or the reason of a
 A machine shows its client in one of four ways:
 
 - The version, for example `0.8.4`, when the node found a client.
-- `client 0.8.4 (local build)`, when the client is a local build. It is compared by the release it is based on. A client of version `dev` shows as `client local build` and is never marked stale.
+- `client 0.8.4+branch.sha`, when the client is a local build. It is compared by the release it is based on. A client of version `dev` shows as `client dev` and is never marked stale.
 - `no client`, when the node looked and found none.
 - `client not reported`, when the node is too old to report clients or the answer is missing.
 

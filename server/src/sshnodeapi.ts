@@ -9,7 +9,7 @@ import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
 import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./sshfiles";
 import { GrantAgent } from "./sshnodeagent";
-import { provisionScript } from "./sshprovision";
+import { deprovisionScript, provisionScript } from "./sshprovision";
 import type { Script } from "./sshprovision";
 import { HOST_KEY_RE, isAccount, isSystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
@@ -532,12 +532,19 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
+// The hub waits 10 seconds for a removal. The script itself stops sooner. A removal that waits behind another script of
+// the same account can still show `failed` and remove the line later. That is harmless, because the key is deleted already.
+const DEAUTHORIZE_TIMEOUT_MS = 8_000;
 
 export interface SshManagedOptions {
   /** The sshd host key file. Default: the Ed25519 key of sshd on Linux and on Windows. */
   hostKeyFile?: string;
   /** Runs a provisioning script as the account. For tests. The default runs `sh -s` or PowerShell with the script on stdin. */
-  runAs?: (account: string, script: Script) => Promise<{ code: number; stderr: string }>;
+  runAs?: (
+    account: string,
+    script: Script,
+    timeoutMs?: number,
+  ) => Promise<{ code: number; stderr: string; stdout?: string }>;
   /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
   identityFor?: IdentityFor;
 }
@@ -551,27 +558,32 @@ async function runWithStdin(
   args: string[],
   script: string,
   env?: Record<string, string>,
-): Promise<{ code: number; stderr: string }> {
+  timeoutMs: number = SCRIPT_TIMEOUT_MS,
+): Promise<{ code: number; stderr: string; stdout: string }> {
   let child: ReturnType<typeof Bun.spawn>;
 
   try {
     child = Bun.spawn([cmd, ...args], {
       stdin: new Blob([script]),
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "pipe",
       ...(env ? { env } : {}),
     });
   } catch (error) {
-    return { code: 127, stderr: error instanceof Error ? error.message : String(error) };
+    return { code: 127, stderr: error instanceof Error ? error.message : String(error), stdout: "" };
   }
 
   const timer = setTimeout(() => {
     child.kill();
-  }, SCRIPT_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
-    const [stderr, code] = await Promise.all([new Response(child.stderr as ReadableStream).text(), child.exited]);
-    return { code, stderr };
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout as ReadableStream).text(),
+      new Response(child.stderr as ReadableStream).text(),
+      child.exited,
+    ]);
+    return { code, stderr, stdout };
   } finally {
     clearTimeout(timer);
   }
@@ -584,10 +596,16 @@ function refuseUnderTest(): void {
 }
 
 function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions["runAs"]> {
-  return async (account, { shell, script }) => {
+  return async (account, { shell, script }, timeoutMs) => {
     if (shell === "powershell") {
       refuseUnderTest();
-      return runWithStdin("powershell", ["-NoProfile", "-NonInteractive", "-Command", "-"], script);
+      return runWithStdin(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-Command", "-"],
+        script,
+        undefined,
+        timeoutMs,
+      );
     }
 
     // Fail closed: without a user switch the script would write to the home of the node's own user.
@@ -595,7 +613,7 @@ function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions[
     // identityFor rejects an unknown account with a 400.
     const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
     refuseUnderTest();
-    return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env);
+    return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env, timeoutMs);
   };
 }
 
@@ -625,9 +643,40 @@ function authorizeLine(value: unknown): string {
   return value;
 }
 
-/** The managed target routes: `GET /hostkey` and `POST /authorize`. They work on every node. */
+const MAX_BLOB = 200;
+const BLOB_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const ED25519_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);
+
+/** The key blob of the line to remove: base64 of an ssh-ed25519 public key blob, at most 200 characters. */
+function deauthorizeKey(value: unknown): string {
+  if (typeof value === "string" && value.length <= MAX_BLOB && BLOB_RE.test(value)) {
+    const raw = Buffer.from(value, "base64");
+    if (raw.length > ED25519_PREFIX.length && raw.subarray(0, ED25519_PREFIX.length).equals(ED25519_PREFIX))
+      return value;
+  }
+
+  throw new HttpError(400, "key must be the base64 blob of an ssh-ed25519 public key of at most 200 characters");
+}
+
+/** The managed target routes: `GET /hostkey`, `POST /authorize` and `POST /deauthorize`. They work on every node. */
 export function sshManagedApi(options: SshManagedOptions = {}): Hono {
-  const runAs = options.runAs ?? defaultRunAs(options.identityFor);
+  const runUnserialized = options.runAs ?? defaultRunAs(options.identityFor);
+  // Two scripts for one account would read and rewrite the same authorized_keys file, and one could lose the change of
+  // the other. They run one after the other. A failure does not stop the next one.
+  const tails = new Map<string, Promise<unknown>>();
+
+  const runAs: typeof runUnserialized = (account, script, timeoutMs) => {
+    const run = (tails.get(account) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => runUnserialized(account, script, timeoutMs));
+    const tail = run.catch(() => undefined);
+    tails.set(account, tail);
+    void tail.then(() => {
+      if (tails.get(account) === tail) tails.delete(account);
+    });
+    return run;
+  };
+
   const app = new Hono();
 
   app.get("/hostkey", async (context) => {
@@ -650,6 +699,25 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
     if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
     return context.body(null, 204);
+  });
+
+  // Removes the key line of a target. The match is by blob and comment, because `from=` can change after the install.
+  app.post("/deauthorize", async (context) => {
+    const body = await readObject(context);
+    const { account, systemType, id } = body;
+    if (!isAccount(account)) throw new HttpError(400, "account is not valid");
+    if (!isSystemType(systemType)) throw new HttpError(400, "systemType is not valid");
+    if (typeof id !== "string" || !HOST_ID_RE.test(id)) throw new HttpError(400, "id is not valid");
+    const key = deauthorizeKey(body.key);
+
+    const script = deprovisionScript(systemType, key, id, systemType === "windows" ? { account } : {});
+    const { code, stderr, stdout } = await runAs(account, script, DEAUTHORIZE_TIMEOUT_MS);
+    const failure = stderr.trim();
+    if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
+    if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
+    const result = (stdout ?? "").trim();
+    if (result !== "removed" && result !== "not-found") throw new HttpError(500, "the script gave no result");
+    return context.json({ result });
   });
 
   return app;

@@ -115,8 +115,8 @@ export interface Deps {
     keys: SshKeyStore;
     targets: TargetStore;
     grants: GrantStore;
-    /** The address of the hub host `local`, when it has SSH wiring. Without it `local` is not a host of the SSH routes. */
-    localAddress?: string;
+    /** True when the hub host `local` has SSH wiring. Without it `local` is not a host of the SSH routes. */
+    local?: boolean;
   };
 }
 
@@ -661,11 +661,12 @@ export function createApp(deps: Deps): Hono {
   const ssh = () => {
     const { ssh: parts } = deps;
     if (!parts) return undefined;
-    const { localAddress, ...rest } = parts;
+    const { local, ...rest } = parts;
     return sshApi({
       ...rest,
       hostAddress: (hostId) => {
-        if (hostId === LOCAL_HOST && localAddress !== undefined) return localAddress;
+        // The address of `local` is never derived: the public URL names another machine.
+        if (hostId === LOCAL_HOST) return undefined;
         const url = registry.get(hostId)?.host.url;
 
         try {
@@ -674,10 +675,7 @@ export function createApp(deps: Deps): Hono {
           return undefined;
         }
       },
-      hostIds: () => [
-        ...(localAddress !== undefined ? [LOCAL_HOST] : []),
-        ...registry.list().map((entry) => entry.host.id),
-      ],
+      hostIds: () => [...(local ? [LOCAL_HOST] : []), ...registry.list().map((entry) => entry.host.id)],
       user: (context) => {
         const current = context.get("user" as never) as User | undefined;
         return current?.username ?? current?.sub ?? "unknown";

@@ -12,6 +12,7 @@ import type { Instance } from "../src/instances";
 import { DEFAULT_ROLES } from "../src/roles";
 import { identitiesAnswer, FrameReader, publicKeyBlob } from "../src/sshagentproto";
 import { TargetStore } from "../src/sshtargets";
+import { noSkill } from "./support";
 
 const INSTANCE_ID = "0123456789ab";
 const unlock = { method: "passphrase", secret: Buffer.from("correct horse").toString("base64url") };
@@ -102,6 +103,7 @@ async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean
     instances: fake,
     oidc: stubOidc,
     sshDir,
+    deploySkill: noSkill,
     ...(options.platform ? { platform: options.platform } : {}),
   });
   cleanups.push(() => {
@@ -280,6 +282,7 @@ describe("SSH for the hub-local host", () => {
       events: new NodeEvents(),
       dir: path.join(root, "ssh"),
       platform: "linux",
+      deploySkill: noSkill,
     });
     await local.start();
     const created = await local.client?.call("POST", "/api/ssh/grants", {

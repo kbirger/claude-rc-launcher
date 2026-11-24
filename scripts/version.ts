@@ -13,7 +13,7 @@ export function computeVersion({ env, git }: Inputs): string {
   const sha = git(["rev-parse", "--short", "HEAD"]);
   const changes = git(["status", "--porcelain", "--untracked-files=no"]);
   if (branch === null || sha === null || changes === null) return "dev";
-  const base = (git(["describe", "--tags", "--abbrev=0"]) ?? "0.0.0").replace(/^v/, "");
+  const base = (git(["describe", "--tags", "--abbrev=0", "--exclude", "*-test.*"]) ?? "0.0.0").replace(/^v/, "");
   const name = branch === "HEAD" ? "detached" : branch.replace(/[^A-Za-z0-9.-]/g, "-");
   return `${base}+${name}.${sha}${changes ? ".dirty" : ""}`;
 }

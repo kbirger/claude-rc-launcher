@@ -9,6 +9,8 @@
   import { ApiError } from "../../shared/http";
   import { getSalt, type SshStatus, type Unlock, type UnlockMethod } from "./api";
   import { beginRecoveryMutation, rewrapTargetMutation } from "./mutations";
+  import { longEnough, MIN_PASSPHRASE, PASSPHRASE_NAME, TOO_SHORT } from "./passphrase";
+  import UsernameHint from "./UsernameHint.svelte";
   import { registerPasskey, toBase64Url, unlockWithPasskey, UnlockError } from "./prf";
 
   // Recovery with the recovery code, after the owner lost the passkey or the passphrase. Step 1: the code and the new
@@ -112,6 +114,11 @@
     if (choice === "passphrase") {
       if (passphrase === "") {
         problem = "Type the new passphrase.";
+        return;
+      }
+
+      if (!longEnough(passphrase)) {
+        problem = TOO_SHORT;
         return;
       }
 
@@ -221,7 +228,14 @@
       <Sheet.Title>Recover SSH access</Sheet.Title>
       <Sheet.Description class="sr-only">Use the recovery code to choose a new unlock method.</Sheet.Description>
     </Sheet.Header>
-    <div class="grid min-w-0 gap-3 px-4">
+    <form
+      id="{uid}-form"
+      class="grid min-w-0 gap-3 px-4"
+      onsubmit={(event) => {
+        event.preventDefault();
+        if (step === "code" && !untested && !busy) void start();
+      }}
+    >
       {#if note && step === "code"}
         <p class="text-sm text-muted-foreground" role="status">{note}</p>
       {/if}
@@ -282,23 +296,29 @@
         {#if choice === "passphrase"}
           <div class="grid gap-1">
             <Label for="{uid}-pass">New passphrase</Label>
+            <UsernameHint />
             <Input
               id="{uid}-pass"
+              name={PASSPHRASE_NAME}
               type="password"
-              autocomplete="off"
+              autocomplete="new-password"
               autocapitalize="off"
               spellcheck={false}
               class="h-11"
               disabled={busy}
               bind:value={passphrase}
             />
+            <p class="text-xs text-muted-foreground">
+              Use at least {MIN_PASSPHRASE} characters. A password manager can make and save one.
+            </p>
           </div>
           <div class="grid gap-1">
             <Label for="{uid}-again">Type the passphrase again</Label>
             <Input
               id="{uid}-again"
+              name="{PASSPHRASE_NAME}-again"
               type="password"
-              autocomplete="off"
+              autocomplete="new-password"
               autocapitalize="off"
               spellcheck={false}
               class="h-11"
@@ -350,7 +370,7 @@
       {#if untested && step === "code"}
         <p class="text-sm">Tap to test the passkey you just created.</p>
       {/if}
-    </div>
+    </form>
     <Sheet.Footer class="px-4">
       {#if step === "code"}
         {#if untested}
@@ -358,7 +378,7 @@
             {busy ? "Working..." : "Test your passkey"}
           </Button>
         {:else}
-          <Button type="button" size="touch" disabled={busy} onclick={start}>
+          <Button type="submit" form="{uid}-form" size="touch" disabled={busy}>
             {busy ? "Working..." : "Continue"}
           </Button>
         {/if}

@@ -24,6 +24,7 @@ import { startHub } from "../src/hubmain";
 import type { Instance } from "../src/instances";
 import { DEFAULT_ROLES } from "../src/roles";
 import { openWithRecovery } from "../src/sshwrap";
+import { noSkill } from "./support";
 
 const INSTANCE_ID = "0123456789ab";
 const TARGET = "lab";
@@ -255,7 +256,7 @@ describe("SSH delegation with a real sshd", () => {
         },
         hosts: [],
       } as unknown as Config;
-      const hub = await startHub(cfg, { instances: fake, oidc: stubOidc, sshDir });
+      const hub = await startHub(cfg, { instances: fake, oidc: stubOidc, sshDir, deploySkill: noSkill });
 
       hubStop = () => {
         hub.stop();

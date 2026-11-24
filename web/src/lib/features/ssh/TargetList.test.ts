@@ -92,6 +92,7 @@ test("TargetList Retire asks for a confirmation and then calls DELETE", async ()
     return found as HTMLElement;
   });
   expect(changes()).toHaveLength(0);
+  expect(dialog.textContent).toContain("tries to remove the key line");
   button("Cancel", dialog)!.click();
   flushSync();
   expect(changes()).toHaveLength(0);
@@ -109,13 +110,64 @@ test("TargetList Retire asks for a confirmation and then calls DELETE", async ()
   expect(changes()[0]).toMatchObject({ method: "DELETE", url: "/api/ssh/targets/nas" });
 });
 
-test("TargetList shows the line comment to remove for a retired target", async () => {
-  const shown = await show([target({ state: "retired", account: "admin" })]);
-  expect(shown.textContent).toContain(
-    "Remove the line that ends with claude-rc:nas from the authorized_keys file of admin on 10.0.0.5.",
-  );
-  expect(button("Retire", shown)).toBeUndefined();
-  expect(button("Disable", shown)).toBeUndefined();
+test("TargetList shows no retired entries and no text about them", async () => {
+  const shown = await show([target({ account: "admin" })]);
+  expect(shown.textContent).not.toContain("retired");
+  expect(shown.textContent).not.toContain("claude-rc:");
+  expect(shown.querySelector('[role="status"]')).toBeNull();
+});
+
+const retireWith = async (answer: Record<string, unknown>) => {
+  const list = [target({ account: "admin" })];
+  const shown = await show(list);
+  const base = fetch;
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") {
+      calls.push({ method: "DELETE", url: String(url), body: undefined });
+      targets = [];
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    return base(url, init);
+  });
+  button("Retire", shown)!.click();
+  const dialog = await vi.waitFor(() => {
+    const found = document.querySelector('[role="alertdialog"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  button("Retire", dialog)!.click();
+  const status = await vi.waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[role="status"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  return { shown, status };
+};
+
+const answer = { id: "nas", account: "admin", address: "10.0.0.5", port: 22, systemType: "linux", managed: true };
+
+test.each([
+  ["removed", {}, "Retired nas. The key line was removed from admin@10.0.0.5."],
+  ["not-found", {}, "Retired nas. The key line was not on admin@10.0.0.5."],
+  [
+    "failed",
+    { detail: "connect refused" },
+    "Retired nas. The hub could not remove the key line from admin@10.0.0.5: connect refused. You can remove the line that ends with claude-rc:nas yourself. It no longer works.",
+  ],
+  [
+    "manual",
+    { managed: false },
+    "Retired nas. You can remove the line that ends with claude-rc:nas from the authorized_keys file of admin@10.0.0.5. It no longer works.",
+  ],
+])("TargetList shows a notice after a retire with the line %s", async (line, extra, text) => {
+  const { shown, status } = await retireWith({ ...answer, line, ...extra });
+  expect(status.textContent?.replace(/\s+/g, " ").trim()).toContain(text);
+  await vi.waitFor(() => expect(shown.querySelectorAll("[data-target]")).toHaveLength(0));
+  expect(shown.textContent).not.toContain("retired");
+  // The notice can be dismissed.
+  button("Dismiss", status)!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="status"]')).toBeNull());
 });
 
 test("TargetList links a draft target to the wizard with ?target=<id>", async () => {
