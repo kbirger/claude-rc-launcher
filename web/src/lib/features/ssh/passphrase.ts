@@ -2,8 +2,10 @@
 export const MIN_PASSPHRASE = 12;
 
 export const longEnough = (text: string): boolean => {
+  // The hub decodes the bytes with a decoder that drops a leading byte order mark (U+FEFF), so it is not counted here.
+  const plain = text.startsWith("\uFEFF") ? text.slice(1) : text;
   let count = 0;
-  for (const point of text) count += point.length > 0 ? 1 : 0;
+  for (const _point of plain) count++;
   return count >= MIN_PASSPHRASE;
 };
 
