@@ -149,7 +149,7 @@ describe("serviceCloner", () => {
 
     for (const item of [undefined, "svc"]) {
       const call = await firstCall(config, { uid: 999, gid: 998 }, item);
-      expect(call.cmd).toBe("setpriv");
+      expect(call.cmd).toMatch(/\/setpriv$/);
       expect(call.args.slice(0, 6)).toEqual(["--reuid", "999", "--regid", "998", "--init-groups", "--"]);
       expect(call.args.slice(6, 7)).toEqual(["gh"]);
       expect(call.opts?.env?.HOME).toBe("/var/lib/svc");
@@ -164,7 +164,7 @@ describe("serviceCloner", () => {
 
   test("a named user runs as that user's uid and gid, not dirOwner", async () => {
     const call = await firstCall(cfg({ serviceUser: "svc" }), { uid: 999, gid: 998 }, "alice");
-    expect(call.cmd).toBe("setpriv");
+    expect(call.cmd).toMatch(/\/setpriv$/);
     expect(call.args.slice(0, 4)).toEqual(["--reuid", "1000", "--regid", "1001"]);
     expect(call.opts?.env?.HOME).toBe("/home/alice");
   });

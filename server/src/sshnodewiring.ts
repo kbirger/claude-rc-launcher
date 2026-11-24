@@ -206,7 +206,9 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
           if (result === "failed") skillDone.delete(name);
         } catch (error) {
           skillDone.delete(name);
-          log(`ssh skill for ${name}: cannot install: ${error instanceof Error ? error.message : String(error)}`);
+          log(
+            `ssh skill for ${name}: cannot install: ${error instanceof Error ? error.message : String(error)}; will retry at the next instance change`,
+          );
         }
       });
     }

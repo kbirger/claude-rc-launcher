@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { asUser } from "./asuser";
 import type { Identity } from "./asuser";
 import type { Runner } from "./runner";
@@ -32,7 +32,7 @@ You have no SSH key. The owner gives you temporary access, one request at a time
 - Ask once for each target, with the shortest time that works. Never retry in a loop.
 - If the owner denies the request or it times out, report this and stop.
 - The access gives the full power of the account on the target. Run only the commands that the task of the owner needs. Prefer read-only commands. Say so before you change anything on the target.
-- Never look for, copy or print keys. Never try other credentials or the own SSH keys of the user.
+- Never look for, copy or print keys. Never try other credentials or your own SSH keys.
 - If ssh says that the access ended or the socket is gone, the grant is over. Ask again only if the owner agrees.
 
 ## Messages
@@ -40,9 +40,9 @@ You have no SSH key. The owner gives you temporary access, one request at a time
 | Message | What to do |
 | --- | --- |
 | \`SSH access is not turned on for this instance\` | Tell the owner to turn on \`Allow SSH requests\` for this instance. |
-| \`no answer from the hub\` | This is a problem on the side of the owner. Tell the owner. |
+| \`no answer from the hub\` | The request timed out. The owner did not answer in 10 minutes. Report it and stop. |
 | \`the unlock does not open the key\` | This is a problem on the side of the owner. Tell the owner. |
-| The request is denied | Report it and stop. Do not ask again. |
+| \`the grant ended: denied\` | The owner denied the request. Report it and stop. Do not ask again. |
 `;
 
 const MARKER_PREFIX = "<!-- managed by claude-rc-launcher sha256:";
@@ -78,16 +78,40 @@ export interface SkillDeps {
   log?: (line: string) => void;
   /** The file content. Default: the skill text. A test gives another text to simulate an update. */
   content?: string;
+  /** Whether this process runs as root. Default: the uid is 0. */
+  isRoot?: () => boolean;
 }
 
 const RUN_TIMEOUT_MS = 30_000;
-const MANAGED_RE = /^<!-- managed by claude-rc-launcher sha256:/m;
-/** Foreign files already reported in this process. */
+/** The PATH of the script. The script runs as the user, but its tools never come from a folder of the user. */
+const SCRIPT_PATH = "/usr/bin:/bin";
+/** The managed line must follow the closing `---` of the frontmatter at once. */
+const MANAGED_RE = /^---\n[\s\S]*?\n---\n(<!-- managed by claude-rc-launcher sha256:([0-9a-f]{64}) -->\n)/;
+/** Files already reported in this process, by kind and home. */
 const reported = new Set<string>();
 
+type Verdict = "unchanged" | "update" | "foreign" | "edited";
+
 /**
- * The script that runs as the target user. The content comes on stdin and the home in `HOME`: nothing is put into
- * the text of the script. It refuses a link at each part of the path and renames a temporary file over the target.
+ * Decides what to do with the file that exists. A file is the launcher's own only when the managed line follows the
+ * frontmatter. If the stored hash matches the rest of the file, it is unedited and an update replaces it.
+ */
+export function classify(existing: string, expected: string): Verdict {
+  if (existing === expected) return "unchanged";
+  const match = MANAGED_RE.exec(existing);
+  if (!match) return "foreign";
+  const line = match[1];
+  const at = existing.indexOf(line);
+  const rest = existing.slice(0, at) + existing.slice(at + line.length);
+  const actual = createHash("sha256").update(rest).digest("hex");
+
+  return actual === match[2] ? "update" : "edited";
+}
+
+/**
+ * The script that runs as the target user. The home comes in `HOME` and the content on stdin: nothing is put into the
+ * text of the script. It refuses a link at each part of the path. Mode `read` prints `absent`, or `present` and the file.
+ * Mode `write` renames a temporary file over the target.
  */
 const SCRIPT = String.raw`set -eu
 umask 022
@@ -95,19 +119,18 @@ root="$HOME/.claude"
 skills="$root/skills"
 dir="$skills/ssh-access"
 file="$dir/SKILL.md"
-new=$(cat; printf x)
 check() {
   for p in "$root" "$skills" "$dir" "$file"; do
     if [ -L "$p" ]; then echo "refused: $p is a symbolic link" >&2; exit 3; fi
   done
+  if [ -e "$file" ] && [ ! -f "$file" ]; then echo "refused: $file is not a file" >&2; exit 3; fi
 }
 check
-if [ -e "$file" ]; then
-  if [ ! -f "$file" ]; then echo "refused: $file is not a file" >&2; exit 3; fi
-  old=$(cat "$file"; printf x)
-  if [ "$old" = "$new" ]; then echo unchanged; exit 0; fi
-  if ! grep -q '^<!-- managed by claude-rc-launcher sha256:' "$file"; then echo kept-foreign; exit 0; fi
+if [ "$1" = read ]; then
+  if [ -e "$file" ]; then echo present; cat "$file"; else echo absent; fi
+  exit 0
 fi
+new=$(cat; printf x)
 for p in "$root" "$skills" "$dir"; do
   if [ ! -e "$p" ]; then mkdir "$p"; fi
   if [ ! -d "$p" ]; then echo "refused: $p is not a folder" >&2; exit 3; fi
@@ -126,13 +149,34 @@ function firstLine(text: string): string {
   return text.trim().split("\n")[0] ?? "";
 }
 
-async function viaRunner(user: SkillUser, content: string, run: Runner): Promise<SkillResult> {
-  const command = asUser(user, "sh", ["-c", SCRIPT]);
-  const result = await run(command.cmd, command.args, { env: command.env, stdin: content, timeoutMs: RUN_TIMEOUT_MS });
+async function runScript(user: SkillUser, run: Runner, mode: "read" | "write", stdin?: string) {
+  const command = asUser(user, "sh", ["-c", SCRIPT, "sh", mode]);
+  const result = await run(command.cmd, command.args, {
+    env: { ...command.env, PATH: SCRIPT_PATH },
+    ...(stdin === undefined ? {} : { stdin }),
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
   if (result.code !== 0)
     throw new Error(result.timedOut ? "timed out" : firstLine(result.stderr) || `exit ${result.code}`);
-  const answer = result.stdout.trim().split("\n").pop();
-  if (answer === "written" || answer === "unchanged" || answer === "kept-foreign") return answer;
+
+  return result.stdout;
+}
+
+/** The node switches to the user: the script reads, TypeScript decides, the script writes. */
+async function viaRunner(user: SkillUser, content: string, run: Runner): Promise<SkillResult | Verdict> {
+  const output = await runScript(user, run, "read");
+  const newline = output.indexOf("\n");
+  const status = newline < 0 ? output.trim() : output.slice(0, newline);
+
+  if (status === "present") {
+    const verdict = classify(output.slice(newline + 1), content);
+    if (verdict !== "update") return verdict;
+  } else if (status !== "absent") {
+    throw new Error(`unexpected answer: ${firstLine(output)}`);
+  }
+
+  const answer = (await runScript(user, run, "write", content)).trim().split("\n").pop();
+  if (answer === "written") return "written";
   throw new Error(`unexpected answer: ${answer ?? ""}`);
 }
 
@@ -153,7 +197,7 @@ async function ensureFolder(path: string): Promise<void> {
 }
 
 /** The node runs as the user itself: plain Node calls, with a check for a link at each part of the path. */
-async function direct(home: string, content: string): Promise<SkillResult> {
+async function direct(home: string, content: string): Promise<SkillResult | Verdict> {
   const root = join(home, ".claude");
   const skills = join(root, "skills");
   const dir = join(skills, "ssh-access");
@@ -175,8 +219,8 @@ async function direct(home: string, content: string): Promise<SkillResult> {
     if (!info.isFile()) throw new Error(`refused: ${file} is not a file`);
     const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const old = await handle.readFile("utf8").finally(() => handle.close());
-    if (old === content) return "unchanged";
-    if (!MANAGED_RE.test(old)) return "kept-foreign";
+    const verdict = classify(old, content);
+    if (verdict !== "update") return verdict;
   }
 
   for (const folder of [root, skills, dir]) await ensureFolder(folder);
@@ -196,8 +240,8 @@ async function direct(home: string, content: string): Promise<SkillResult> {
 }
 
 /**
- * Puts the skill into `<home>/.claude/skills/ssh-access/SKILL.md` of the user. A file without the managed comment line
- * is not ours and stays as it is. It never throws: a failure is one log line and the result `failed`.
+ * Puts the skill into `<home>/.claude/skills/ssh-access/SKILL.md` of the user. A file that the launcher did not make,
+ * or that somebody edited, stays as it is. It never throws: a failure is one log line and the result `failed`.
  */
 export async function ensureSkill(user: SkillUser, deps: SkillDeps): Promise<SkillResult> {
   if ((deps.platform ?? process.platform) === "win32") return "unchanged";
@@ -207,24 +251,31 @@ export async function ensureSkill(user: SkillUser, deps: SkillDeps): Promise<Ski
       console.error(line);
     });
   const content = deps.content ?? SSH_SKILL;
+  const isRoot = deps.isRoot ?? (() => process.getuid?.() === 0);
 
   try {
-    // A uid and gid mean that the node switches to the user. Without them the node is the user.
-    const result =
-      user.uid !== undefined && user.gid !== undefined
-        ? await viaRunner(user, content, deps.run)
-        : await direct(user.home, content);
+    if (!isAbsolute(user.home)) throw new Error(`the home ${user.home} is not an absolute path`);
+    const switching = user.uid !== undefined && user.gid !== undefined;
+    // A root node that has no uid to switch to must never write by path: the folders belong to the user.
+    if (!switching && isRoot()) throw new Error("the node runs as root and has no user to switch to");
+    const result = switching ? await viaRunner(user, content, deps.run) : await direct(user.home, content);
+    const where = `${user.home}/.claude/skills/ssh-access/SKILL.md`;
 
-    if (result === "kept-foreign" && !reported.has(user.home)) {
-      reported.add(user.home);
+    if ((result === "foreign" || result === "edited") && !reported.has(`${result}:${user.home}`)) {
+      reported.add(`${result}:${user.home}`);
       log(
-        `ssh skill for ${user.name}: ${user.home}/.claude/skills/ssh-access/SKILL.md is not managed by the launcher, left as it is`,
+        result === "foreign"
+          ? `ssh skill for ${user.name}: ${where} is not managed by the launcher, left as it is`
+          : `ssh skill for ${user.name}: ${where} was edited, left as it is; delete it to get the new version`,
       );
     }
 
-    return result;
+    return result === "foreign" || result === "edited" ? "kept-foreign" : result === "update" ? "written" : result;
   } catch (error) {
-    log(`ssh skill for ${user.name}: cannot install: ${error instanceof Error ? error.message : String(error)}`);
+    log(
+      `ssh skill for ${user.name}: cannot install: ${error instanceof Error ? error.message : String(error)}; will retry at the next instance change`,
+    );
+
     return "failed";
   }
 }

@@ -25,6 +25,7 @@ import { defined } from "./support";
 let root: string;
 let home: string;
 let logged: string[];
+const notRoot = () => false;
 const noRun: Runner = () => Promise.reject(new Error("the runner must not be called"));
 
 beforeEach(() => {
@@ -65,7 +66,7 @@ describe("the text of the skill", () => {
 
 describe("the node is the user (direct path)", () => {
   test("it writes the file with mode 644 and the right content", async () => {
-    expect(await ensureSkill(self(), { run: noRun, log })).toBe("written");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("written");
     expect(readFileSync(skillFile(), "utf8")).toBe(SSH_SKILL);
     expect(statSync(skillFile()).mode & 0o777).toBe(0o644);
     // No temporary file stays behind.
@@ -73,33 +74,83 @@ describe("the node is the user (direct path)", () => {
   });
 
   test("a second run is unchanged and does not write", async () => {
-    await ensureSkill(self(), { run: noRun, log });
+    await ensureSkill(self(), { run: noRun, isRoot: notRoot, log });
     const before = statSync(skillFile());
-    expect(await ensureSkill(self(), { run: noRun, log })).toBe("unchanged");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("unchanged");
     const after = statSync(skillFile());
     expect(after.ino).toBe(before.ino);
     expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 
   test("a new version of the skill rewrites the file", async () => {
-    await ensureSkill(self(), { run: noRun, log });
+    await ensureSkill(self(), { run: noRun, isRoot: notRoot, log });
     const next = renderSkill(undefined, "# SSH access to other machines\n\nnew text\n");
-    expect(await ensureSkill(self(), { run: noRun, log, content: next })).toBe("written");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log, content: next })).toBe("written");
     expect(readFileSync(skillFile(), "utf8")).toBe(next);
   });
 
-  test("a managed file that somebody edited is restored", async () => {
-    await ensureSkill(self(), { run: noRun, log });
-    writeFileSync(skillFile(), readFileSync(skillFile(), "utf8") + "extra\n");
-    expect(await ensureSkill(self(), { run: noRun, log })).toBe("written");
+  test("a managed file that somebody edited is kept, and one line says so once", async () => {
+    await ensureSkill(self(), { run: noRun, isRoot: notRoot, log });
+    const edited = readFileSync(skillFile(), "utf8") + "extra\n";
+    writeFileSync(skillFile(), edited);
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
+    expect(readFileSync(skillFile(), "utf8")).toBe(edited);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("was edited, left as it is; delete it to get the new version");
+  });
+
+  test("a tampered body under an old marker line is kept", async () => {
+    const old = renderSkill(undefined, "# SSH access to other machines\n\nold text\n");
+    mkdirSync(join(home, ".claude", "skills", "ssh-access"), { recursive: true });
+    writeFileSync(skillFile(), old.replace("old text", "evil text"));
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
+    expect(readFileSync(skillFile(), "utf8")).toContain("evil text");
+  });
+
+  test("an unedited old version is updated", async () => {
+    const old = renderSkill(undefined, "# SSH access to other machines\n\nold text\n");
+    mkdirSync(join(home, ".claude", "skills", "ssh-access"), { recursive: true });
+    writeFileSync(skillFile(), old);
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("written");
     expect(readFileSync(skillFile(), "utf8")).toBe(SSH_SKILL);
+  });
+
+  test("a foreign file that quotes the managed line in its body is never touched", async () => {
+    mkdirSync(join(home, ".claude", "skills", "ssh-access"), { recursive: true });
+    const quoted = `---\nname: ssh-access\n---\nmy notes\n${SSH_SKILL.split("\n").find((line) => line.startsWith("<!--")) ?? ""}\n`;
+    writeFileSync(skillFile(), quoted);
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
+    expect(readFileSync(skillFile(), "utf8")).toBe(quoted);
+    expect(logged[0]).toContain("not managed by the launcher");
+  });
+
+  test("a marker with a wrong hash right after the frontmatter is kept", async () => {
+    mkdirSync(join(home, ".claude", "skills", "ssh-access"), { recursive: true });
+    const wrong = `---\nname: ssh-access\n---\n<!-- managed by claude-rc-launcher sha256:${"0".repeat(64)} -->\nbody\n`;
+    writeFileSync(skillFile(), wrong);
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
+    expect(readFileSync(skillFile(), "utf8")).toBe(wrong);
+  });
+
+  test("a root node with no user to switch to refuses to write by path", async () => {
+    expect(await ensureSkill(self(), { run: noRun, isRoot: () => true, log })).toBe("failed");
+    expect(existsSync(join(home, ".claude"))).toBe(false);
+    expect(logged[0]).toContain("runs as root");
+  });
+
+  test("a home that is not an absolute path is refused", async () => {
+    const relative: SkillUser = { name: "rel", home: "relative/home", path: "/usr/bin" };
+    expect(await ensureSkill(relative, { run: noRun, isRoot: notRoot, log })).toBe("failed");
+    expect(logged[0]).toContain("not an absolute path");
+    expect(await ensureSkill({ ...relative, uid: 1, gid: 1 }, { run: noRun, log })).toBe("failed");
   });
 
   test("a file without the managed line is left alone, and one line is logged once", async () => {
     mkdirSync(join(home, ".claude", "skills", "ssh-access"), { recursive: true });
     writeFileSync(skillFile(), "---\nname: ssh-access\n---\nmy own text\n");
-    expect(await ensureSkill(self(), { run: noRun, log })).toBe("kept-foreign");
-    expect(await ensureSkill(self(), { run: noRun, log })).toBe("kept-foreign");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("kept-foreign");
     expect(readFileSync(skillFile(), "utf8")).toBe("---\nname: ssh-access\n---\nmy own text\n");
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("me");
@@ -123,7 +174,7 @@ describe("the node is the user (direct path)", () => {
       if (part.endsWith("SKILL.md")) writeFileSync(join(victim, "SKILL.md"), "target");
       symlinkSync(part.endsWith("SKILL.md") ? join(victim, "SKILL.md") : victim, full);
 
-      expect(await ensureSkill(self(), { run: noRun, log })).toBe("failed");
+      expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("failed");
       expect(logged.join("\n")).toContain("symbolic link");
       expect(lstatSync(full).isSymbolicLink()).toBe(true);
       expect(readdirSync(victim).sort()).toEqual(part.endsWith("SKILL.md") ? ["SKILL.md", "keep"] : ["keep"]);
@@ -133,7 +184,7 @@ describe("the node is the user (direct path)", () => {
 
   test("a failure never throws: it returns failed and logs one line with the user name", async () => {
     writeFileSync(join(home, ".claude"), "a file where a folder should be");
-    expect(await ensureSkill(self(), { run: noRun, log })).toBe("failed");
+    expect(await ensureSkill(self(), { run: noRun, isRoot: notRoot, log })).toBe("failed");
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("me");
     expect(existsSync(skillFile())).toBe(false);
@@ -148,12 +199,14 @@ describe("the node switches to the user (root path)", () => {
 
     const run: Runner = (cmd, args, opts) => {
       calls.push({ cmd, args, ...(opts?.env ? { env: opts.env } : {}), ...(opts?.stdin ? { stdin: opts.stdin } : {}) });
-      return Promise.resolve({ code: 0, stdout: "written\n", stderr: "" });
+      return Promise.resolve({ code: 0, stdout: args.at(-1) === "read" ? "absent\n" : "written\n", stderr: "" });
     };
 
     expect(await ensureSkill(rootUser(), { run, log })).toBe("written");
-    const call = defined(calls[0]);
-    expect(call.cmd).toBe("setpriv");
+    expect(calls.map((item) => item.args.at(-1))).toEqual(["read", "write"]);
+    const call = defined(calls[1]);
+    expect(call.cmd).toMatch(/^\/.*\/setpriv$/);
+    expect(call.env?.PATH).toBe("/usr/bin:/bin");
     expect(call.args.slice(0, 6)).toEqual(["--reuid", "1000", "--regid", "1001", "--init-groups", "--"]);
     expect(call.stdin).toBe(SSH_SKILL);
     expect(call.env?.HOME).toBe(home);
@@ -166,17 +219,19 @@ describe("the node switches to the user (root path)", () => {
   test("a failing command is failed, with the first line of its error", async () => {
     const run: Runner = () => Promise.resolve({ code: 3, stdout: "", stderr: "refused: x is a symbolic link\nmore" });
     expect(await ensureSkill(rootUser(), { run, log })).toBe("failed");
-    expect(logged).toEqual(["ssh skill for alice: cannot install: refused: x is a symbolic link"]);
+    expect(logged).toEqual([
+      "ssh skill for alice: cannot install: refused: x is a symbolic link; will retry at the next instance change",
+    ]);
   });
 
   test("a runner that throws is failed", async () => {
-    expect(await ensureSkill(rootUser(), { run: noRun, log })).toBe("failed");
+    expect(await ensureSkill(rootUser(), { run: noRun, isRoot: notRoot, log })).toBe("failed");
     expect(logged[0]).toContain("alice");
   });
 
   /** Runs the real script of the root path, without the switch of the user, in the fake home. */
   const realScript: Runner = (cmd, args, opts) => {
-    expect(cmd).toBe("setpriv");
+    expect(cmd).toMatch(/\/setpriv$/);
     const at = args.indexOf("--");
     return bunRunner(args[at + 1] ?? "", args.slice(at + 2), {
       ...opts,
@@ -202,6 +257,24 @@ describe("the node switches to the user (root path)", () => {
     expect(readFileSync(skillFile(), "utf8")).toBe("mine\n");
   });
 
+  test("through the script, an edited managed file and a file that quotes the marker are kept, an old one is updated", async () => {
+    const old = renderSkill(undefined, "# SSH access to other machines\n\nold text\n");
+    mkdirSync(join(home, ".claude", "skills", "ssh-access"), { recursive: true });
+    writeFileSync(skillFile(), old);
+    expect(await ensureSkill(rootUser(), { run: realScript, log })).toBe("written");
+    expect(readFileSync(skillFile(), "utf8")).toBe(SSH_SKILL);
+
+    const edited = SSH_SKILL + "extra\n";
+    writeFileSync(skillFile(), edited);
+    expect(await ensureSkill(rootUser(), { run: realScript, log })).toBe("kept-foreign");
+    expect(readFileSync(skillFile(), "utf8")).toBe(edited);
+
+    const quoted = `---\nname: ssh-access\n---\nnotes\n${SSH_SKILL.split("\n").find((line) => line.startsWith("<!--")) ?? ""}\n`;
+    writeFileSync(skillFile(), quoted);
+    expect(await ensureSkill(rootUser(), { run: realScript, log })).toBe("kept-foreign");
+    expect(readFileSync(skillFile(), "utf8")).toBe(quoted);
+  });
+
   test("the script refuses a link at the folder and at the file", async () => {
     const victim = join(root, "victim");
     mkdirSync(victim);
@@ -221,7 +294,10 @@ describe("the node switches to the user (root path)", () => {
 
 describe("Windows", () => {
   test("it does nothing and does not call the runner", async () => {
-    const result = await ensureSkill({ name: "w", home, path: "" }, { run: noRun, log, platform: "win32" });
+    const result = await ensureSkill(
+      { name: "w", home, path: "" },
+      { run: noRun, isRoot: notRoot, log, platform: "win32" },
+    );
     expect(result).toBe("unchanged");
     expect(existsSync(join(home, ".claude"))).toBe(false);
     expect(logged).toEqual([]);
