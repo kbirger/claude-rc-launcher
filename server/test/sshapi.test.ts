@@ -962,3 +962,110 @@ describe("unlock bytes", () => {
     }
   });
 });
+
+describe("passphrase length", () => {
+  const pass = (text: string) => ({ method: "passphrase", secret: Buffer.from(text).toString("base64url") });
+  const NEEDS = "the passphrase needs at least 12 characters";
+
+  const addTarget = async (call: Awaited<ReturnType<typeof setup>>["call"], id: string) => {
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", {
+      id,
+      address: "10.0.0.5",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+  };
+
+  test("the first key refuses 11 characters and accepts 12, and the answer and the log never hold the text", async () => {
+    const { call, keys } = await setup();
+    await addTarget(call, "nas");
+    const short = await call("POST", "/targets/nas/key", "admin", { unlock: pass("elevenchars") });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect(short.text).not.toContain("elevenchars");
+    expect(logs.join("\n")).not.toContain("elevenchars");
+    expect(() => keys.publicLine("nas")).toThrow();
+    const long = await call("POST", "/targets/nas/key", "admin", { unlock: pass("twelve chars") });
+    expect(long.status).toBe(200);
+    expect(long.text).not.toContain("twelve chars");
+    expect(logs.join("\n")).not.toContain("twelve chars");
+  });
+
+  test("the length counts characters, not bytes", async () => {
+    const { call } = await setup();
+    await addTarget(call, "nas");
+    const emoji = "\u{1F600}";
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass(emoji.repeat(11)) })).status).toBe(400);
+    expect((await call("POST", "/targets/nas/key", "admin", { unlock: pass(emoji.repeat(12)) })).status).toBe(200);
+    const accent = "é";
+    await call("POST", "/targets", "admin", {
+      id: "web",
+      address: "10.0.0.6",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    // A second key must match the first one, so the accented text is wrong there, not too short.
+    expect((await call("POST", "/targets/web/key", "admin", { unlock: pass(accent.repeat(12)) })).status).toBe(403);
+  });
+
+  test("a later key and an approval accept a short passphrase that the existing keys use", async () => {
+    const { call, keys, targets } = await setup();
+    await addTarget(call, "nas");
+    await keys.create("nas", { method: "passphrase", secret: new TextEncoder().encode("abcd") });
+    await targets.setKeyFingerprint("nas", "SHA256:x");
+    await call("POST", "/targets", "admin", {
+      id: "web",
+      address: "10.0.0.6",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+    });
+    const second = await call("POST", "/targets/web/key", "admin", { unlock: pass("abcd") });
+    expect(second.status).toBe(200);
+  });
+
+  test("an approval accepts a 4 character passphrase", async () => {
+    const { call, keys, targets, request, grants } = await setup();
+    await addTarget(call, "nas");
+    await keys.create("nas", { method: "passphrase", secret: new TextEncoder().encode("abcd") });
+    await targets.setKeyFingerprint("nas", "SHA256:x");
+    await call("POST", "/targets/nas/pin", "admin", { hostKey: HOST_KEY });
+    await targets.setState("nas", "ready");
+    const grant = await request();
+    expect((await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock: pass("abcd") })).status).toBe(200);
+    expect(grants.get(grant.id)?.state).toBe("active");
+  });
+
+  test("a rewrap with a passphrase needs 12 characters", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    const begin = (method: string) => ({
+      code: recovery.code,
+      method,
+      ...(method === "prf" ? { credentialId: "c" } : {}),
+    });
+    expect((await call("POST", "/recovery/begin", "admin", begin("passphrase"))).status).toBe(200);
+    const short = await call("POST", "/targets/nas/rewrap", "admin", {
+      code: recovery.code,
+      unlock: pass("elevenchars"),
+    });
+    expect(short.status).toBe(400);
+    expect(short.body.error).toBe(NEEDS);
+    expect(short.text).not.toContain("elevenchars");
+    expect(logs.join("\n")).not.toContain("elevenchars");
+    expect(
+      (await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: pass("twelve chars") }))
+        .status,
+    ).toBe(204);
+  });
+
+  test("GET /status tells whether a key exists", async () => {
+    const { call, readyTarget } = await setup();
+    expect((await call("GET", "/status")).body.hasKeys).toBe(false);
+    await readyTarget();
+    expect((await call("GET", "/status")).body.hasKeys).toBe(true);
+  });
+});
