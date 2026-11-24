@@ -1,0 +1,64 @@
+name: Prune test builds
+
+# Start this workflow by hand from the Actions tab. It deletes the oldest test builds (pre-releases whose tag looks
+# like v1.2.3-test.<branch>.<sha>) and keeps the newest ones. Run it with dry_run first: it only prints the list.
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: How many of the newest test builds to keep.
+        type: number
+        default: 5
+      dry_run:
+        description: Print what would be deleted. Delete nothing.
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the old test builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_KEEP: ${{ inputs.keep }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if ! printf '%s' "$INPUT_KEEP" | grep -Eq '^[0-9]+$'; then
+            echo "::error::The keep input must be a whole number of 0 or more."
+            exit 1
+          fi
+          keep=$((10#$INPUT_KEEP))
+          # Only a pre-release whose tag matches the test build pattern is a candidate. The newest come first.
+          gh release list --json tagName,createdAt,isPrerelease --limit 200 > "$RUNNER_TEMP/releases.json"
+          jq -r '[.[] | select(.isPrerelease == true and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test\\.")))]
+                 | sort_by(.createdAt) | reverse | .[].tagName' "$RUNNER_TEMP/releases.json" > "$RUNNER_TEMP/all.txt"
+          total="$(wc -l < "$RUNNER_TEMP/all.txt")"
+          tail -n "+$((keep + 1))" "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/old.txt"
+          echo "Test builds found: $total. Kept: the newest $keep." | tee -a "$summary"
+          if [ ! -s "$RUNNER_TEMP/old.txt" ]; then
+            echo "Nothing to delete." | tee -a "$summary"
+            exit 0
+          fi
+          while IFS= read -r tag; do
+            # Check the pattern again, so that nothing else is ever deleted.
+            if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-test\.'; then
+              echo "::error::Refusing to delete $tag."
+              exit 1
+            fi
+            if [ "$INPUT_DRY_RUN" = "false" ]; then
+              gh release delete "$tag" --cleanup-tag --yes
+              echo "Deleted $tag" | tee -a "$summary"
+            else
+              echo "Would delete $tag" | tee -a "$summary"
+            fi
+          done < "$RUNNER_TEMP/old.txt"
+          if [ "$INPUT_DRY_RUN" != "false" ]; then
+            echo "Dry run: nothing was deleted." | tee -a "$summary"
+          fi
