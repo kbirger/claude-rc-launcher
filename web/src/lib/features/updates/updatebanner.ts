@@ -32,7 +32,8 @@ export const isRunning = (updateEntry: UpdateEntry | undefined, now: Date) =>
 const unknownVersion = (value?: string) => value !== undefined && releaseOf(value) === undefined;
 
 // A machine is offered an update only to a release that is an upgrade. A test build is never a target. A machine that
-// runs a test build is offered one only when the release is above the release its build is based on.
+// runs a test build is offered one only when the release is above the release its build is based on. This also guards
+// against a hub that does not have this rule and marks a test build as stale.
 function offersUpdate(host: HostInfo): boolean {
   if (!host.target || isTestBuild(host.target)) return false;
   if (!isTestBuild(host.version) && !isTestBuild(host.clientVersion)) return true;
