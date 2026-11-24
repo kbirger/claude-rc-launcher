@@ -252,7 +252,7 @@ export async function main(
         parseNodeIds(flags);
         checkAllNodesFlags(flags, "--node");
       } else if (flags["all-nodes"]) checkAllNodesFlags(flags);
-      const viaHub = flags["all-nodes"] || flags.node !== undefined;
+      const viaHub = flags["all-nodes"] === true || flags.node !== undefined;
       const allowed = [
         "release",
         "json",

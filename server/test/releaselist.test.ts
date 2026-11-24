@@ -83,6 +83,17 @@ describe("createReleaseList", () => {
     expect(await harness.list.between("0.22.0", "dev")).toEqual({ releases: [], complete: true });
   });
 
+  test("skips a test build even when GitHub does not mark it as a prerelease", async () => {
+    const harness = setup([{ tag_name: "v0.22.3-test.ssh.5bf4ca1" }, ...four]);
+    const releaseNotes = await harness.list.between("0.22.0", "0.22.3");
+    expect(releaseNotes.releases.map((releaseNote) => releaseNote.version)).toEqual(["0.22.3", "0.22.2", "0.22.1"]);
+  });
+
+  test("the notes between a test build and an older release are empty", async () => {
+    const releaseNotes = await setup().list.between("0.22.4-test.ssh.5bf4ca1", "0.22.3");
+    expect(releaseNotes).toEqual({ releases: [], complete: true });
+  });
+
   test("skips drafts and prereleases", async () => {
     const releaseNotes = await setup([
       { tag_name: "v0.22.3", draft: true },

@@ -1,6 +1,6 @@
 import type { HostInfo } from "../hosts";
 import type { UpdateEntry } from "./api";
-import { isBehind, releaseOf } from "../../shared/version";
+import { isBehind, isTestBuild, releaseOf } from "../../shared/version";
 import { stepText } from "./updateoutput";
 
 export type BannerItem =
@@ -31,6 +31,14 @@ export const isRunning = (updateEntry: UpdateEntry | undefined, now: Date) =>
 // A local build (`0.12.4+branch.sha`) is compared by the release it is based on. Only `dev` and the like cannot be compared.
 const unknownVersion = (value?: string) => value !== undefined && releaseOf(value) === undefined;
 
+// A machine is offered an update only to a release that is an upgrade. A test build is never a target. A machine that
+// runs a test build is offered one only when the release is above the release its build is based on.
+function offersUpdate(host: HostInfo): boolean {
+  if (!host.target || isTestBuild(host.target)) return false;
+  if (!isTestBuild(host.version) && !isTestBuild(host.clientVersion)) return true;
+  return isBehind(host.version, host.target) || isBehind(host.clientVersion, host.target);
+}
+
 export function bannerModel(options: {
   hosts: HostInfo[];
   updates: UpdateEntry[];
@@ -53,8 +61,8 @@ export function bannerModel(options: {
     }
   }
 
-  if (hub?.stale && hub.target && !isRunning(hubEntry, options.now))
-    items.push({ kind: "hub-update", target: hub.target });
+  if (hub?.stale && offersUpdate(hub) && !isRunning(hubEntry, options.now))
+    items.push({ kind: "hub-update", target: hub.target as string });
 
   if (!isRunning(hubEntry, options.now)) {
     const nodes = options.hosts
@@ -63,7 +71,7 @@ export function bannerModel(options: {
           host.id !== "local" &&
           host.status === "ok" &&
           host.stale &&
-          host.target &&
+          offersUpdate(host) &&
           !isRunning(last(host.id), options.now),
       )
       .map((host) => ({ id: host.id, name: host.name, target: host.target as string }));

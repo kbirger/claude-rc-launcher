@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { compareVersions, isKnownVersion, isStale, normalizeVersion, releaseOf, stalestVersion } from "../src/versions";
+import {
+  compareVersions,
+  installableRelease,
+  isKnownVersion,
+  isStale,
+  isTestBuild,
+  normalizeVersion,
+  releaseOf,
+  stalestVersion,
+} from "../src/versions";
 
 describe("versions", () => {
   test("normalizeVersion strips one leading v", () => {
@@ -54,5 +63,44 @@ describe("versions", () => {
   test("stalestVersion", () => {
     expect(stalestVersion(["1.2.0", undefined, "1.1.9"])).toBe("1.1.9");
     expect(stalestVersion(["dev"])).toBeUndefined();
+  });
+
+  test("isTestBuild is true only for X.Y.Z-test.<branch>.<sha>", () => {
+    expect(isTestBuild("0.33.1-test.ssh.5bf4ca1")).toBe(true);
+    expect(isTestBuild("0.33.1-test.feat.multi.host.5bf4ca1")).toBe(true);
+    expect(isTestBuild("0.33.1")).toBe(false);
+    expect(isTestBuild("0.33.1-rc.1")).toBe(false);
+    expect(isTestBuild("0.33.1-testing.1")).toBe(false);
+    expect(isTestBuild("0.33.1+ssh.5bf4ca1")).toBe(false);
+    expect(isTestBuild("dev")).toBe(false);
+    expect(isTestBuild(undefined)).toBe(false);
+  });
+
+  test("a test build is based on its release, like a local build", () => {
+    expect(releaseOf("0.33.1-test.ssh.5bf4ca1")).toBe("0.33.1");
+    expect(isKnownVersion("0.33.1-test.ssh.5bf4ca1")).toBe(true);
+  });
+
+  test("a test build is never stale for differing from the latest release in its suffix", () => {
+    expect(isStale("0.33.1-test.ssh.5bf4ca1", "0.33.1")).toBe(false);
+    expect(isStale("0.33.1-test.ssh.5bf4ca1", "0.33.0")).toBe(false);
+    expect(isStale("0.33.1-test.ssh.5bf4ca1", "0.33.1-test.other.abcdef1")).toBe(false);
+  });
+
+  test("a test build on an older base is stale by the same base rule", () => {
+    expect(isStale("0.33.0-test.ssh.5bf4ca1", "0.33.1")).toBe(true);
+    expect(isStale("0.33.0-test.ssh.5bf4ca1", "0.33.0")).toBe(false);
+  });
+
+  test("a test build is not an installable target, a release and a local build are", () => {
+    expect(installableRelease("0.33.1-test.ssh.5bf4ca1")).toBeUndefined();
+    expect(installableRelease("0.33.1")).toBe("0.33.1");
+    expect(installableRelease("0.33.1+main.abc1234")).toBe("0.33.1");
+    expect(installableRelease("dev")).toBeUndefined();
+  });
+
+  test("stalestVersion keeps a test build as given and ranks it by its base", () => {
+    expect(stalestVersion(["0.33.1", "0.33.0-test.ssh.5bf4ca1"])).toBe("0.33.0-test.ssh.5bf4ca1");
+    expect(stalestVersion(["0.33.0", "0.33.1-test.ssh.5bf4ca1"])).toBe("0.33.0");
   });
 });
