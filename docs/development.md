@@ -61,6 +61,33 @@ the commits since the previous tag:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+## Publishing a test build (maintainers)
+
+A test build is an unreviewed build of any branch. Use it to try a branch on a real node before it is merged.
+
+1. Open the Actions tab of the repository, choose `Release`, and select Run workflow.
+2. Choose the branch to build. Set `test_build` on. Leave `version` empty.
+3. Run it with `dry_run` on first. The run prints the tag and the notes and builds nothing.
+4. Read the tag and the notes. If they are right, run the workflow again with `dry_run` off.
+
+The tag looks like `v0.33.1-test.feat.ssh.delegation.5bf4ca1`. It has the next version, the word `test`, the branch name, and
+the first seven characters of the commit. The branch name is lower case. Every other character becomes a dot, and the name is cut to 30 characters.
+The run stops if the tag exists already. The notes start with a line that says the build is unreviewed. Then they show how to install it and
+the commits since the latest release tag.
+
+The build, the tests, and `SHA256SUMS` are the same as for a release. The result is a pre-release and not the latest release.
+The update banner and `releases/latest` ignore it, so no hub offers it as an update.
+
+To put a test build on a node, run `claude-rc update --node <id> --release <tag>` from your own computer. On the machine
+itself, run `claude-rc node update --release <tag>`. The node then shows its version as `0.33.1 (test build)`.
+
+To delete old test builds, run the `Prune test builds` workflow. It has two inputs: `keep` (default 5) and `dry_run`
+(default on). It lists the pre-releases whose tag starts with a version and `-test.`. It keeps the newest ones and deletes the rest
+together with their tags. It never touches a release that is not a pre-release. Run it with `dry_run` on first and read the list.
+
+Warning: if the repository is public, everyone can download the binaries of a test build. Do not publish a branch that must stay private.
+The notes say that the build is unreviewed. Do not use a test build in production.
+
 ## First-run verification checklist
 
 Not yet executed; perform on a Linux host with systemd and Claude installed:
