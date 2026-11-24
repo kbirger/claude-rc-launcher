@@ -288,6 +288,35 @@ describe("sshTargetAdd external", () => {
   });
 });
 
+describe("sshTargetAdd managed local", () => {
+  test("the usage text says that --managed local needs the LAN address of this machine", async () => {
+    const error = await rejection(rig({}).run({ type: "linux" }));
+    expect(error.message).toContain("--managed local needs --address");
+    expect(error.message).toContain("LAN address of this machine as the other nodes see it");
+  });
+
+  test("the answer of the hub that the address is unknown reaches the owner", async () => {
+    const text = "give the address of this host: the hub cannot tell it";
+    const rg = rig({
+      "POST /cli/api/ssh/targets": () => {
+        throw new HubError(text, 400, undefined);
+      },
+    });
+    const error = await rejection(rg.run({ ...managed, managed: "local" }));
+    expect(exitCode(error)).toBe(1);
+    expect(error.message).toContain(text);
+  });
+
+  test("an explicit --address is sent with the managed host local", async () => {
+    const rg = rig({});
+    await rg.run({ ...managed, managed: "local", address: "192.168.1.5" });
+    expect(bodyOf(rg.calls.find((call) => call.path.endsWith("/targets")))).toMatchObject({
+      managedHost: "local",
+      address: "192.168.1.5",
+    });
+  });
+});
+
 describe("sshTargetAdd managed", () => {
   test("a managed add calls the authorize route and runs no local ssh", async () => {
     const rg = rig({});

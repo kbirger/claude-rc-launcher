@@ -72,6 +72,7 @@ Tap Add target on the SSH access page. Fill in the form:
 - The account on the target.
 - The system type: `linux`, `windows`, `synology` or `dropbear`.
 - Whether the target is a managed target. A managed target runs the launcher as a node of this hub.
+- For a managed target of the host `local`, the address is required. Give the LAN address of this machine as the other nodes see it. The hub cannot tell it, and it never takes the address from `public_url`, because that name can lead to another machine. The wizard fills the field with the source address of the node `local` when you entered one.
 - The nodes that can reach the target. Only nodes with access turned on are listed.
 
 An account name has no spaces, quotes, commas or backslashes. It does not start with a dash. For a Windows domain account, use the form `user@domain`.
@@ -117,6 +118,8 @@ For a managed target, name its host id. You need no key of your own:
 ```sh
 claude-rc ssh target add slon --managed slon --type linux --account root --node local
 ```
+
+For a remote managed host, the address is the host name from the URL of that host. For the host `local`, add `--address` with the LAN address of this machine as the other nodes see it. The hub refuses the command without it.
 
 The command works in this order:
 
@@ -236,6 +239,8 @@ Access ends in these ways:
 - You turn off Allow SSH requests for an instance, or you delete the instance. The node closes the control socket of the instance and tells the hub. The hub ends all grants of that instance with the reason `revoked`.
 
 Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again. A session cannot request a `draft` target, so the target is not usable until the test passes.
+
+A retired target stays in the list. You can use its id again. The new target replaces the retired one and starts in `draft`. A target in `draft`, `ready` or `disabled` keeps its id, and the hub refuses a second target with that id.
 
 ## What it does not do
 

@@ -189,6 +189,8 @@ A managed target runs the launcher as a node of this hub. Use `--managed` with i
 claude-rc ssh target add slon --managed slon --type linux --account root --node local
 ```
 
+For a remote host, the address is the host name from its URL. For the host `local`, add `--address` with the LAN address of this machine as the other nodes see it. The hub never derives it from `public_url`.
+
 These flags apply:
 
 - `--type` is `linux`, `windows`, `synology` or `dropbear`.

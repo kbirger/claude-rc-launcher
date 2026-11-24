@@ -173,15 +173,6 @@ export function stepWriter(record: UpdateRecord): (host: string, value: StepEven
   };
 }
 
-/** The host name of the public URL: the address that other machines see for the hub. */
-function localAddressOf(cfg: Config): string {
-  try {
-    return new URL(cfg.publicUrl).hostname.replace(/^\[|\]$/g, "") || cfg.host;
-  } catch {
-    return cfg.host;
-  }
-}
-
 export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port: number; stop(): void }> {
   if (cfg.mode !== "hub") throw new Error("startHub needs mode = hub");
   const hubKey = await loadOrCreateHubKey(cfg.stateDir);
@@ -386,7 +377,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
       keys: sshKeys,
       targets: sshTargets,
       grants: sshGrants,
-      ...(localSsh.client ? { localAddress: localAddressOf(cfg) } : {}),
+      ...(localSsh.client ? { local: true } : {}),
     },
     ...(cloner ? { cloner } : {}),
     ...(cli ? { cli } : {}),

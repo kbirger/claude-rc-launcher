@@ -315,6 +315,32 @@ describe("setup", () => {
 });
 
 describe("targets", () => {
+  test("POST /targets for the host local never takes the address from the public URL", async () => {
+    const { call, targets } = await setup();
+    const body = { id: "self", account: "root", systemType: "linux", nodes: ["node1"], managedHost: "local" };
+    const refused = await call("POST", "/targets", "admin", body);
+    expect(refused.status).toBe(400);
+    expect(refused.text).toContain("give the address of this host: the hub cannot tell it");
+    expect(targets.list()).toEqual([]);
+
+    await targets.setNodeAccess("local", { enabled: true, sourceAddress: "192.168.1.5" });
+    const made = await call("POST", "/targets", "admin", body);
+    expect(made.status).toBe(201);
+    expect(made.body).toMatchObject({ address: "192.168.1.5", managedHost: "local" });
+
+    const explicit = await call("POST", "/targets", "admin", { ...body, id: "other", address: "10.1.1.1" });
+    expect(explicit.body).toMatchObject({ address: "10.1.1.1" });
+  });
+
+  test("a retired id can be added again", async () => {
+    const { call } = await setup();
+    const body = { id: "nas", address: "10.0.0.5", account: "root", systemType: "linux", nodes: ["node1"] };
+    expect((await call("POST", "/targets", "admin", body)).status).toBe(201);
+    expect((await call("POST", "/targets", "admin", body)).status).toBe(409);
+    expect((await call("DELETE", "/targets/nas")).status).toBe(200);
+    expect((await call("POST", "/targets", "admin", { ...body, address: "10.0.0.6" })).status).toBe(201);
+  });
+
   test("POST /targets with managedHost and no address takes the address from the host", async () => {
     const { call, targets } = await setup();
     const made = await call("POST", "/targets", "admin", {
