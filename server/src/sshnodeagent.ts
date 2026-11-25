@@ -28,6 +28,8 @@ export interface RawConnection {
 /** What the transport calls for one connection. */
 export interface ConnectionHandler {
   data(chunk: Uint8Array): void;
+  /** The peer or the transport closed the connection. Optional. */
+  close?(): void;
 }
 
 export interface TransportListener {
