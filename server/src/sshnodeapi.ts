@@ -264,9 +264,11 @@ function parseGrant(body: Record<string, unknown>): GrantRequest {
  */
 export function sshConfigPath(path: string, windows: boolean): string {
   if (!windows) return path;
-  const slashed = path.replaceAll("\\", "/");
-  if (/["\r\n]/.test(slashed)) throw new Error("a config path holds a quote or a line break");
-  return /\s/.test(slashed) ? `"${slashed}"` : slashed;
+  // `"` would end the quoting, a line break would end the line, and `$` starts an environment variable in some options.
+  if (/["\r\n$]/.test(path)) throw new Error("a config path holds a quote, a dollar sign or a line break");
+  // `%` starts a token such as %u, so it is doubled. A space, `'` or `#` needs double quotes: `#` starts a comment.
+  const slashed = path.replaceAll("\\", "/").replaceAll("%", "%%");
+  return /[\s'#]/.test(slashed) ? `"${slashed}"` : slashed;
 }
 
 /**
