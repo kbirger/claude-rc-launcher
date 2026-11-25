@@ -34,6 +34,7 @@ function fakeTransport() {
     handlers.push(handler);
     return {
       send: (text: string) => handler.data(new Uint8Array(Buffer.from(text))),
+      sendBytes: (bytes: Uint8Array) => handler.data(new Uint8Array(bytes)),
       sent: () => sent[index].join(""),
       ended: () => ended[index],
     };
@@ -127,6 +128,86 @@ describe("WinSshControl", () => {
     await tick();
     expect(JSON.parse(c.sent())).toEqual({ ok: false, error: "targetId is required" });
     expect(c.ended()).toBe(false);
+  });
+});
+
+describe("WinSshControl review fixes", () => {
+  const slow = () => {
+    const gate: { open: () => void } = { open: () => {} };
+    const calls: { instanceId: string; targetId: string }[] = [];
+    const fake = fakeTransport();
+    const control = new WinSshControl({
+      transport: fake.transport,
+      targets: () => [],
+      request: async (input) => {
+        calls.push(input);
+        await new Promise<void>((resolve) => (gate.open = resolve));
+        return { socket: "s", config: "c", endsAt: 1 } as never;
+      },
+    });
+    return { control, open: fake.open, calls, gate };
+  };
+
+  test("a queued line does not run after its token is removed", async () => {
+    const { control, open, calls, gate } = slow();
+    await control.start();
+    const token = control.register("a");
+    const c = open();
+    const line = JSON.stringify({ op: "request", targetId: "nas", token }) + "\n";
+    c.send(line + line);
+    await tick();
+    control.unregister("a");
+    gate.open();
+    await tick();
+    expect(calls).toHaveLength(1);
+  });
+
+  test("a bad line after good ones cancels the queued requests", async () => {
+    const { control, open, calls, gate } = slow();
+    await control.start();
+    const token = control.register("a");
+    const c = open();
+    const line = JSON.stringify({ op: "request", targetId: "nas", token }) + "\n";
+    c.send(line + line + "garbage\n");
+    await tick();
+    gate.open();
+    await tick();
+    expect(c.ended()).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(c.sent()).toBe("");
+  });
+
+  test("more than four waiting lines close the connection", async () => {
+    const { control, open } = slow();
+    await control.start();
+    const token = control.register("a");
+    const c = open();
+    const line = JSON.stringify({ op: "request", targetId: "nas", token }) + "\n";
+    c.send(line.repeat(5));
+    await tick();
+    expect(c.ended()).toBe(true);
+  });
+
+  test("a multibyte reason split across two chunks arrives whole", async () => {
+    const calls: { reason?: string }[] = [];
+    const fake = fakeTransport();
+    const control = new WinSshControl({
+      transport: fake.transport,
+      targets: () => [],
+      request: async (input) => {
+        calls.push(input);
+        return { socket: "s", config: "c", endsAt: 1 } as never;
+      },
+    });
+    await control.start();
+    const token = control.register("a");
+    const bytes = Buffer.from(JSON.stringify({ op: "request", targetId: "nas", reason: "café", token }) + "\n");
+    const cut = bytes.indexOf(0xc3) + 1;
+    const raw = fake.open();
+    raw.sendBytes(bytes.subarray(0, cut));
+    raw.sendBytes(bytes.subarray(cut));
+    await tick();
+    expect(calls[0].reason).toBe("café");
   });
 });
 
