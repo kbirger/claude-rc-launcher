@@ -80,8 +80,8 @@ export async function sshRequest(options: {
     ...(options.reason === undefined ? {} : { reason: options.reason }),
   });
   options.out("approved");
-  if (typeof answer.endsAt === "number" && Number.isFinite(answer.endsAt))
-    options.out(`access ends at ${new Date(answer.endsAt).toISOString()}`);
+  const ends = typeof answer.endsAt === "number" ? new Date(answer.endsAt) : undefined;
+  if (ends && !Number.isNaN(ends.getTime())) options.out(`access ends at ${ends.toISOString()}`);
   options.out(`socket: ${String(answer.socket)}`);
   options.out(`config: ${String(answer.config)}`);
   options.out(`ssh -F ${String(answer.config)} ${options.targetId}`);
