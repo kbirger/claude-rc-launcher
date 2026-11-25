@@ -144,3 +144,35 @@ test("a hub failure on turn off keeps the browser subscription, keeps the switch
   expect(existing.unsubscribe).not.toHaveBeenCalled();
   expect(toggle(target).checked).toBe(true);
 });
+
+test("on mount, an existing subscription with granted permission is posted to the hub again", async () => {
+  permission = "granted";
+  existing = fakeSub("https://push.example/1");
+  const target = await show();
+  await vi.waitFor(() => expect(toggle(target).checked).toBe(true));
+  await vi.waitFor(() => expect(calls.some((call) => call.url === "/api/push/subscribe")).toBe(true));
+  expect(calls.find((call) => call.url === "/api/push/subscribe")!.body).toEqual({
+    endpoint: "https://push.example/1",
+    keys: { p256dh: "a", auth: "b" },
+  });
+});
+
+test("on mount, a refused re-register is ignored and the switch stays on", async () => {
+  permission = "granted";
+  existing = fakeSub("https://push.example/1");
+  hubFails = true;
+  const target = await show();
+  await vi.waitFor(() => expect(toggle(target).checked).toBe(true));
+  await vi.waitFor(() => expect(calls.some((call) => call.url === "/api/push/subscribe")).toBe(true));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(target.querySelector('[role="alert"]')).toBeNull();
+  expect(toggle(target).checked).toBe(true);
+});
+
+test("on mount, nothing is posted when there is no subscription or the permission is not granted", async () => {
+  permission = "default";
+  existing = fakeSub("https://push.example/1");
+  await show();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(calls.some((call) => call.url === "/api/push/subscribe")).toBe(false);
+});

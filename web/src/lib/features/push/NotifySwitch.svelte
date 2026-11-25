@@ -29,7 +29,12 @@
     if (!supported) return;
     void registration()
       .then((item) => item.pushManager.getSubscription())
-      .then((item) => (on = item !== null && !denied))
+      .then((item) => {
+        on = item !== null && !denied;
+        // The hub can have lost this device (device cap, a move to another user, a deleted file, a new key).
+        // Register it again in the background. The endpoint is the key, so this is safe to repeat.
+        if (item && Notification.permission === "granted") void subscribe(item.toJSON()).catch(() => {});
+      })
       .catch(() => (on = false));
   });
 

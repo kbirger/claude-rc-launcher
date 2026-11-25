@@ -54,7 +54,7 @@ The default does not contain `--no-create-session-in-dir`. A server that starts 
 
 ## State folder
 
-The hub keeps its files in the state folder, set by the top-level key `state_dir` (default `/var/lib/claude-rc-launcher`). The folder `<state_dir>/push/` holds the push notifications for SSH requests. It has the file `vapid.json`, which is the key pair of the hub, and the file `subscriptions.json`, which lists the devices. The files have mode 600 and the folder has mode 700. There is no setting for push. The hub uses `public_url` as the VAPID subject. Read [SSH delegation](ssh-delegation.md#notifications).
+The hub keeps its files in the state folder, set by the top-level key `state_dir` (default `/var/lib/claude-rc-launcher`). The folder `<state_dir>/push/` holds the push notifications for SSH requests. It has the file `vapid.json`, which is the key pair of the hub, and the file `subscriptions.json`, which lists the devices. The files have mode 600 and the folder has mode 700. There is no setting for push. The hub uses `public_url` as the VAPID subject. Push needs an https `public_url`. Read [SSH delegation](ssh-delegation.md#notifications).
 
 ## proxy-jwt keys
 

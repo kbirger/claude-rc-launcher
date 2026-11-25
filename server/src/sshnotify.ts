@@ -4,11 +4,14 @@ import type { PushMessage } from "./webpush";
 
 const MAX_REASON_CHARS = 120;
 
-const CONTROL = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]", "g");
+const CONTROL = new RegExp(
+  "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]",
+  "g",
+);
 
-/** Plain text for a notification: control characters (newlines too) become spaces, and the text is cut to `max`. */
+/** Plain text for a notification: control, bidi and zero-width characters (newlines too) become spaces, and the text is cut to `max` characters, never inside a surrogate pair. */
 function plain(text: string, max: number): string {
-  return text.replace(CONTROL, " ").slice(0, max);
+  return Array.from(text.replace(CONTROL, " ")).slice(0, max).join("");
 }
 
 /**

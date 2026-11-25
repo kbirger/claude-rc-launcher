@@ -4,6 +4,7 @@ import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { logToken } from "./roles";
 import type { User } from "./userauth";
+import { PushValidationError } from "./webpush";
 import type { PushService, PushSubscriptionJson } from "./webpush";
 
 // The routes that register a device for push notifications, mounted at `/push` of the browser API and of the CLI API.
@@ -60,7 +61,8 @@ export function pushApi(options: PushApiOptions): Hono {
     try {
       await push.subscribe(options.user(context), sub);
     } catch (error) {
-      throw new HttpError(400, error instanceof Error ? error.message : "the subscription is not valid");
+      if (error instanceof PushValidationError) throw new HttpError(400, error.message);
+      throw new HttpError(500, "the subscription could not be saved");
     }
 
     return context.body(null, 204);

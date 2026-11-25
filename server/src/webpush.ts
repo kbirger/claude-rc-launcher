@@ -28,12 +28,14 @@ export type PushTransport = (
   sub: PushSubscriptionJson,
   payload: string,
   vapid: { publicKey: string; privateKey: string; subject: string },
+  options: { urgency: "high" | "normal" },
 ) => Promise<{ status: number }>;
 
 const MAX_PER_USER = 20;
 const MAX_BYTES = 1024 * 1024;
 const VERSION = 1;
 const TTL_SECONDS = 600;
+const TIMEOUT_MS = 10_000;
 
 interface Vapid {
   publicKey: string;
@@ -55,10 +57,12 @@ function isSubscription(value: unknown): value is PushSubscriptionJson {
 }
 
 /** The default transport: `web-push` encrypts the payload (aes128gcm) and signs the VAPID header. */
-const defaultTransport: PushTransport = async (sub, payload, vapid) => {
+const defaultTransport: PushTransport = async (sub, payload, vapid, options) => {
   try {
     const result = await webpush.sendNotification(sub, payload, {
       TTL: TTL_SECONDS,
+      urgency: options.urgency,
+      timeout: TIMEOUT_MS,
       vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey },
     });
     return { status: result.statusCode };
@@ -67,6 +71,23 @@ const defaultTransport: PushTransport = async (sub, payload, vapid) => {
     throw error;
   }
 };
+
+/** A subscription that the hub refuses because of its content. The API answers 400 for it and 500 for any other error. */
+export class PushValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PushValidationError";
+  }
+}
+
+/** The error name, and the error code when there is one. It holds no key and no message text. */
+function errorToken(error: unknown): string {
+  if (!(error instanceof Error)) return "error";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" || typeof code === "number"
+    ? `${error.name} code=${logToken(String(code))}`
+    : error.name;
+}
 
 function hostOf(endpoint: string): string {
   try {
@@ -104,11 +125,11 @@ export class PushService {
     try {
       url = new URL(sub.endpoint);
     } catch {
-      throw new Error("the push endpoint is not a valid URL");
+      throw new PushValidationError("the push endpoint is not a valid URL");
     }
 
-    if (url.protocol !== "https:") throw new Error("the push endpoint must use https");
-    if (!isSubscription(sub)) throw new Error("the push subscription needs keys");
+    if (url.protocol !== "https:") throw new PushValidationError("the push endpoint must use https");
+    if (!isSubscription(sub)) throw new PushValidationError("the push subscription needs keys");
     const entry: PushSubscriptionJson = {
       endpoint: sub.endpoint,
       keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
@@ -155,13 +176,13 @@ export class PushService {
           const host = logToken(hostOf(sub.endpoint));
 
           try {
-            const { status } = await this.transport(sub, payload, vapid);
+            const { status } = await this.transport(sub, payload, vapid, {
+              urgency: message.close === true ? "normal" : "high",
+            });
             if (status === 404 || status === 410) dead.add(sub.endpoint);
             this.audit(`audit push send host=${host} status=${status}`);
           } catch (error) {
-            this.audit(
-              `audit push send host=${host} failed=${logToken(error instanceof Error ? error.name : "error")}`,
-            );
+            this.audit(`audit push send host=${host} failed=${logToken(errorToken(error))}`);
           }
         }),
       );
@@ -178,7 +199,7 @@ export class PushService {
         });
       }
     } catch (error) {
-      this.audit(`audit push send failed=${logToken(error instanceof Error ? error.name : "error")}`);
+      this.audit(`audit push send failed=${logToken(errorToken(error))}`);
     }
   }
 
@@ -196,8 +217,11 @@ export class PushService {
         if (isRecord(parsed) && typeof parsed.publicKey === "string" && typeof parsed.privateKey === "string") {
           return { publicKey: parsed.publicKey, privateKey: parsed.privateKey };
         }
-      } catch {
-        // missing or not valid: make a new pair
+
+        throw new Error("vapid.json is not valid");
+      } catch (error) {
+        // Only a missing file makes a new pair. An unreadable or corrupt file must not be overwritten.
+        if ((error as { code?: unknown }).code !== "ENOENT") throw error;
       }
 
       const keys = webpush.generateVAPIDKeys();
