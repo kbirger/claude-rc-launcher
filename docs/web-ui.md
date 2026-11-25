@@ -197,7 +197,7 @@ Three settings control the server. Two control how it starts:
 - "Create a session at start" (`createSession`). On is the default. The server makes one empty session at start, and it brings back its recorded sessions after a crash or a restart. Off starts the server with no session.
 - "Session folders" (`spawnMode`). "Same folder" is the default: every session works in the same folder, so two sessions can change the same files. "Worktree" gives each new session its own git worktree (a separate checkout of the same repository). The folder must be a git repository.
 
-A third setting, "Allow SSH requests" (`sshRequests`), is off by default. When it is on, a session of the instance can ask for SSH access with `claude-rc ssh request`. It needs a Linux node. Read [SSH delegation](ssh-delegation.md).
+A third setting, "Allow SSH requests" (`sshRequests`), is off by default. When it is on, a session of the instance can ask for SSH access with `claude-rc ssh request`. A Windows node offers it only when the node has a working OpenSSH client. Read [SSH delegation](ssh-delegation.md).
 
 Press Apply to save the change. If the instance runs, the change restarts its server. If the server does not stay up with the new settings, the node puts the old settings back and the dialog shows the reason. If the instance is paused, the change is only saved. It starts at the next resume.
 

@@ -61,7 +61,7 @@ A node needs the OpenSSH client program `ssh`. It also needs the folder `/run/cl
 
 You cannot turn a node on without a source address. The hub puts the address into the `from=` option of the key line.
 
-The node must run Linux to host sessions that ask for access. A Windows node answers the grant routes with 501. A Windows machine can still be a target.
+A Linux node or a Windows node can host sessions that ask for access. A Windows node needs the Windows OpenSSH client. Read [SSH requests on a Windows node](#ssh-requests-on-a-windows-node). A Windows machine can also be a target.
 
 ### Add a target in the web UI
 
@@ -326,7 +326,7 @@ A failed removal never stops the retire. The id is free after a retire. You can 
 - The instance name on a request is a claim, not proof.
 - It has no Rotate a key action. To rotate a key, retire the target and add it again.
 - A push message does not approve a request. Approval needs your passkey or passphrase on the page.
-- A Windows node cannot host sessions that request access. A Windows machine can be a target.
+- On a Windows node, all sessions run as one Windows user. A session can read the token of a sibling instance and ask for access in its name. The token stops mistakes. It does not stop a hostile session of that user.
 - Sessions on the own host of the hub need Linux.
 - On the own host of the hub, a root session can copy the key during a grant. Read the note in [How it works](#how-it-works).
 
@@ -348,11 +348,24 @@ The hub keeps the devices in `<state_dir>/push/`. Read [Configuration](configura
 
 The files `<state_dir>/ssh/keys.json` and `<state_dir>/ssh/targets.json` hold all the state. The keys in `keys.json` are encrypted, so the backup is safe to keep. To rebuild a hub, restore the folder `<state_dir>/ssh`. Unlock with your passkey on the same host name, or with your passphrase.
 
+## SSH requests on a Windows node
+
+A Windows node can host sessions that ask for access. The steps are the same as on a Linux node. These points are different:
+
+- The node needs the Windows OpenSSH client, version 9.0 or newer. The install script checks for it and installs it when it is missing. The switch `-NoSshClient` skips this step.
+- The node checks the client at start and before each grant. If the client is missing or too old, the setting Allow SSH requests is not offered. The node gives the reason.
+- The agent and the control channel are named pipes. A session finds them in the variables `CLAUDE_RC_SSH_CONTROL` and `CLAUDE_RC_SSH_TOKEN`. Each start of an instance makes a new token.
+- The printed command starts with the full path of `ssh.exe`. Use that path. The `ssh` program of Git for Windows cannot use the pipe.
+- The grant files are in the `ssh` folder of the data folder of the node. Only SYSTEM, Administrators and the service user can open that folder.
+- All sessions run as the same Windows user. The approval page names the instance. Read the name before you approve.
+
 ## Known open checks
 
 - The Dropbear options `from=` and `restrict` were not tested on a real router.
 - The key on Asuswrt-Merlin was not tested across a reboot.
 - The Windows install script was checked for syntax. It was not run on a real Windows machine.
+- SSH requests on a Windows node were not tested with the real service account or with a second Windows user.
+- The Windows install steps that add the OpenSSH client were not run on a machine that lacked it.
 - The passkey flow was proven on one phone.
 - Push delivery to Android Chrome was not tested by hand.
 - The Deny button of a push message was not tested by hand.
