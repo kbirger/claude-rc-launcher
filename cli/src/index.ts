@@ -224,11 +224,13 @@ export async function main(
       if (sub !== "targets" && sub !== "request") throw new ExitError(sshUsage, 1);
       if ((sub === "targets" && target) || (sub === "request" && (!target || extra.length > 0)))
         throw new ExitError(sshUsage, 1);
-      const control = (env.environ ?? process.env).CLAUDE_RC_SSH_CONTROL;
+      const environ = env.environ ?? process.env;
+      const control = environ.CLAUDE_RC_SSH_CONTROL;
+      const token = environ.CLAUDE_RC_SSH_TOKEN;
       if (!control) throw new ExitError(SSH_OFF_MESSAGE, 1);
 
       if (sub === "targets") {
-        await sshTargets({ control, out: io.out });
+        await sshTargets({ control, ...(token ? { token } : {}), out: io.out });
         return 0;
       }
 
@@ -237,6 +239,7 @@ export async function main(
         throw new ExitError("--minutes must be a whole number of minutes", 1);
       await sshRequest({
         control,
+        ...(token ? { token } : {}),
         targetId: target,
         ...(minutes === undefined ? {} : { minutes }),
         ...(flags.reason === undefined ? {} : { reason: flags.reason }),
