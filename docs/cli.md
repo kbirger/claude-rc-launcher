@@ -129,7 +129,7 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 |---|---|
 | `ssh targets` | Run in a session: list the targets that the instance can ask for. |
 | `ssh request <target> [--minutes <n>] [--reason <text>]` | Run in a session: ask the owner for SSH access, wait for the approval, and print the `ssh` command. |
-| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
+| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
 
 ### Updates
 
@@ -197,6 +197,7 @@ These flags apply:
 - `--account` is the account on the target. It has no spaces, quotes, commas or backslashes. It does not start with a dash.
 - `--node` lists the host ids of the nodes that can reach the target, separated by commas and with no spaces.
 - `--port` is the SSH port. The default is 22.
+- `--key-file <name>` sets the file in `~/.ssh` for a managed target of the type `linux` or `synology`. The default is `authorized_keys`. The name starts with `authorized_keys`, for example `authorized_keys2`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
 - `--fingerprint SHA256:<value>` answers the host key question in advance for an external target.
 - `--no-test` skips the one-minute test grant.
 
