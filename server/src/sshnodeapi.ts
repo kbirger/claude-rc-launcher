@@ -258,6 +258,18 @@ function parseGrant(body: Record<string, unknown>): GrantRequest {
 }
 
 /**
+ * A path as the config file of `ssh.exe` needs it. On Linux the path stays as it is. On Windows every backslash becomes a
+ * forward slash, and a path with a space gets double quotes. The reason: `ssh.exe` ignores `IdentityAgent \\.\pipe\x`
+ * without a message, and then fails with a misleading `invalid format`. The forward-slash form `//./pipe/x` works.
+ */
+export function sshConfigPath(path: string, windows: boolean): string {
+  if (!windows) return path;
+  const slashed = path.replaceAll("\\", "/");
+  if (/["\r\n]/.test(slashed)) throw new Error("a config path holds a quote or a line break");
+  return /\s/.test(slashed) ? `"${slashed}"` : slashed;
+}
+
+/**
  * The lines of the config file for one target. Every value was checked: none holds a newline. `identity` is the public
  * key file of the grant: with `IdentitiesOnly yes`, ssh offers only that key of the agent, and never a default key of
  * the account that runs it (`~/.ssh/id_*`), nor a password.
@@ -270,19 +282,23 @@ export function grantConfig(input: {
   socket: string;
   identity: string;
   knownHosts: string;
+  /** The node is Windows: write the paths for `ssh.exe` (see `sshConfigPath`). */
+  windows?: boolean;
 }): string {
+  const path = (value: string) => sshConfigPath(value, input.windows === true);
+
   return (
     [
       `Host ${input.targetId}`,
       `HostName ${input.address}`,
       `Port ${input.port}`,
       `User ${input.account}`,
-      `IdentityAgent ${input.socket}`,
-      `IdentityFile ${input.identity}`,
+      `IdentityAgent ${path(input.socket)}`,
+      `IdentityFile ${path(input.identity)}`,
       "IdentitiesOnly yes",
       "PasswordAuthentication no",
       "KbdInteractiveAuthentication no",
-      `UserKnownHostsFile ${input.knownHosts}`,
+      `UserKnownHostsFile ${path(input.knownHosts)}`,
       "GlobalKnownHostsFile /dev/null",
       "StrictHostKeyChecking yes",
       "ControlMaster no",
