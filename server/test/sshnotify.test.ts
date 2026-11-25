@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Grant } from "../src/sshgrants";
-import { requestMessage } from "../src/sshnotify";
+import { createRequestNotifier, requestMessage } from "../src/sshnotify";
+import type { PushMessage } from "../src/webpush";
 import type { Target } from "../src/sshtargets";
 
 const target = {
@@ -53,5 +54,52 @@ describe("requestMessage", () => {
     const json = JSON.stringify(message);
     expect(json).not.toContain("10.0.0.5");
     expect(json).not.toContain("ssh-ed25519");
+  });
+});
+
+describe("createRequestNotifier", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+  function run(
+    listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined,
+    timeoutMs = 20,
+  ) {
+    const sent: PushMessage[] = [];
+    const errors: string[] = [];
+    const notify = createRequestNotifier({
+      send: (message) => sent.push(message),
+      listInstances,
+      timeoutMs,
+      onError: (text) => errors.push(text),
+    });
+    notify(grant({ instanceId: "inst1" }), target);
+    return { sent, errors, settle };
+  }
+
+  test("names the instance when the lookup finds it", async () => {
+    const { sent } = run(async () => [{ id: "inst1", name: "work" }]);
+    await settle();
+    expect(sent.map((m) => m.body)).toEqual(["nas on work, 30 min"]);
+  });
+
+  test("falls back to the id when the lookup fails", async () => {
+    const { sent, errors } = run(() => Promise.reject(new Error("down")));
+    await settle();
+    expect(sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
+    expect(errors).toEqual(["down"]);
+  });
+
+  test("falls back to the id when the lookup times out", async () => {
+    const { sent } = run(() => new Promise(() => {}));
+    await settle();
+    expect(sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
+  });
+
+  test("falls back to the id when the instance is not found or the node is unknown", async () => {
+    const other = run(async () => [{ id: "other", name: "x" }]);
+    const unknown = run(() => undefined);
+    await settle();
+    expect(other.sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
+    expect(unknown.sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
   });
 });

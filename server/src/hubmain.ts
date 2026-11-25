@@ -38,6 +38,7 @@ import { GrantStore } from "./sshgrants";
 import { SshKeyStore } from "./sshkeystore";
 import { createLocalSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
+import { createRequestNotifier } from "./sshnotify";
 import { SshService } from "./sshservice";
 import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
@@ -306,7 +307,19 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     grants: sshGrants,
     client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
     audit: sshAudit,
-    notify: (message) => void push.send(message),
+    notify: createRequestNotifier({
+      send: (message) => push.send(message),
+      listInstances: (nodeId) => {
+        if (nodeId === LOCAL_HOST) return localSsh.instances.list();
+        const client = hosts.get(nodeId)?.client;
+        if (!client) return undefined;
+        return client.call("GET", "/api/instances", { timeoutMs: 3000 }).then((reply) => {
+          if (reply.status < 200 || reply.status >= 300 || !Array.isArray(reply.body)) return [];
+          return reply.body as { id: string; name: string }[];
+        });
+      },
+      onError: (text) => sshAudit(`push notify: name lookup failed: ${logToken(text)}`),
+    }),
   });
   sshHook.service = ssh;
 

@@ -25,3 +25,47 @@ export function requestMessage(grant: Grant, target: Target, instanceName: strin
     grantId: grant.id,
   };
 }
+
+export interface RequestNotifierOptions {
+  send: (message: PushMessage) => unknown;
+  /** The instances of a node, or `undefined` when the node is unknown. A throw or a slow answer means no name. */
+  listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined;
+  timeoutMs?: number;
+  /** For a failed lookup: it never gets a secret. */
+  onError?: (text: string) => void;
+}
+
+/**
+ * Makes the notifier of the SSH service: it looks up the name of the instance and sends the push. The lookup runs
+ * after the request is stored and never fails it. When the lookup fails, is slow or finds nothing, the message names
+ * the instance by its id.
+ */
+export function createRequestNotifier(options: RequestNotifierOptions): (grant: Grant, target: Target) => void {
+  const timeoutMs = options.timeoutMs ?? 3000;
+
+  const lookup = async (grant: Grant): Promise<string> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const pending = options.listInstances(grant.nodeId);
+      if (!pending) return grant.instanceId;
+      const timeout = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+      });
+      const list = await Promise.race([pending, timeout]);
+      const found = Array.isArray(list) ? list.find((item) => item.id === grant.instanceId) : undefined;
+      return typeof found?.name === "string" && found.name ? found.name : grant.instanceId;
+    } catch (error) {
+      options.onError?.(error instanceof Error ? error.message : String(error));
+      return grant.instanceId;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  return (grant, target) => {
+    void lookup(grant)
+      .then((name) => options.send(requestMessage(grant, target, name)))
+      .catch((error) => options.onError?.(error instanceof Error ? error.message : String(error)));
+  };
+}
