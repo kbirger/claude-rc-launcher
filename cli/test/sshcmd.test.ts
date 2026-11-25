@@ -98,6 +98,20 @@ describe("claude-rc ssh", () => {
     expect(node.seen).toEqual([{ op: "request", targetId: "nas", minutes: 30, reason: "fix the backup" }]);
   });
 
+  test("ssh request omits the end time line when endsAt is missing, not a number or out of range", async () => {
+    for (const endsAt of [undefined, "soon", 8.64e15 + 1, 1e300]) {
+      const node = fakeNode(() => ({
+        ok: true,
+        socket: "/s",
+        config: "/c",
+        ...(endsAt === undefined ? {} : { endsAt }),
+      }));
+      const outcome = await run({ CLAUDE_RC_SSH_CONTROL: node.control }, "ssh", "request", "nas");
+      expect(outcome.code).toBe(0);
+      expect(outcome.out).toEqual(["waiting for approval", "approved", "socket: /s", "config: /c", "ssh -F /c nas"]);
+    }
+  });
+
   test("ssh request without the environment variable exits 1 with the message above", async () => {
     const outcome = await run({}, "ssh", "request", "nas");
     expect(outcome.code).toBe(1);
