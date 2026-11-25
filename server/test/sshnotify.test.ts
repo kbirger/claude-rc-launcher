@@ -116,3 +116,25 @@ describe("closeMessage", () => {
     expect(JSON.stringify(message)).not.toContain("secret");
   });
 });
+
+describe("createRequestNotifier with a grant that is answered during the lookup", () => {
+  test("a slow lookup and a deny in between send only the close push", async () => {
+    const sent: PushMessage[] = [];
+    let pending = true;
+    let release: (list: { id: string; name: string }[]) => void = () => {};
+    const notify = createRequestNotifier({
+      send: (message) => sent.push(message),
+      isPending: () => pending,
+      listInstances: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    });
+    notify(grant(), target);
+    pending = false;
+    sent.push(closeMessage(grant()));
+    release([{ id: "inst1", name: "work" }]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent.map((m) => m.close === true)).toEqual([true]);
+  });
+});

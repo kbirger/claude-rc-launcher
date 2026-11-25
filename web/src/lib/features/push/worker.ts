@@ -101,7 +101,23 @@ export async function showPush(message: PushMessage, registration: RegistrationL
     return;
   }
 
-  await registration.showNotification(message.title, { tag: message.tag, silent: true, icon: "/icon-192.png" });
-  const open = await registration.getNotifications({ tag: message.tag });
-  for (const item of open) item.close();
+  // The lookup can fail. Close what we can find before and after the quiet one, retry once, and never reject.
+  const closeAll = async (): Promise<boolean> => {
+    try {
+      for (const item of await registration.getNotifications({ tag: message.tag })) item.close();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  await closeAll();
+
+  try {
+    await registration.showNotification(message.title, { tag: message.tag, silent: true, icon: "/icon-192.png" });
+  } catch {
+    return;
+  }
+
+  if (!(await closeAll())) await closeAll();
 }

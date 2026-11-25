@@ -31,13 +31,22 @@ export function requestMessage(grant: Grant, target: Target, instanceName: strin
  * close flag, with a fixed title and no body. It holds no target, no reason and no secret.
  */
 export function closeMessage(grant: Grant): PushMessage {
-  return { title: "SSH request answered", body: "", url: "/ssh", tag: `ssh-${grant.id}`, grantId: grant.id, close: true };
+  return {
+    title: "SSH request answered",
+    body: "",
+    url: "/ssh",
+    tag: `ssh-${grant.id}`,
+    grantId: grant.id,
+    close: true,
+  };
 }
 
 export interface RequestNotifierOptions {
   send: (message: PushMessage) => unknown;
   /** The instances of a node, or `undefined` when the node is unknown. A throw or a slow answer means no name. */
   listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined;
+  /** True while the grant is still `pending`. When it is not, the request push is skipped (a close was sent). */
+  isPending?: (grantId: string) => boolean;
   timeoutMs?: number;
   /** For a failed lookup: it never gets a secret. */
   onError?: (text: string) => void;
@@ -73,7 +82,11 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
 
   return (grant, target) => {
     void lookup(grant)
-      .then((name) => options.send(requestMessage(grant, target, name)))
+      .then((name) =>
+        options.isPending && !options.isPending(grant.id)
+          ? undefined
+          : options.send(requestMessage(grant, target, name)),
+      )
       .catch((error) => options.onError?.(error instanceof Error ? error.message : String(error)));
   };
 }

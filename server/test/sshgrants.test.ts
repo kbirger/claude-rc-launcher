@@ -263,6 +263,22 @@ describe("GrantStore", () => {
       expect(left.map((item) => item.endReason)).toEqual(["denied", "expired", "node-lost"]);
     });
 
+    test("a throwing hook on deny still runs onEnd", () => {
+      const timers = fakeTimers(1_000_000);
+      const ended: Grant[] = [];
+      const store = new GrantStore({
+        timers,
+        audit: () => {},
+        onEnd: (grant) => ended.push(grant),
+        onLeavePending: () => {
+          throw new Error("boom");
+        },
+      });
+      const grant = store.request({ nodeId: "n", instanceId: "i", targetId: "t" });
+      expect(store.deny(grant.id, "admin").state).toBe("ended");
+      expect(ended).toHaveLength(1);
+    });
+
     test("active expiry calls it none, and a throwing hook does not fail approve", () => {
       const { store, input, left, timers } = withHook();
       const grant = store.request(input);
