@@ -243,6 +243,12 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
     expect(script).toContain("if ($declared.ContainsKey($k))");
   });
 
+  test("the OpenSSH feature install falls back to dism.exe when the cmdlet is missing", () => {
+    expect(script).toContain("Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue");
+    expect(script).toContain("/Add-Capability");
+    expect(script).toContain("-notin @(0, 3010)");
+  });
+
   test("the OpenSSH feature install has a time limit and is never a stop for the install", () => {
     expect(script).toContain("Wait-Job -Job $job -Timeout 600");
     expect(script).toContain("The install of the OpenSSH Client failed");
