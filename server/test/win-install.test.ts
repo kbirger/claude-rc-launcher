@@ -40,6 +40,8 @@ async function install(extra: string[] = [], over: { binary?: string } = {}) {
       SCRIPT,
       "-NoService",
       "-NoClient",
+      // A test never installs a Windows feature: it skips the OpenSSH step unless it gives a folder of its own.
+      ...(extra.includes("-SshClientDir") ? [] : ["-NoSshClient"]),
       "-ClientRegistryKey",
       "HKCU:\\Software\\claude-rc-unused",
       "-Binary",
@@ -105,6 +107,32 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
     expect(await Bun.file(join(dir, "app", "service", "claude-rc-launcher.exe")).exists()).toBe(false);
   });
 
+  test("-NoSshClient skips the OpenSSH client step", async () => {
+    const result = await install();
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Skipping the OpenSSH client check");
+  });
+
+  test("a folder with no OpenSSH client leaves SSH access off and the install goes on", async () => {
+    const empty = join(dir, "no-ssh");
+    await mkdir(empty);
+    const result = await install(["-SshClientDir", empty]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("No usable Windows OpenSSH client was found");
+    expect(existsSync(join(dir, "data", "config.toml"))).toBe(true);
+  });
+
+  const system = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "OpenSSH");
+  test.skipIf(!existsSync(join(system, "ssh.exe")))("a folder with a Windows OpenSSH client is accepted", async () => {
+    const copy = join(dir, "with-ssh");
+    await mkdir(copy);
+    await Bun.write(join(copy, "ssh.exe"), Bun.file(join(system, "ssh.exe")));
+    await Bun.write(join(copy, "ssh-add.exe"), Bun.file(join(system, "ssh-add.exe")));
+    const result = await install(["-SshClientDir", copy]);
+    expect(result.code).toBe(0);
+    expect(result.out).toMatch(/The Windows OpenSSH client \d+\.\d+ is in /);
+  });
+
   test("a built-in service account is refused", async () => {
     const result = await install(["-Account", "NT AUTHORITY\\SYSTEM"]);
     expect(result.code).not.toBe(0);
@@ -121,6 +149,7 @@ describe.skipIf(!windows)("install.ps1 -NoService", () => {
         "-File",
         SCRIPT,
         "-NoService",
+        "-NoSshClient",
         "-Release",
         "not-a-tag",
         "-WinSW",
@@ -285,6 +314,7 @@ describe.skipIf(!windows)("install.ps1: the layout and the client registry value
       "-File",
       SCRIPT,
       "-NoService",
+      "-NoSshClient",
       "-Binary",
       bin,
       "-WinSW",
