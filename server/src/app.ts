@@ -111,9 +111,9 @@ export interface Deps {
   watchTimers?: Timers;
   /** The hub passes the beat loop it built, so that its stop() can end it. */
   beatLoop?: BeatLoop;
-  /** SSH delegation. The routes are mounted at `/ssh` of the browser API and of the CLI API when this is set. */
   /** Push notifications. The routes are mounted at `/push` of the browser API and of the CLI API when this is set. */
   push?: PushService;
+  /** SSH delegation. The routes are mounted at `/ssh` of the browser API and of the CLI API when this is set. */
   ssh?: {
     service: SshService;
     keys: SshKeyStore;

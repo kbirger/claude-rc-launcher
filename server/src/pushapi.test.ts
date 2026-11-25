@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { onError } from "./app";
 import { pushApi } from "./pushapi";
 import { requiredRole } from "./roles";
+import { PushValidationError } from "./webpush";
 import type { PushService, PushSubscriptionJson } from "./webpush";
 
 const good = (endpoint = "https://push.example.com/a"): PushSubscriptionJson => ({
@@ -13,11 +14,14 @@ const good = (endpoint = "https://push.example.com/a"): PushSubscriptionJson => 
 
 function setup() {
   const stored: [string, PushSubscriptionJson][] = [];
+  const failure: { error?: Error } = {};
   const lines: string[] = [];
   const push = {
     publicKey: () => Promise.resolve("PUBKEY"),
     subscribe: (user: string, sub: PushSubscriptionJson) => {
-      if (!sub.endpoint.startsWith("https:")) return Promise.reject(new Error("the push endpoint must use https"));
+      if (failure.error) return Promise.reject(failure.error);
+      if (!sub.endpoint.startsWith("https:"))
+        return Promise.reject(new PushValidationError("the push endpoint must use https"));
       stored.push([user, sub]);
       return Promise.resolve();
     },
@@ -47,7 +51,7 @@ function setup() {
       headers: { "content-type": "application/json", "x-user": user },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  return { call, stored, lines };
+  return { call, stored, lines, failure };
 }
 
 describe("push api", () => {
@@ -74,6 +78,16 @@ describe("push api", () => {
     expect((await call("POST", "/subscribe", good("http://push.example.com/a"))).status).toBe(400);
     expect((await call("POST", "/subscribe", [])).status).toBe(400);
     expect(stored).toEqual([]);
+  });
+
+  test("a store failure answers 500 with a fixed text and no raw message", async () => {
+    const { call, failure } = setup();
+    failure.error = new Error("EACCES: /var/lib/secret/path");
+    const response = await call("POST", "/subscribe", good());
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).toContain("the subscription could not be saved");
+    expect(text).not.toContain("EACCES");
   });
 
   test("POST /unsubscribe answers 204 for an own endpoint and 404 for one of another user", async () => {

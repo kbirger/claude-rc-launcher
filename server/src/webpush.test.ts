@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PushService } from "./webpush";
@@ -147,5 +147,56 @@ describe("PushService", () => {
     expect(text).not.toContain("secretpath");
     expect(text).not.toContain("p256dh-secretpath");
     expect(text).not.toContain("auth-secretpath");
+  });
+
+  test("request pushes use high urgency and close pushes use normal urgency", async () => {
+    const dir = tempDir();
+    const urgencies: string[] = [];
+    const transport: PushTransport = async (_sub, payload, _vapid, options) => {
+      urgencies.push(`${JSON.parse(payload).close === true ? "close" : "request"}:${options.urgency}`);
+      return { status: 201 };
+    };
+    const service = make(dir, transport);
+    await service.subscribe("alice", sub(1));
+    await service.send(message);
+    await service.send({ ...message, body: "", close: true });
+    expect(urgencies).toEqual(["request:high", "close:normal"]);
+  });
+
+  test("a corrupt vapid.json is not overwritten and rejects, then a fixed file works", async () => {
+    const dir = tempDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "vapid.json"), "{not json");
+    const lines: string[] = [];
+    const service = make(dir, fake().transport, (line) => lines.push(line));
+    await expect(service.publicKey()).rejects.toThrow();
+    await service.send(message);
+    expect(readFileSync(join(dir, "vapid.json"), "utf8")).toBe("{not json");
+    expect(lines.some((line) => line.includes("send failed"))).toBe(true);
+    writeFileSync(join(dir, "vapid.json"), JSON.stringify({ version: 1, publicKey: "pub", privateKey: "priv" }));
+    expect(await service.publicKey()).toBe("pub");
+  });
+
+  test("an unreadable vapid.json is not overwritten", async () => {
+    if (process.getuid?.() === 0) return; // root can read any file
+    const dir = tempDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "vapid.json"), "{}", { mode: 0o000 });
+    chmodSync(join(dir, "vapid.json"), 0o000);
+    await expect(make(dir).publicKey()).rejects.toThrow();
+  });
+
+  test("an error code is logged with the error name", async () => {
+    const dir = tempDir();
+    const lines: string[] = [];
+    const transport: PushTransport = async () => {
+      throw Object.assign(new Error("secret text"), { code: "ECONNRESET" });
+    };
+    const service = make(dir, transport, (line) => lines.push(line));
+    await service.subscribe("alice", sub(1));
+    await service.send(message);
+    const line = lines.find((item) => item.includes("failed="))!;
+    expect(line).toContain("ECONNRESET");
+    expect(line).not.toContain("secret text");
   });
 });

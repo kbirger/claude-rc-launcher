@@ -76,6 +76,8 @@ self.addEventListener("notificationclick", (event) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "same-origin",
+            // A forward-auth redirect is an opaque redirect (not ok), so the page opens instead of a false success.
+            redirect: "manual",
           }),
         open: focusOrOpen,
       },

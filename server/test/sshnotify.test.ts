@@ -58,9 +58,9 @@ describe("requestMessage", () => {
 });
 
 describe("createRequestNotifier", () => {
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 
-  function run(listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined, timeoutMs = 20) {
+  function run(listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined, timeoutMs = 50) {
     const sent: PushMessage[] = [];
     const errors: string[] = [];
     const notify = createRequestNotifier({
@@ -98,6 +98,20 @@ describe("createRequestNotifier", () => {
     await settle();
     expect(other.sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
     expect(unknown.sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
+  });
+});
+
+describe("plain text", () => {
+  test("bidi and zero-width characters become spaces", () => {
+    const text = requestMessage(grant({ reason: "a\u202eb\u200bc\u2066d" }), target, "work").body;
+    expect(text).toContain(": a b c d");
+  });
+
+  test("the cut never splits a surrogate pair", () => {
+    const text = requestMessage(grant({ reason: "\u{1F600}".repeat(130) }), target, "work").body;
+    const reason = text.split(": ")[1]!;
+    expect(Array.from(reason)).toHaveLength(120);
+    expect(reason).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
   });
 });
 
