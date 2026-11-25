@@ -3,10 +3,12 @@ import { createPublicKey, verify } from "node:crypto";
 import { HostError } from "../src/hostclient";
 import type { HostClient } from "../src/hostclient";
 import { GrantError, GrantStore } from "../src/sshgrants";
+import type { Grant } from "../src/sshgrants";
 import { SshKeyStore } from "../src/sshkeystore";
 import type { UnlockSecret } from "../src/sshkeystore";
 import { SshService } from "../src/sshservice";
 import { TargetError, TargetStore } from "../src/sshtargets";
+import type { Target } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
 import { fakeTimers } from "./faketimers";
 
@@ -52,7 +54,12 @@ const flush = async () => {
 };
 
 async function setup(
-  options: { nodes?: Record<string, ReturnType<typeof fakeNode>>; state?: "ready" | "draft" | "disabled" } = {},
+  options: {
+    nodes?: Record<string, ReturnType<typeof fakeNode>>;
+    state?: "ready" | "draft" | "disabled";
+    notify?: (grant: Grant, target: Target) => void;
+    notifyClose?: (grant: Grant) => void;
+  } = {},
 ) {
   const timers = fakeTimers(1_000_000);
   const audit: string[] = [];
@@ -80,6 +87,7 @@ async function setup(
     timers,
     audit: (line) => audit.push(line),
     onEnd: (grant) => hook.service?.onGrantEnd(grant),
+    onLeavePending: (grant) => hook.service?.onGrantLeavePending(grant),
   });
   const service = new SshService({
     keys,
@@ -87,6 +95,8 @@ async function setup(
     grants,
     client: (hostId) => (nodes as Partial<typeof nodes>)[hostId]?.client,
     audit: (line) => audit.push(line),
+    ...(options.notify ? { notify: options.notify } : {}),
+    ...(options.notifyClose ? { notifyClose: options.notifyClose } : {}),
   });
   hook.service = service;
   return { service, keys, targets, grants, nodes, audit, timers, recovery, node: nodes.node1 };
@@ -100,6 +110,96 @@ const request = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("SshService requests", () => {
+  test("a real request calls notify once with the grant and the target", async () => {
+    const sent: [Grant, Target][] = [];
+    const { service, grants } = await setup({ notify: (grant, target) => sent.push([grant, target]) });
+    service.onNodeEvent("node1", "ssh.request", request({ minutes: 30, reason: "deploy" }));
+    await flush();
+    const [grant] = grants.list();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]![0].id).toBe(grant!.id);
+    expect(sent[0]![1].id).toBe("nas");
+  });
+
+  test("a request that grants.request refuses does not call notify again", async () => {
+    const sent: Grant[] = [];
+    const { service, grants } = await setup({ notify: (grant) => sent.push(grant) });
+    service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    // minutes 0 makes grants.request throw, and notify must come after it.
+    service.onNodeEvent("node1", "ssh.request", request({ requestId: "req2", minutes: 0 }));
+    await flush();
+    expect(grants.list()).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+  });
+
+  test("a test grant does not call notify", async () => {
+    const sent: Grant[] = [];
+    const node = fakeNode({ "POST /api/ssh/grants/:id/probe": { status: 200, body: { code: 0, stderr: "" } } });
+    const { service } = await setup({ nodes: { node1: node }, notify: (grant) => sent.push(grant) });
+    await service.test("nas", "node1", "admin", unlock).catch(() => undefined);
+    expect(sent).toEqual([]);
+  });
+
+  test("a grant that leaves pending sends one close, and the end of the active grant sends none", async () => {
+    const closed: Grant[] = [];
+    const ctx = await setup({ notifyClose: (grant) => closed.push(grant) });
+    ctx.service.onNodeEvent("node1", "ssh.request", request({ minutes: 30 }));
+    await flush();
+    const [grant] = ctx.grants.list();
+    await ctx.service.approve(grant!.id, "alice", unlock);
+    expect(closed.map((item) => item.id)).toEqual([grant!.id]);
+    ctx.grants.revoke(grant!.id, "alice");
+    expect(closed).toHaveLength(1);
+  });
+
+  test("a denied request sends one close", async () => {
+    const closed: Grant[] = [];
+    const ctx = await setup({ notifyClose: (grant) => closed.push(grant) });
+    ctx.service.onNodeEvent("node1", "ssh.request", request({ minutes: 30 }));
+    await flush();
+    const [grant] = ctx.grants.list();
+    ctx.grants.deny(grant!.id, "alice");
+    expect(closed).toHaveLength(1);
+  });
+
+  test("a test grant sends no close, and a throwing close is audited", async () => {
+    const closed: Grant[] = [];
+    const ctx = await setup({ notifyClose: (grant) => closed.push(grant) });
+    ctx.service.onGrantLeavePending({ id: "t", test: true } as Grant);
+    expect(closed).toEqual([]);
+
+    const bad = await setup({
+      notifyClose: () => {
+        throw new Error("boom");
+      },
+    });
+    bad.service.onGrantLeavePending({ id: "g", test: false } as Grant);
+    expect(bad.audit.some((line) => line.includes("notify close failed"))).toBe(true);
+  });
+
+  test("a refused request does not call notify", async () => {
+    const sent: Grant[] = [];
+    const { service } = await setup({ state: "draft", notify: (grant) => sent.push(grant) });
+    service.onNodeEvent("node1", "ssh.request", request());
+    service.onNodeEvent("node2", "ssh.request", request());
+    await flush();
+    expect(sent).toEqual([]);
+  });
+
+  test("a throwing notify does not fail the request", async () => {
+    const { service, grants, audit, node } = await setup({
+      notify: () => {
+        throw new Error("push is down");
+      },
+    });
+    service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    expect(grants.list()).toHaveLength(1);
+    expect(node.paths()).toEqual([]);
+    expect(audit.some((line) => line.includes("notify failed"))).toBe(true);
+  });
+
   test("an ssh.request event makes a pending grant for that node and instance", async () => {
     const { service, grants } = await setup();
     service.onNodeEvent("node1", "ssh.request", request({ minutes: 30, reason: "deploy" }));

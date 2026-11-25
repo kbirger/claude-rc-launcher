@@ -38,6 +38,7 @@ import { GrantStore } from "./sshgrants";
 import { SshKeyStore } from "./sshkeystore";
 import { createLocalSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
+import { closeMessage, createRequestNotifier } from "./sshnotify";
 import { SshService } from "./sshservice";
 import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
@@ -50,6 +51,7 @@ import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
+import { PushService } from "./webpush";
 
 export interface HubDeps {
   instances?: Instances;
@@ -274,6 +276,14 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const sshKeys = new SshKeyStore(path.join(sshDir, "keys.json"));
   const sshTargets = new TargetStore(path.join(sshDir, "targets.json"));
 
+  const push = new PushService({
+    dir: path.join(cfg.stateDir, "push"),
+    subject: cfg.publicUrl,
+    audit: (line) => {
+      console.log(line);
+    },
+  });
+
   const sshAudit = (line: string) => {
     console.log(line);
   };
@@ -290,13 +300,32 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   });
 
   const sshHook: { service?: SshService } = {};
-  const sshGrants = new GrantStore({ audit: sshAudit, onEnd: (grant) => sshHook.service?.onGrantEnd(grant) });
+  const sshGrants = new GrantStore({
+    audit: sshAudit,
+    onEnd: (grant) => sshHook.service?.onGrantEnd(grant),
+    onLeavePending: (grant) => sshHook.service?.onGrantLeavePending(grant),
+  });
   const ssh = new SshService({
     keys: sshKeys,
     targets: sshTargets,
     grants: sshGrants,
     client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
     audit: sshAudit,
+    notifyClose: (grant) => void push.send(closeMessage(grant)),
+    notify: createRequestNotifier({
+      send: (message) => push.send(message),
+      isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
+      listInstances: (nodeId) => {
+        if (nodeId === LOCAL_HOST) return localSsh.instances.list();
+        const client = hosts.get(nodeId)?.client;
+        if (!client) return undefined;
+        return client.call("GET", "/api/instances", { timeoutMs: 3000 }).then((reply) => {
+          if (reply.status < 200 || reply.status >= 300 || !Array.isArray(reply.body)) return [];
+          return reply.body as { id: string; name: string }[];
+        });
+      },
+      onError: (text) => sshAudit(`push notify: name lookup failed: ${logToken(text)}`),
+    }),
   });
   sshHook.service = ssh;
 
@@ -372,6 +401,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     sessionIndex,
     sessionsStore: store,
     beatLoop,
+    push,
     ssh: {
       service: ssh,
       keys: sshKeys,

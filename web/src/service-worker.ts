@@ -4,6 +4,7 @@
 /// <reference lib="webworker" />
 import { immutable } from "$app/manifest";
 import { version } from "$app/env";
+import { handleClick, parsePush, showPush, type ClickData } from "#lib/features/push/worker";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -37,4 +38,49 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || !ASSETS.has(url.pathname)) return;
   event.respondWith(caches.match(request).then((hit) => hit ?? fetch(request)));
+});
+
+// Push: the hub sends one JSON message for each SSH request. Chrome requires a visible notification for every push,
+// so a message that cannot be read still shows a generic one.
+self.addEventListener("push", (event) => {
+  const message = parsePush(event.data?.text() ?? "");
+  const show = message
+    ? showPush(message, self.registration)
+    : self.registration.showNotification("SSH access requested", {
+        tag: "ssh-request",
+        body: "Open the SSH page to answer.",
+        icon: "/icon-192.png",
+        data: { url: "/ssh" },
+      });
+  event.waitUntil(show);
+});
+
+async function focusOrOpen(url: string) {
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const known = windows.find((item) => new URL(item.url).pathname === new URL(url, self.location.origin).pathname);
+  if (known) await known.focus();
+  else await self.clients.openWindow(url);
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification.data as ClickData | undefined;
+  event.waitUntil(
+    handleClick(
+      event.action,
+      { url: data?.url ?? "/ssh", grantId: data?.grantId },
+      {
+        // Same call as `denyGrant` in the page: JSON content type, and the cookie goes along on a same-origin fetch.
+        deny: (grantId) =>
+          fetch(`/api/ssh/grants/${encodeURIComponent(grantId)}/deny`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            // A forward-auth redirect is an opaque redirect (not ok), so the page opens instead of a false success.
+            redirect: "manual",
+          }),
+        open: focusOrOpen,
+      },
+    ),
+  );
 });

@@ -379,3 +379,24 @@ test("the check button is absent unless canAdmin is passed", async () => {
   await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
   expect(button(CHECK)).toBeUndefined();
 });
+
+test("the notify switch shows for an admin in a browser with push, and not for a non-admin", async () => {
+  vi.stubGlobal("PushManager", class {});
+  vi.stubGlobal("Notification", { permission: "default", requestPermission: async () => "default" });
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: { ready: new Promise(() => {}) },
+  });
+
+  try {
+    showCheck(PRF_STATUS, false);
+    await vi.waitFor(() => expect(button("Lost your passkey? Recover")).toBeDefined());
+    expect(document.body.textContent).not.toContain("Notify this device");
+    for (const helper of open.splice(0)) helper();
+    document.body.innerHTML = "";
+    showCheck(PRF_STATUS, true);
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Notify this device"));
+  } finally {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+  }
+});

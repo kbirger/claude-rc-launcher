@@ -8,6 +8,7 @@
   import GrantList from "./GrantList.svelte";
   import { statusQuery } from "./queries";
   import NodeAccess from "./NodeAccess.svelte";
+  import NotifySwitch from "../push/NotifySwitch.svelte";
   import RecoveryFlow from "./RecoveryFlow.svelte";
   import SetupForm from "./SetupForm.svelte";
   import TargetList from "./TargetList.svelte";
@@ -46,6 +47,11 @@
 </script>
 
 <h2 class="font-heading mb-3 text-lg font-bold">SSH access</h2>
+{#if canAdmin}
+  <div class="mb-3">
+    <NotifySwitch />
+  </div>
+{/if}
 <!-- The passkey check is outside the branches below, so that a failed refetch of the status cannot drop its result. -->
 {#if canAdmin && !holding && query.data?.setUp && query.data.method === "prf" && query.data.credentialId}
   <CheckPasskey credentialId={query.data.credentialId} busy={recovering || !!wizard || !!approving} />
