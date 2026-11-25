@@ -350,6 +350,7 @@ test("the key file field shows only for a managed linux or synology target", asy
   expect(document.body.textContent).toContain(
     "Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile.",
   );
+  expect(document.body.textContent).toContain("To change the file later, retire the target and add it again.");
 });
 
 const fillManaged = async (type: string) => {

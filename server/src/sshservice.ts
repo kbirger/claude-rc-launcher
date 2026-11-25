@@ -223,7 +223,7 @@ export class SshService {
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
     const line = authorizedKeysLine(keys.publicLine(targetId), sources);
-    await this.nodeReply(
+    const reply = await this.nodeReply(
       target.managedHost,
       "POST",
       "/authorize",
@@ -235,6 +235,14 @@ export class SshService {
       },
       SCRIPT_TIMEOUT_MS,
     );
+
+    // An old node ignores the key file and writes `authorized_keys`. It answers without the name, so the install
+    // would look fine. The node must name the file back.
+    if (target.keyFile !== undefined) {
+      const answered = isObject(reply.body) ? reply.body.keyFile : undefined;
+      if (answered !== target.keyFile)
+        throw new NodeError("the node does not know key files: update the node first, then install again");
+    }
   }
 
   /**

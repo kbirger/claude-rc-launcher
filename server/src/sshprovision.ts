@@ -1,4 +1,5 @@
-import { isKeyFile, type SystemType } from "./sshtargets";
+import { isKeyFile } from "./sshtargets";
+import type { SystemType } from "./sshtargets";
 
 // Provisioning scripts. A script puts the public key line of a target into the `authorized_keys` list of the account on
 // the target. The owner or the hub runs it on the target through a remote shell (the script goes to the shell on stdin).
@@ -129,8 +130,8 @@ function powershellScript(line: string, account: string | undefined): string {
 
 /**
  * Build the script that installs `line` for the given system type. Linux and Dropbear use `~/.ssh/authorized_keys`
- * (folder mode 700, file mode 600), or `~/.ssh/<keyFile>` when `keyFile` is set. Synology also removes group and other write from the home folder, because sshd
- * refuses keys when it is writable. Windows uses `administrators_authorized_keys` for an administrator (with access
+ * (folder mode 700, file mode 600), or `~/.ssh/<keyFile>` when `keyFile` is set. Synology also removes group and
+ * other write from the home folder, because sshd refuses keys when it is writable. Windows uses `administrators_authorized_keys` for an administrator (with access
  * for SYSTEM and Administrators only) and `.ssh\authorized_keys` in the profile for any other account. Without
  * `account`, that is the account that runs the script (`%USERPROFILE%`). With `account`, the script looks up the SID of the
  * account, checks the Administrators group, and reads the profile folder from the ProfileList registry key. It fails
@@ -141,9 +142,9 @@ export function provisionScript(systemType: SystemType, line: string, options: P
   return { shell: "sh", script: shScript(line, systemType === "synology", keyFileName(options.keyFile)) };
 }
 
-// Removal scripts. They take the key line of a target out of the same key file (`authorized_keys` or `keyFile`). A line goes when the key
-// blob is one of its fields and its last field is the comment `claude-rc:<id>`. A line with only the blob or only the
-// comment stays. The match does not use the whole line, because the `from=` part can change after the install.
+// Removal scripts. They take the key line of a target out of the same key file (`authorized_keys` or `keyFile`). A line
+// goes when the key blob is one of its fields and its last field is the comment `claude-rc:<id>`. A line with only the
+// blob or only the comment stays. The match does not use the whole line, because the `from=` part can change after the install.
 // The script prints `removed` or `not-found`, and it is safe to run twice. The values are data: they are quoted like in
 // the install scripts, and the shell script hands them to awk through the environment, so awk does not read escapes.
 

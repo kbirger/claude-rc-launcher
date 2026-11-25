@@ -186,7 +186,8 @@
         spellcheck={false}
       />
       <p class="text-xs text-muted-foreground">
-        Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile.
+        Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile. The node
+        must be up to date. To change the file later, retire the target and add it again.
       </p>
     </div>
   {/if}

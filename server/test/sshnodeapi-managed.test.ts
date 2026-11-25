@@ -400,9 +400,12 @@ describe("key file on the node routes", () => {
   const KEY = BLOB.toString("base64");
 
   test("POST /authorize builds the script for the chosen key file", async () => {
-    expect((await authorize({ keyFile: "authorized_keys2" })).status).toBe(204);
+    const response = await authorize({ keyFile: "authorized_keys2" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ keyFile: "authorized_keys2" });
     expect(calls[0]?.script.script).toContain("'authorized_keys2'");
-    await authorize();
+    // Without a key file the answer stays 204, for old hubs.
+    expect((await authorize()).status).toBe(204);
     expect(calls[1]?.script.script).toContain("'authorized_keys'");
   });
 
