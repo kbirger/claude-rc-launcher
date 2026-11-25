@@ -42,6 +42,13 @@ export interface WinInstanceOptions {
   instanceDir: string;
   /** The service account is an administrator: then it offers a restricted entry (default) and an `(admin)` entry. */
   serviceIsAdmin?: boolean;
+  /**
+   * The variables of an instance that has `sshRequests` on: the control pipe and the token. Called at each start of the
+   * process, so a restart gets a new token. Without it the node refuses the setting.
+   */
+  sshEnv?: (instanceId: string) => Record<string, string>;
+  /** A plain reason when the SSH client of the node is not usable. Checked when a change turns the setting on. */
+  sshRefusal?: () => Promise<string | undefined>;
 }
 
 export interface Spawned {
@@ -51,7 +58,11 @@ export interface Spawned {
 
 export interface WinDeps {
   /** Starts a child with output appended to `logFile`. Throws if the program cannot be started. */
-  spawn: (cmd: string, args: string[], options: { cwd: string; logFile: string }) => Spawned;
+  spawn: (
+    cmd: string,
+    args: string[],
+    options: { cwd: string; logFile: string; env?: Record<string, string> },
+  ) => Spawned;
   /** Ends a process and its children. Resolves if the process is already gone. */
   killTree: (pid: number) => Promise<void>;
   /** Like `spawn`, but with a restricted copy of the service token. Required when `serviceIsAdmin` is true. */
@@ -95,9 +106,15 @@ interface Entry {
 
 type EntryBase = Pick<Entry, "id" | "path" | "name" | "admin" | "settings">;
 
-/** SSH requests need a Linux node: the sessions of a Windows node cannot hold an SSH grant. */
-function refuseSshRequests(patch: SettingsPatch | undefined): void {
-  if (patch?.sshRequests === true) throw new HttpError(400, "SSH requests need a Linux node");
+/** A node with no SSH wiring (`sshEnv` is not set) refuses the setting, and so does a node with no usable SSH client. */
+async function refuseSshRequests(
+  patch: SettingsPatch | undefined,
+  options: Pick<WinInstanceOptions, "sshEnv" | "sshRefusal">,
+): Promise<void> {
+  if (patch?.sshRequests !== true) return;
+  if (!options.sshEnv) throw new HttpError(400, "SSH requests are not turned on for this node");
+  const reason = await options.sshRefusal?.();
+  if (reason) throw new HttpError(400, reason);
 }
 
 /** Copies only the fields of the patch that have a value. */
@@ -110,12 +127,18 @@ function definedFields(settingsPatch: SettingsPatch): SettingsPatch {
 }
 
 export function bunSpawn(): WinDeps["spawn"] {
-  return (cmd, args, { cwd, logFile }) => {
+  return (cmd, args, { cwd, logFile, env }) => {
     mkdirSync(dirname(logFile), { recursive: true });
     const fd = openSync(logFile, "a");
 
     try {
-      const subprocess = Bun.spawn([cmd, ...args], { cwd, stdin: "ignore", stdout: fd, stderr: fd });
+      const subprocess = Bun.spawn([cmd, ...args], {
+        cwd,
+        stdin: "ignore",
+        stdout: fd,
+        stderr: fd,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
+      });
       return { pid: subprocess.pid, exited: subprocess.exited };
     } finally {
       closeSync(fd); // the child has its own copy
@@ -255,7 +278,13 @@ export class WinInstances implements Instances {
     const spawn = this.o.serviceIsAdmin && !entryBase.admin ? spawnRestricted : spawnPlain;
     if (!spawn) throw new Error("this node cannot start a restricted process");
     const args = ["remote-control", "--name", entryBase.name, ...argsWith(this.o.claudeRcArgs, entryBase.settings)];
-    return spawn(this.o.claudeBin, args, { cwd: entryBase.path, logFile: this.logFile(entryBase.id) });
+    const env = entryBase.settings.sshRequests ? this.o.sshEnv?.(entryBase.id) : undefined;
+
+    return spawn(this.o.claudeBin, args, {
+      cwd: entryBase.path,
+      logFile: this.logFile(entryBase.id),
+      ...(env ? { env } : {}),
+    });
   }
 
   private wait(entry: Entry): Promise<void> {
@@ -360,7 +389,7 @@ export class WinInstances implements Instances {
   }): Promise<Instance> {
     if (input.name !== undefined && !isValidName(input.name)) throw new HttpError(400, "invalid name");
     if (input.settings !== undefined && !isValidPatch(input.settings)) throw new HttpError(400, "invalid settings");
-    refuseSshRequests(input.settings);
+    await refuseSshRequests(input.settings, this.o);
     const real = await this.deps.resolvePath(input.path, this.o.roots);
     const admin = this.checkUser(input.user);
     // The operator list gives the defaults. The check uses the value that the process really gets.
@@ -587,7 +616,7 @@ export class WinInstances implements Instances {
 
     try {
       if (!isValidPatch(patch)) throw new HttpError(400, "invalid settings");
-      refuseSshRequests(patch);
+      await refuseSshRequests(patch, this.o);
       const entry = this.requireEntry(id);
       const previous: InstanceSettings = { ...entry.settings };
       const next: InstanceSettings = { ...previous, ...definedFields(patch) };

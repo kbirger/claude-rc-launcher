@@ -1,7 +1,7 @@
 // Starts a process with a restricted copy of this process's own token (UAC-like): the Administrators group is
 // deny-only, integrity is Medium and only SeChangeNotifyPrivilege is left. Windows only; no helper program.
 // dlopen runs inside functions only, so this file imports safely on Linux.
-import { dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { dlopen, ptr, read, toArrayBuffer } from "bun:ffi";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Spawned, WinDeps } from "./instances";
@@ -249,9 +249,52 @@ function buildToken(): bigint {
   }
 }
 
+/**
+ * Adds variables to an environment block. A name that exists is replaced, and the case of a name does not matter. The
+ * block is sorted by name, as Windows does it, and ends with two zero characters. A name with `=` or a zero character
+ * is refused, and so is a value with a zero character.
+ */
+export function mergeEnvBlock(entries: string[], extra: Record<string, string>): Buffer {
+  const map = new Map<string, string>();
+
+  for (const entry of entries) {
+    // A name can start with `=` (`=C:`): the split is at the first `=` after the first character.
+    const at = entry.indexOf("=", 1);
+    if (at < 1) continue;
+    map.set(entry.slice(0, at).toUpperCase(), entry);
+  }
+
+  for (const [name, value] of Object.entries(extra)) {
+    if (name === "" || /[=\0]/.test(name) || value.includes("\0")) throw new Error("a bad environment variable");
+    map.set(name.toUpperCase(), `${name}=${value}`);
+  }
+
+  const lines = [...map.entries()].sort(([first], [second]) => (first < second ? -1 : first > second ? 1 : 0));
+  return Buffer.from(lines.map(([, line]) => line).join("\0") + "\0\0", "utf16le");
+}
+
+/** Reads the entries of an environment block that Windows made. */
+function readEnvBlock(block: bigint): string[] {
+  const entries: string[] = [];
+  const address = Number(block);
+  let current: number[] = [];
+
+  for (let offset = 0; ; offset += 2) {
+    const unit = read.u16(address, offset);
+
+    if (unit === 0) {
+      if (current.length === 0) break;
+      entries.push(String.fromCharCode(...current));
+      current = [];
+    } else current.push(unit);
+  }
+
+  return entries;
+}
+
 /** Starts each child with a restricted copy of this process's token. Output goes to `logFile` (appended). */
 export function restrictedSpawn(): WinDeps["spawn"] {
-  return (cmd, args, { cwd, logFile }): Spawned => {
+  return (cmd, args, { cwd, logFile, env: extraEnv }): Spawned => {
     if (process.platform !== "win32") throw new RestrictedTokenError("restricted sessions need Windows");
     const { k32, adv, user } = api();
     mkdirSync(dirname(logFile), { recursive: true });
@@ -267,6 +310,7 @@ export function restrictedSpawn(): WinDeps["spawn"] {
       opened.push(token);
 
       let env = 0n;
+      const mergedBlocks: Buffer[] = [];
 
       try {
         const pe = new BigUint64Array(1);
@@ -278,6 +322,10 @@ export function restrictedSpawn(): WinDeps["spawn"] {
         const block = pe.at(0);
         if (block === undefined) throw new RestrictedTokenError("CreateEnvironmentBlock returned no block");
         env = block;
+        // Added variables: the block of the token plus these, in a block that this function owns.
+        const merged =
+          extraEnv && Object.keys(extraEnv).length > 0 ? mergeEnvBlock(readEnvBlock(block), extraEnv) : undefined;
+        if (merged) mergedBlocks.push(merged);
 
         // Inheritable handles: NUL for stdin, the log file for stdout and stderr.
         const sa = Buffer.alloc(24); // SECURITY_ATTRIBUTES: nLength, lpSecurityDescriptor, bInheritHandle
@@ -338,12 +386,12 @@ export function restrictedSpawn(): WinDeps["spawn"] {
             null,
             1,
             CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
-            env,
+            merged ? BigInt(ptr(merged)) : env,
             ptr(cwdW),
             ptr(si),
             ptr(pi),
           );
-          [handles, cmdline, cwdW, si, sa, nulW, logW]; // keep alive until CreateProcessAsUserW returned
+          [handles, cmdline, cwdW, si, sa, nulW, logW, mergedBlocks]; // keep alive until CreateProcessAsUserW returned
           if (!ok) throw new Error(`CreateProcessAsUserW failed for ${cmd} (error ${k32.GetLastError()})`);
         } finally {
           k32.DeleteProcThreadAttributeList(ptr(attrs));
