@@ -27,7 +27,7 @@ export function newPipeName(kind: string): string {
 export function assertPipeName(name: string): void {
   if (!name.startsWith(PIPE_PREFIX)) throw new Error("a pipe name starts with \\\\.\\pipe\\");
   const leaf = name.slice(PIPE_PREFIX.length);
-  if (!PIPE_LEAF.test(leaf)) throw new Error("the pipe name holds a bad character");
+  if (!PIPE_LEAF.test(leaf) || /^\.+$/.test(leaf)) throw new Error("the pipe name holds a bad character");
   if (leaf.toLowerCase().includes(SERVICE_PIPE)) throw new Error("the pipe name clashes with the Windows ssh-agent");
 }
 
@@ -66,9 +66,10 @@ export async function restrictPipe(pipeName: string, sid: string): Promise<void>
   }).symbols;
   const k32 = dlopen("kernel32.dll", { LocalFree: { args: ["u64"], returns: "u64" } }).symbols;
   const descriptor = new BigUint64Array(1);
-  if (
-    !adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(ptr(wide(sddl)), SDDL_REVISION_1, ptr(descriptor), null)
-  )
+  // `ptr` keeps only the address. These buffers stay in local variables until the end, so the garbage collector keeps them.
+  const sddlText = wide(sddl);
+  const pipeText = wide(pipeName);
+  if (!adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(ptr(sddlText), SDDL_REVISION_1, ptr(descriptor), null))
     throw new Error("could not build the pipe access list");
 
   try {
@@ -78,7 +79,7 @@ export async function restrictPipe(pipeName: string, sid: string): Promise<void>
     if (!adv.GetSecurityDescriptorDacl(descriptor[0], ptr(present), ptr(dacl), ptr(defaulted)) || !present[0])
       throw new Error("could not read the pipe access list");
     const code = adv.SetNamedSecurityInfoW(
-      ptr(wide(pipeName)),
+      ptr(pipeText),
       SE_FILE_OBJECT,
       DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
       null,
@@ -89,6 +90,8 @@ export async function restrictPipe(pipeName: string, sid: string): Promise<void>
     if (code !== 0) throw new Error(`could not set the pipe access list (Windows error ${code})`);
   } finally {
     k32.LocalFree(descriptor[0]);
+    // Reading the buffers here ends their life after the native calls.
+    sddlText.length + pipeText.length;
   }
 }
 
@@ -109,11 +112,22 @@ export function pipeTransport(options: PipeTransportOptions): AgentTransport {
   return {
     async listen(accept) {
       assertPipeName(options.name);
+      // Read the SID before the pipe exists: this call blocks and can fail, and the pipe must not wait for it.
+      const sid = options.sid ?? currentUserSid();
       const sockets = new Set<Socket>();
+      // The pipe has the default access list from `listen` until `restrict` returns. A connection that arrives in that
+      // time is closed. The call of `restrict` opens the pipe by name once itself, and that connection ends here too.
+      let restricted = false;
       const server: Server = createServer((socket) => {
+        socket.on("error", () => {});
+
+        if (!restricted) {
+          socket.destroy();
+          return;
+        }
+
         sockets.add(socket);
         socket.on("close", () => sockets.delete(socket));
-        socket.on("error", () => {});
         const handler = accept({
           write: (bytes) => void socket.write(bytes),
           end: () => void socket.end(),
@@ -141,7 +155,8 @@ export function pipeTransport(options: PipeTransportOptions): AgentTransport {
       });
 
       try {
-        await (options.restrict ?? restrictPipe)(options.name, options.sid ?? currentUserSid());
+        await (options.restrict ?? restrictPipe)(options.name, sid);
+        restricted = true;
       } catch (error) {
         await stop();
         throw error;
