@@ -321,6 +321,24 @@ describe("SshService approve", () => {
     expect(ctx.grants.get(grant.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
   });
 
+  test("approve says in plain words that the session stopped waiting when the node has no waiting request", async () => {
+    const nodes = {
+      node1: fakeNode({ "POST /api/ssh/grants": { status: 409, body: { error: "no request waits for this answer" } } }),
+    };
+    const ctx = await setup({ nodes });
+    ctx.service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    const grant = ctx.grants.list()[0];
+    const error = await ctx.service.approve(grant.id, "alice", unlock).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(GrantError);
+    expect((error as GrantError).status).toBe(409);
+    expect((error as Error).message).toBe("The session stopped waiting. Ask the session to request again.");
+    expect(ctx.grants.get(grant.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
+  });
+
   test("approve refuses a target without a pinned host key and keeps the grant pending", async () => {
     const ctx = await setup();
     ctx.service.onNodeEvent("node1", "ssh.request", request());
