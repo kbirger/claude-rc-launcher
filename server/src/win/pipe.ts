@@ -135,6 +135,7 @@ export function pipeTransport(options: PipeTransportOptions): AgentTransport {
         socket.on("data", (chunk: Buffer) => {
           handler.data(new Uint8Array(chunk));
         });
+        socket.on("close", () => handler.close?.());
       });
 
       const stop = async () => {
