@@ -120,8 +120,8 @@ export const SETTINGS_HELP: SettingsHelp = {
   ],
 };
 
-/** The help of a node on this platform. A Windows node cannot hold an SSH grant, so its help has no SSH setting and the UI never offers it. */
-export function settingsHelpFor(platform: NodeJS.Platform): SettingsHelp {
-  if (platform !== "win32") return SETTINGS_HELP;
+/** The help of a node on this platform. A Windows node offers the SSH setting only when it has a usable SSH client. */
+export function settingsHelpFor(platform: NodeJS.Platform, sshUsable = false): SettingsHelp {
+  if (platform !== "win32" || sshUsable) return SETTINGS_HELP;
   return { ...SETTINGS_HELP, settings: SETTINGS_HELP.settings.filter((setting) => setting.key !== "sshRequests") };
 }

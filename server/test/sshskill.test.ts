@@ -293,14 +293,19 @@ describe("the node switches to the user (root path)", () => {
 });
 
 describe("Windows", () => {
-  test("it does nothing and does not call the runner", async () => {
+  test("it writes the skill into the home of the service user with no runner", async () => {
     const result = await ensureSkill(
       { name: "w", home, path: "" },
       { run: noRun, isRoot: notRoot, log, platform: "win32" },
     );
-    expect(result).toBe("unchanged");
-    expect(existsSync(join(home, ".claude"))).toBe(false);
+    expect(result).toBe("written");
+    expect(existsSync(join(home, ".claude", "skills", "ssh-access", "SKILL.md"))).toBe(true);
     expect(logged).toEqual([]);
+    const again = await ensureSkill(
+      { name: "w", home, path: "" },
+      { run: noRun, isRoot: notRoot, log, platform: "win32" },
+    );
+    expect(again).toBe("unchanged");
   });
 });
 
