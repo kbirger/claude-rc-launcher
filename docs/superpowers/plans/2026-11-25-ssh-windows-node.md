@@ -42,7 +42,7 @@ Date: 2026-11-25. Status: draft, waiting for approval. Design note: `docs/superp
 - It runs the self test: a throwaway pipe agent and `ssh-add.exe -L`. This test reuses the Task 2 transport.
 - The result is `{ ok, sshPath, sshAddPath, version }` or `{ ok: false, reason }`. The reason is plain English.
 - The node runs the check at start and before each grant. The result decides the `sshRequests` option and the grant routes.
-- `install.ps1` runs the same check. With no client, it installs `OpenSSH.Client` with `Add-WindowsCapability`. The switch `-NoSshClient` skips this.
+- `install.ps1` runs the same check. With no client, it installs `OpenSSH.Client` with `Add-WindowsCapability`, or with `dism.exe` when the cmdlet is missing. The switch `-NoSshClient` skips this.
 - If the install fails, the script prints the reason, turns SSH access off and goes on. There is no winget fallback, because the only package is a preview build.
 - The update path runs the check again.
 - I do not run the install step on this machine without a yes from the owner.
