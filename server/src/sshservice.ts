@@ -3,6 +3,8 @@ import { isObject } from "./requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";
 import type { Grant, GrantStore } from "./sshgrants";
+import { requestMessage } from "./sshnotify";
+import type { PushMessage } from "./webpush";
 import { KeyError } from "./sshkeystore";
 import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { authorizedKeysLine, TargetError } from "./sshtargets";
@@ -45,6 +47,8 @@ interface Deps {
   grants: GrantStore;
   client: (hostId: string) => HostClient | undefined;
   audit: (line: string) => void;
+  /** Called once for each real request that became pending. A throw is audited and does not fail the request. */
+  notify?: (message: PushMessage) => void;
 }
 
 const isOk = (status: number) => status >= 200 && status < 300;
@@ -409,8 +413,10 @@ export class SshService {
     // Only a target that passed its test can be requested. A draft is for the test grant of the hub alone.
     if (target.state !== "ready") return refuse(`the target is ${target.state}`);
 
+    let grant: Grant;
+
     try {
-      this.deps.grants.request({
+      grant = this.deps.grants.request({
         nodeId: hostId,
         instanceId,
         targetId,
@@ -420,6 +426,13 @@ export class SshService {
       });
     } catch (error) {
       return refuse(message(error));
+    }
+
+    try {
+      // The node sends no instance name, so the message names the instance by its id.
+      this.deps.notify?.(requestMessage(grant, target, instanceId));
+    } catch (error) {
+      this.note(`notify failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
     }
   }
 
