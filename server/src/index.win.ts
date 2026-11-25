@@ -12,6 +12,7 @@ import { VERSION } from "./version";
 import { checkServiceAccount } from "./win/account";
 import { definitionStatus } from "./win/definition";
 import { taskkillTree, WinInstances } from "./win/instances";
+import { WinSshBridge } from "./win/sshbridge";
 import { planSessions, serviceAdminState } from "./win/token";
 import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
 
@@ -54,6 +55,8 @@ if (!nodeConfig) throw new Error("the configuration has no node section");
 const plan = planSessions(serviceAdminState());
 console.log(plan.log);
 
+const sshBridge = new WinSshBridge();
+
 const instances = new WinInstances(
   {
     roots: cfg.roots,
@@ -64,6 +67,14 @@ const instances = new WinInstances(
     namePrefix: cfg.namePrefix,
     instanceDir: join(nodeConfig.tls.stateDir, "instances"),
     serviceIsAdmin: plan.serviceIsAdmin,
+    sshEnv: (id) => {
+      if (sshBridge.env) return sshBridge.env(id);
+      console.error(
+        `instance ${id} has SSH requests on, but the node has no SSH link: it starts without the variables`,
+      );
+      return {};
+    },
+    sshRefusal: () => sshBridge.refusal(),
   },
   { killTree: taskkillTree(bunRunner), ...(plan.spawnRestricted ? { spawnRestricted: plan.spawnRestricted } : {}) },
 );
@@ -98,6 +109,7 @@ try {
     instances,
     update,
     events,
+    winSshBridge: sshBridge,
     definition: () => definitionStatus({ exePath: process.execPath, readFile: (path) => readFileSync(path, "utf8") }),
   });
   const restored = await instances.restore();
