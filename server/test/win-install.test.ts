@@ -245,6 +245,7 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
 
   test("the OpenSSH feature install falls back to dism.exe when the cmdlet is missing", () => {
     expect(script).toContain("Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue");
+    expect(script).toContain("Import-Module -Name DISM -UseWindowsPowerShell");
     expect(script).toContain("/Add-Capability");
     expect(script).toContain("-notin @(0, 3010)");
   });
