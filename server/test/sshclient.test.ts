@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { bunRun, checkSshClient, checkSshClientHere, clientDirs, parseVersion, pipeSelfTest } from "../src/win/sshclient";
+import {
+  bunRun,
+  checkSshClient,
+  checkSshClientHere,
+  clientDirs,
+  mergedEnv,
+  parseVersion,
+  pipeSelfTest,
+} from "../src/win/sshclient";
 import type { RunResult, SshClientDeps } from "../src/win/sshclient";
 
 const onWindows = process.platform === "win32";
@@ -58,6 +66,8 @@ describe("the version", () => {
     ["OpenSSH_9.0p1, OpenSSL 3", "OpenSSH_9.0p1", 9, 0],
     ["OpenSSH_for_Windows_10.4p1", "OpenSSH_for_Windows_10.4p1", 10, 4],
     ["OpenSSH_8.1", "OpenSSH_8.1", 8, 1],
+    ["OpenSSH_10.0p2 Debian-7, OpenSSL 3.5", "OpenSSH_10.0p2", 10, 0],
+    ["usage: the OpenSSH docs\nOpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2", "OpenSSH_for_Windows_9.5p2", 9, 5],
   ])("%p", (text, name, major, minor) => {
     expect(parseVersion(text)).toEqual({ text: name, major, minor });
   });
@@ -162,6 +172,32 @@ describe("with the real client", () => {
   const gitSshAdd = "C:\\Program Files\\Git\\usr\\bin\\ssh-add.exe";
   test.skipIf(!onWindows || !existsSync(gitSshAdd))("the self test fails for the ssh-add of Git for Windows", async () => {
     expect(await pipeSelfTest(gitSshAdd, bunRun)).toBe(false);
+  });
+
+  test("mergedEnv replaces a name that differs only in case and keeps the rest", () => {
+    const before = process.env.SSH_AUTH_SOCK;
+    process.env.ssh_auth_sock = "C:\\real-agent";
+    process.env.CLAUDE_RC_KEEP_ME = "yes";
+
+    try {
+      const merged = mergedEnv({ SSH_AUTH_SOCK: "\\\\.\\pipe\\x" });
+      const keys = Object.keys(merged).filter((name) => name.toLowerCase() === "ssh_auth_sock");
+      expect(keys).toEqual(["SSH_AUTH_SOCK"]);
+      expect(merged.SSH_AUTH_SOCK).toBe("\\\\.\\pipe\\x");
+      expect(merged.CLAUDE_RC_KEEP_ME).toBe("yes");
+    } finally {
+      delete process.env.ssh_auth_sock;
+      delete process.env.CLAUDE_RC_KEEP_ME;
+      if (before !== undefined) process.env.SSH_AUTH_SOCK = before;
+    }
+  });
+
+  windowsTest("a program that runs too long is stopped at the time limit", async () => {
+    const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const started = Date.now();
+    const result = await bunRun(powershell, ["-NoProfile", "-Command", "Start-Sleep -Seconds 30"], undefined, 700);
+    expect(result.code).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   windowsTest("a program that does not exist gives code 127", async () => {
