@@ -306,6 +306,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     grants: sshGrants,
     client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
     audit: sshAudit,
+    notify: (message) => void push.send(message),
   });
   sshHook.service = ssh;
 
