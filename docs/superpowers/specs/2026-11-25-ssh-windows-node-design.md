@@ -78,7 +78,7 @@ On Linux, each instance runs as its own user, so the operating system separates 
 ### Pipe access list with a restricted session (new finding)
 
 - A restricted session cannot open a pipe whose access list gives full control only to SYSTEM and Administrators. The test used a pipe with exactly that list and got `Access to the path is denied`.
-- The service has the full administrator token. A pipe that it creates by default most likely gets that kind of list, with no entry for the user alone. I could not run an elevated process, so I did not see this on the real service. The plan must treat it as true.
+- The service has the full administrator token. A pipe that it creates by default most likely gets that kind of list, with no entry for the user alone. The test session has no administrator rights, so I did not see this on the real service. The plan must treat it as true.
 - The fix works. After `listen`, the node sets the access list of the pipe by name with `SetNamedSecurityInfoW` through `bun:ffi`. The list is SYSTEM and the service user SID, both with full control, and nothing inherited. A restricted client was denied with the first list and allowed with the second. `win/token.ts` already uses `bun:ffi`, so this is not new.
 - This is a single call that sets the list. It is not the caller check that you declined. The pipe server stays `node:net`.
 - Every agent pipe and the control pipe get this list at start. A short gap exists between `listen` and the call. The tests close it with a check before the pipe name goes to a session.
