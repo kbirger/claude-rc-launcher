@@ -64,11 +64,12 @@
     const subscription = await item.pushManager.getSubscription();
     if (!subscription) return;
     const { endpoint } = subscription;
-    await subscription.unsubscribe();
+    // The hub first: when it fails, the browser keeps its subscription and the switch stays on.
     await unsubscribe(endpoint).catch((error: unknown) => {
       // The hub has no record of it: that is the wanted end state.
       if (!(error instanceof Error && "status" in error && error.status === 404)) throw error;
     });
+    await subscription.unsubscribe();
   }
 
   async function change(box: HTMLInputElement) {

@@ -11,6 +11,21 @@ export type PushMessage = {
 
 export type ClickData = { url: string; grantId?: string };
 
+/**
+ * A link that stays on this site: one `/` and then a path. Anything else (another origin, `//host`, `/\host`, a
+ * `javascript:` link, text that is not a link) becomes `/ssh`, so that a push can never open another site.
+ */
+export function safeUrl(url: unknown): string {
+  if (typeof url !== "string" || !url.startsWith("/") || url[1] === "/" || url[1] === "\\") return "/ssh";
+  const base = "https://site.invalid";
+
+  try {
+    return new URL(url, base).origin === base ? url : "/ssh";
+  } catch {
+    return "/ssh";
+  }
+}
+
 /** The message of a push, or `undefined` when the text is not a JSON object with the needed fields. */
 export function parsePush(data: string): PushMessage | undefined {
   let parsed: unknown;
@@ -24,11 +39,11 @@ export function parsePush(data: string): PushMessage | undefined {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
   const item = parsed as Record<string, unknown>;
   if (typeof item.title !== "string" || typeof item.body !== "string") return undefined;
-  if (typeof item.url !== "string" || typeof item.tag !== "string") return undefined;
+  if (typeof item.tag !== "string") return undefined;
   return {
     title: item.title,
     body: item.body,
-    url: item.url,
+    url: safeUrl(item.url),
     tag: item.tag,
     ...(typeof item.grantId === "string" ? { grantId: item.grantId } : {}),
     ...(item.close === true ? { close: true } : {}),
@@ -40,7 +55,7 @@ export function notificationOptions(message: PushMessage): NotificationOptions {
     tag: message.tag,
     body: message.body,
     icon: "/icon-192.png",
-    data: { url: message.url, ...(message.grantId ? { grantId: message.grantId } : {}) } satisfies ClickData,
+    data: { url: safeUrl(message.url), ...(message.grantId ? { grantId: message.grantId } : {}) } satisfies ClickData,
     ...(message.grantId
       ? {
           actions: [
@@ -67,5 +82,5 @@ export async function handleClick(
     }
   }
 
-  await deps.open(data.url);
+  await deps.open(safeUrl(data.url));
 }

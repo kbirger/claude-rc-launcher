@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { handleClick, notificationOptions, parsePush } from "./worker";
+import { handleClick, notificationOptions, parsePush, safeUrl } from "./worker";
 
 const message = { title: "SSH", body: "Node wants access", url: "/ssh", tag: "ssh-g1", grantId: "g1" };
 
@@ -53,4 +53,22 @@ test("no action opens the url", async () => {
   await handleClick("open", { url: "/ssh" }, fake);
   expect(fake.open).toHaveBeenCalledTimes(2);
   expect(fake.deny).not.toHaveBeenCalled();
+});
+
+test("safeUrl keeps a path of this site and replaces anything else with /ssh", () => {
+  expect(safeUrl("/ssh")).toBe("/ssh");
+  expect(safeUrl("/ssh?target=a")).toBe("/ssh?target=a");
+  expect(safeUrl("https://evil.example")).toBe("/ssh");
+  expect(safeUrl("//evil.example")).toBe("/ssh");
+  expect(safeUrl("/\\evil.example")).toBe("/ssh");
+  expect(safeUrl("javascript:alert(1)")).toBe("/ssh");
+  expect(safeUrl(undefined)).toBe("/ssh");
+});
+
+test("a bad url in a push or in click data never reaches open", async () => {
+  expect(parsePush(JSON.stringify({ ...message, url: "https://evil.example" }))?.url).toBe("/ssh");
+  expect(notificationOptions({ ...message, url: "//evil.example" }).data).toEqual({ url: "/ssh", grantId: "g1" });
+  const fake = deps(async () => new Response("{}"));
+  await handleClick("open", { url: "https://evil.example" }, fake);
+  expect(fake.open).toHaveBeenCalledWith("/ssh");
 });
