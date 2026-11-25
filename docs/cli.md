@@ -169,7 +169,7 @@ If the folder is not trusted for the chosen user, `start` fails. `--force` adds 
 
 SSH delegation lets a session log in to another machine, with the approval of the owner. Read [SSH delegation](ssh-delegation.md) for the setup.
 
-The commands `ssh targets` and `ssh request` run inside a session of an instance that has Allow SSH requests on. They talk to the node of the instance through the socket in `CLAUDE_RC_SSH_CONTROL`. They need no login and no hub address, because they do not call the hub. Outside such a session, they print `SSH access is not turned on for this instance`.
+The commands `ssh targets` and `ssh request` run inside a session of an instance that has Allow SSH requests on. They talk to the node of the instance through the socket in `CLAUDE_RC_SSH_CONTROL`. On a Windows node this is a named pipe, and the commands send the token in `CLAUDE_RC_SSH_TOKEN` with each request. They need no login and no hub address, because they do not call the hub. Outside such a session, they print `SSH access is not turned on for this instance`.
 
 ```sh
 claude-rc ssh targets
