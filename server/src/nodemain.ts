@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { createNodeApp } from "./app";
 import type { Updater } from "./app";
 import { serviceCloner } from "./cloner";
@@ -16,6 +17,7 @@ import type { NodeSshOptions } from "./sshnodewiring";
 import { ensureNodeCert } from "./tls";
 import { NodeEvents } from "./updateevents";
 import type { DefinitionStatus } from "./win/definition";
+import type { WinSshBridge } from "./win/sshbridge";
 
 export interface NodeDeps {
   instances?: Instances;
@@ -25,8 +27,12 @@ export interface NodeDeps {
   definition?: () => DefinitionStatus | undefined;
   /** The top folder for the SSH sockets and grant files. Default: `/run/claude-rc-ssh`. Tests give a temporary folder. */
   sshDir?: string;
-  /** Default: `process.platform`. A `win32` node has no SSH grants. */
+  /** Default: `process.platform`. */
   platform?: NodeJS.Platform;
+  /** Windows only: the link to the instances. A `win32` node without it has no SSH grants. */
+  winSshBridge?: WinSshBridge;
+  /** Windows only: more options for the SSH wiring. For tests. */
+  winSsh?: Partial<NodeSshOptions>;
   /** Puts the `ssh-access` skill into a home. Tests give one, because the default writes into a real home. */
   deploySkill?: NodeSshOptions["deploySkill"];
 }
@@ -57,8 +63,14 @@ export async function startNode(
     cfg,
     instances: baseInstances,
     events,
-    ...(deps.sshDir ? { dir: deps.sshDir } : {}),
+    ...(deps.sshDir
+      ? { dir: deps.sshDir }
+      : (deps.platform ?? process.platform) === "win32"
+        ? { dir: join(node.tls.stateDir, "ssh") }
+        : {}),
     ...(deps.platform ? { platform: deps.platform } : {}),
+    ...(deps.winSshBridge ? { bridge: deps.winSshBridge } : {}),
+    ...deps.winSsh,
     ...(deps.deploySkill ? { deploySkill: deps.deploySkill } : {}),
   });
   const instances = sshNode.instances;
@@ -77,6 +89,7 @@ export async function startNode(
     events,
     ...(deps.definition ? { definition: deps.definition } : {}),
     ...(sshNode.ssh ? { ssh: sshNode.ssh } : {}),
+    ...(sshNode.sshUsable ? { sshUsable: sshNode.sshUsable } : {}),
     sshManaged: sshNode.sshManaged,
     ...(cloner ? { cloner } : {}),
   });

@@ -139,6 +139,11 @@ entry and the registry value. `-ClientBinary <file>` chooses the file. `-ClientO
 entry and the registry value, with no node and no service. The script keeps the other entries of the `PATH` as they are
 and adds the folder only once.
 
+The script also checks for the Windows OpenSSH client, version 9.0 or newer, because SSH requests need it. The check looks only in
+`%SystemRoot%System32OpenSSH` and `%ProgramFiles%OpenSSH`. If the client is missing, the script adds it with
+`Add-WindowsCapability` and then with `dism.exe` if that fails. If it cannot install a client, it prints the reason and goes on.
+SSH requests then stay off. The switch `-NoSshClient` skips this step.
+
 The script creates `C:\ProgramData\claude-rc-launcher\config.toml` from `deploy\windows\node.config.example.toml`. It never
 changes an existing `config.toml`. It limits the data folder (it holds the certificate key) to `SYSTEM`, Administrators and
 the service account. WinSW then asks for the account and its password: enter the user that you signed in to `claude` with.

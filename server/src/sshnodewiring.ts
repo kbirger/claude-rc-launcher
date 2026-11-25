@@ -10,6 +10,7 @@ import { LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
 import type { Instance, Instances } from "./instances";
 import { bunRunner } from "./runner";
+import type { AgentTransport } from "./sshnodeagent";
 import { SshBroker, sshManagedApi, sshNodeApi } from "./sshnodeapi";
 import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
 import { SshControl } from "./sshnodecontrol";
@@ -19,6 +20,13 @@ import { SSH_RUN_DIR, runAsFor } from "./unit";
 import type { NodeEvents } from "./updateevents";
 import { passwdDirectory } from "./users";
 import type { UserDirectory } from "./users";
+import { newPipeName, pipeTransport, currentUserSid } from "./win/pipe";
+import type { WinSshBridge } from "./win/sshbridge";
+import { checkSshClientHere } from "./win/sshclient";
+import type { SshClientCheck } from "./win/sshclient";
+import { WinSshControl } from "./win/sshcontrol";
+import { ensurePrivateFolder, removeStaleGrantFiles } from "./win/sshfiles";
+import type { RunIcacls } from "./win/sshfiles";
 
 // The SSH parts of a node, wired together: the broker, the grant routes, the managed target routes and one control
 // socket for each instance that opted in. The node does not remember grants across a restart, so a start removes the
@@ -55,11 +63,25 @@ export interface NodeSshOptions {
   deploySkill?: (user: SkillUser) => Promise<SkillResult>;
   /** The text of the skill. A change makes the node deploy it again. Default: the skill of the launcher. */
   skillContent?: () => string;
+  /** Windows only: the link to the instances. The wiring fills it in. */
+  bridge?: WinSshBridge;
+  /** Windows only: the SSH client check. Default: the real check. */
+  winClient?: () => Promise<SshClientCheck>;
+  /** Windows only: the SID of the service user. Default: read from `whoami`. */
+  winSid?: () => string;
+  /** Windows only: runs icacls. For tests. */
+  winIcacls?: RunIcacls;
+  /** Windows only: the transport of the control pipe and of the agent pipe of a grant. For tests. */
+  winTransports?: { control: () => AgentTransport; agent: (grantId: string) => AgentTransport };
+  /** Windows only: whether the node may offer SSH requests at all. Default: true. */
+  winEnabled?: boolean;
 }
 
 export interface NodeSsh {
-  /** The grant routes. Missing on Windows: the routes answer 501 there. */
+  /** The grant routes. Missing on a Windows node that has SSH turned off: the routes answer 501 there. */
   ssh?: SshNodeOptions;
+  /** Windows only: tells if SSH requests work now. The settings help follows it. */
+  sshUsable?: () => Promise<boolean>;
   /** The managed target routes. Every node has them. */
   sshManaged: SshManagedOptions;
   /** The instances of the node. A change to one of them updates the control sockets before the call returns. */
@@ -145,6 +167,8 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
   const sshManaged: SshManagedOptions = linux
     ? { identityFor: accountIdentity(cfg, users, isRoot, () => process.getuid?.()) }
     : {};
+
+  if (!linux && options.winEnabled !== false && options.bridge) return createWindowsSsh(options, dir, events, log);
 
   if (!linux)
     return {
@@ -397,6 +421,173 @@ export function createLocalSsh(options: NodeSshOptions): LocalSsh {
       }
 
       await node.stop();
+    },
+  };
+}
+
+/** How long the result of the client check stays valid for the settings help and for a change of the setting. */
+const CLIENT_CACHE_MS = 30_000;
+
+/**
+ * The SSH wiring of a Windows node. The agent of a grant is a named pipe, the files have access lists, and the control
+ * channel is one named pipe with a token for each instance (win/sshcontrol.ts). Every grant checks the client again.
+ */
+function createWindowsSsh(
+  options: NodeSshOptions,
+  dir: string,
+  events: NodeEvents,
+  log: (line: string) => void,
+): NodeSsh {
+  const bridge = options.bridge;
+  if (!bridge) throw new Error("a Windows node needs the bridge");
+  const check = options.winClient ?? (() => checkSshClientHere());
+  let sidText: string | undefined;
+  const sid = () => (sidText ??= (options.winSid ?? currentUserSid)());
+  const broker = new SshBroker({ events });
+  let cached: { at: number; result: SshClientCheck } | undefined;
+
+  const reasonOf = (result: SshClientCheck) => (result.ok ? undefined : result.reason);
+
+  const cachedCheck = async (): Promise<SshClientCheck> => {
+    if (cached && Date.now() - cached.at < CLIENT_CACHE_MS) return cached.result;
+    const result = await check();
+    cached = { at: Date.now(), result };
+    return result;
+  };
+
+  const transports = options.winTransports ?? {
+    control: () => pipeTransport({ name: newPipeName("control"), sid: sid() }),
+    agent: (_grantId: string) => pipeTransport({ name: newPipeName("agent"), sid: sid() }),
+  };
+  const control = new WinSshControl({
+    transport: transports.control(),
+    targets: () => broker.targets(),
+    request: (input) => broker.request(input),
+  });
+  /** The instances that have a token, so that one that turns the setting off can be reported. */
+  const withToken = new Set<string>();
+  let pipe = "";
+
+  /** Set only after the control pipe is open, so no instance gets an empty pipe name. */
+  const issueEnv = (instanceId: string): Record<string, string> => {
+    withToken.add(instanceId);
+    return { CLAUDE_RC_SSH_CONTROL: pipe, CLAUDE_RC_SSH_TOKEN: control.register(instanceId) };
+  };
+
+  bridge.refusal = async () => {
+    if (pipe === "") return "SSH requests are not ready on this node";
+    return reasonOf(await cachedCheck());
+  };
+
+  const reconcile = async () => {
+    const list = await options.instances.list();
+    const wanted = new Set(list.filter((item) => item.settings?.sshRequests === true).map((item) => item.id));
+
+    for (const id of [...withToken]) {
+      if (wanted.has(id)) continue;
+      withToken.delete(id);
+      control.unregister(id);
+      events.emit({ type: "ssh.instance-off", instanceId: id });
+    }
+  };
+
+  let chain: Promise<void> = Promise.resolve();
+
+  /**
+   * The skill goes into the home of the service user, which is the user of every session. It is written only when the
+   * client works, because the skill sends a session to a feature that needs it. A test must give its own deployer.
+   */
+  const deployWindowsSkill = async (): Promise<void> => {
+    if (options.cfg.installSkill === false) return;
+    if (options.deploySkill === undefined && process.env.NODE_ENV === "test") return;
+    if (!(await cachedCheck()).ok) return;
+    const deploy =
+      options.deploySkill ??
+      ((user: SkillUser) =>
+        ensureSkill(user, {
+          run: bunRunner,
+          platform: "win32",
+          log,
+          content: (options.skillContent ?? (() => SSH_SKILL))(),
+        }));
+
+    try {
+      await deploy({ home: options.cfg.serviceHome, path: options.cfg.servicePath, name: options.cfg.serviceUser });
+    } catch (error) {
+      log(`ssh skill: cannot install: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const sync = (): Promise<void> => {
+    chain = chain.then(async () => {
+      try {
+        await reconcile();
+      } catch (error) {
+        log(`ssh controls: cannot update: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
+
+    return chain;
+  };
+
+  const instances = new Proxy(options.instances, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (typeof value !== "function") return value;
+      const method = (value as (...args: unknown[]) => unknown).bind(target);
+      if (typeof property !== "string" || !CHANGING.has(property)) return method;
+
+      return async (...args: unknown[]) => {
+        const result = await method(...args);
+        await sync();
+        return result;
+      };
+    },
+  });
+
+  const ssh: SshNodeOptions = {
+    dir,
+    events,
+    broker,
+    windows: {
+      get sid() {
+        return sid();
+      },
+      checkClient: async () => {
+        const result = await check();
+        cached = { at: Date.now(), result };
+        return result.ok ? { ok: true, sshPath: result.sshPath } : { ok: false, reason: result.reason };
+      },
+      agentTransport: (grantId) => transports.agent(grantId),
+      ...(options.winIcacls ? { runIcacls: options.winIcacls } : {}),
+    },
+  };
+
+  return {
+    ssh,
+    sshManaged: {},
+    sshUsable: async () => pipe !== "" && (await cachedCheck()).ok,
+    instances,
+    skillsSettled: () => Promise.resolve(),
+    async start() {
+      try {
+        await ensurePrivateFolder(dir, sid(), options.winIcacls);
+        const removed = await removeStaleGrantFiles(dir);
+        if (removed > 0) log(`ssh: removed ${removed} old grant files`);
+        pipe = await control.start();
+        bridge.env = issueEnv;
+      } catch (error) {
+        log(`ssh: cannot start on this node: ${error instanceof Error ? error.message : String(error)}`);
+        bridge.env = undefined;
+        return;
+      }
+
+      await sync();
+      await deployWindowsSkill();
+    },
+    async stop() {
+      await chain;
+      await control.stop().catch(() => {});
     },
   };
 }

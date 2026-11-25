@@ -15,7 +15,7 @@
   A lone install.ps1 (this file, without the files of the release zip next to it) downloads the release zip, checks it
   against SHA256SUMS and runs the install.ps1 inside. From a clone or an unpacked zip it uses the files next to it:
 
-    .\install.ps1 [-Binary <exe>] [-Release v1.2.3] [-Account DOMAIN\user] [-InstallDir <folder>] [-OpenFirewall] [-NoClient]
+    .\install.ps1 [-Binary <exe>] [-Release v1.2.3] [-Account DOMAIN\user] [-InstallDir <folder>] [-OpenFirewall] [-NoClient] [-NoSshClient]
     .\install.ps1 -ClientOnly [-Release v1.2.3]      only the claude-rc client and the PATH (no node, no service)
     .\install.ps1 -Uninstall
 
@@ -28,6 +28,9 @@
       client). Open a new terminal afterwards. -NoClient skips all three. Only administrators can write under
       HKLM\SOFTWARE, so a user cannot make the node run another program. <InstallDir>\bin is locked to SYSTEM and Administrators
       (Users read only): the service account cannot replace a program on the PATH.
+    * Checks for the Windows OpenSSH client (version 9.0 or later) in System32\OpenSSH and Program Files\OpenSSH. With no
+      client it installs the Windows feature OpenSSH Client. If that fails, it says so and goes on: SSH access for sessions
+      stays off. -NoSshClient skips this step. The PATH is never used, because the ssh of Git for Windows cannot use a pipe.
     * Gets WinSW (the Windows service wrapper) v2.12.0 and checks it against a pinned SHA-256.
     * Copies both into <InstallDir>\service, with the launcher script, and writes the WinSW definition next to them.
       The service account gets Modify rights on that folder only: the agent updates its own binary there. The binary is
@@ -64,8 +67,12 @@ param(
   [string]$PathRegistryKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
   # The registry key whose value Client holds the path of the client. The node reads it. Only tests give another one.
   [string]$ClientRegistryKey = 'HKLM:\SOFTWARE\claude-rc',
+  # A folder with ssh.exe and ssh-add.exe. It replaces the two Windows OpenSSH folders and turns off the install of the
+  # Windows feature. Only tests give one.
+  [string]$SshClientDir,
   [switch]$OpenFirewall,
   [switch]$NoClient,
+  [switch]$NoSshClient,
   [switch]$ClientOnly,
   [switch]$NoService,
   [switch]$Uninstall
@@ -87,6 +94,7 @@ $envRelease = [Environment]::GetEnvironmentVariable('CLAUDE_RC_RELEASE')
 if (-not $PSBoundParameters.ContainsKey('Release') -and $envRelease) { $Release = $envRelease; $PSBoundParameters['Release'] = $envRelease }
 if (-not $PSBoundParameters.ContainsKey('ClientOnly') -and (Get-EnvFlag 'CLAUDE_RC_CLIENT_ONLY')) { $ClientOnly = [switch]$true; $PSBoundParameters['ClientOnly'] = $ClientOnly }
 if (-not $PSBoundParameters.ContainsKey('NoClient') -and (Get-EnvFlag 'CLAUDE_RC_NO_CLIENT')) { $NoClient = [switch]$true; $PSBoundParameters['NoClient'] = $NoClient }
+if (-not $PSBoundParameters.ContainsKey('NoSshClient') -and (Get-EnvFlag 'CLAUDE_RC_NO_SSH_CLIENT')) { $NoSshClient = [switch]$true; $PSBoundParameters['NoSshClient'] = $NoSshClient }
 if (-not $PSBoundParameters.ContainsKey('OpenFirewall') -and (Get-EnvFlag 'CLAUDE_RC_OPEN_FIREWALL')) { $OpenFirewall = [switch]$true; $PSBoundParameters['OpenFirewall'] = $OpenFirewall }
 
 $Name = 'claude-rc-launcher'
@@ -319,6 +327,81 @@ function Get-ConfigProblems([string]$Path) {
 
 function Get-NodeService { Get-Service -Name $Name -ErrorAction SilentlyContinue }
 
+# ---- the Windows OpenSSH client ---------------------------------------------------------------------------
+# Sessions use ssh.exe from the Windows OpenSSH client for SSH access. The ssh of Git for Windows comes first on many
+# PATH lists and cannot use a named pipe, so only the two Windows OpenSSH folders count. The node runs a deeper test
+# at start. This step never stops the install: with no client, SSH access stays off.
+$SshMinMajor = 9
+function Get-SshClientDirs {
+  if ($SshClientDir) { return @($SshClientDir) }
+  @((Join-Path $env:SystemRoot 'System32\OpenSSH'), (Join-Path $env:ProgramFiles 'OpenSSH'))
+}
+# Returns the first folder that has ssh.exe and ssh-add.exe and a version of $SshMinMajor or later. Else $null.
+function Find-SshClient {
+  foreach ($dir in Get-SshClientDirs) {
+    $ssh = Join-Path $dir 'ssh.exe'
+    if (-not ((Test-Path -LiteralPath $ssh) -and (Test-Path -LiteralPath (Join-Path $dir 'ssh-add.exe')))) { continue }
+    # ssh -V prints to standard error. With the global setting Stop, that text would end the script.
+    $ErrorActionPreference = 'Continue'
+    $text = ''
+    try { $text = (& $ssh -V 2>&1 | Out-String) } catch { $text = '' }
+    if ($text -match 'OpenSSH[A-Za-z_]*?_(\d+)\.(\d+)') {
+      if ([int]$Matches[1] -ge $SshMinMajor) { return [pscustomobject]@{ Dir = $dir; Version = "$($Matches[1]).$($Matches[2])" } }
+      Write-Host "The OpenSSH client in $dir is version $($Matches[1]).$($Matches[2]). The node needs version $SshMinMajor.0 or later."
+    }
+  }
+  $null
+}
+function Install-SshClient {
+  if ($NoSshClient) {
+    Write-Host 'Skipping the OpenSSH client check (-NoSshClient). SSH access for sessions stays off unless the client is there.'
+    return
+  }
+  $found = Find-SshClient
+  if (-not $found -and -not $SshClientDir) {
+    Write-Host '==> Installing the Windows feature OpenSSH Client (this needs Windows Update)'
+    # A job with a time limit: without Windows Update (WSUS, no network) the call can wait for a long time.
+    # Some machines have no Add-WindowsCapability cmdlet (a stripped image, a missing DISM module). The program
+    # dism.exe does the same work and ships with every Windows.
+    $job = Start-Job -ScriptBlock {
+      $capability = 'OpenSSH.Client~~~~0.0.1.0'
+      # PowerShell 7 does not always load the DISM module. It loads through Windows PowerShell with this option.
+      if ($PSVersionTable.PSEdition -eq 'Core' -and -not (Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue)) {
+        try { Import-Module -Name DISM -UseWindowsPowerShell -ErrorAction Stop } catch { }
+      }
+      if (Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue) {
+        Add-WindowsCapability -Online -Name $capability
+      } else {
+        $dism = Join-Path $env:SystemRoot 'System32\dism.exe'
+        if (-not (Test-Path -LiteralPath $dism)) { throw 'this machine has neither Add-WindowsCapability nor dism.exe' }
+        & $dism /Online /Add-Capability "/CapabilityName:$capability" /NoRestart | Out-Null
+        # 3010 means that the change worked and a restart is needed.
+        if ($LASTEXITCODE -notin @(0, 3010)) { throw "dism.exe ended with exit code $LASTEXITCODE" }
+      }
+    }
+    try {
+      if (Wait-Job -Job $job -Timeout 600) {
+        $done = Receive-Job -Job $job -ErrorAction Stop
+        if ($done -and $done.RestartNeeded) { Write-Host 'Windows asks for a restart to finish the OpenSSH Client.' }
+      } else {
+        Write-Host 'The install of the OpenSSH Client took more than 10 minutes and was stopped.'
+      }
+    } catch {
+      Write-Host "The install of the OpenSSH Client failed: $($_.Exception.Message)"
+    } finally {
+      Stop-Job -Job $job -ErrorAction SilentlyContinue
+      Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    }
+    $found = Find-SshClient
+  }
+  if ($found) {
+    Write-Host "The Windows OpenSSH client $($found.Version) is in $($found.Dir). SSH access for sessions can be turned on."
+  } else {
+    Write-Host 'No usable Windows OpenSSH client was found. SSH access for sessions stays off.'
+    Write-Host 'Install the Windows feature OpenSSH Client, then restart the service.'
+  }
+}
+
 # ---- -Uninstall -------------------------------------------------------------------------------------------
 if ($Uninstall) {
   if (-not (Test-Admin)) { throw 'run this in an elevated PowerShell (Run as administrator)' }
@@ -382,8 +465,14 @@ if (-not $haveSideFiles) {
       if (-not (Test-Path -LiteralPath (Join-Path $unpacked $f))) { throw "$InstallerAsset does not contain $f" }  # also stops a loop
     }
     $forward = @{}
-    foreach ($k in $PSBoundParameters.Keys) { $forward[$k] = $PSBoundParameters[$k] }
-    & (Join-Path $unpacked 'install.ps1') @forward
+    $inner = Join-Path $unpacked 'install.ps1'
+    # An older release has no -NoSshClient or -SshClientDir. Forward only what the inner script declares.
+    $declared = (Get-Command -Name $inner).Parameters
+    foreach ($k in $PSBoundParameters.Keys) {
+      if ($declared.ContainsKey($k)) { $forward[$k] = $PSBoundParameters[$k] }
+      else { Write-Host "The release $Release has no -$k option. It is not used." }
+    }
+    & $inner @forward
   } finally {
     Remove-Item -LiteralPath $bootTemp -Recurse -Force -ErrorAction SilentlyContinue
   }
@@ -479,6 +568,9 @@ try {
 
   # ---- the claude-rc client, and the PATH -----------------------------------------------------------------
   if (-not $NoClient) { Install-ClientAndPath $clientSource }
+
+  # ---- the Windows OpenSSH client (for SSH access of sessions) --------------------------------------------
+  Install-SshClient
 
   if ($NoService) {
     Write-Host 'Files are in place (-NoService): no service was registered or started.'
