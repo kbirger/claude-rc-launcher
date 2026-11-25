@@ -138,5 +138,7 @@ export async function sshRequest(options: {
   if (ends && !Number.isNaN(ends.getTime())) options.out(`access ends at ${ends.toISOString()}`);
   options.out(`socket: ${String(answer.socket)}`);
   options.out(`config: ${String(answer.config)}`);
-  options.out(`ssh -F ${String(answer.config)} ${options.targetId}`);
+  // A Windows node names the checked client. Another `ssh` on the PATH (the one of Git for Windows) can fail with the pipe.
+  const program = typeof answer.ssh === "string" ? `"${answer.ssh}"` : "ssh";
+  options.out(`${program} -F ${String(answer.config)} ${options.targetId}`);
 }
