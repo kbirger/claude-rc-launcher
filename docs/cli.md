@@ -175,7 +175,7 @@ claude-rc ssh targets
 claude-rc ssh request slon --minutes 30 --reason "read logs"
 ```
 
-`ssh request` waits for the owner. A grant lasts 60 minutes by default and 480 minutes at most. The command prints the path of the socket, the path of the SSH configuration file and the command `ssh -F <config> <target>`. A request that nobody answers fails after 10 minutes.
+`ssh request` waits for the owner. A grant lasts 60 minutes by default and 480 minutes at most. The command prints `waiting for approval` first. After the owner approves, it prints the line `approved` and the line `access ends at <time>`. Then it prints the path of the socket, the path of the SSH configuration file and the command `ssh -F <config> <target>`. A request that nobody answers fails after 10 minutes.
 
 The command `ssh target add` runs on your own machine, with the saved login. It needs the `admin` role. It has two forms. An external target does not run the launcher, and the command needs `--address` and `--identity`:
 

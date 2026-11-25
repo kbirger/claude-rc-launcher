@@ -148,7 +148,7 @@ Some machines run a job that rewrites `authorized_keys`. For example, a cron job
 
 #### Way 1: a key file
 
-Use this way for a managed target of the type `linux` or `synology`. Way 2 is for an external target. The hub then keeps its key line in another file in `~/.ssh`. Name the file with `--key-file`:
+Use this way for a managed target of the type `linux` or `synology`. The hub then keeps its key line in another file in `~/.ssh`. Name the file with `--key-file`:
 
 ```sh
 claude-rc ssh target add slon --managed slon --type linux --account root --node local --key-file authorized_keys2
@@ -160,6 +160,7 @@ The web wizard has the field Key file for the same setting. Leave it empty to us
 - The name is a plain file name in `~/.ssh`. A path or another ssh file, such as `known_hosts`, is refused with a 400.
 - An external target and the types `dropbear` and `windows` do not take a key file. The hub refuses it with a 400.
 - A retire removes the key line from the same file that the install used.
+- Way 2 is for an external target.
 - No route changes the key file of an existing target. To change it, retire the target and add it again.
 - The node must run a version that knows key files. Update the node first. An old node makes the install fail with a clear text.
 
@@ -187,7 +188,7 @@ sudo sshd -t && (sudo systemctl reload ssh || sudo systemctl reload sshd)
 - The drop-in loads before the main file. sshd uses the first value of a keyword. So the line must repeat the files that sshd already uses. Check them with `sudo sshd -T | grep -i authorizedkeysfile` before you write the line.
 - The folder and the files must belong to root. If another user can write them, sshd refuses the key.
 - This is an external target. The owner installs the line, and the hub only signs. The hub never writes to `/etc/ssh`.
-- The drop-in works only when the main `sshd_config` starts with `Include /etc/ssh/sshd_config.d/*.conf`. Debian 11, Ubuntu 20.04 and newer releases do this. Check it with `grep -n Include /etc/ssh/sshd_config`.
+- The drop-in works only when the main `sshd_config` has the line `Include /etc/ssh/sshd_config.d/*.conf`. The line is near the top of the file, after the comments. Debian 11, Ubuntu 20.04 and newer releases do this. Check it with `grep -n Include /etc/ssh/sshd_config`.
 - The name starts with `49-` because the drop-in must load first. It must load before the main file and before other drop-ins that set the same keyword. So it loads before `50-cloud-init.conf`.
 
 #### Way 3: a dedicated account
@@ -230,7 +231,7 @@ Inside a session of an enabled instance, do these steps:
 2. Run `claude-rc ssh request <target> --minutes 30 --reason "read logs"`. Both options are optional. The command waits.
 3. On your phone, open the SSH access page. The request shows the node, the instance, the target, the account and the time. It also shows a warning about the power of the account.
 4. Tap Approve, set the minutes, and unlock the key.
-5. The command prints the path of the socket, the path of the SSH configuration file and the command to run.
+5. The command prints the line `approved`, the end time of the access, the path of the socket, the path of the SSH configuration file and the command to run.
 6. Run the printed command. It has the form `ssh -F <config> <target>`.
 
 The command `claude-rc ssh` finds the node through the variable `CLAUDE_RC_SSH_CONTROL`. The unit of an enabled instance sets it. A command that runs elsewhere prints `SSH access is not turned on for this instance`.
