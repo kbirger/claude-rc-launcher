@@ -52,6 +52,10 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 
 The default does not contain `--no-create-session-in-dir`. A server that starts with this flag refuses to restart while its folder has a recoverable session.
 
+## State folder
+
+The hub keeps its files in the state folder, `tls.state_dir` (default `/var/lib/claude-rc-launcher`). The folder `<state_dir>/push/` holds the push notifications for SSH requests. It has the file `vapid.json`, which is the key pair of the hub, and the file `subscriptions.json`, which lists the devices. The files have mode 600 and the folder has mode 700. There is no setting for push. The hub uses `public_url` as the VAPID subject. Read [SSH delegation](ssh-delegation.md#notifications).
+
 ## proxy-jwt keys
 
 With `user_auth.mode = "proxy-jwt"` the hub does not log users in itself; a reverse proxy (Authentik's
