@@ -3,8 +3,6 @@ import { isObject } from "./requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";
 import type { Grant, GrantStore } from "./sshgrants";
-import { requestMessage } from "./sshnotify";
-import type { PushMessage } from "./webpush";
 import { KeyError } from "./sshkeystore";
 import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { authorizedKeysLine, TargetError } from "./sshtargets";
@@ -48,7 +46,7 @@ interface Deps {
   client: (hostId: string) => HostClient | undefined;
   audit: (line: string) => void;
   /** Called once for each real request that became pending. A throw is audited and does not fail the request. */
-  notify?: (message: PushMessage) => void;
+  notify?: (grant: Grant, target: Target) => void;
 }
 
 const isOk = (status: number) => status >= 200 && status < 300;
@@ -429,8 +427,7 @@ export class SshService {
     }
 
     try {
-      // The node sends no instance name, so the message names the instance by its id.
-      this.deps.notify?.(requestMessage(grant, target, instanceId));
+      this.deps.notify?.(grant, target);
     } catch (error) {
       this.note(`notify failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
     }

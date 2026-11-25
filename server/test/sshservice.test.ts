@@ -3,12 +3,13 @@ import { createPublicKey, verify } from "node:crypto";
 import { HostError } from "../src/hostclient";
 import type { HostClient } from "../src/hostclient";
 import { GrantError, GrantStore } from "../src/sshgrants";
+import type { Grant } from "../src/sshgrants";
 import { SshKeyStore } from "../src/sshkeystore";
 import type { UnlockSecret } from "../src/sshkeystore";
 import { SshService } from "../src/sshservice";
 import { TargetError, TargetStore } from "../src/sshtargets";
+import type { Target } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
-import type { PushMessage } from "../src/webpush";
 import { fakeTimers } from "./faketimers";
 
 const unlock: UnlockSecret = { method: "passphrase", secret: new TextEncoder().encode("correct horse") };
@@ -56,7 +57,7 @@ async function setup(
   options: {
     nodes?: Record<string, ReturnType<typeof fakeNode>>;
     state?: "ready" | "draft" | "disabled";
-    notify?: (message: PushMessage) => void;
+    notify?: (grant: Grant, target: Target) => void;
   } = {},
 ) {
   const timers = fakeTimers(1_000_000);
@@ -106,34 +107,40 @@ const request = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("SshService requests", () => {
-  test("a real request calls notify once", async () => {
-    const sent: PushMessage[] = [];
-    const { service, grants } = await setup({ notify: (message) => sent.push(message) });
+  test("a real request calls notify once with the grant and the target", async () => {
+    const sent: [Grant, Target][] = [];
+    const { service, grants } = await setup({ notify: (grant, target) => sent.push([grant, target]) });
     service.onNodeEvent("node1", "ssh.request", request({ minutes: 30, reason: "deploy" }));
     await flush();
     const [grant] = grants.list();
-    expect(sent).toEqual([
-      {
-        title: "SSH access requested",
-        body: "nas on inst1, 30 min: deploy",
-        url: "/ssh",
-        tag: `ssh-${grant!.id}`,
-        grantId: grant!.id,
-      },
-    ]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]![0].id).toBe(grant!.id);
+    expect(sent[0]![1].id).toBe("nas");
+  });
+
+  test("a request that grants.request refuses does not call notify again", async () => {
+    const sent: Grant[] = [];
+    const { service, grants } = await setup({ notify: (grant) => sent.push(grant) });
+    service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    // minutes 0 makes grants.request throw, and notify must come after it.
+    service.onNodeEvent("node1", "ssh.request", request({ requestId: "req2", minutes: 0 }));
+    await flush();
+    expect(grants.list()).toHaveLength(1);
+    expect(sent).toHaveLength(1);
   });
 
   test("a test grant does not call notify", async () => {
-    const sent: PushMessage[] = [];
+    const sent: Grant[] = [];
     const node = fakeNode({ "POST /api/ssh/grants/:id/probe": { status: 200, body: { code: 0, stderr: "" } } });
-    const { service } = await setup({ nodes: { node1: node }, notify: (message) => sent.push(message) });
+    const { service } = await setup({ nodes: { node1: node }, notify: (grant) => sent.push(grant) });
     await service.test("nas", "node1", "admin", unlock).catch(() => undefined);
     expect(sent).toEqual([]);
   });
 
   test("a refused request does not call notify", async () => {
-    const sent: PushMessage[] = [];
-    const { service } = await setup({ state: "draft", notify: (message) => sent.push(message) });
+    const sent: Grant[] = [];
+    const { service } = await setup({ state: "draft", notify: (grant) => sent.push(grant) });
     service.onNodeEvent("node1", "ssh.request", request());
     service.onNodeEvent("node2", "ssh.request", request());
     await flush();
