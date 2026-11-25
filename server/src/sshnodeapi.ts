@@ -707,6 +707,8 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const failure = stderr.trim();
     if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
     if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
+    // A hub that sent a key file gets it back, so it can tell this node from an old node that ignores the field.
+    if (keyFile !== undefined) return context.json({ keyFile });
     return context.body(null, 204);
   });
 
