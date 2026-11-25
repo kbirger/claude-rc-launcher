@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 import type { AgentTransport, ConnectionHandler, RawConnection } from "../sshnodeagent";
 import type { AccessResult, TargetSummary } from "../sshnodeapi";
 
@@ -14,6 +15,10 @@ import type { AccessResult, TargetSummary } from "../sshnodeapi";
 
 /** The longest line that a client may send. */
 const MAX_LINE = 16 * 1024;
+/** Lines of one connection that wait for an answer. A request can wait long for an approval. */
+const MAX_PENDING = 4;
+/** A new connection must send a valid line in this time. */
+const FIRST_LINE_MS = 5000;
 
 export interface WinSshControlOptions {
   transport: AgentTransport;
@@ -27,6 +32,9 @@ export interface WinSshControlOptions {
 }
 
 interface State {
+  decoder: StringDecoder;
+  pending: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
   buffer: string;
   chain: Promise<void>;
   closed: boolean;
@@ -92,21 +100,32 @@ export class WinSshControl {
   }
 
   private accept(raw: RawConnection): ConnectionHandler {
-    const state: State = { buffer: "", chain: Promise.resolve(), closed: false };
+    const state: State = {
+      decoder: new StringDecoder("utf8"),
+      pending: 0,
+      timer: undefined,
+      buffer: "",
+      chain: Promise.resolve(),
+      closed: false,
+    };
 
     const refuse = () => {
+      clearTimeout(state.timer);
       state.closed = true;
       state.buffer = "";
       raw.end();
     };
 
+    state.timer = setTimeout(refuse, FIRST_LINE_MS);
+
     return {
       close: () => {
+        clearTimeout(state.timer);
         state.closed = true;
       },
       data: (chunk) => {
         if (state.closed) return;
-        state.buffer += Buffer.from(chunk).toString("utf8");
+        state.buffer += state.decoder.write(Buffer.from(chunk));
 
         for (let end = state.buffer.indexOf("\n"); end !== -1; end = state.buffer.indexOf("\n")) {
           const line = state.buffer.slice(0, end);
@@ -140,12 +159,22 @@ export class WinSshControl {
       return false;
     }
 
-    const instanceId = this.lookup(message.token);
-    if (instanceId === undefined) return false;
+    const token = message.token;
+    if (this.lookup(token) === undefined) return false;
+    if (state.pending >= MAX_PENDING) return false;
+    clearTimeout(state.timer);
+    state.pending += 1;
 
     state.chain = state.chain.then(async () => {
-      const answer = await this.answer(instanceId, message);
-      if (!state.closed) raw.write(Buffer.from(`${JSON.stringify(answer)}\n`));
+      try {
+        // A line that waited is checked again: the connection can be closed and the token can be gone by now.
+        const instanceId = state.closed ? undefined : this.lookup(token);
+        if (instanceId === undefined) return;
+        const answer = await this.answer(instanceId, message);
+        if (!state.closed) raw.write(Buffer.from(`${JSON.stringify(answer)}\n`));
+      } finally {
+        state.pending -= 1;
+      }
     });
 
     return true;
