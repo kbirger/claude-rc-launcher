@@ -126,6 +126,9 @@ const RULES: Rule[] = [
   ...rows("admin", "PUT", ["/ssh/nodes/:host"]),
   ...rows("admin", "PATCH", ["/ssh/targets/:id"]),
   ...rows("admin", "DELETE", ["/ssh/targets/:id"]),
+  // Push notifications: registering a device is for admins, who approve SSH requests.
+  ...rows("admin", "GET", ["/push/key"]),
+  ...rows("admin", "POST", ["/push/subscribe", "/push/unsubscribe"]),
   // read
   ...rows("read", "GET", ["/hosts/:host/fs"], true),
   ...rows("read", "GET", [

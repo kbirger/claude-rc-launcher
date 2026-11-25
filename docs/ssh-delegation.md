@@ -268,10 +268,24 @@ A failed removal never stops the retire. The id is free after a retire. You can 
 - The generated SSH configuration turns off connection sharing. A user can override it in a command.
 - The instance name on a request is a claim, not proof.
 - It has no Rotate a key action. To rotate a key, retire the target and add it again.
-- It sends no push message for a pending request. You see a badge on the menu.
+- A push message does not approve a request. Approval needs your passkey or passphrase on the page.
 - A Windows node cannot host sessions that request access. A Windows machine can be a target.
 - Sessions on the own host of the hub need Linux.
 - On the own host of the hub, a root session can copy the key during a grant. Read the note in [How it works](#how-it-works).
+
+## Notifications
+
+The hub sends a push message to each registered device when a session asks for SSH access. The message tells you that a request waits. You still approve on the SSH access page.
+
+- Only an admin can register a device. Turn on Notify this device on the SSH access page. Read [Web UI](web-ui.md#ssh-access).
+- The message holds the target id, the instance name, the minutes and the reason. The reason is cut to 120 characters. If the instance has no name, the message shows the instance id.
+- A test grant sends no message.
+- On Android Chrome, the message has an Open button and a Deny button. Deny refuses the request. There is no Approve button, because the unlock needs a passkey or passphrase on the page.
+- Safari and iOS show no buttons. If you tap the message, it opens the SSH access page.
+- When a request is approved, denied or expired, the hub sends a close message. The device then removes the notification. The notification can flash for a moment, because Chrome needs each push to show a notification.
+- A hub restart ends all pending requests. It sends no close message, so an old notification can stay on a device.
+
+The hub keeps the devices in `<state_dir>/push/`. Read [Configuration](configuration.md#state-folder).
 
 ## Back up and restore
 
@@ -283,6 +297,10 @@ The files `<state_dir>/ssh/keys.json` and `<state_dir>/ssh/targets.json` hold al
 - The key on Asuswrt-Merlin was not tested across a reboot.
 - The Windows install script was checked for syntax. It was not run on a real Windows machine.
 - The passkey flow was proven on one phone.
+- Push delivery to Android Chrome was not tested by hand.
+- The Deny button of a push message was not tested by hand.
+- The close of a notification on a second device was not tested by hand.
+- Safari without buttons was not tested by hand.
 
 ## Troubleshooting
 

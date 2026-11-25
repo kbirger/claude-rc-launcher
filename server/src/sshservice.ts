@@ -45,6 +45,10 @@ interface Deps {
   grants: GrantStore;
   client: (hostId: string) => HostClient | undefined;
   audit: (line: string) => void;
+  /** Called once for each real request that became pending. A throw is audited and does not fail the request. */
+  notify?: (grant: Grant, target: Target) => void;
+  /** Called once when a real (not test) grant leaves `pending`, so that the request notification can close. */
+  notifyClose?: (grant: Grant) => void;
 }
 
 const isOk = (status: number) => status >= 200 && status < 300;
@@ -324,6 +328,17 @@ export class SshService {
     if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
   }
 
+  /** The `onLeavePending` hook of the grant store. A test grant never had a notification. It never throws. */
+  onGrantLeavePending(grant: Grant): void {
+    if (grant.test) return;
+
+    try {
+      this.deps.notifyClose?.(grant);
+    } catch (error) {
+      this.note(`notify close failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
+    }
+  }
+
   /**
    * The `onEnd` hook of the grant store. It never throws and never rejects: the grant store calls it without a guard,
    * and an error here would leave the other grants of `endWhere` active. The node call runs in the background.
@@ -409,8 +424,10 @@ export class SshService {
     // Only a target that passed its test can be requested. A draft is for the test grant of the hub alone.
     if (target.state !== "ready") return refuse(`the target is ${target.state}`);
 
+    let grant: Grant;
+
     try {
-      this.deps.grants.request({
+      grant = this.deps.grants.request({
         nodeId: hostId,
         instanceId,
         targetId,
@@ -420,6 +437,12 @@ export class SshService {
       });
     } catch (error) {
       return refuse(message(error));
+    }
+
+    try {
+      this.deps.notify?.(grant, target);
+    } catch (error) {
+      this.note(`notify failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
     }
   }
 
