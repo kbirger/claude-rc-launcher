@@ -227,4 +227,59 @@ describe("GrantStore", () => {
     expect(line).not.toContain("secret");
     expect(line).not.toContain("736563726574");
   });
+
+  describe("onLeavePending", () => {
+    function withHook() {
+      const timers = fakeTimers(1_000_000);
+      const left: Grant[] = [];
+      const store = new GrantStore({
+        now: () => timers.now(),
+        timers,
+        audit: () => {},
+        onEnd: () => {},
+        onLeavePending: (grant) => left.push(grant),
+      });
+      const input = { nodeId: "node1", instanceId: "inst1", targetId: "nas" };
+      return { timers, left, store, input };
+    }
+
+    test("approve calls it once, and the end of the active grant does not", () => {
+      const { store, input, left } = withHook();
+      const grant = store.request(input);
+      store.approve(grant.id, "admin", fakeKey().key);
+      expect(left.map((item) => item.state)).toEqual(["active"]);
+      store.revoke(grant.id, "admin");
+      expect(left).toHaveLength(1);
+    });
+
+    test("deny, pending expiry and endWhere of a pending grant call it once each", () => {
+      const { store, input, left, timers } = withHook();
+      const denied = store.request(input);
+      store.deny(denied.id, "admin");
+      store.request(input);
+      timers.advance(11 * 60_000);
+      const third = store.request(input);
+      store.endWhere((item) => item.id === third.id, "node-lost");
+      expect(left.map((item) => item.endReason)).toEqual(["denied", "expired", "node-lost"]);
+    });
+
+    test("active expiry calls it none, and a throwing hook does not fail approve", () => {
+      const { store, input, left, timers } = withHook();
+      const grant = store.request(input);
+      store.approve(grant.id, "admin", fakeKey().key, 1);
+      timers.advance(2 * 60_000);
+      expect(left).toHaveLength(1);
+
+      const bad = new GrantStore({
+        timers,
+        audit: () => {},
+        onEnd: () => {},
+        onLeavePending: () => {
+          throw new Error("boom");
+        },
+      });
+      const next = bad.request(input);
+      expect(bad.approve(next.id, "admin", fakeKey().key).state).toBe("active");
+    });
+  });
 });

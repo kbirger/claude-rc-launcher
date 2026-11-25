@@ -55,6 +55,8 @@ interface Options {
   timers?: Timers;
   audit: (line: string) => void;
   onEnd: (grant: Grant) => void;
+  /** Called once when a grant leaves `pending`: approved, denied, expired or ended by the hub. It never fails a call. */
+  onLeavePending?: (grant: Grant) => void;
   defaultMinutes?: number;
   maxMinutes?: number;
   pendingMinutes?: number;
@@ -65,6 +67,7 @@ export class GrantStore {
   private readonly timers: Timers;
   private readonly audit: (line: string) => void;
   private readonly onEnd: (grant: Grant) => void;
+  private readonly onLeavePending: ((grant: Grant) => void) | undefined;
   private readonly defaultMinutes: number;
   private readonly maxMinutes: number;
   private readonly pendingMinutes: number;
@@ -77,6 +80,7 @@ export class GrantStore {
     this.timers = options.timers ?? realTimers;
     this.audit = options.audit;
     this.onEnd = options.onEnd;
+    this.onLeavePending = options.onLeavePending;
     this.defaultMinutes = options.defaultMinutes ?? DEFAULT_MINUTES;
     this.maxMinutes = options.maxMinutes ?? MAX_MINUTES;
     this.pendingMinutes = options.pendingMinutes ?? PENDING_MINUTES;
@@ -137,6 +141,7 @@ export class GrantStore {
         this.timers.setTimeout(() => this.finish(grant, "expired", "system"), grant.minutes * MINUTE_MS),
       );
       this.line(grant, "approved", by);
+      this.leftPending(grant);
       return { ...grant };
     } catch (error) {
       if (this.keys.get(id) !== key) key.destroy();
@@ -215,6 +220,7 @@ export class GrantStore {
   /** The one end path: stop the timer, destroy the key, mark the grant, audit, and only then tell the owner. */
   private finish(grant: Grant, reason: EndReason, by: string): Grant {
     this.clear(grant.id);
+    const wasPending = grant.state === "pending";
     const key = this.keys.get(grant.id);
     this.keys.delete(grant.id);
 
@@ -225,10 +231,20 @@ export class GrantStore {
       grant.endReason = reason;
       this.line(grant, reason, by);
       this.prune();
+      if (wasPending) this.leftPending(grant);
       this.onEnd({ ...grant });
     }
 
     return { ...grant };
+  }
+
+  /** A grant left `pending` (approve or any end path). A throw in the hook is audited and never fails the call. */
+  private leftPending(grant: Grant): void {
+    try {
+      this.onLeavePending?.({ ...grant });
+    } catch {
+      this.audit(`audit ssh grant=${logToken(grant.id)} event=leave-pending-hook-failed`);
+    }
   }
 
   private prune(): void {

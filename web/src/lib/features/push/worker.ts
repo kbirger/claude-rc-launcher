@@ -84,3 +84,24 @@ export async function handleClick(
 
   await deps.open(safeUrl(data.url));
 }
+
+/** The part of the service worker registration that `showPush` needs. */
+export type RegistrationLike = {
+  showNotification: (title: string, options?: NotificationOptions) => Promise<void>;
+  getNotifications: (filter?: { tag?: string }) => Promise<{ close: () => void }[]>;
+};
+
+/**
+ * Shows a push. A `close` message shows a quiet notification with the same tag (Chrome requires a visible one for
+ * each push) and then closes every notification of that tag, the new one and the earlier request.
+ */
+export async function showPush(message: PushMessage, registration: RegistrationLike): Promise<void> {
+  if (!message.close) {
+    await registration.showNotification(message.title, notificationOptions(message));
+    return;
+  }
+
+  await registration.showNotification(message.title, { tag: message.tag, silent: true, icon: "/icon-192.png" });
+  const open = await registration.getNotifications({ tag: message.tag });
+  for (const item of open) item.close();
+}

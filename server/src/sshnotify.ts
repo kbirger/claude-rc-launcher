@@ -26,6 +26,14 @@ export function requestMessage(grant: Grant, target: Target, instanceName: strin
   };
 }
 
+/**
+ * The push message that closes the notification of a grant on every device. It holds the tag, the grant id and the
+ * close flag, with a fixed title and no body. It holds no target, no reason and no secret.
+ */
+export function closeMessage(grant: Grant): PushMessage {
+  return { title: "SSH request answered", body: "", url: "/ssh", tag: `ssh-${grant.id}`, grantId: grant.id, close: true };
+}
+
 export interface RequestNotifierOptions {
   send: (message: PushMessage) => unknown;
   /** The instances of a node, or `undefined` when the node is unknown. A throw or a slow answer means no name. */

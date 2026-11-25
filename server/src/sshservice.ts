@@ -47,6 +47,8 @@ interface Deps {
   audit: (line: string) => void;
   /** Called once for each real request that became pending. A throw is audited and does not fail the request. */
   notify?: (grant: Grant, target: Target) => void;
+  /** Called once when a real (not test) grant leaves `pending`, so that the request notification can close. */
+  notifyClose?: (grant: Grant) => void;
 }
 
 const isOk = (status: number) => status >= 200 && status < 300;
@@ -324,6 +326,17 @@ export class SshService {
       .map((target) => ({ id: target.id, account: target.account, address: target.address }));
     const reply = await this.nodeCall(hostId, "PUT", "/targets", { targets });
     if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
+  }
+
+  /** The `onLeavePending` hook of the grant store. A test grant never had a notification. It never throws. */
+  onGrantLeavePending(grant: Grant): void {
+    if (grant.test) return;
+
+    try {
+      this.deps.notifyClose?.(grant);
+    } catch (error) {
+      this.note(`notify close failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
+    }
   }
 
   /**

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Grant } from "../src/sshgrants";
-import { createRequestNotifier, requestMessage } from "../src/sshnotify";
+import { closeMessage, createRequestNotifier, requestMessage } from "../src/sshnotify";
 import type { PushMessage } from "../src/webpush";
 import type { Target } from "../src/sshtargets";
 
@@ -60,10 +60,7 @@ describe("requestMessage", () => {
 describe("createRequestNotifier", () => {
   const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
 
-  function run(
-    listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined,
-    timeoutMs = 20,
-  ) {
+  function run(listInstances: (nodeId: string) => Promise<{ id: string; name: string }[]> | undefined, timeoutMs = 20) {
     const sent: PushMessage[] = [];
     const errors: string[] = [];
     const notify = createRequestNotifier({
@@ -101,5 +98,21 @@ describe("createRequestNotifier", () => {
     await settle();
     expect(other.sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
     expect(unknown.sent.map((m) => m.body)).toEqual(["nas on inst1, 30 min"]);
+  });
+});
+
+describe("closeMessage", () => {
+  test("holds only the tag, the grant id, the close flag and fixed text", () => {
+    const message = closeMessage(grant({ reason: "secret reason reboot" }));
+    expect(message).toEqual({
+      title: "SSH request answered",
+      body: "",
+      url: "/ssh",
+      tag: "ssh-g1",
+      grantId: "g1",
+      close: true,
+    });
+    expect(JSON.stringify(message)).not.toContain("nas");
+    expect(JSON.stringify(message)).not.toContain("secret");
   });
 });
