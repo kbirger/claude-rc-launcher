@@ -960,10 +960,57 @@ describe("instance settings", () => {
     const inst = await winInstances.start({ path: P1 });
     const refused = (await rejection(winInstances.update(inst.id, { sshRequests: true }))) as HttpError;
     expect(refused.status).toBe(400);
-    expect(refused.message).toBe("SSH requests need a Linux node");
+    expect(refused.message).toBe("SSH requests are not turned on for this node");
     expect(killed).toEqual([]);
     // A false value is no change and works.
     expect(await status(settle(winInstances.update(inst.id, { sshRequests: false })))).toBe("ok");
+  });
+
+  test("with an SSH link the setting works and each start gets the variables of the instance", async () => {
+    const seen: (Record<string, string> | undefined)[] = [];
+    let tokenNumber = 0;
+    let refusal: string | undefined;
+    const winInstances = make(
+      {
+        sshEnv: (id) => ({ CLAUDE_RC_SSH_CONTROL: "PIPE", CLAUDE_RC_SSH_TOKEN: `${id}-${++tokenNumber}` }),
+        sshRefusal: () => Promise.resolve(refusal),
+      },
+      {
+        spawn: (cmd, args, item) => {
+          seen.push(item.env);
+          let exit!: (value: number) => void;
+          const exited = new Promise<number>((entry) => {
+            exit = entry;
+          });
+          const fakeProc: FakeProc = {
+            pid: nextPid++,
+            exited,
+            cmd,
+            args,
+            cwd: item.cwd,
+            logFile: item.logFile,
+            exit: (code = 1) => {
+              exit(code);
+            },
+          };
+          procs.push(fakeProc);
+          return fakeProc;
+        },
+      },
+    );
+    const inst = await winInstances.start({ path: P1, settings: { sshRequests: true } });
+    expect(seen[0]).toEqual({ CLAUDE_RC_SSH_CONTROL: "PIPE", CLAUDE_RC_SSH_TOKEN: `${inst.id}-1` });
+    await winInstances.restart(inst.id);
+    expect(seen.at(-1)?.CLAUDE_RC_SSH_TOKEN).toBe(`${inst.id}-2`);
+    // An instance without the setting gets no variables.
+    const plain = await winInstances.start({ path: P2 });
+    expect(plain.id).not.toBe(inst.id);
+    expect(seen.at(-1)).toBeUndefined();
+    // A refusal reason from the client check stops a change that turns the setting on.
+    refusal = "The SSH client is too old";
+    const refused = (await rejection(winInstances.update(plain.id, { sshRequests: true }))) as HttpError;
+    expect(refused.status).toBe(400);
+    expect(refused.message).toBe("The SSH client is too old");
   });
 
   test("bad input changes nothing and always frees the lock", async () => {
