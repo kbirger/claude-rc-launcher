@@ -10,7 +10,7 @@ let permission: NotificationPermission;
 let existing: { endpoint: string; toJSON: () => unknown; unsubscribe: ReturnType<typeof vi.fn> } | null;
 let pushManager: { getSubscription: ReturnType<typeof vi.fn>; subscribe: ReturnType<typeof vi.fn> };
 const open: Array<() => void> = [];
-const KEY = "AQID"; // bytes 1, 2, 3
+const KEY = "-_8"; // base64url for bytes 251, 255
 
 function fakeSub(endpoint: string) {
   return {
@@ -103,7 +103,7 @@ test("turning on asks permission, subscribes with the hub key and posts the subs
   await vi.waitFor(() => expect(calls.some((call) => call.url === "/api/push/subscribe")).toBe(true));
   expect(pushManager.subscribe).toHaveBeenCalledWith({
     userVisibleOnly: true,
-    applicationServerKey: new Uint8Array([1, 2, 3]),
+    applicationServerKey: new Uint8Array([251, 255]),
   });
   const post = calls.find((call) => call.url === "/api/push/subscribe")!;
   expect(post.method).toBe("POST");
@@ -131,4 +131,16 @@ test("NotifySwitch shows an error text when the hub refuses", async () => {
   toggle(target).click();
   await vi.waitFor(() => expect(target.querySelector('[role="alert"]')?.textContent).toContain("the hub refused"));
   expect(toggle(target).checked).toBe(false);
+});
+
+test("a hub failure on turn off keeps the browser subscription, keeps the switch on and shows the error", async () => {
+  permission = "granted";
+  existing = fakeSub("https://push.example/1");
+  const target = await show();
+  await vi.waitFor(() => expect(toggle(target).checked).toBe(true));
+  hubFails = true;
+  toggle(target).click();
+  await vi.waitFor(() => expect(target.querySelector('[role="alert"]')?.textContent).toContain("the hub refused"));
+  expect(existing.unsubscribe).not.toHaveBeenCalled();
+  expect(toggle(target).checked).toBe(true);
 });
