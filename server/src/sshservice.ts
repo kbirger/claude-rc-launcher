@@ -5,6 +5,7 @@ import { GrantError } from "./sshgrants";
 import type { Grant, GrantStore } from "./sshgrants";
 import { KeyError } from "./sshkeystore";
 import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
+import { NO_WAITING_REQUEST } from "./sshnodeapi";
 import { authorizedKeysLine, TargetError } from "./sshtargets";
 import type { Target, TargetStore } from "./sshtargets";
 
@@ -25,6 +26,7 @@ const SCAN_TIMEOUT_MS = 30_000;
 const SCRIPT_TIMEOUT_MS = 90_000;
 const DEAUTHORIZE_TIMEOUT_MS = 10_000;
 const MAX_DETAIL = 200;
+const STOPPED_WAITING = "The session stopped waiting. Ask the session to request again.";
 
 /** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
 export class NodeError extends Error {
@@ -160,7 +162,10 @@ export class SshService {
       if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
     } catch (error) {
       grants.endWhere((item) => item.id === grantId, "node-lost");
-      throw error instanceof GrantError ? error : new GrantError(409, message(error));
+      if (error instanceof GrantError) throw error;
+      // The owner reads this text on the approve sheet, so the node text becomes plain words.
+      const text = message(error);
+      throw new GrantError(409, text === NO_WAITING_REQUEST ? STOPPED_WAITING : text);
     }
 
     // The grant ended while the POST was in flight: its DELETE may have reached the node before the grant existed

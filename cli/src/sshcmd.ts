@@ -64,7 +64,7 @@ export async function sshTargets(options: { control: string; out: (line: string)
   for (const target of targets) options.out(`${target.id}  ${target.account}@${target.address}`);
 }
 
-/** Asks for access to a target, waits for the approval and prints the paths and the ssh command. */
+/** Asks for access to a target, waits for the approval, then prints `approved`, the end time, the paths and the ssh command. */
 export async function sshRequest(options: {
   control: string;
   targetId: string;
@@ -79,6 +79,9 @@ export async function sshRequest(options: {
     ...(options.minutes === undefined ? {} : { minutes: options.minutes }),
     ...(options.reason === undefined ? {} : { reason: options.reason }),
   });
+  options.out("approved");
+  if (typeof answer.endsAt === "number" && Number.isFinite(answer.endsAt))
+    options.out(`access ends at ${new Date(answer.endsAt).toISOString()}`);
   options.out(`socket: ${String(answer.socket)}`);
   options.out(`config: ${String(answer.config)}`);
   options.out(`ssh -F ${String(answer.config)} ${options.targetId}`);

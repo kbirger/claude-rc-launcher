@@ -29,7 +29,7 @@ import type { NodeEvents } from "./updateevents";
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
 const SIGNATURE_LEN = 64;
-const NO_WAITING_REQUEST = "no request waits for this answer";
+export const NO_WAITING_REQUEST = "no request waits for this answer";
 /** The files of one grant in the folder of its instance. */
 const GRANT_SUFFIXES = [".sock", ".config", ".known_hosts", ".pub"];
 const KEY_BLOB_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);

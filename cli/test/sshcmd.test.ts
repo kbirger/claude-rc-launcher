@@ -74,7 +74,7 @@ describe("claude-rc ssh", () => {
     expect(node.seen).toEqual([{ op: "targets" }]);
   });
 
-  test("ssh request prints the waiting line, then the paths", async () => {
+  test("ssh request prints the waiting line, approved, the end time, then the paths", async () => {
     const node = fakeNode(() => ({ ok: true, socket: "/run/s/agent.sock", config: "/run/s/g.conf", endsAt: 5 }));
     const outcome = await run(
       { CLAUDE_RC_SSH_CONTROL: node.control },
@@ -89,6 +89,8 @@ describe("claude-rc ssh", () => {
     expect(outcome.code).toBe(0);
     expect(outcome.out).toEqual([
       "waiting for approval",
+      "approved",
+      `access ends at ${new Date(5).toISOString()}`,
       "socket: /run/s/agent.sock",
       "config: /run/s/g.conf",
       "ssh -F /run/s/g.conf nas",
