@@ -35,6 +35,17 @@ Date: 2026-11-25. Status: draft, waiting for approval. Design note: `docs/superp
 - After `listen`, set the access list of the pipe to SYSTEM and the service user SID with `bun:ffi`. Test it with a restricted client.
 - Tests: list, sign, bad frame, stop removes the pipe. They run on Windows. A fake transport test runs on Linux.
 
+### Task 2a: SSH client check and install step
+
+- Add `win/sshclient.ts`. It finds `ssh.exe` and `ssh-add.exe` in the Windows OpenSSH folders only, never on the PATH.
+- It checks the version from `ssh.exe -V`. The minimum is 9.0. Tests give fake output.
+- It runs the self test: a throwaway pipe agent and `ssh-add.exe -L`. This test reuses the Task 2 transport.
+- The result is `{ ok, sshPath, sshAddPath, version }` or `{ ok: false, reason }`. The reason is plain English.
+- The node runs the check at start and before each grant. The result decides the `sshRequests` option and the grant routes.
+- `install.ps1` runs the same check. With no client, it installs `OpenSSH.Client` with `Add-WindowsCapability`. The switch `-NoSshClient` skips this.
+- The update path runs the check again.
+- I do not run the install step on this machine without a yes from the owner.
+
 ### Task 3: Files and access lists
 
 - Add a Windows files module. It makes the grant folder and sets the access list with `icacls`.
@@ -57,7 +68,7 @@ Date: 2026-11-25. Status: draft, waiting for approval. Design note: `docs/superp
 
 - Install the skill for the service user.
 - Restore `sshRequests` in `settingsHelpFor` for `win32`.
-- Edit `docs/ssh-delegation.md`, `docs/web-ui.md` and `docs/install.md` in plain English.
+- Edit `docs/ssh-delegation.md`, `docs/web-ui.md` and `docs/install.md` in plain English. Name the client check and the `-NoSshClient` switch.
 
 ### Task 7: Acceptance run
 

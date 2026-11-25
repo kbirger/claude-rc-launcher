@@ -86,8 +86,20 @@ On Linux, each instance runs as its own user, so the operating system separates 
 ### Skill, option and docs
 
 - The skill goes to `%USERPROFILE%\.claude\skills\ssh-access\` of the service user.
-- The option `Allow SSH requests` returns for `win32`.
-- The docs say that the node needs Win32-OpenSSH 9.x or later, and that the Windows `ssh-agent` service does not matter.
+- The option `Allow SSH requests` returns for `win32`, but only when the SSH client check passes. See the next section.
+- The docs say that the node needs the Windows OpenSSH client, and that the Windows `ssh-agent` service does not matter.
+
+### SSH client check at install time and at node start
+
+The Git for Windows `ssh` and `ssh-add` come first on the PATH of many machines. They cannot use a named pipe. A session that runs them fails with a message that hides the cause. So the install handles the client, and the node checks it again.
+
+- **Which client counts.** Only `ssh.exe` and `ssh-add.exe` from the Windows OpenSSH folder count. The first place is `%SystemRoot%\System32\OpenSSH`. The second is `%ProgramFiles%\OpenSSH`. The check never searches the PATH.
+- **Version.** The check runs `ssh.exe -V`. The minimum is OpenSSH 9.0. Only 9.5p2 is tested, so the docs say that.
+- **Self test.** The node starts a throwaway agent on a random pipe, runs `ssh-add.exe -L` against it, and expects the test key. This proves that the client can use a pipe. It also finds a wrong client. The test runs at node start and before each grant.
+- **Install step.** `install.ps1` runs the check. If no client is found, it installs the Windows optional feature `OpenSSH.Client` with `Add-WindowsCapability`. This is a Microsoft package. It needs the elevation that the script already has. The switch `-NoSshClient` skips the step. The script then prints that SSH access is off.
+- **When there is no client.** The node reports that SSH access is not available and gives the reason in plain words. The web UI hides the switch `Allow SSH requests` and says why. `claude-rc ssh` in a session prints the same reason.
+- **Paths.** The node writes the full path of the checked `ssh.exe` in the `ssh -F` line and in the skill. A session never depends on the PATH.
+- **Update.** The update of a node runs the same check, so a node that lost its client turns the feature off.
 
 ## Open risks
 
