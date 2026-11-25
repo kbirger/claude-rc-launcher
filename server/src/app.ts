@@ -159,6 +159,8 @@ function csrf(cfg: Config): MiddlewareHandler {
 export interface InstanceApiDeps {
   cfg: Config;
   instances: Instances;
+  /** Windows only: tells if the node has a usable SSH client. */
+  sshUsable?: () => Promise<boolean>;
   clientVersions?: ClientVersionsLookup;
   dirOwner?: DirOwner;
   update?: Updater;
@@ -198,7 +200,7 @@ function sessionIndexFor(
 
 /** The instance, filesystem, node and update routes of one host (served for `local` by the hub and by a node). */
 export function instanceApi(deps: InstanceApiDeps): Hono {
-  const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions } = deps;
+  const { cfg, instances, dirOwner, update, cloner, adoptDir, clientVersions, sshUsable } = deps;
   const hono = new Hono();
   const sessionCatalog = deps.sessions ?? sessionCatalogFor(cfg);
   const index = deps.sessionIndex ?? new SessionIndex({ instances, catalog: sessionCatalog });
@@ -301,8 +303,11 @@ export function instanceApi(deps: InstanceApiDeps): Hono {
     return context.body(null, 204);
   });
   // The defaults are what a start that names no settings gets: the operator list claude_rc_args decides them.
-  hono.get("/instance-settings", (context) =>
-    context.json({ ...settingsHelpFor(process.platform), defaults: settingsFromArgs(cfg.claudeRcArgs) }),
+  hono.get("/instance-settings", async (context) =>
+    context.json({
+      ...settingsHelpFor(process.platform, (await sshUsable?.()) === true),
+      defaults: settingsFromArgs(cfg.claudeRcArgs),
+    }),
   );
   hono.patch("/instances/:id", async (context) => {
     const id = context.req.param("id");
@@ -409,8 +414,10 @@ export function createNodeApp(deps: {
   sessionSource?: ChangeSource;
   watchTimers?: Timers;
   sessions?: SessionCatalog;
-  /** The SSH grant routes. Without it (a Windows node) every route under `/ssh` answers 501. */
+  /** The SSH grant routes. Without it every route under `/ssh` answers 501. */
   ssh?: SshNodeOptions;
+  /** Windows only: tells if the node has a usable SSH client. The settings help offers the SSH setting only then. */
+  sshUsable?: () => Promise<boolean>;
   /** The managed target routes (`/ssh/hostkey`, `/ssh/authorize`). They work on a Windows node too. */
   sshManaged?: SshManagedOptions;
 }): Hono {
@@ -517,6 +524,7 @@ export function createNodeApp(deps: {
       ...(update ? { update } : {}),
       ...(cloner ? { cloner } : {}),
       ...(clientVersions ? { clientVersions } : {}),
+      ...(deps.sshUsable ? { sshUsable: deps.sshUsable } : {}),
     }),
   );
   app.route("/api", api);
