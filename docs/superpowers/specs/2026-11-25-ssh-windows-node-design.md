@@ -68,9 +68,20 @@ On Linux, each instance runs as its own user, so the operating system separates 
 - The config file, the `known_hosts` file and the public key file live there. Tests use a temporary folder and a platform injection, so no test touches `ProgramData`.
 - At node start, the node removes every file that an earlier run left.
 
-### Instance environment
+### Instance environment (question 5, answered in Task 1)
 
-- Not yet spiked. Question 5 stays open. The plan starts with a short read of the Windows start path in `runner.ts` and a test through a real instance.
+- The node starts each instance as a `claude remote-control` child in `win/instances.ts`. The plain path uses `Bun.spawn` and gives no environment option today.
+- When the service user is an administrator, the node starts the instance with a restricted copy of its own token. This path is in `win/token.ts` and builds its environment from `CreateEnvironmentBlock`. It does not copy the node environment.
+- This machine is that case. The service runs as `.\kir`, and `kir` is an administrator. A normal shell here has the Administrators group as deny only and Medium integrity. Sessions run with that same kind of token.
+- So the plan adds an `env` option to both spawn paths. Each path adds `CLAUDE_RC_SSH_CONTROL` for that instance.
+
+### Pipe access list with a restricted session (new finding)
+
+- A restricted session cannot open a pipe whose access list gives full control only to SYSTEM and Administrators. The test used a pipe with exactly that list and got `Access to the path is denied`.
+- The service has the full administrator token. A pipe that it creates by default most likely gets that kind of list, with no entry for the user alone. I could not run an elevated process, so I did not see this on the real service. The plan must treat it as true.
+- The fix works. After `listen`, the node sets the access list of the pipe by name with `SetNamedSecurityInfoW` through `bun:ffi`. The list is SYSTEM and the service user SID, both with full control, and nothing inherited. A restricted client was denied with the first list and allowed with the second. `win/token.ts` already uses `bun:ffi`, so this is not new.
+- This is a single call that sets the list. It is not the caller check that you declined. The pipe server stays `node:net`.
+- Every agent pipe and the control pipe get this list at start. A short gap exists between `listen` and the call. The tests close it with a check before the pipe name goes to a session.
 
 ### Skill, option and docs
 
