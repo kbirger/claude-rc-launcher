@@ -232,4 +232,53 @@ describe.skipIf(!REAL)("a Windows node with SSH requests, on real pipes and real
       await node.stop();
     }
   });
+
+  test("the skill goes to the home of the service user only when the client works", async () => {
+    for (const [client, expected] of [
+      [good, 1],
+      [off("No SSH client is installed"), 0],
+    ] as const) {
+      const deployed: string[] = [];
+      const node = createNodeSsh({
+        cfg: { ...cfg, serviceHome: "C:/Users/svc", servicePath: "" } as Config,
+        instances: fakeInstances([]),
+        events: new NodeEvents(),
+        dir,
+        platform: "win32",
+        bridge: new WinSshBridge(),
+        winClient: client,
+        deploySkill: (user) => {
+          deployed.push(user.home);
+          return Promise.resolve("written");
+        },
+        log: () => {},
+      });
+      await node.start();
+      await node.stop();
+      expect(deployed).toHaveLength(expected);
+    }
+  });
+
+  test("a failed start offers no setting and hands out no variables", async () => {
+    const bridge = new WinSshBridge();
+    const node = createNodeSsh({
+      cfg,
+      instances: fakeInstances([instance(ID1, true)]),
+      events: new NodeEvents(),
+      dir,
+      platform: "win32",
+      bridge,
+      winClient: good,
+      winTransports: {
+        control: () => ({ listen: () => Promise.reject(new Error("pipe busy")) }),
+        agent: () => ({ listen: () => Promise.reject(new Error("pipe busy")) }),
+      },
+      log: () => {},
+    });
+    await node.start();
+    expect(bridge.env).toBeUndefined();
+    expect(await defined(node.sshUsable)()).toBe(false);
+    expect(await bridge.refusal()).toBe("SSH requests are not ready on this node");
+    await node.stop();
+  });
 });

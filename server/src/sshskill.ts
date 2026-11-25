@@ -24,7 +24,7 @@ You have no SSH key. The owner gives you temporary access, one request at a time
 
 1. Run \`claude-rc ssh targets\`. It lists the machines that you can ask for, as \`name  account@address\`. If it fails with \`SSH access is not turned on for this instance\`, stop. Tell the owner to turn on \`Allow SSH requests\` for this instance.
 2. Ask for one target for the time that you need. The default is 60 minutes and the most is 480 minutes. Run \`claude-rc ssh request <target> --minutes <n> --reason "<why>"\`. The command waits for the owner for up to 10 minutes. Run it in the background with the run_in_background option of the Bash tool. Tell the owner in plain words that a request is waiting on the SSH access page. Read the output of the command when it ends. The command prints \`waiting for approval\` first. That line does not mean the owner answered. Wait for the line \`approved\`. After it, the output has a socket path, a config path and an \`ssh -F ...\` line. If the output ends with an error line instead, see Messages. The line \`access ends at <time>\` shows the end of the access in UTC. It can be missing.
-3. Run the \`ssh -F <config> <target>\` line only after the output shows \`approved\`. Add your remote command to the end, for example \`ssh -F <config> <target> 'uptime'\`. Use only that config file. Never add options that change the host key checks or the identity.
+3. Run the \`ssh -F <config> <target>\` line only after the output shows \`approved\`. On a Windows machine the line starts with the full path of \`ssh.exe\` in double quotes. Use that path exactly and never another \`ssh\` program. Add your remote command to the end, for example \`ssh -F <config> <target> 'uptime'\`. Use only that config file. Never add options that change the host key checks or the identity.
 4. There is nothing to clean up. The access ends at the end time or when the owner revokes it. Do not leave connections, tunnels or ControlMaster sessions open.
 
 ## Rules
@@ -245,7 +245,6 @@ async function direct(home: string, content: string): Promise<SkillResult | Verd
  * or that somebody edited, stays as it is. It never throws: a failure is one log line and the result `failed`.
  */
 export async function ensureSkill(user: SkillUser, deps: SkillDeps): Promise<SkillResult> {
-  if ((deps.platform ?? process.platform) === "win32") return "unchanged";
   const log =
     deps.log ??
     ((line: string) => {
