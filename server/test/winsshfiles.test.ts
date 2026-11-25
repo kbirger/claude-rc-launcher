@@ -7,6 +7,7 @@ import { HttpError } from "../src/instances";
 import { grantConfig, sshConfigPath } from "../src/sshnodeapi";
 import { newPipeName, currentUserSid } from "../src/win/pipe";
 import {
+  countEntries,
   ensurePrivateFolder,
   privateFolderArgs,
   removeStaleGrantFiles,
@@ -46,8 +47,20 @@ describe("paths in the config file", () => {
     expect(sshConfigPath("C:\\Users\\a b\\g.pub", true)).toBe('"C:/Users/a b/g.pub"');
   });
 
-  test.each(['C:\\a"b', "C:\\a\nb", "C:\\a\rb"])("a Windows path with a quote or line break %p is refused", (path) => {
-    expect(() => sshConfigPath(path, true)).toThrow();
+  test.each(['C:\\a"b', "C:\\a\nb", "C:\\a\rb", "C:\\a$HOME"])(
+    "a Windows path with a quote, a line break or a dollar sign %p is refused",
+    (path) => {
+      expect(() => sshConfigPath(path, true)).toThrow();
+    },
+  );
+
+  test("a percent sign is doubled, so it is not a token", () => {
+    expect(sshConfigPath("C:\\100%\\x", true)).toBe("C:/100%%/x");
+  });
+
+  test("a single quote or a hash sign needs double quotes", () => {
+    expect(sshConfigPath("C:\\Users\\O'Brien\\x", true)).toBe('"C:/Users/O\'Brien/x"');
+    expect(sshConfigPath("C:\\c#dev\\x", true)).toBe('"C:/c#dev/x"');
   });
 });
 
@@ -77,6 +90,26 @@ describe("the config text for a Windows node", () => {
     expect(text).toContain("IdentityAgent /run/x/g1.sock\n");
     expect(text).toContain("IdentityFile /run/x/g1.pub\n");
     expect(text).toContain("UserKnownHostsFile /run/x/g1.kh\n");
+  });
+
+  windowsTest("ssh.exe reads a path with a quote, a hash sign and a percent sign whole", async () => {
+    const folder = join(dir, "it's #1 100%");
+    await mkdir(folder);
+    const identity = join(folder, "g1.pub");
+    const knownHosts = join(folder, "g1.known_hosts");
+    const config = join(folder, "g1.config");
+    await writeFile(config, grantConfig({ ...input, socket: newPipeName("agent"), identity, knownHosts, windows: true }));
+    const sshExe = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "OpenSSH", "ssh.exe");
+    const proc = Bun.spawn([sshExe, "-G", "-F", config, "kirhub"], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    const lines = out.split(/\r?\n/);
+    // `ssh -G` prints IdentityFile before it expands tokens, so the doubled percent sign shows. A real login
+    // expands it to one percent sign (checked by hand with a local test server).
+    const want = identity.replaceAll("\\", "/").replaceAll("%", "%%");
+    expect(lines).toContain(`identityfile ${want}`);
+    expect(lines.some((line) => line.startsWith("userknownhostsfile ") && line.endsWith("g1.known_hosts"))).toBe(true);
+    expect(lines.find((line) => line.startsWith("userknownhostsfile "))).toContain("it's #1 100%");
   });
 
   windowsTest("ssh.exe reads the pipe and the paths from the config the way the node means", async () => {
@@ -116,21 +149,61 @@ describe("the access list of a folder", () => {
     expect(() => privateFolderArgs("C:\\x", sid)).toThrow();
   });
 
-  test("ensurePrivateFolder makes the folder and sets the list before it returns", async () => {
+  /** icacls output for a folder: the path, then one line for each entry. */
+  const listing = (...names: string[]) =>
+    `${dir} ${names.map((name, index) => `${index === 0 ? "" : "        "}${name}:(OI)(CI)(F)`).join("\n")}\n\nSuccessfully processed 1 files; Failed processing 0 files\n`;
+  const three = listing("NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators", "PC\\kir");
+
+  test("countEntries counts the entries of icacls output", () => {
+    expect(countEntries(three)).toBe(3);
+    expect(countEntries(listing("A\\x", "B\\y", "C\\z", "Everyone"))).toBe(4);
+    expect(countEntries("")).toBe(0);
+  });
+
+  test("ensurePrivateFolder makes the folder, sets the list and reads it back before it returns", async () => {
     const calls: string[][] = [];
     const run: RunIcacls = (args) => {
       calls.push(args);
-      return Promise.resolve({ code: 0, output: "" });
+      return Promise.resolve({ code: 0, output: args.length === 1 ? three : "" });
     };
     const folder = join(dir, "top", "i1");
     await ensurePrivateFolder(folder, SID, run);
     expect(existsSync(folder)).toBe(true);
-    expect(calls).toEqual([privateFolderArgs(folder, SID)]);
+    expect(calls).toEqual([privateFolderArgs(folder, SID), [folder]]);
   });
 
-  test("a failed icacls is an error that holds its output", async () => {
+  test("a failed icacls is an error that holds its output, and the new folder is removed", async () => {
     const run: RunIcacls = () => Promise.resolve({ code: 5, output: "Access is denied." });
-    await expect(ensurePrivateFolder(join(dir, "i1"), SID, run)).rejects.toThrow("Access is denied.");
+    const folder = join(dir, "i1");
+    await expect(ensurePrivateFolder(folder, SID, run)).rejects.toThrow("Access is denied.");
+    expect(existsSync(folder)).toBe(false);
+  });
+
+  test("an extra entry in the list is refused and the new folder is removed", async () => {
+    const run: RunIcacls = (args) =>
+      Promise.resolve({ code: 0, output: args.length === 1 ? listing("A\\x", "B\\y", "C\\z", "Everyone") : "" });
+    const folder = join(dir, "i1");
+    await expect(ensurePrivateFolder(folder, SID, run)).rejects.toThrow("expected entries");
+    expect(existsSync(folder)).toBe(false);
+  });
+
+  test("a folder that existed before stays when its list is refused", async () => {
+    const folder = join(dir, "i1");
+    await mkdir(folder);
+    const run: RunIcacls = (args) =>
+      Promise.resolve({ code: 0, output: args.length === 1 ? listing("A\\x", "Everyone") : "" });
+    await expect(ensurePrivateFolder(folder, SID, run)).rejects.toThrow();
+    expect(existsSync(folder)).toBe(true);
+  });
+
+  test.each(["relative\\folder", "\\\\server\\share\\x"])("the path %p is refused and icacls does not run", async (path) => {
+    let ran = false;
+    const run: RunIcacls = () => {
+      ran = true;
+      return Promise.resolve({ code: 0, output: "" });
+    };
+    await expect(ensurePrivateFolder(path, SID, run)).rejects.toThrow("local absolute path");
+    expect(ran).toBe(false);
   });
 
   test("a file at the folder path is refused and icacls does not run", async () => {
@@ -143,6 +216,27 @@ describe("the access list of a folder", () => {
     };
     await expect(ensurePrivateFolder(path, SID, run)).rejects.toThrow();
     expect(ran).toBe(false);
+  });
+
+  windowsTest("a folder inside a private top folder inherits the list at once", async () => {
+    const top = join(dir, "top with space");
+    await ensurePrivateFolder(top, currentUserSid());
+    const child = join(top, "i1");
+    await mkdir(child);
+    const text = (await runIcacls([child])).output;
+    expect(countEntries(text)).toBe(3);
+    expect(text).toContain("NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)");
+    expect(text).not.toMatch(/Everyone|BUILTIN\\Users|Authenticated Users/);
+    await ensurePrivateFolder(child, currentUserSid());
+  });
+
+  windowsTest("a folder with an extra entry for Everyone is refused on a second run", async () => {
+    const folder = join(dir, "i1");
+    await mkdir(folder);
+    // The folder has an extra explicit entry. ensurePrivateFolder removes inheritance and replaces the three
+    // entries, but the extra one stays, and the read-back finds four.
+    expect((await runIcacls([folder, "/grant", "*S-1-1-0:(OI)(CI)R"])).code).toBe(0);
+    await expect(ensurePrivateFolder(folder, currentUserSid())).rejects.toThrow("expected entries");
   });
 
   windowsTest("the real list is SYSTEM, Administrators and the user, and a new file inherits it", async () => {
@@ -200,6 +294,14 @@ describe("files left by an earlier run", () => {
     expect((await readdir(join(dir, "i1"))).sort()).toEqual(["g1.sock", "notes.txt"]);
     expect(await readdir(join(dir, "i2"))).toEqual([]);
     expect(existsSync(join(dir, "top-file.config"))).toBe(true);
+  });
+
+  test("an entry that cannot be removed is not counted", async () => {
+    await mkdir(join(dir, "i1"));
+    await mkdir(join(dir, "i1", "x.config"));
+    await writeFile(join(dir, "i1", "g1.pub"), "x");
+    expect(await removeStaleGrantFiles(dir)).toBe(1);
+    expect(existsSync(join(dir, "i1", "x.config"))).toBe(true);
   });
 
   test("a top folder that does not exist gives 0", async () => {
