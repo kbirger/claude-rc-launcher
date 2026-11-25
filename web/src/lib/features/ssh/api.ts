@@ -33,6 +33,8 @@ export type Target = {
   /** Host ids of the nodes that can reach the target. */
   nodes: string[];
   managedHost?: string;
+  /** A managed linux or synology target only: the file in `~/.ssh` that holds the key line. Absent means `authorized_keys`. */
+  keyFile?: string;
   /** The pinned host key, one line in the `known_hosts` format. */
   hostKey?: string;
   keyFingerprint?: string;
@@ -44,6 +46,7 @@ export type NewTarget = {
   systemType: SystemType;
   nodes: string[];
   managedHost?: string;
+  keyFile?: string;
   address?: string;
   port?: number;
 };

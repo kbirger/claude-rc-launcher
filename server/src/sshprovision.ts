@@ -1,4 +1,4 @@
-import type { SystemType } from "./sshtargets";
+import { isKeyFile, type SystemType } from "./sshtargets";
 
 // Provisioning scripts. A script puts the public key line of a target into the `authorized_keys` list of the account on
 // the target. The owner or the hub runs it on the target through a remote shell (the script goes to the shell on stdin).
@@ -19,6 +19,17 @@ export interface Script {
 export interface ProvisionOptions {
   /** Windows only: the account whose profile receives the key. Without it, the script uses the account that runs it. */
   account?: string;
+  /** The `sh` variants only: the file in `~/.ssh` that holds the key line. Without it, the file is `authorized_keys`. */
+  keyFile?: string;
+}
+
+const DEFAULT_KEY_FILE = "authorized_keys";
+
+/** The name of the key file for the `sh` scripts. A name that the target rule does not take is an error, never a path. */
+function keyFileName(keyFile: string | undefined): string {
+  if (keyFile === undefined) return DEFAULT_KEY_FILE;
+  if (!isKeyFile(keyFile)) throw new Error("the key file name is not valid");
+  return keyFile;
 }
 
 /** Quote a value for a POSIX shell: single quotes, and each single quote becomes `'\''`. */
@@ -44,13 +55,13 @@ const LOCK_LINES = [
   "fi",
 ];
 
-function shScript(line: string, synology: boolean): string {
+function shScript(line: string, synology: boolean, keyFile: string): string {
   return [
     "set -eu",
     "umask 077",
     `line=${shQuote(line)}`,
     'dir="$HOME/.ssh"',
-    'file="$dir/authorized_keys"',
+    `file="$dir"/${shQuote(keyFile)}`,
     ...(synology ? ['chmod go-w "$HOME"'] : []),
     'mkdir -p "$dir"',
     'chmod 700 "$dir"',
@@ -118,7 +129,7 @@ function powershellScript(line: string, account: string | undefined): string {
 
 /**
  * Build the script that installs `line` for the given system type. Linux and Dropbear use `~/.ssh/authorized_keys`
- * (folder mode 700, file mode 600). Synology also removes group and other write from the home folder, because sshd
+ * (folder mode 700, file mode 600), or `~/.ssh/<keyFile>` when `keyFile` is set. Synology also removes group and other write from the home folder, because sshd
  * refuses keys when it is writable. Windows uses `administrators_authorized_keys` for an administrator (with access
  * for SYSTEM and Administrators only) and `.ssh\authorized_keys` in the profile for any other account. Without
  * `account`, that is the account that runs the script (`%USERPROFILE%`). With `account`, the script looks up the SID of the
@@ -127,10 +138,10 @@ function powershellScript(line: string, account: string | undefined): string {
  */
 export function provisionScript(systemType: SystemType, line: string, options: ProvisionOptions = {}): Script {
   if (systemType === "windows") return { shell: "powershell", script: powershellScript(line, options.account) };
-  return { shell: "sh", script: shScript(line, systemType === "synology") };
+  return { shell: "sh", script: shScript(line, systemType === "synology", keyFileName(options.keyFile)) };
 }
 
-// Removal scripts. They take the key line of a target out of the same `authorized_keys` file. A line goes when the key
+// Removal scripts. They take the key line of a target out of the same key file (`authorized_keys` or `keyFile`). A line goes when the key
 // blob is one of its fields and its last field is the comment `claude-rc:<id>`. A line with only the blob or only the
 // comment stays. The match does not use the whole line, because the `from=` part can change after the install.
 // The script prints `removed` or `not-found`, and it is safe to run twice. The values are data: they are quoted like in
@@ -150,7 +161,7 @@ const AWK_PROGRAM = [
   '  else if (have && !(ENVIRON["RC_NONL"] == "1" && kept)) printf "\\n" }',
 ].join("\n");
 
-function shRemoveScript(blob: string, comment: string): string {
+function shRemoveScript(blob: string, comment: string, keyFile: string): string {
   return [
     "set -eu",
     "umask 077",
@@ -158,9 +169,9 @@ function shRemoveScript(blob: string, comment: string): string {
     `RC_COMMENT=${shQuote(comment)}`,
     "export RC_BLOB RC_COMMENT",
     'dir="$HOME/.ssh"',
-    'file="$dir/authorized_keys"',
+    `file="$dir"/${shQuote(keyFile)}`,
     // A link would be replaced by a plain file, and the target of the link would stay as it was.
-    'if [ -L "$dir" ] || [ -L "$file" ]; then echo "authorized_keys or its folder is a symbolic link" >&2; exit 1; fi',
+    'if [ -L "$dir" ] || [ -L "$file" ]; then echo "the key file or its folder is a symbolic link" >&2; exit 1; fi',
     'if [ ! -f "$file" ]; then echo not-found; exit 0; fi',
     ...LOCK_LINES,
     `prog=${shQuote(AWK_PROGRAM)}`,
@@ -253,5 +264,5 @@ export function deprovisionScript(
   const comment = `claude-rc:${id}`;
   if (systemType === "windows")
     return { shell: "powershell", script: powershellRemoveScript(keyBlob, comment, options.account) };
-  return { shell: "sh", script: shRemoveScript(keyBlob, comment) };
+  return { shell: "sh", script: shRemoveScript(keyBlob, comment, keyFileName(options.keyFile)) };
 }

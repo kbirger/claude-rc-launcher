@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { parseCli } from "../src/args";
 import type { Flags } from "../src/args";
 import { ExitError } from "../src/creds";
 import { HubError } from "../src/hub";
 import type { HubClient } from "../src/hub";
-import { sshTargetAdd } from "../src/sshtarget";
+import { sshTargetAdd, SSH_TARGET_USAGE } from "../src/sshtarget";
 import { rejection } from "./support";
 
 const HUB = "https://hub.example";
@@ -338,6 +339,53 @@ describe("sshTargetAdd managed", () => {
     expect(rg.paths()).toContain("POST /cli/api/ssh/targets/nas/pin-managed");
     expect(rg.paths()).not.toContain("POST /cli/api/ssh/targets/nas/scan");
     expect(rg.prompts.filter((prompt) => prompt.includes("match"))).toEqual([]);
+  });
+});
+
+describe("sshTargetAdd key file", () => {
+  test("the usage text shows --key-file and the help text lists it", () => {
+    expect(SSH_TARGET_USAGE).toContain("[--key-file <name>]");
+  });
+
+  test("--key-file is a flag that the parser reads", () => {
+    const { flags } = parseCli(["ssh", "target", "add", "nas", "--managed", "pve", "--key-file", "authorized_keys2"]);
+    expect(flags["key-file"]).toBe("authorized_keys2");
+  });
+
+  test("a managed add sends the key file to the hub", async () => {
+    const rg = rig({});
+    await rg.run({ ...managed, "key-file": "authorized_keys2" });
+    expect(bodyOf(rg.calls.find((call) => call.path.endsWith("/targets")))).toMatchObject({
+      managedHost: "nas-host",
+      keyFile: "authorized_keys2",
+    });
+  });
+
+  test("a managed add without --key-file sends no keyFile", async () => {
+    const rg = rig({});
+    await rg.run(managed);
+    expect(bodyOf(rg.calls.find((call) => call.path.endsWith("/targets")))).not.toHaveProperty("keyFile");
+  });
+
+  test("a bad name, an external add, dropbear and windows exit 1 with the usage text and call nothing", async () => {
+    const cases: Flags[] = [
+      { ...managed, "key-file": "../x" },
+      { ...managed, "key-file": "authorized_keys/../x" },
+      { ...managed, "key-file": "known_hosts" },
+      { ...managed, "key-file": "authorized_keys" + "a".repeat(49) },
+      { ...managed, "key-file": "" },
+      { ...external, "key-file": "authorized_keys2" },
+      { ...managed, type: "dropbear", "key-file": "authorized_keys2" },
+      { ...managed, type: "windows", "key-file": "authorized_keys2" },
+    ];
+    for (const flags of cases) {
+      const rg = rig({});
+      const error = await rejection(rg.run(flags));
+      expect(exitCode(error)).toBe(1);
+      expect(error.message).toStartWith(USAGE_START);
+      expect(error.message).toContain("--key-file");
+      expect(rg.calls).toEqual([]);
+    }
   });
 });
 

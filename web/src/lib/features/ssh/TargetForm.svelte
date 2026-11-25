@@ -38,6 +38,7 @@
   let address = $state("");
   let port = $state("");
   let account = $state("");
+  let keyFile = $state("");
   let picked = $state<string[]>([]);
 
   const idOk = $derived(ID_RE.test(id));
@@ -45,6 +46,8 @@
   const external = $derived(kind === "external");
   // The hub cannot tell how the other nodes see its own host, and the public URL names another machine.
   const isLocal = $derived(!external && managedHost === "local");
+  // Only a managed linux or synology target can use another key file.
+  const takesKeyFile = $derived(!external && (systemType === "linux" || systemType === "synology"));
   const valid = $derived(
     idOk &&
       portOk &&
@@ -68,6 +71,7 @@
       systemType,
       nodes: [...picked],
       ...(external ? {} : { managedHost }),
+      ...(takesKeyFile && keyFile.trim() ? { keyFile: keyFile.trim() } : {}),
       ...(address.trim() ? { address: address.trim() } : {}),
       ...(port.trim() ? { port: Number(port) } : {}),
     });
@@ -168,6 +172,24 @@
       spellcheck={false}
     />
   </div>
+
+  {#if takesKeyFile}
+    <div class="grid gap-1">
+      <Label for="{uid}-keyfile">Key file (optional)</Label>
+      <Input
+        id="{uid}-keyfile"
+        class="h-11 font-mono"
+        placeholder="authorized_keys"
+        bind:value={keyFile}
+        autocapitalize="off"
+        autocomplete="off"
+        spellcheck={false}
+      />
+      <p class="text-xs text-muted-foreground">
+        Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile.
+      </p>
+    </div>
+  {/if}
 
   <fieldset class="grid gap-2">
     <legend class="text-sm font-medium">Nodes that can reach the target</legend>

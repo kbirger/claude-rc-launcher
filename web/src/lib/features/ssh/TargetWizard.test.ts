@@ -323,6 +323,81 @@ test("a managed target is sent with its managed host and an optional address", a
   });
 });
 
+const keyFileInput = () => document.querySelector<HTMLInputElement>('input[id$="-keyfile"]');
+
+test("the key file field shows only for a managed linux or synology target", async () => {
+  answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
+  show(PRF);
+  // External: hidden for every type.
+  for (const type of ["linux", "synology", "windows", "dropbear"]) {
+    choose('select[id$="-type"]', type);
+    expect(keyFileInput()).toBeNull();
+  }
+  label("Managed").querySelector("input")!.click();
+  flushSync();
+  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
+  for (const type of ["linux", "synology"]) {
+    choose('select[id$="-type"]', type);
+    expect(keyFileInput()).not.toBeNull();
+  }
+  for (const type of ["windows", "dropbear"]) {
+    choose('select[id$="-type"]', type);
+    expect(keyFileInput()).toBeNull();
+  }
+  choose('select[id$="-type"]', "linux");
+  expect(keyFileInput()!.value).toBe("");
+  expect(keyFileInput()!.placeholder).toBe("authorized_keys");
+  expect(document.body.textContent).toContain(
+    "Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile.",
+  );
+});
+
+const fillManaged = async (type: string) => {
+  answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
+  answers["POST /api/ssh/targets"] = () => ({ body: detail({ managedHost: "node2" }) });
+  show(PRF);
+  label("Managed").querySelector("input")!.click();
+  flushSync();
+  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
+  typeInto('input[id$="-id"]', "box");
+  choose('select[id$="-host"]', "node2");
+  choose('select[id$="-type"]', type);
+  typeInto('input[id$="-account"]', "admin");
+  label("node1").querySelector("input")!.click();
+  flushSync();
+};
+
+test("a managed linux target posts the key file that was typed", async () => {
+  await fillManaged("linux");
+  typeInto('input[id$="-keyfile"]', " authorized_keys2 ");
+  press("Create target");
+  await waitText("Step 2 of 6");
+  expect(posts()[0]!.body).toEqual({
+    id: "box",
+    account: "admin",
+    systemType: "linux",
+    nodes: ["node1"],
+    managedHost: "node2",
+    keyFile: "authorized_keys2",
+  });
+});
+
+test("an empty key file is not posted", async () => {
+  await fillManaged("synology");
+  press("Create target");
+  await waitText("Step 2 of 6");
+  expect(posts()[0]!.body).not.toHaveProperty("keyFile");
+});
+
+test("a key file typed for linux is not posted after the type changes to windows", async () => {
+  await fillManaged("linux");
+  typeInto('input[id$="-keyfile"]', "authorized_keys2");
+  choose('select[id$="-type"]', "windows");
+  press("Create target");
+  await waitText("Step 2 of 6");
+  expect(posts()[0]!.body).not.toHaveProperty("keyFile");
+});
+
 const pickLocal = async (status: SshStatus) => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "local", name: "Hub", status: "ok" }] });
   show(status);

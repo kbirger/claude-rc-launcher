@@ -11,7 +11,7 @@ import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
 import { NodeError } from "./sshservice";
 import type { SshService } from "./sshservice";
-import { authorizedKeysLine, HOST_KEY_RE, installNotes, isSystemType, TargetError } from "./sshtargets";
+import { authorizedKeysLine, HOST_KEY_RE, installNotes, isSystemType, keyFileProblem, TargetError } from "./sshtargets";
 import type { Target, TargetState, TargetStore } from "./sshtargets";
 import { newRecovery } from "./sshwrap";
 import type { User } from "./userauth";
@@ -296,6 +296,10 @@ export function sshApi(options: SshApiOptions): Hono {
       throw new HttpError(400, "nodes must be a list of host ids");
     if (body.managedHost !== undefined && typeof body.managedHost !== "string")
       throw new HttpError(400, "managedHost must be a host id");
+    if (body.keyFile !== undefined && typeof body.keyFile !== "string")
+      throw new HttpError(400, "keyFile must be text");
+    const keyFileBad = keyFileProblem(body.keyFile, body.systemType, body.managedHost !== undefined);
+    if (keyFileBad) throw new HttpError(400, keyFileBad);
     if (body.address !== undefined && typeof body.address !== "string")
       throw new HttpError(400, "address must be text");
     if (body.port !== undefined && typeof body.port !== "number") throw new HttpError(400, "port must be a number");
@@ -318,6 +322,7 @@ export function sshApi(options: SshApiOptions): Hono {
       systemType: body.systemType,
       nodes: body.nodes,
       ...(body.managedHost !== undefined ? { managedHost: body.managedHost } : {}),
+      ...(body.keyFile !== undefined ? { keyFile: body.keyFile } : {}),
     });
     await push(target.nodes);
     return context.json(target, 201);

@@ -395,3 +395,50 @@ describe("scripts of one account on the node", () => {
     expect(limits).toEqual([8000]);
   });
 });
+
+describe("key file on the node routes", () => {
+  const KEY = BLOB.toString("base64");
+
+  test("POST /authorize builds the script for the chosen key file", async () => {
+    expect((await authorize({ keyFile: "authorized_keys2" })).status).toBe(204);
+    expect(calls[0]?.script.script).toContain("'authorized_keys2'");
+    await authorize();
+    expect(calls[1]?.script.script).toContain("'authorized_keys'");
+  });
+
+  test("POST /deauthorize builds the removal script for the chosen key file", async () => {
+    result = { code: 0, stderr: "", stdout: "removed\n" };
+    const response = await call("POST", "/deauthorize", {
+      account: "alice",
+      systemType: "linux",
+      key: KEY,
+      id: "nas",
+      keyFile: "authorized_keys.claude-rc",
+    });
+    expect(response.status).toBe(200);
+    expect(calls[0]?.script.script).toContain("'authorized_keys.claude-rc'");
+  });
+
+  test("both routes refuse a bad key file, and dropbear and windows with one, with 400", async () => {
+    const bad = [
+      { keyFile: "../x" },
+      { keyFile: "authorized_keys/../x" },
+      { keyFile: "known_hosts" },
+      { keyFile: 5 },
+      { keyFile: "authorized_keys2", systemType: "dropbear" },
+      { keyFile: "authorized_keys2", systemType: "windows" },
+    ];
+    for (const overrides of bad) {
+      expect((await authorize(overrides)).status).toBe(400);
+      const removal = call("POST", "/deauthorize", {
+        account: "alice",
+        systemType: "linux",
+        key: KEY,
+        id: "nas",
+        ...overrides,
+      });
+      expect((await removal).status).toBe(400);
+    }
+    expect(calls).toHaveLength(0);
+  });
+});

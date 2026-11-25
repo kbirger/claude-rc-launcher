@@ -388,3 +388,54 @@ describe("deprovisionScript", () => {
     expect({ code: await proc.exited, out: out + err }).toEqual({ code: 0, out: "" });
   });
 });
+
+describe("key file", () => {
+  const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIAAA";
+  const mine = `from="10.0.0.1",restrict ssh-ed25519 ${BLOB} claude-rc:nas`;
+  const file = (dir: string, name: string) => join(dir, ".ssh", name);
+
+  test("the install script writes the chosen file and leaves authorized_keys alone", async () => {
+    const dir = await home();
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await writeFile(keys(dir), "ssh-rsa JOB x\n");
+    for (const type of ["linux", "synology"] as const) {
+      const { script } = provisionScript(type, LINE, { keyFile: "authorized_keys2" });
+      expect(script).toContain("'authorized_keys2'");
+      expect(await run(script, dir)).toEqual({ code: 0, out: "" });
+    }
+    expect(await readFile(file(dir, "authorized_keys2"), "utf8")).toBe(`${LINE}\n`);
+    expect(await mode(file(dir, "authorized_keys2"))).toBe(0o600);
+    expect(await readFile(keys(dir), "utf8")).toBe("ssh-rsa JOB x\n");
+  });
+
+  test("the removal script removes from the chosen file and leaves authorized_keys alone", async () => {
+    const dir = await home();
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await writeFile(file(dir, "authorized_keys.claude-rc"), `ssh-rsa KEEP x\n${mine}\n`, { mode: 0o600 });
+    await writeFile(keys(dir), `${mine}\n`, { mode: 0o600 });
+    const { script } = deprovisionScript("linux", BLOB, "nas", { keyFile: "authorized_keys.claude-rc" });
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(file(dir, "authorized_keys.claude-rc"), "utf8")).toBe("ssh-rsa KEEP x\n");
+    expect(await readFile(keys(dir), "utf8")).toBe(`${mine}\n`);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "not-found\n" });
+  });
+
+  test("without a key file both scripts use authorized_keys", async () => {
+    const dir = await home();
+    expect(provisionScript("linux", LINE).script).toContain(`file="$dir"/'authorized_keys'`);
+    expect(deprovisionScript("linux", BLOB, "nas").script).toContain(`file="$dir"/'authorized_keys'`);
+    await run(provisionScript("linux", LINE).script, dir);
+    expect(await readFile(keys(dir), "utf8")).toBe(`${LINE}\n`);
+    expect(await run(deprovisionScript("linux", "AAAAC3Nza", "nas").script, dir)).toEqual({
+      code: 0,
+      out: "removed\n",
+    });
+  });
+
+  test("a name that is not a key file name throws and never reaches a script", () => {
+    for (const keyFile of ["../x", "authorized_keys/../x", "known_hosts", "authorized_keys'; touch x; '"]) {
+      expect(() => provisionScript("linux", LINE, { keyFile })).toThrow();
+      expect(() => deprovisionScript("linux", BLOB, "nas", { keyFile })).toThrow();
+    }
+  });
+});

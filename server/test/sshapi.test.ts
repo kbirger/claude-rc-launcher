@@ -348,6 +348,41 @@ describe("targets", () => {
     expect(again.body).toMatchObject({ address: "10.0.0.6", state: "draft" });
   });
 
+  test("POST /targets takes a key file for a managed linux target and stores it", async () => {
+    const { call, targets } = await setup();
+    const body = { id: "kf", account: "root", systemType: "linux", nodes: ["node1"], managedHost: "node2" };
+    const made = await call("POST", "/targets", "admin", { ...body, keyFile: "authorized_keys2" });
+    expect(made.status).toBe(201);
+    expect(made.body).toMatchObject({ keyFile: "authorized_keys2" });
+    expect(targets.get("kf")?.keyFile).toBe("authorized_keys2");
+    const plain = await call("POST", "/targets", "admin", { ...body, id: "plain" });
+    expect(plain.status).toBe(201);
+    expect(plain.body).not.toHaveProperty("keyFile");
+  });
+
+  test("POST /targets refuses a bad key file, an external target with one, and dropbear and windows with 400", async () => {
+    const { call, targets } = await setup();
+    const managed = { id: "kf", account: "root", systemType: "linux", nodes: ["node1"], managedHost: "node2" };
+    const bad = [
+      { ...managed, keyFile: "../x" },
+      { ...managed, keyFile: "authorized_keys/../x" },
+      { ...managed, keyFile: "known_hosts" },
+      { ...managed, keyFile: 5 },
+      { ...managed, keyFile: "authorized_keys2", systemType: "dropbear" },
+      { ...managed, keyFile: "authorized_keys2", systemType: "windows" },
+      {
+        id: "ext",
+        account: "root",
+        systemType: "linux",
+        nodes: ["node1"],
+        address: "10.0.0.7",
+        keyFile: "authorized_keys2",
+      },
+    ];
+    for (const body of bad) expect((await call("POST", "/targets", "admin", body)).status).toBe(400);
+    expect(targets.list()).toEqual([]);
+  });
+
   test("POST /targets with managedHost and no address takes the address from the host", async () => {
     const { call, targets } = await setup();
     const made = await call("POST", "/targets", "admin", {
