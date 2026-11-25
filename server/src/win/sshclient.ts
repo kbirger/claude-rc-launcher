@@ -65,15 +65,32 @@ const atLeastMin = (version: { major: number; minor: number }) =>
 const NOT_FOUND =
   "The Windows OpenSSH client is not installed. Install the Windows feature OpenSSH Client, then restart the node.";
 
+/** The environment of this process with the given names set. Windows names ignore case, so a name that differs only in case is replaced. */
+export function mergedEnv(extra: Record<string, string>): Record<string, string> {
+  const wanted = new Set(Object.keys(extra).map((name) => name.toLowerCase()));
+  const out: Record<string, string> = {};
+
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && !wanted.has(name.toLowerCase())) out[name] = value;
+  }
+
+  return { ...out, ...extra };
+}
+
 /** Runs a program with Bun and stops it after a time limit. A program that cannot start gives code 127. */
-export async function bunRun(exe: string, args: string[], env?: Record<string, string>): Promise<RunResult> {
+export async function bunRun(
+  exe: string,
+  args: string[],
+  env?: Record<string, string>,
+  timeoutMs = 10_000,
+): Promise<RunResult> {
   try {
     const proc = Bun.spawn([exe, ...args], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
-      ...(env ? { env: { ...process.env, ...env } } : {}),
-      timeout: 10_000,
+      ...(env ? { env: mergedEnv(env) } : {}),
+      timeout: timeoutMs,
     });
     const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     return { code: await proc.exited, output: out + err };

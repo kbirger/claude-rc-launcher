@@ -360,10 +360,20 @@ function Install-SshClient {
   $found = Find-SshClient
   if (-not $found -and -not $SshClientDir) {
     Write-Host '==> Installing the Windows feature OpenSSH Client (this needs Windows Update)'
+    # A job with a time limit: without Windows Update (WSUS, no network) the call can wait for a long time.
+    $job = Start-Job -ScriptBlock { Add-WindowsCapability -Online -Name 'OpenSSH.Client~~~~0.0.1.0' }
     try {
-      Add-WindowsCapability -Online -Name 'OpenSSH.Client~~~~0.0.1.0' | Out-Null
+      if (Wait-Job -Job $job -Timeout 600) {
+        $done = Receive-Job -Job $job -ErrorAction Stop
+        if ($done -and $done.RestartNeeded) { Write-Host 'Windows asks for a restart to finish the OpenSSH Client.' }
+      } else {
+        Write-Host 'The install of the OpenSSH Client took more than 10 minutes and was stopped.'
+      }
     } catch {
       Write-Host "The install of the OpenSSH Client failed: $($_.Exception.Message)"
+    } finally {
+      Stop-Job -Job $job -ErrorAction SilentlyContinue
+      Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
     $found = Find-SshClient
   }
@@ -438,8 +448,14 @@ if (-not $haveSideFiles) {
       if (-not (Test-Path -LiteralPath (Join-Path $unpacked $f))) { throw "$InstallerAsset does not contain $f" }  # also stops a loop
     }
     $forward = @{}
-    foreach ($k in $PSBoundParameters.Keys) { $forward[$k] = $PSBoundParameters[$k] }
-    & (Join-Path $unpacked 'install.ps1') @forward
+    $inner = Join-Path $unpacked 'install.ps1'
+    # An older release has no -NoSshClient or -SshClientDir. Forward only what the inner script declares.
+    $declared = (Get-Command -Name $inner).Parameters
+    foreach ($k in $PSBoundParameters.Keys) {
+      if ($declared.ContainsKey($k)) { $forward[$k] = $PSBoundParameters[$k] }
+      else { Write-Host "The release $Release has no -$k option. It is not used." }
+    }
+    & $inner @forward
   } finally {
     Remove-Item -LiteralPath $bootTemp -Recurse -Force -ErrorAction SilentlyContinue
   }

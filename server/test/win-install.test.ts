@@ -238,6 +238,16 @@ describe("install.ps1: the layout and the client registry value (text checks)", 
     expect(script).toContain("could not remove the old client ${oldClient}");
   });
 
+  test("the bootstrap forwards only the options that the inner script declares", () => {
+    expect(script).toContain("$declared = (Get-Command -Name $inner).Parameters");
+    expect(script).toContain("if ($declared.ContainsKey($k))");
+  });
+
+  test("the OpenSSH feature install has a time limit and is never a stop for the install", () => {
+    expect(script).toContain("Wait-Job -Job $job -Timeout 600");
+    expect(script).toContain("The install of the OpenSSH Client failed");
+  });
+
   test("-NoService writes no registry value unless a test key is given", () => {
     expect(script).toContain("$NoService -and -not $ClientOnly -and $ClientRegistryKey -eq $DefaultClientKey");
     expect(script).toContain("The client registry value was not written (-NoService).");
