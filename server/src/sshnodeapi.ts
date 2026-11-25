@@ -9,11 +9,14 @@ import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
 import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./sshfiles";
 import { GrantAgent } from "./sshnodeagent";
+import type { AgentTransport } from "./sshnodeagent";
 import { deprovisionScript, provisionScript } from "./sshprovision";
 import type { Script } from "./sshprovision";
 import { HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
 import type { SystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
+import { ensurePrivateFolder, writeGrantFile } from "./win/sshfiles";
+import type { RunIcacls } from "./win/sshfiles";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
 // (sshnodeagent.ts), writes an `ssh` config file and a known_hosts file, and asks the hub to sign when the SSH client
@@ -50,6 +53,20 @@ export interface AccessResult {
   socket: string;
   config: string;
   endsAt: number;
+  /** The full path of the checked `ssh` program. Set on a Windows node only. */
+  ssh?: string;
+}
+
+/** What a Windows node adds to the grant routes. The agent is a named pipe and the files get access lists. */
+export interface WindowsGrantOptions {
+  /** The SID of the service user. The folders and the pipes give access to it, to SYSTEM and to Administrators only. */
+  sid: string;
+  /** The checked client. A reason in plain English when there is none. Runs before each grant. */
+  checkClient: () => Promise<{ ok: true; sshPath: string } | { ok: false; reason: string }>;
+  /** The transport of the agent of one grant: a named pipe with its own name. */
+  agentTransport: (grantId: string) => AgentTransport;
+  /** Runs icacls. For tests. */
+  runIcacls?: RunIcacls;
 }
 
 interface Waiter<T> {
@@ -132,6 +149,8 @@ export interface SshNodeOptions {
   signTimeoutMs?: number;
   /** Changes the owner of a path. For tests. */
   chown?: (path: string, uid: number, gid: number) => Promise<void>;
+  /** Set on a Windows node. */
+  windows?: WindowsGrantOptions;
 }
 
 interface Grant {
@@ -349,6 +368,7 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
   const app = new Hono();
 
   const chown = options.chown ?? chownDefault;
+  const windows = options.windows;
   const pathOf = (folder: string, grantId: string, suffix: string) => join(folder, `${grantId}${suffix}`);
 
   /**
@@ -366,7 +386,7 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
   /** The files of a grant never follow a link that a session put in its folder (sshfiles.ts). */
   const writePrivate = (path: string, text: string, owner?: { uid: number; gid: number }) =>
-    createPrivateFile(path, text, owner, options.chown);
+    windows ? writeGrantFile(path, text) : createPrivateFile(path, text, owner, options.chown);
 
   function failSigns(grantId: string | undefined, reason: string): void {
     for (const [signId, pending] of signs) {
@@ -417,6 +437,11 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
       dirOk = false;
     }
 
+    if (windows) {
+      const client = await windows.checkClient();
+      return context.json({ ssh: client.ok, dir: dirOk, ...(client.ok ? {} : { reason: client.reason }) });
+    }
+
     return context.json({ ssh: Bun.which("ssh") !== null, dir: dirOk });
   });
 
@@ -424,20 +449,33 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
     const request = parseGrant(await readObject(context));
     const folder = join(dir, request.instanceId);
     const socketPath = pathOf(folder, request.grantId, ".sock");
-    if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH || !stageFits(dir))
+    // A named pipe has no such limit.
+    if (!windows && (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH || !stageFits(dir)))
       throw new HttpError(400, `the socket path is longer than ${MAX_SOCKET_PATH} bytes`);
     if (grants.has(request.grantId)) throw new HttpError(409, "a grant with that id exists");
     // An answer to a request that ended (a timeout, a node restart) would start an agent that no session uses.
     if (request.requestId !== undefined && !broker.isWaiting(request.requestId))
       throw new HttpError(409, NO_WAITING_REQUEST);
 
-    const owner = options.resolveUser?.(request.instanceId);
-    await ensureDir();
-    await ensureInstanceDir(folder, owner);
+    const owner = windows ? undefined : options.resolveUser?.(request.instanceId);
+    let sshPath: string | undefined;
+
+    if (windows) {
+      // The client is checked before each grant: it can change after the start.
+      const client = await windows.checkClient();
+      if (!client.ok) throw new HttpError(409, client.reason);
+      sshPath = client.sshPath;
+      await ensurePrivateFolder(dir, windows.sid, windows.runIcacls);
+      await ensurePrivateFolder(folder, windows.sid, windows.runIcacls);
+    } else {
+      await ensureDir();
+      await ensureInstanceDir(folder, owner);
+    }
 
     const agent = new GrantAgent({
       dir: folder,
       topDir: dir,
+      ...(windows ? { transport: windows.agentTransport(request.grantId) } : {}),
       ...(options.chown ? { chown: options.chown } : {}),
       grantId: request.grantId,
       publicBlob: request.publicBlob,
@@ -457,8 +495,12 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
       const identity = pathOf(folder, request.grantId, ".pub");
       await writePrivate(knownHosts, knownHostsLine(request.address, request.port, request.hostKey), owner);
       await writePrivate(identity, `ssh-ed25519 ${Buffer.from(request.publicBlob).toString("base64")}\n`, owner);
-      await writePrivate(config, grantConfig({ ...request, socket, identity, knownHosts }), owner);
-      result = { socket, config, endsAt: request.endsAt };
+      await writePrivate(
+        config,
+        grantConfig({ ...request, socket, identity, knownHosts, ...(windows ? { windows: true } : {}) }),
+        owner,
+      );
+      result = { socket, config, endsAt: request.endsAt, ...(sshPath ? { ssh: sshPath } : {}) };
     } catch (error) {
       await removeGrant(request.grantId);
       throw error;
