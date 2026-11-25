@@ -50,6 +50,7 @@ import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
+import { PushService } from "./webpush";
 
 export interface HubDeps {
   instances?: Instances;
@@ -274,6 +275,14 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   const sshKeys = new SshKeyStore(path.join(sshDir, "keys.json"));
   const sshTargets = new TargetStore(path.join(sshDir, "targets.json"));
 
+  const push = new PushService({
+    dir: path.join(cfg.stateDir, "push"),
+    subject: cfg.publicUrl,
+    audit: (line) => {
+      console.log(line);
+    },
+  });
+
   const sshAudit = (line: string) => {
     console.log(line);
   };
@@ -372,6 +381,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     sessionIndex,
     sessionsStore: store,
     beatLoop,
+    push,
     ssh: {
       service: ssh,
       keys: sshKeys,
