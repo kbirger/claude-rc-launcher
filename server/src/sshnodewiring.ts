@@ -468,7 +468,8 @@ function createWindowsSsh(
   const withToken = new Set<string>();
   let pipe = "";
 
-  bridge.env = (instanceId) => {
+  /** Set only after the control pipe is open, so no instance gets an empty pipe name. */
+  const issueEnv = (instanceId: string): Record<string, string> => {
     withToken.add(instanceId);
     return { CLAUDE_RC_SSH_CONTROL: pipe, CLAUDE_RC_SSH_TOKEN: control.register(instanceId) };
   };
@@ -491,6 +492,31 @@ function createWindowsSsh(
   };
 
   let chain: Promise<void> = Promise.resolve();
+
+  /**
+   * The skill goes into the home of the service user, which is the user of every session. It is written only when the
+   * client works, because the skill sends a session to a feature that needs it. A test must give its own deployer.
+   */
+  const deployWindowsSkill = async (): Promise<void> => {
+    if (options.cfg.installSkill === false) return;
+    if (options.deploySkill === undefined && process.env.NODE_ENV === "test") return;
+    if (!(await cachedCheck()).ok) return;
+    const deploy =
+      options.deploySkill ??
+      ((user: SkillUser) =>
+        ensureSkill(user, {
+          run: bunRunner,
+          platform: "win32",
+          log,
+          content: (options.skillContent ?? (() => SSH_SKILL))(),
+        }));
+
+    try {
+      await deploy({ home: options.cfg.serviceHome, path: options.cfg.servicePath, name: options.cfg.serviceUser });
+    } catch (error) {
+      log(`ssh skill: cannot install: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   const sync = (): Promise<void> => {
     chain = chain.then(async () => {
@@ -540,7 +566,7 @@ function createWindowsSsh(
   return {
     ssh,
     sshManaged: {},
-    sshUsable: async () => (await cachedCheck()).ok,
+    sshUsable: async () => pipe !== "" && (await cachedCheck()).ok,
     instances,
     skillsSettled: () => Promise.resolve(),
     async start() {
@@ -549,6 +575,7 @@ function createWindowsSsh(
         const removed = await removeStaleGrantFiles(dir);
         if (removed > 0) log(`ssh: removed ${removed} old grant files`);
         pipe = await control.start();
+        bridge.env = issueEnv;
       } catch (error) {
         log(`ssh: cannot start on this node: ${error instanceof Error ? error.message : String(error)}`);
         bridge.env = undefined;
@@ -556,6 +583,7 @@ function createWindowsSsh(
       }
 
       await sync();
+      await deployWindowsSkill();
     },
     async stop() {
       await chain;

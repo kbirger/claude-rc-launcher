@@ -67,7 +67,13 @@ const instances = new WinInstances(
     namePrefix: cfg.namePrefix,
     instanceDir: join(nodeConfig.tls.stateDir, "instances"),
     serviceIsAdmin: plan.serviceIsAdmin,
-    sshEnv: (id) => sshBridge.env?.(id) ?? {},
+    sshEnv: (id) => {
+      if (sshBridge.env) return sshBridge.env(id);
+      console.error(
+        `instance ${id} has SSH requests on, but the node has no SSH link: it starts without the variables`,
+      );
+      return {};
+    },
     sshRefusal: () => sshBridge.refusal(),
   },
   { killTree: taskkillTree(bunRunner), ...(plan.spawnRestricted ? { spawnRestricted: plan.spawnRestricted } : {}) },
