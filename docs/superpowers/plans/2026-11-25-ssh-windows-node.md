@@ -24,12 +24,15 @@ Date: 2026-11-25. Status: draft, waiting for approval. Design note: `docs/superp
 
 - Read how `runner.ts` starts an instance on `win32` and which environment it gives.
 - Write a short note in the design file. Say which user runs the instances and how the variable reaches the session.
-- Done when a test shows the variable inside a real Windows instance.
+- Result: see the design note. Both spawn paths need an `env` option. The restricted path builds its own environment block.
+- Result: a restricted session cannot open a default pipe of the full token. Task 2 sets the pipe access list with one `SetNamedSecurityInfoW` call.
+- Still open: a test that shows the variable inside a real instance. It runs in Task 5.
 
 ### Task 2: Agent on a named pipe
 
 - Add a pipe transport behind the interface of `GrantAgent`. Keep the Unix socket path for Linux.
 - Pipe names come from a random value. Reject a name that matches `openssh-ssh-agent`.
+- After `listen`, set the access list of the pipe to SYSTEM and the service user SID with `bun:ffi`. Test it with a restricted client.
 - Tests: list, sign, bad frame, stop removes the pipe. They run on Windows. A fake transport test runs on Linux.
 
 ### Task 3: Files and access lists
