@@ -665,6 +665,32 @@ describe("SshService managed targets", () => {
     });
   });
 
+  test("authorizeManaged and deauthorizeManaged send the key file of the target, and send none without one", async () => {
+    const { service, targets, keys, host } = await managed({
+      "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } },
+    });
+    await service.authorizeManaged("pve");
+    await service.deauthorizeManaged("pve");
+    expect(host.calls[0].json).not.toHaveProperty("keyFile");
+    expect(host.calls[1].json).not.toHaveProperty("keyFile");
+
+    await targets.add({
+      id: "alt",
+      address: "10.0.0.10",
+      port: 22,
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "pve",
+      keyFile: "authorized_keys2",
+    });
+    await keys.create("alt", unlock);
+    await service.authorizeManaged("alt");
+    expect(host.calls[2].json).toMatchObject({ account: "root", keyFile: "authorized_keys2" });
+    expect(await service.deauthorizeManaged("alt")).toEqual({ line: "removed" });
+    expect(host.calls[3].json).toMatchObject({ id: "alt", keyFile: "authorized_keys2" });
+  });
+
   test("authorizeManaged without an enabled node address is a 409", async () => {
     const { service, targets, host } = await managed();
     await targets.setNodeAccess("node1", { enabled: false, sourceAddress: "192.168.1.10" });

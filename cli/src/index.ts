@@ -59,7 +59,8 @@ Commands:
   ssh request <target> [--minutes n] [--reason text]
                                      ask the owner for SSH access and wait (inside an instance)
   ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>)
-                                     [--port n] [--fingerprint f] [--no-test]
+                                     [--port n] [--key-file name] [--fingerprint f] [--no-test]
+                                     (--key-file: managed linux or synology, a file in ~/.ssh that starts with authorized_keys)
                                      add a machine that sessions may ask to reach
   node update [--binary file] [--release tag]
                                      update this node's server binary and restart it

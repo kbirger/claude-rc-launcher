@@ -11,7 +11,8 @@ import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./
 import { GrantAgent } from "./sshnodeagent";
 import { deprovisionScript, provisionScript } from "./sshprovision";
 import type { Script } from "./sshprovision";
-import { HOST_KEY_RE, isAccount, isSystemType } from "./sshtargets";
+import { HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
+import type { SystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
@@ -658,6 +659,13 @@ function deauthorizeKey(value: unknown): string {
   throw new HttpError(400, "key must be the base64 blob of an ssh-ed25519 public key of at most 200 characters");
 }
 
+/** The optional key file of a managed request: the rule of the target store, so a path or another ssh file is a 400. */
+function keyFileOf(value: unknown, systemType: SystemType): string | undefined {
+  const bad = keyFileProblem(value, systemType, true);
+  if (bad) throw new HttpError(400, bad);
+  return value as string | undefined;
+}
+
 /** The managed target routes: `GET /hostkey`, `POST /authorize` and `POST /deauthorize`. They work on every node. */
 export function sshManagedApi(options: SshManagedOptions = {}): Hono {
   const runUnserialized = options.runAs ?? defaultRunAs(options.identityFor);
@@ -692,8 +700,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     if (!isAccount(account)) throw new HttpError(400, "account is not valid");
     if (!isSystemType(systemType)) throw new HttpError(400, "systemType is not valid");
     const line = authorizeLine(body.line);
+    const keyFile = keyFileOf(body.keyFile, systemType);
 
-    const script = provisionScript(systemType, line, systemType === "windows" ? { account } : {});
+    const script = provisionScript(systemType, line, systemType === "windows" ? { account } : { keyFile });
     const { code, stderr } = await runAs(account, script);
     const failure = stderr.trim();
     if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
@@ -709,8 +718,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     if (!isSystemType(systemType)) throw new HttpError(400, "systemType is not valid");
     if (typeof id !== "string" || !HOST_ID_RE.test(id)) throw new HttpError(400, "id is not valid");
     const key = deauthorizeKey(body.key);
+    const keyFile = keyFileOf(body.keyFile, systemType);
 
-    const script = deprovisionScript(systemType, key, id, systemType === "windows" ? { account } : {});
+    const script = deprovisionScript(systemType, key, id, systemType === "windows" ? { account } : { keyFile });
     const { code, stderr, stdout } = await runAs(account, script, DEAUTHORIZE_TIMEOUT_MS);
     const failure = stderr.trim();
     if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);

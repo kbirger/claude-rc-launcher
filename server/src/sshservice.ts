@@ -227,7 +227,12 @@ export class SshService {
       target.managedHost,
       "POST",
       "/authorize",
-      { account: target.account, systemType: target.systemType, line },
+      {
+        account: target.account,
+        systemType: target.systemType,
+        line,
+        ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+      },
       SCRIPT_TIMEOUT_MS,
     );
   }
@@ -256,7 +261,13 @@ export class SshService {
         target.managedHost,
         "POST",
         "/deauthorize",
-        { account: target.account, systemType: target.systemType, key: blob, id: targetId },
+        {
+          account: target.account,
+          systemType: target.systemType,
+          key: blob,
+          id: targetId,
+          ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+        },
         DEAUTHORIZE_TIMEOUT_MS,
       );
       const result = isObject(reply.body) ? reply.body.result : undefined;
