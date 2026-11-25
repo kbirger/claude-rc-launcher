@@ -4,7 +4,7 @@
 /// <reference lib="webworker" />
 import { immutable } from "$app/manifest";
 import { version } from "$app/env";
-import { handleClick, notificationOptions, parsePush, type ClickData } from "#lib/features/push/worker";
+import { handleClick, parsePush, showPush, type ClickData } from "#lib/features/push/worker";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -45,7 +45,7 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("push", (event) => {
   const message = parsePush(event.data?.text() ?? "");
   const show = message
-    ? self.registration.showNotification(message.title, notificationOptions(message))
+    ? showPush(message, self.registration)
     : self.registration.showNotification("SSH access requested", {
         tag: "ssh-request",
         body: "Open the SSH page to answer.",

@@ -38,7 +38,7 @@ import { GrantStore } from "./sshgrants";
 import { SshKeyStore } from "./sshkeystore";
 import { createLocalSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
-import { createRequestNotifier } from "./sshnotify";
+import { closeMessage, createRequestNotifier } from "./sshnotify";
 import { SshService } from "./sshservice";
 import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
@@ -300,13 +300,16 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   });
 
   const sshHook: { service?: SshService } = {};
-  const sshGrants = new GrantStore({ audit: sshAudit, onEnd: (grant) => sshHook.service?.onGrantEnd(grant) });
+  const sshGrants = new GrantStore({ audit: sshAudit, onEnd: (grant) => sshHook.service?.onGrantEnd(grant),
+    onLeavePending: (grant) => sshHook.service?.onGrantLeavePending(grant),
+  });
   const ssh = new SshService({
     keys: sshKeys,
     targets: sshTargets,
     grants: sshGrants,
     client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
     audit: sshAudit,
+    notifyClose: (grant) => void push.send(closeMessage(grant)),
     notify: createRequestNotifier({
       send: (message) => push.send(message),
       listInstances: (nodeId) => {

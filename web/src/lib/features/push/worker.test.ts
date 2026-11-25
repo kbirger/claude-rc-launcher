@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { handleClick, notificationOptions, parsePush, safeUrl } from "./worker";
+import { handleClick, notificationOptions, parsePush, safeUrl, showPush } from "./worker";
 
 const message = { title: "SSH", body: "Node wants access", url: "/ssh", tag: "ssh-g1", grantId: "g1" };
 
@@ -71,4 +71,30 @@ test("a bad url in a push or in click data never reaches open", async () => {
   const fake = deps(async () => new Response("{}"));
   await handleClick("open", { url: "https://evil.example" }, fake);
   expect(fake.open).toHaveBeenCalledWith("/ssh");
+});
+
+test("a close message shows a notification with the same tag and closes it and the earlier one", async () => {
+  const order: string[] = [];
+  const earlier = { close: vi.fn(() => order.push("close-earlier")) };
+  const fresh = { close: vi.fn(() => order.push("close-new")) };
+  const registration = {
+    showNotification: vi.fn(async (_title: string, _options?: NotificationOptions) => {
+      order.push("show");
+    }),
+    getNotifications: vi.fn(async (_filter?: { tag?: string }) => [earlier, fresh]),
+  };
+
+  await showPush({ title: "SSH request answered", body: "", url: "/ssh", tag: "ssh-g1", grantId: "g1", close: true }, registration);
+
+  expect(registration.showNotification).toHaveBeenCalledTimes(1);
+  expect(registration.showNotification.mock.calls[0]![1]).toMatchObject({ tag: "ssh-g1" });
+  expect(registration.getNotifications).toHaveBeenCalledWith({ tag: "ssh-g1" });
+  expect(order).toEqual(["show", "close-earlier", "close-new"]);
+});
+
+test("a normal message only shows and closes nothing", async () => {
+  const registration = { showNotification: vi.fn(async () => {}), getNotifications: vi.fn(async () => []) };
+  await showPush(message, registration);
+  expect(registration.showNotification).toHaveBeenCalledWith("SSH", expect.objectContaining({ tag: "ssh-g1" }));
+  expect(registration.getNotifications).not.toHaveBeenCalled();
 });
