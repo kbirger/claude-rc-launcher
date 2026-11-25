@@ -12,7 +12,7 @@ function version(git: Git, env: Record<string, string | undefined> = {}) {
 }
 
 const local = (over: Git = {}): Git => ({
-  "describe --tags --abbrev=0": "v0.2.0",
+  "describe --tags --abbrev=0 --exclude *-test.*": "v0.2.0",
   "rev-parse --abbrev-ref HEAD": "feat/multi-host",
   "rev-parse --short HEAD": "dbe45d4",
   "status --porcelain --untracked-files=no": "",
@@ -39,7 +39,9 @@ describe("computeVersion", () => {
     );
   });
   test("no tag gives base 0.0.0", () => {
-    expect(version(local({ "describe --tags --abbrev=0": null }))).toBe("0.0.0+feat-multi-host.dbe45d4");
+    expect(version(local({ "describe --tags --abbrev=0 --exclude *-test.*": null }))).toBe(
+      "0.0.0+feat-multi-host.dbe45d4",
+    );
   });
   test("odd branch characters become dashes", () => {
     expect(version(local({ "rev-parse --abbrev-ref HEAD": "fix/a_b c@{1}" }))).toBe("0.2.0+fix-a-b-c--1-.dbe45d4");

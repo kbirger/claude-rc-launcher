@@ -499,3 +499,37 @@ test("node text renders as text, never as HTML", async () => {
   expect(document.querySelector("img")).toBeNull();
   expect(document.querySelector("b")).toBeNull();
 });
+
+test("the instance settings fields show Allow SSH requests off by default", async () => {
+  help = {
+    settings: [
+      ...HELP.settings,
+      {
+        key: "sshRequests",
+        label: "Allow SSH requests",
+        values: [
+          { value: false, label: "Off", explanation: "Node text for ssh off." },
+          { value: true, label: "On", explanation: "Node text for ssh on." },
+        ],
+      },
+    ],
+  };
+  list = [inst({ settings: SETTINGS })];
+  await openSettings();
+  const text = document.body.textContent!;
+  expect(text).toContain("Allow SSH requests");
+  expect(text).toContain("Node text for ssh on.");
+  const ssh = document.querySelector<HTMLElement>('[aria-label="Allow SSH requests"]')!;
+  const inGroup = (label: string) =>
+    [...ssh.querySelectorAll("label")]
+      .find((item) => item.querySelector("[data-slot=field-title]")?.textContent?.trim() === label)!
+      .querySelector<HTMLButtonElement>("[role=radio]")!;
+  expect(inGroup("Off").getAttribute("aria-checked")).toBe("true");
+  expect(button("Apply")!.disabled).toBe(true);
+  inGroup("On").click();
+  flushSync();
+  button("Apply")!.click();
+  flushSync();
+  await until(() => patches.length === 1);
+  expect(patches[0]!.body).toEqual({ sshRequests: true });
+});

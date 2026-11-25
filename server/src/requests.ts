@@ -46,6 +46,12 @@ function optionalCreateSession(body: Record<string, unknown>): boolean | undefin
   return body.createSession;
 }
 
+function optionalSshRequests(body: Record<string, unknown>): boolean | undefined {
+  if (body.sshRequests === undefined) return undefined;
+  if (typeof body.sshRequests !== "boolean") throw new HttpError(400, "sshRequests must be a boolean");
+  return body.sshRequests;
+}
+
 function optionalSpawnMode(body: Record<string, unknown>): SpawnMode | undefined {
   if (body.spawnMode === undefined) return undefined;
   if (typeof body.spawnMode !== "string" || !SPAWN_MODES.includes(body.spawnMode as SpawnMode))
@@ -60,6 +66,7 @@ export interface StartRequest {
   addTrust?: boolean;
   createSession?: boolean;
   spawnMode?: SpawnMode;
+  sshRequests?: boolean;
 }
 
 /** The body of `PATCH /instances/:id`. At least one known field is required. An unknown field is an error. */
@@ -67,16 +74,19 @@ export function parseSettingsPatch(body: unknown): SettingsPatch {
   if (!isObject(body)) throw new HttpError(400, "body must be an object");
 
   for (const key of Object.keys(body)) {
-    if (key !== "createSession" && key !== "spawnMode") throw new HttpError(400, `unknown field: ${key}`);
+    if (key !== "createSession" && key !== "spawnMode" && key !== "sshRequests")
+      throw new HttpError(400, `unknown field: ${key}`);
   }
 
   const createSession = optionalCreateSession(body);
   const spawnMode = optionalSpawnMode(body);
-  if (createSession === undefined && spawnMode === undefined)
-    throw new HttpError(400, "at least one of createSession and spawnMode is required");
+  const sshRequests = optionalSshRequests(body);
+  if (createSession === undefined && spawnMode === undefined && sshRequests === undefined)
+    throw new HttpError(400, "at least one of createSession, spawnMode and sshRequests is required");
   return {
     ...(createSession === undefined ? {} : { createSession }),
     ...(spawnMode === undefined ? {} : { spawnMode }),
+    ...(sshRequests === undefined ? {} : { sshRequests }),
   };
 }
 
@@ -90,6 +100,7 @@ export function parseStartRequest(body: unknown): StartRequest {
     throw new HttpError(400, "addTrust must be a boolean");
   const createSession = optionalCreateSession(body);
   const spawnMode = optionalSpawnMode(body);
+  const sshRequests = optionalSshRequests(body);
   return {
     path: body.path,
     ...(body.name === undefined ? {} : { name: body.name }),
@@ -97,6 +108,7 @@ export function parseStartRequest(body: unknown): StartRequest {
     ...(body.addTrust === undefined ? {} : { addTrust: body.addTrust }),
     ...(createSession === undefined ? {} : { createSession }),
     ...(spawnMode === undefined ? {} : { spawnMode }),
+    ...(sshRequests === undefined ? {} : { sshRequests }),
   };
 }
 

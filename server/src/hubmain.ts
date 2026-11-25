@@ -1,3 +1,4 @@
+import path from "node:path";
 import { createApp, sessionCatalogFor } from "./app";
 import type { CliDeps, Updater } from "./app";
 import { createOidcClient, oidcUserAuth } from "./auth";
@@ -8,6 +9,7 @@ import { serviceCloner } from "./cloner";
 import type { Config } from "./config";
 import { createHostClient, hubAuthorizer, secretAuthorizer } from "./hostclient";
 import type { Authorizer, HostClient, HostConfig } from "./hostclient";
+import { LOCAL_HOST } from "./hostid";
 import { HostRegistry } from "./hostregistry";
 import { loadOrCreateHubKey } from "./hubproof";
 import type { HubKey } from "./hubproof";
@@ -23,7 +25,7 @@ import { proxyJwtUserAuth } from "./proxyauth";
 import type { PeerResolver } from "./proxyauth";
 import { realUpdateEnv } from "./realupdate";
 import { createReleaseList } from "./releaselist";
-import { rolesFrom } from "./roles";
+import { logToken, rolesFrom } from "./roles";
 import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
@@ -32,7 +34,15 @@ import { SessionIndex } from "./sessionindex";
 import { SessionsStore } from "./sessionsstore";
 import { WatchFlag } from "./sessionwatch";
 import { stopServer } from "./sse";
+import { GrantStore } from "./sshgrants";
+import { SshKeyStore } from "./sshkeystore";
+import { createLocalSsh } from "./sshnodewiring";
+import type { NodeSshOptions } from "./sshnodewiring";
+import { closeMessage, createRequestNotifier } from "./sshnotify";
+import { SshService } from "./sshservice";
+import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
+import { NodeEvents } from "./updateevents";
 import type { UpdateHooks } from "./updateevents";
 import { UpdateHistory } from "./updatehistory";
 import { updateJournal } from "./updatejournal";
@@ -41,6 +51,7 @@ import { UpdateRecord } from "./updaterecord";
 import type { UserAuthStrategy } from "./userauth";
 import { VERSION } from "./version";
 import { loadWebFiles } from "./webfiles";
+import { PushService } from "./webpush";
 
 export interface HubDeps {
   instances?: Instances;
@@ -53,6 +64,21 @@ export interface HubDeps {
   watcher?: { sleep?: (ms: number) => Promise<void>; random?: () => number };
   /** The timers of the local watch flag and of the beat loop. Default: real timers. */
   watchTimers?: Timers;
+  /** The top folder for the SSH sockets and grant files of the host `local`. Default: `/run/claude-rc-ssh`. Tests give a temporary folder. */
+  sshDir?: string;
+  /** Default: `process.platform`. A `win32` hub has no SSH grants for the host `local`. */
+  platform?: NodeJS.Platform;
+  /** Puts the `ssh-access` skill into a home. Tests give one, because the default writes into a real home. */
+  deploySkill?: NodeSshOptions["deploySkill"];
+}
+
+/** The client that the SSH service uses for a host: the in-process one for `local`, the client of the registry for any other id. */
+export function sshHostClient(
+  hostId: string,
+  local: HostClient | undefined,
+  remote: (hostId: string) => HostClient | undefined,
+): HostClient | undefined {
+  return hostId === LOCAL_HOST ? local : remote(hostId);
 }
 
 function buildUserAuth(cfg: Config, deps: HubDeps): UserAuthStrategy {
@@ -244,6 +270,74 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     store.set("local", event);
   });
   sessionIndex.start();
+  // SSH delegation. The grant store ends grants through the service, and the service needs the store: the hook is set
+  // right after both exist. No grant can end before that, because a grant starts only from a request of a node.
+  const sshDir = path.join(cfg.stateDir, "ssh");
+  const sshKeys = new SshKeyStore(path.join(sshDir, "keys.json"));
+  const sshTargets = new TargetStore(path.join(sshDir, "targets.json"));
+
+  const push = new PushService({
+    dir: path.join(cfg.stateDir, "push"),
+    subject: cfg.publicUrl,
+    audit: (line) => {
+      console.log(line);
+    },
+  });
+
+  const sshAudit = (line: string) => {
+    console.log(line);
+  };
+
+  // The host `local` has the SSH wiring of a node, in this process: no network and no node authentication in between.
+  const localEvents = new NodeEvents();
+  const localSsh = createLocalSsh({
+    cfg,
+    instances,
+    events: localEvents,
+    ...(deps.sshDir ? { dir: deps.sshDir } : {}),
+    ...(deps.platform ? { platform: deps.platform } : {}),
+    ...(deps.deploySkill ? { deploySkill: deps.deploySkill } : {}),
+  });
+
+  const sshHook: { service?: SshService } = {};
+  const sshGrants = new GrantStore({
+    audit: sshAudit,
+    onEnd: (grant) => sshHook.service?.onGrantEnd(grant),
+    onLeavePending: (grant) => sshHook.service?.onGrantLeavePending(grant),
+  });
+  const ssh = new SshService({
+    keys: sshKeys,
+    targets: sshTargets,
+    grants: sshGrants,
+    client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
+    audit: sshAudit,
+    notifyClose: (grant) => void push.send(closeMessage(grant)),
+    notify: createRequestNotifier({
+      send: (message) => push.send(message),
+      isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
+      listInstances: (nodeId) => {
+        if (nodeId === LOCAL_HOST) return localSsh.instances.list();
+        const client = hosts.get(nodeId)?.client;
+        if (!client) return undefined;
+        return client.call("GET", "/api/instances", { timeoutMs: 3000 }).then((reply) => {
+          if (reply.status < 200 || reply.status >= 300 || !Array.isArray(reply.body)) return [];
+          return reply.body as { id: string; name: string }[];
+        });
+      },
+      onError: (text) => sshAudit(`push notify: name lookup failed: ${logToken(text)}`),
+    }),
+  });
+  sshHook.service = ssh;
+
+  // The events of the local broker go straight to the service, as the events of a node stream do (`type` is the name).
+  const offLocalSsh = localSsh.client
+    ? localEvents.subscribe((event) => {
+        const { type, ...data } = event;
+        if (type === "ssh.request" || type === "ssh.sign" || type === "ssh.instance-off")
+          ssh.onNodeEvent(LOCAL_HOST, type, data);
+      })
+    : () => {};
+
   const watchers = createNodeWatchers({
     registry: hosts,
     log: updateLog,
@@ -262,6 +356,20 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     onSessions: (host, payload) => {
       store.set(host, payload);
     },
+    onSsh: (host, event, data) => {
+      ssh.onNodeEvent(host, event, data);
+    },
+    onOnline: (host) => {
+      ssh.onNodeOnline(host).catch((error: unknown) => {
+        sshAudit(`audit ssh event=online node=${logToken(host)} failed=${logToken(String(error))}`);
+      });
+    },
+    onOffline: (host) => {
+      ssh.onNodeOffline(host);
+    },
+    onRemoved: (host) => {
+      ssh.onNodeRemoved(host);
+    },
     ...(deps.watcher?.sleep ? { sleep: deps.watcher.sleep } : {}),
     ...(deps.watcher?.random ? { random: deps.watcher.random } : {}),
   });
@@ -276,7 +384,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   });
   const app = createApp({
     cfg,
-    instances,
+    instances: localSsh.instances,
     userAuth,
     staticHandler: staticHandler(files),
     dirOwner,
@@ -293,9 +401,26 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     sessionIndex,
     sessionsStore: store,
     beatLoop,
+    push,
+    ssh: {
+      service: ssh,
+      keys: sshKeys,
+      targets: sshTargets,
+      grants: sshGrants,
+      ...(localSsh.client ? { local: true } : {}),
+    },
     ...(cloner ? { cloner } : {}),
     ...(cli ? { cli } : {}),
   });
+  // The folders of the instances that opted in get their sockets now, and the broker gets the targets of `local`.
+  await localSsh.start();
+
+  if (localSsh.client) {
+    ssh.onNodeOnline(LOCAL_HOST).catch((error: unknown) => {
+      sshAudit(`audit ssh event=online node=${logToken(LOCAL_HOST)} failed=${logToken(String(error))}`);
+    });
+  }
+
   const server = Bun.serve({
     port: cfg.port,
     hostname: cfg.host,
@@ -313,6 +438,11 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   return {
     port,
     stop: () => {
+      // The grant store holds unlocked keys: end every grant, so that the keys are destroyed.
+      sshGrants.endWhere(() => true, "hub-restart");
+      offLocalSsh();
+      // It resets the grant routes of `local` (every agent socket closes), then closes the control sockets.
+      void localSsh.stop().catch(() => {});
       offRecord();
       watchers.stop();
       beatLoop.stop();

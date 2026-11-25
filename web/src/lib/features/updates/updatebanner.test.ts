@@ -56,6 +56,28 @@ test("node-update is hidden only while the hub update is running", () => {
   ]);
 });
 
+test("a test-build hub and a test-build node get no notice and no hub-local-build", () => {
+  const test = "1.3.0-test.ssh.5bf4ca1";
+  expect(model([hub({ version: test, clientVersion: test }), node({ version: test })])).toEqual([]);
+});
+
+test("a test build is never offered an update to an older release", () => {
+  const test = "1.3.0-test.ssh.5bf4ca1";
+  // Even when an older hub marks it stale, the page does not call 1.2.0 an update for 1.3.0-test.
+  expect(model([hub({ version: test, clientVersion: test, stale: true, target: "1.2.0" })])).toEqual([]);
+  expect(model([hub(), node({ version: test, stale: true, target: "1.2.0" })])).toEqual([]);
+});
+
+test("a test build on an older base is still offered the newer release", () => {
+  const items = model([hub(), node({ version: "1.1.0-test.ssh.5bf4ca1", stale: true, target: "1.2.0" })]);
+  expect(items).toEqual([{ kind: "node-update", hosts: [{ id: "n1", name: "node one", target: "1.2.0" }] }]);
+});
+
+test("a test build is never a target of an update", () => {
+  expect(model([hub({ stale: true, target: "1.3.0-test.ssh.5bf4ca1" })])).toEqual([]);
+  expect(model([hub(), node({ stale: true, target: "1.3.0-test.ssh.5bf4ca1" })])).toEqual([]);
+});
+
 test("an unknown hub version gives hub-local-build and no node-update", () => {
   expect(model([hub({ version: "dev" }), node()])).toEqual([{ kind: "hub-local-build" }]);
 });

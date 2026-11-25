@@ -53,6 +53,8 @@ export interface Config {
   claudeBin: string;
   claudeRcArgs: string[];
   namePrefix: string;
+  /** Whether the node puts the `ssh-access` skill into the home of the users that its instances run as. */
+  installSkill?: boolean;
   userAuth?: OidcUserAuth | ProxyJwtUserAuth; // hub
   node?: NodeConfig; // node
   hosts: HostConfig[]; // hub; [] otherwise
@@ -521,6 +523,7 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
       `${serviceHome}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`);
   const sshAuthSock = windows ? undefined : inst?.str("ssh_auth_sock");
   const namePrefix = inst?.str("name_prefix") ?? "";
+  const installSkill = inst?.bool("install_skill") ?? true;
   inst?.finish();
 
   let userAuth: OidcUserAuth | ProxyJwtUserAuth | undefined;
@@ -643,6 +646,7 @@ export function parseConfig(raw: unknown, io: ConfigIo, opts: ParseOptions = {})
     claudeBin,
     claudeRcArgs,
     namePrefix,
+    installSkill,
     ...(userAuth ? { userAuth } : {}),
     ...(node ? { node } : {}),
     ...(cliAuth ? { cliAuth } : {}),

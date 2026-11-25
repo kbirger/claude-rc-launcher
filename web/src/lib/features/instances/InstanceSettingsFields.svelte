@@ -20,16 +20,20 @@
   const uid = $props.id();
 
   const fits = (key: string, candidate: unknown) =>
-    key === "createSession" ? typeof candidate === "boolean" : candidate === "same-dir" || candidate === "worktree";
+    key === "spawnMode" ? candidate === "same-dir" || candidate === "worktree" : typeof candidate === "boolean";
   const shown = $derived(
     help.settings
-      .filter((setting) => setting.key === "createSession" || setting.key === "spawnMode")
+      .filter((setting) => ["createSession", "spawnMode", "sshRequests"].includes(setting.key))
       .map((setting) => ({ ...setting, values: setting.values.filter((option) => fits(setting.key, option.value)) }))
       .filter((setting) => setting.values.length > 0),
   );
 
   // The radio group works with strings, so a value is matched by its text and the node value is sent back unchanged.
-  function choose(key: "createSession" | "spawnMode", values: { value: boolean | string }[], text: string) {
+  function choose(
+    key: "createSession" | "spawnMode" | "sshRequests",
+    values: { value: boolean | string }[],
+    text: string,
+  ) {
     const found = values.find((option) => String(option.value) === text);
     if (found) onchange({ ...value, [key]: found.value } as InstanceSettings);
   }
@@ -40,7 +44,7 @@
     <fieldset class="m-0 grid min-w-0 gap-2 border-0 p-0" {disabled}>
       <legend class="mb-1 p-0 text-sm font-medium [overflow-wrap:anywhere]">{setting.label}</legend>
       <RadioGroup.Root
-        value={String(value[setting.key])}
+        value={String(value[setting.key] ?? false)}
         {disabled}
         aria-label={setting.label}
         onValueChange={(text) => choose(setting.key, setting.values, text)}

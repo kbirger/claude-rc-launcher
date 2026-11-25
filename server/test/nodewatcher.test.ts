@@ -124,7 +124,7 @@ function fakeRegistry() {
   };
 }
 
-function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void } = {}) {
+function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h: string, e: any) => void; onSessions?: (h: string, e: any) => void; pre?: (nodes: Record<string, FakeNode>) => void; onSsh?: (h: string, e: string, d: unknown) => void; onOnline?: (h: string) => void; onOffline?: (h: string) => void; onRemoved?: (h: string) => void } = {}) {
   const clock = new Clock();
   const reg = fakeRegistry();
   const nodes: Record<string, FakeNode> = {};
@@ -149,6 +149,10 @@ function setup(ids: string[] = ["nas"], o: { random?: () => number; onStep?: (h:
       steps.push([h, e]);
       o.onStep?.(h, e);
     },
+    ...(o.onSsh ? { onSsh: o.onSsh } : {}),
+    ...(o.onOnline ? { onOnline: o.onOnline } : {}),
+    ...(o.onOffline ? { onOffline: o.onOffline } : {}),
+    ...(o.onRemoved ? { onRemoved: o.onRemoved } : {}),
     now: clock.now,
     sleep: clock.sleep,
     random: o.random ?? (() => 0),
@@ -387,6 +391,30 @@ describe("createNodeWatchers events", () => {
     expect(s.steps).toEqual([["nas", { step: "verifying", to: "2.0.0", client: "/x", detail: "d" }]]);
   });
 
+  test("ssh events reach onSsh and offline reaches onOffline", async () => {
+    const seen: string[] = [];
+    const s = setup(["nas"], {
+      onSsh: (h, e, d) => seen.push(`${h} ${e} ${JSON.stringify(d)}`),
+      onOnline: (h) => seen.push(`online ${h}`),
+      onOffline: (h) => seen.push(`offline ${h}`),
+    });
+    await flush();
+    const c = s.nodes.nas!.last;
+    c.snapshot();
+    c.push("ssh.request", { requestId: "r1", instanceId: "i1", targetId: "nas" });
+    c.push("ssh.sign", { signId: "s1" });
+    c.push("ssh.broken", "not an object");
+    await flush();
+    c.close();
+    await flush();
+    expect(seen).toEqual([
+      "online nas",
+      'nas ssh.request {"requestId":"r1","instanceId":"i1","targetId":"nas"}',
+      'nas ssh.sign {"signId":"s1"}',
+      "offline nas",
+    ]);
+  });
+
   test("a downloading step clears the lines of that host first", async () => {
     let seen: number | undefined;
     const s = setup(["nas", "pi"], { onStep: () => (seen = s.log.get("nas").length) });
@@ -477,6 +505,21 @@ describe("createNodeWatchers registry", () => {
     expect(s.w.presence()).toEqual([]);
     await s.clock.advance(120_000);
     expect(pi.conns.length).toBe(1);
+  });
+
+  test("remove calls onRemoved, for a host that was online and for one that never was", async () => {
+    const removed: string[] = [];
+    const watched = setup([], { onRemoved: (host) => removed.push(host) });
+    const pi = new FakeNode(watched.clock);
+    watched.reg.add("pi", pi.client);
+    await flush();
+    pi.last.snapshot();
+    await flush();
+    watched.reg.add("nas", new FakeNode(watched.clock).client);
+    watched.reg.remove("pi");
+    watched.reg.remove("nas");
+    await flush();
+    expect(removed).toEqual(["pi", "nas"]);
   });
 
   test("the host local gets no watcher", async () => {

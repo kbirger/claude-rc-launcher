@@ -105,6 +105,30 @@ const RULES: Rule[] = [
     `${SESSION}/permissions/rules`,
   ]),
   ...rows("write", "GET", ["/hosts/:host/github/repos"], true),
+  // SSH delegation: a write user lists targets and grants. Everything else needs admin (setup, targets, keys, unlocks, grants).
+  ...rows("write", "GET", ["/ssh/status", "/ssh/targets", "/ssh/grants"]),
+  ...rows("admin", "GET", ["/ssh/targets/:id", "/ssh/targets/:id/salt", "/ssh/targets/:id/provision"]),
+  ...rows("admin", "POST", [
+    "/ssh/setup",
+    "/ssh/recovery/begin",
+    "/ssh/targets/:id/rewrap",
+    "/ssh/targets",
+    "/ssh/targets/:id/key",
+    "/ssh/targets/:id/scan",
+    "/ssh/targets/:id/pin",
+    "/ssh/targets/:id/pin-managed",
+    "/ssh/targets/:id/authorize",
+    "/ssh/targets/:id/test",
+    "/ssh/grants/:id/approve",
+    "/ssh/grants/:id/deny",
+    "/ssh/grants/:id/revoke",
+  ]),
+  ...rows("admin", "PUT", ["/ssh/nodes/:host"]),
+  ...rows("admin", "PATCH", ["/ssh/targets/:id"]),
+  ...rows("admin", "DELETE", ["/ssh/targets/:id"]),
+  // Push notifications: registering a device is for admins, who approve SSH requests.
+  ...rows("admin", "GET", ["/push/key"]),
+  ...rows("admin", "POST", ["/push/subscribe", "/push/unsubscribe"]),
   // read
   ...rows("read", "GET", ["/hosts/:host/fs"], true),
   ...rows("read", "GET", [

@@ -47,6 +47,32 @@ const withSock = () => cfg({ SSH_AUTH_SOCK: "/run/ssh-agent.sock" });
 const item = "/srv/claude/projects/monitoring";
 const BS = String.fromCharCode(92);
 
+describe("sshRequests in a unit", () => {
+  const on = { createSession: true, spawnMode: "same-dir" as const, sshRequests: true };
+  const off = { ...on, sshRequests: false };
+  const line = `Environment="CLAUDE_RC_SSH_CONTROL=/run/claude-rc-ssh/${instanceId(item)}/control.sock"`;
+
+  test("renderUnit adds the CLAUDE_RC_SSH_CONTROL line only when sshRequests is true", () => {
+    expect(renderUnit(cfg(), item, "n", undefined, on).split("\n")).toContain(line);
+    expect(renderUnit(cfg(), item, "n", undefined, off)).not.toContain("CLAUDE_RC_SSH_CONTROL");
+    expect(renderUnit(cfg(), item, "n")).not.toContain("CLAUDE_RC_SSH_CONTROL");
+  });
+  test("parseUnitSettings reads sshRequests from that line", () => {
+    expect(parseUnitSettings(renderUnit(cfg(), item, "n", undefined, on))).toEqual(on);
+    expect(parseUnitSettings(renderUnit(cfg(), item, "n", undefined, off))).toEqual(off);
+  });
+  test("a unit from before this change parses as false", () => {
+    const old = [
+      `# managed-by: claude-rc-launcher path=${item}`,
+      "[Service]",
+      'Environment="HOME=/root"',
+      "ExecStart=/bin/claude remote-control --name n --spawn same-dir",
+      "",
+    ].join("\n");
+    expect(parseUnitSettings(old).sshRequests).toBe(false);
+  });
+});
+
 describe("renderUnit", () => {
   test("matches proven template", () => {
     const out = renderUnit(withSock(), item, "myhost-monitoring");
@@ -243,17 +269,25 @@ describe("unit settings", () => {
   test("round trip keeps settings with spaces and a percent sign in the binary path", () => {
     const config = cfg({ CLAUDE_RC_ARGS: "--verbose" });
     config.claudeBin = "/opt/my bin/100%/claude";
-    const out = renderUnit(config, item, "my-proj", undefined, { createSession: false, spawnMode: "worktree" });
+    const out = renderUnit(config, item, "my-proj", undefined, {
+      createSession: false,
+      spawnMode: "worktree",
+      sshRequests: false,
+    });
     expect(out).toContain(
       '"/opt/my bin/100%%/claude" remote-control --name my-proj --verbose --spawn worktree --no-create-session-in-dir',
     );
-    expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree" });
+    expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree", sshRequests: false });
   });
   test("operator args with quotes and backslashes survive", () => {
     const config = cfg();
     config.claudeRcArgs = ["--note", 'a "b" c\\d $x', "--spawn", "worktree"];
-    const out = renderUnit(config, item, "n", undefined, { createSession: false, spawnMode: "worktree" });
-    expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree" });
+    const out = renderUnit(config, item, "n", undefined, {
+      createSession: false,
+      spawnMode: "worktree",
+      sshRequests: false,
+    });
+    expect(parseUnitSettings(out)).toEqual({ createSession: false, spawnMode: "worktree", sshRequests: false });
     expect(out).toContain('--note "a \\"b\\" c\\\\d $$x" --spawn worktree');
   });
   test("execWords undoes the execWord quoting", () => {
@@ -266,19 +300,24 @@ describe("unit settings", () => {
   });
   test("old unit with flags reads back", () => {
     const entry = "ExecStart=/bin/claude remote-control --name x --spawn same-dir --no-create-session-in-dir\n";
-    expect(parseUnitSettings(entry)).toEqual({ createSession: false, spawnMode: "same-dir" });
+    expect(parseUnitSettings(entry)).toEqual({ createSession: false, spawnMode: "same-dir", sshRequests: false });
   });
   test("a unit with no flags reads as the defaults", () => {
     expect(parseUnitSettings("ExecStart=/bin/claude remote-control --name x\n")).toEqual({
       createSession: true,
       spawnMode: "same-dir",
+      sshRequests: false,
     });
-    expect(parseUnitSettings("")).toEqual({ createSession: true, spawnMode: "same-dir" });
+    expect(parseUnitSettings("")).toEqual({ createSession: true, spawnMode: "same-dir", sshRequests: false });
   });
   test("settings keep other operator flags", () => {
     const config = cfg();
     config.claudeRcArgs = ["--spawn", "worktree", "--permission-mode", "plan"];
-    const out = renderUnit(config, item, "n", undefined, { createSession: true, spawnMode: "same-dir" });
+    const out = renderUnit(config, item, "n", undefined, {
+      createSession: true,
+      spawnMode: "same-dir",
+      sshRequests: false,
+    });
     expect(out).toContain("--name n --permission-mode plan --spawn same-dir\n");
   });
   test("without settings the args are untouched", () => {

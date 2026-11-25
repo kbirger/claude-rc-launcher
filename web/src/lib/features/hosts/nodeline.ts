@@ -1,8 +1,8 @@
-import { isBehind } from "../../shared/version";
+import { isBehind, versionLabel } from "../../shared/version";
 import type { HostInfo } from "./api";
 import { clientLabel } from "./clientlabel";
 
-const shown = (value?: string) => value ?? "unknown";
+const shown = (value?: string) => (value === undefined ? "unknown" : versionLabel(value));
 
 /** "service 0.12.4, client 0.12.4": the versions of a node as it reports them (a local build with its branch and commit). */
 export const versionsText = (hostInfo: HostInfo): string =>
@@ -30,7 +30,7 @@ export function components(hostInfo: HostInfo, latest?: string): Component[] {
     },
     {
       key: "client",
-      text: hostInfo.clientVersion ? `client ${hostInfo.clientVersion}` : clientLabel(hostInfo),
+      text: hostInfo.clientVersion ? `client ${shown(hostInfo.clientVersion)}` : clientLabel(hostInfo),
       outdated: isBehind(hostInfo.clientVersion, latest),
     },
   ];

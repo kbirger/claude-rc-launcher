@@ -47,9 +47,14 @@ Register that redirect URI with your OIDC provider. `--local` is an error on a n
 | `instance.ssh_auth_sock` | unset | Path to an ssh-agent socket. If set, emitted as `Environment=SSH_AUTH_SOCK=...` in every generated unit |
 | `instance.claude_bin` | `<service_home>/.local/bin/claude` | Claude executable used in `ExecStart`. Must be absolute |
 | `instance.claude_rc_args` | `["--spawn","same-dir"]` | Array of args after `remote-control --name <name>`; operator-only |
+| `instance.install_skill` | `true` | The node puts the `ssh-access` skill into the home of each user that its instances run as. Set `false` to turn this off. See [SSH delegation](ssh-delegation.md#the-ssh-access-skill) |
 | `instance.name_prefix` | empty | Prefix for the default `--name`. Names must match `^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$` |
 
 The default does not contain `--no-create-session-in-dir`. A server that starts with this flag refuses to restart while its folder has a recoverable session.
+
+## State folder
+
+The hub keeps its files in the state folder, set by the top-level key `state_dir` (default `/var/lib/claude-rc-launcher`). The folder `<state_dir>/push/` holds the push notifications for SSH requests. It has the file `vapid.json`, which is the key pair of the hub, and the file `subscriptions.json`, which lists the devices. The files have mode 600 and the folder has mode 700. There is no setting for push. The hub uses `public_url` as the VAPID subject. Push needs an https `public_url`. Read [SSH delegation](ssh-delegation.md#notifications).
 
 ## proxy-jwt keys
 

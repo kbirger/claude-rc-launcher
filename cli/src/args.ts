@@ -29,6 +29,16 @@ export interface Flags {
   "no-create-session"?: boolean;
   spawn?: string;
   yes?: boolean;
+  minutes?: string;
+  reason?: string;
+  type?: string;
+  address?: string;
+  account?: string;
+  node?: string;
+  identity?: string;
+  managed?: string;
+  "key-file"?: string;
+  "no-test"?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -67,6 +77,16 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         "no-create-session": { type: "boolean" },
         spawn: { type: "string" },
         yes: { type: "boolean" },
+        minutes: { type: "string" },
+        reason: { type: "string" },
+        type: { type: "string" },
+        address: { type: "string" },
+        account: { type: "string" },
+        node: { type: "string" },
+        identity: { type: "string" },
+        managed: { type: "string" },
+        "key-file": { type: "string" },
+        "no-test": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },

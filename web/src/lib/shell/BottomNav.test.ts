@@ -13,7 +13,7 @@ vi.mock("$app/state", () => ({
   },
 }));
 
-import BottomNav from "./BottomNav.svelte";
+import BottomNavHarness from "./BottomNavHarness.svelte";
 
 const open: Array<() => void> = [];
 afterEach(() => {
@@ -25,7 +25,7 @@ function show(path: string) {
   pathname.value = path;
   const target = document.createElement("div");
   document.body.append(target);
-  const item = mount(BottomNav, { target });
+  const item = mount(BottomNavHarness, { target });
   open.push(() => unmount(item));
   flushSync();
   return target;

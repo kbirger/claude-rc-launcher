@@ -123,12 +123,21 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 | `node roots remove <dir> [--config <file>] [--no-restart]` | Run on a node: remove a root folder and restart the service. |
 | `node update [--binary <file>] [--release <tag>]` | Run on a node: update its server binary and restart it. |
 
+### SSH
+
+| Command | What it does |
+|---|---|
+| `ssh targets` | Run in a session: list the targets that the instance can ask for. |
+| `ssh request <target> [--minutes <n>] [--reason <text>]` | Run in a session: ask the owner for SSH access, wait for the approval, and print the `ssh` command. |
+| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
+
 ### Updates
 
 | Command | What it does |
 |---|---|
 | `update [--release <tag>]` | Update this `claude-rc` binary. |
 | `update --all-nodes [--release <tag>] [--json]` | Update every node, then the hub, then this binary. |
+| `update --node <id>[,<id>...] [--release <tag>] [--json]` | Update only the named nodes, in that order. |
 
 ## Examples
 
@@ -154,6 +163,45 @@ claude-rc stop <id>
 If the folder is not trusted for the chosen user, `start` fails. `--force` adds the folder to the `~/.claude.json` of that user and then starts the instance. If the host is too old to accept `--force`, the CLI stops with `The host did not accept --force. Update the hub and the node.`
 
 `--user` needs a node that runs as root in system scope. If the node is too old to know `--user`, the CLI stops with `this host does not support --user. Update the node.` and starts or creates nothing. This applies to `start` and `mkdir`. An empty `--user` is an error. A `--user` other than the default `service_user` needs the `admin` role.
+
+## SSH delegation
+
+SSH delegation lets a session log in to another machine, with the approval of the owner. Read [SSH delegation](ssh-delegation.md) for the setup.
+
+The commands `ssh targets` and `ssh request` run inside a session of an instance that has Allow SSH requests on. They talk to the node of the instance through the socket in `CLAUDE_RC_SSH_CONTROL`. They need no login and no hub address, because they do not call the hub. Outside such a session, they print `SSH access is not turned on for this instance`.
+
+```sh
+claude-rc ssh targets
+claude-rc ssh request slon --minutes 30 --reason "read logs"
+```
+
+`ssh request` waits for the owner. A grant lasts 60 minutes by default and 480 minutes at most. The command prints `waiting for approval` first. After the owner approves, it prints the line `approved` and the line `access ends at <time>`. Then it prints the path of the socket, the path of the SSH configuration file and the command `ssh -F <config> <target>`. A request that nobody answers fails after 10 minutes.
+
+The command `ssh target add` runs on your own machine, with the saved login. It needs the `admin` role. It has two forms. An external target does not run the launcher, and the command needs `--address` and `--identity`:
+
+```sh
+claude-rc ssh target add router --type dropbear --address 192.168.1.1 --account admin --node local --identity ~/.ssh/id_ed25519
+```
+
+A managed target runs the launcher as a node of this hub. Use `--managed` with its host id, and no key of your own:
+
+```sh
+claude-rc ssh target add slon --managed slon --type linux --account root --node local
+```
+
+For a remote host, the address is the host name from its URL. For the host `local`, add `--address` with the LAN address of this machine as the other nodes see it. The hub never derives it from `public_url`.
+
+These flags apply:
+
+- `--type` is `linux`, `windows`, `synology` or `dropbear`.
+- `--account` is the account on the target. It has no spaces, quotes, commas or backslashes. It does not start with a dash.
+- `--node` lists the host ids of the nodes that can reach the target, separated by commas and with no spaces.
+- `--port` is the SSH port. The default is 22.
+- `--key-file <name>` sets the file in `~/.ssh` for a managed target of the type `linux` or `synology`. The default is `authorized_keys`. The name starts with `authorized_keys`, for example `authorized_keys2`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
+- `--fingerprint SHA256:<value>` answers the host key question in advance for an external target.
+- `--no-test` skips the one-minute test grant.
+
+The command makes the key, pins the host key, installs the key and runs the test. For a passphrase, you type it in the terminal. For a passkey, the command prints a link to the web UI and waits until you unlock there. The key of `--identity` stays on your machine and never goes to the hub. If a step fails, the target stays in `draft` on the hub.
 
 ## Instance settings
 
@@ -404,6 +452,18 @@ is the machine named `local`. The hub restarts, and the command waits for it to 
 client copy that runs the command. One failed machine does not stop the others. The nodes come first because the hub
 watches each node through its event route. A node without that route shows as `error (bad response)` until you update
 it.
+
+To update only some nodes, name them with `--node`:
+
+```sh
+claude-rc update --node nas,pi --release v1.2.3
+```
+
+The command updates the named nodes in the order given, to the release tag or to the latest release. It does not update
+the hub, the other nodes or this client. `--node` and `--all-nodes` cannot be used together. `--binary` is an error here
+too. The command stops before it updates anything when an id is unknown, is named twice or is `local`. The hub updates
+itself only through `--all-nodes`. An offline node is skipped, and the exit code follows the same rules as for
+`--all-nodes`. With `--json`, the rows hold only the named nodes.
 
 While the command runs, it shows the live output of each update. Each line starts with the machine name, as in
 `[a] downloading`. The lines come from the hub, in the order it receives them. The command prints only the lines of

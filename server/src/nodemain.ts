@@ -11,6 +11,8 @@ import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { stopServer } from "./sse";
+import { createNodeSsh } from "./sshnodewiring";
+import type { NodeSshOptions } from "./sshnodewiring";
 import { ensureNodeCert } from "./tls";
 import { NodeEvents } from "./updateevents";
 import type { DefinitionStatus } from "./win/definition";
@@ -21,6 +23,12 @@ export interface NodeDeps {
   limits?: ServeLimits;
   events?: NodeEvents;
   definition?: () => DefinitionStatus | undefined;
+  /** The top folder for the SSH sockets and grant files. Default: `/run/claude-rc-ssh`. Tests give a temporary folder. */
+  sshDir?: string;
+  /** Default: `process.platform`. A `win32` node has no SSH grants. */
+  platform?: NodeJS.Platform;
+  /** Puts the `ssh-access` skill into a home. Tests give one, because the default writes into a real home. */
+  deploySkill?: NodeSshOptions["deploySkill"];
 }
 
 export async function startNode(
@@ -42,13 +50,23 @@ export async function startNode(
     secretHashes: node.auth.secretHashes,
   });
   const dirOwner = await resolveDirOwner(cfg);
-  const instances = deps.instances ?? new InstanceService(cfg, bunRunner);
+  const baseInstances = deps.instances ?? new InstanceService(cfg, bunRunner);
   const events = deps.events ?? new NodeEvents();
+  // The SSH routes, and a control socket for each instance that opted in. Windows gets the managed target routes only.
+  const sshNode = createNodeSsh({
+    cfg,
+    instances: baseInstances,
+    events,
+    ...(deps.sshDir ? { dir: deps.sshDir } : {}),
+    ...(deps.platform ? { platform: deps.platform } : {}),
+    ...(deps.deploySkill ? { deploySkill: deps.deploySkill } : {}),
+  });
+  const instances = sshNode.instances;
   // One updater for the process: it holds the lock that refuses a second update while one runs.
   const updateEnv = realUpdateEnv(cfg);
   const update = deps.update ?? createServiceUpdater(updateEnv, events.hooks());
   const clientVersions = createClientVersions(updateEnv);
-  const cloner = serviceCloner(cfg, instances, dirOwner);
+  const cloner = serviceCloner(cfg, baseInstances, dirOwner);
   const app = createNodeApp({
     cfg,
     instances,
@@ -58,8 +76,11 @@ export async function startNode(
     clientVersions,
     events,
     ...(deps.definition ? { definition: deps.definition } : {}),
+    ...(sshNode.ssh ? { ssh: sshNode.ssh } : {}),
+    sshManaged: sshNode.sshManaged,
     ...(cloner ? { cloner } : {}),
   });
+  await sshNode.start();
   const server = Bun.serve({
     port: cfg.port,
     hostname: cfg.host,
@@ -76,6 +97,7 @@ export async function startNode(
     fingerprint: cert.fingerprintSha256,
     stop: () => {
       stopServer(server, app);
+      void sshNode.stop();
     },
   };
 }
