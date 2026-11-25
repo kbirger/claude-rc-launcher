@@ -361,7 +361,20 @@ function Install-SshClient {
   if (-not $found -and -not $SshClientDir) {
     Write-Host '==> Installing the Windows feature OpenSSH Client (this needs Windows Update)'
     # A job with a time limit: without Windows Update (WSUS, no network) the call can wait for a long time.
-    $job = Start-Job -ScriptBlock { Add-WindowsCapability -Online -Name 'OpenSSH.Client~~~~0.0.1.0' }
+    # Some machines have no Add-WindowsCapability cmdlet (a stripped image, a missing DISM module). The program
+    # dism.exe does the same work and ships with every Windows.
+    $job = Start-Job -ScriptBlock {
+      $capability = 'OpenSSH.Client~~~~0.0.1.0'
+      if (Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue) {
+        Add-WindowsCapability -Online -Name $capability
+      } else {
+        $dism = Join-Path $env:SystemRoot 'System32\dism.exe'
+        if (-not (Test-Path -LiteralPath $dism)) { throw 'this machine has neither Add-WindowsCapability nor dism.exe' }
+        & $dism /Online /Add-Capability "/CapabilityName:$capability" /NoRestart | Out-Null
+        # 3010 means that the change worked and a restart is needed.
+        if ($LASTEXITCODE -notin @(0, 3010)) { throw "dism.exe ended with exit code $LASTEXITCODE" }
+      }
+    }
     try {
       if (Wait-Job -Job $job -Timeout 600) {
         $done = Receive-Job -Job $job -ErrorAction Stop
