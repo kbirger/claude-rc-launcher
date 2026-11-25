@@ -113,6 +113,8 @@ describe("pipe names", () => {
     ["the Windows ssh-agent", "\\\\.\\pipe\\openssh-ssh-agent"],
     ["the Windows ssh-agent in capitals", "\\\\.\\pipe\\x-OpenSSH-ssh-agent"],
     ["empty", "\\\\.\\pipe\\"],
+    ["a dot", "\\\\.\\pipe\\."],
+    ["two dots", "\\\\.\\pipe\\.."],
   ])("%s is refused", (_label, name) => {
     expect(() => assertPipeName(name)).toThrow();
   });
@@ -226,6 +228,32 @@ describe("the agent on a real named pipe", () => {
     await agent.start();
     const answer = await ask(name, signRequest(Uint8Array.of(5, 6)));
     expect(parseResponseCode(answer)).toBe(14);
+  });
+
+  windowsTest("a connection before the access list is set is closed and gets no answer", async () => {
+    const name = newPipeName("agent");
+    let early: Promise<string> | undefined;
+    const agent = agentOn(
+      pipeTransport({
+        name,
+        sid: SID,
+        restrict: async () => {
+          early = new Promise((resolve) => {
+            const socket = connect(name);
+            socket.on("error", () => resolve("error"));
+            socket.on("data", () => resolve("answer"));
+            socket.on("close", () => resolve("closed"));
+            socket.on("connect", () => socket.write(IDENTITIES_REQUEST));
+          });
+          expect(await early).not.toBe("answer");
+        },
+      }),
+    );
+    stops.push(() => agent.stop());
+    await agent.start();
+    expect(await early).not.toBe("answer");
+    // After the start, a connection works.
+    expect((await ask(name, IDENTITIES_REQUEST))[0]).toBe(12);
   });
 
   windowsTest("a failed access list closes the pipe and fails the start", async () => {
