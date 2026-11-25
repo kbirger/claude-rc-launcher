@@ -365,6 +365,10 @@ function Install-SshClient {
     # dism.exe does the same work and ships with every Windows.
     $job = Start-Job -ScriptBlock {
       $capability = 'OpenSSH.Client~~~~0.0.1.0'
+      # PowerShell 7 does not always load the DISM module. It loads through Windows PowerShell with this option.
+      if ($PSVersionTable.PSEdition -eq 'Core' -and -not (Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue)) {
+        try { Import-Module -Name DISM -UseWindowsPowerShell -ErrorAction Stop } catch { }
+      }
       if (Get-Command -Name Add-WindowsCapability -ErrorAction SilentlyContinue) {
         Add-WindowsCapability -Online -Name $capability
       } else {
