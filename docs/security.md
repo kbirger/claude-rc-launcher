@@ -53,6 +53,9 @@ SSH delegation lets a session use an SSH key that the hub holds. Read [SSH deleg
 - A grant lasts 60 minutes by default and 480 minutes at most. A grant cannot be extended. A hub restart ends all grants.
 - The hub pins the SSH host key of each target. A session cannot be sent to another machine.
 - The line in `authorized_keys` limits the key to the source addresses of the allowed nodes. It also turns off forwarding.
+- The hub sends a push message to each stored device when a session asks for SSH access. The message holds the target id, the instance name, the minutes and the reason, cut to 120 characters. It never holds a key, a passphrase or a grant secret. A test grant sends nothing.
+- Only an `admin` can register a device. A person who loses the admin role keeps getting messages until they turn the switch off or the push service drops the device. To stop it at once, delete the file `<state_dir>/push/subscriptions.json` and restart the hub.
+- The hub keeps at most 20 devices for each user. The oldest device drops first. If an endpoint is registered again, it moves to the latest person.
 - The hub writes one audit line for each step of a grant. A signature line holds the key fingerprint and never the signed data.
 
 These limits remain:

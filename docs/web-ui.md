@@ -369,6 +369,8 @@ On the first visit, the page asks you to choose an unlock method, a passkey or a
 - Add target. This opens a wizard with these steps: the form, the key, the host key, the install and the test.
 - Lost your passkey? Recover. This button starts a recovery with the recovery code. When targets wait for a re-lock, a banner names how many, and its button opens the same flow. Read [SSH delegation](ssh-delegation.md#recover-with-the-recovery-code).
 
+The page also has the switch Notify this device. If you turn it on, the browser asks for permission to show notifications. The hub then sends a push message to this device for each new request. If you turn it off, the hub forgets the device. The switch is hidden if the browser cannot do push. If the permission is blocked, the page tells you to allow notifications for the site in the browser settings. Read [SSH delegation](ssh-delegation.md#notifications).
+
 Approve opens a sheet. The sheet shows the node, the instance, the target, the account and a warning about the power of the account. The instance name is a claim of the session. Set the minutes, from 1 to 480, and unlock with your passkey or passphrase.
 
 Only an `admin` can use this page.
