@@ -89,7 +89,7 @@ test("a close message shows a notification with the same tag and closes it and t
   expect(registration.showNotification).toHaveBeenCalledTimes(1);
   expect(registration.showNotification.mock.calls[0]![1]).toMatchObject({ tag: "ssh-g1" });
   expect(registration.getNotifications).toHaveBeenCalledWith({ tag: "ssh-g1" });
-  expect(order).toEqual(["show", "close-earlier", "close-new"]);
+  expect(order).toEqual(["close-earlier", "close-new", "show", "close-earlier", "close-new"]);
 });
 
 test("a normal message only shows and closes nothing", async () => {
@@ -97,4 +97,33 @@ test("a normal message only shows and closes nothing", async () => {
   await showPush(message, registration);
   expect(registration.showNotification).toHaveBeenCalledWith("SSH", expect.objectContaining({ tag: "ssh-g1" }));
   expect(registration.getNotifications).not.toHaveBeenCalled();
+});
+
+test("a close message never rejects when the lookup fails once, and nothing of the tag stays open", async () => {
+  const open = new Set<{ close: () => void }>();
+  let lookups = 0;
+  const registration = {
+    showNotification: vi.fn(async () => {
+      const item = { close: () => open.delete(item) };
+      open.add(item);
+    }),
+    getNotifications: vi.fn(async () => {
+      lookups++;
+      if (lookups === 2) throw new Error("lookup failed");
+      return [...open];
+    }),
+  };
+
+  await expect(showPush({ title: "x", body: "", url: "/ssh", tag: "ssh-g1", close: true }, registration)).resolves.toBeUndefined();
+  expect(open.size).toBe(0);
+});
+
+test("a close message does not reject when every lookup fails", async () => {
+  const registration = {
+    showNotification: vi.fn(async () => {}),
+    getNotifications: vi.fn(async () => {
+      throw new Error("down");
+    }),
+  };
+  await expect(showPush({ title: "x", body: "", url: "/ssh", tag: "ssh-g1", close: true }, registration)).resolves.toBeUndefined();
 });

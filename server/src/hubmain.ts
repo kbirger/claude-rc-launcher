@@ -300,7 +300,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
   });
 
   const sshHook: { service?: SshService } = {};
-  const sshGrants = new GrantStore({ audit: sshAudit, onEnd: (grant) => sshHook.service?.onGrantEnd(grant),
+  const sshGrants = new GrantStore({
+    audit: sshAudit,
+    onEnd: (grant) => sshHook.service?.onGrantEnd(grant),
     onLeavePending: (grant) => sshHook.service?.onGrantLeavePending(grant),
   });
   const ssh = new SshService({
@@ -312,6 +314,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     notifyClose: (grant) => void push.send(closeMessage(grant)),
     notify: createRequestNotifier({
       send: (message) => push.send(message),
+      isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
       listInstances: (nodeId) => {
         if (nodeId === LOCAL_HOST) return localSsh.instances.list();
         const client = hosts.get(nodeId)?.client;
