@@ -114,6 +114,7 @@ const RULES: Rule[] = [
     "/ssh/targets/:id/rewrap",
     "/ssh/targets",
     "/ssh/targets/:id/key",
+    "/ssh/targets/:id/provisioner-key",
     "/ssh/targets/:id/scan",
     "/ssh/targets/:id/pin",
     "/ssh/targets/:id/pin-managed",
