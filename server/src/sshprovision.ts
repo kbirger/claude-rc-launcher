@@ -105,10 +105,13 @@ function shScript(line: string, synology: boolean, keyFile: string): string {
     "  :",
     "else",
     // A link would be replaced by a plain file, and the target of the link would stay as it was.
-    '  if [ -L "$file" ]; then echo "the key file is a symbolic link" >&2; exit 1; fi',
+    '  if [ -L "$dir" ] || [ -L "$file" ]; then echo "the key file or its folder is a symbolic link" >&2; exit 1; fi',
     '  tmp="$file.tmp.$$"',
+    // The temporary file goes away on any exit and on a signal.
+    "  trap 'rm -f \"$tmp\"' EXIT",
+    "  trap 'exit 1' HUP INT TERM",
     '  if ! cp -p "$file" "$tmp" 2>/dev/null; then echo "cannot make a temporary file in $dir" >&2; exit 1; fi',
-    '  if RC_MODE=keep RC_NONL=0 awk "$prog" "$file" > "$tmp" && printf \'%s\\n\' "$line" >> "$tmp" && mv -f "$tmp" "$file"; then :; else rm -f "$tmp"; exit 1; fi',
+    '  if RC_MODE=keep RC_NONL=0 awk "$prog" "$file" > "$tmp" && printf \'%s\\n\' "$line" >> "$tmp" && mv -f "$tmp" "$file"; then :; else exit 1; fi',
     "fi",
   ];
   return [
@@ -173,7 +176,7 @@ function powershellScript(line: string, account: string | undefined): string {
           "    if ($fields.Count -ge 3 -and -not $fields[0].StartsWith('#') -and $fields[-1] -ceq $comment -and $fields[-2] -ceq $blob -and $fields[-3] -ceq 'ssh-ed25519') { $matched++; continue }",
           "    $kept += $entryLine",
           "  }",
-          "  if ($matched -eq 1 -and $lines -contains $line) {",
+          "  if ($matched -eq 1 -and $lines -ccontains $line) {",
           "    # the line is there already",
           "  } elseif ($matched -eq 0) {",
           "    $text = [IO.File]::ReadAllText($file)",
@@ -191,7 +194,7 @@ function powershellScript(line: string, account: string | undefined): string {
           "  }",
         ]
       : [
-          "  if ($lines -notcontains $line) {",
+          "  if ($lines -cnotcontains $line) {",
           "    $text = [IO.File]::ReadAllText($file)",
           "    $prefix = ''",
           '    if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $prefix = "`r`n" }',

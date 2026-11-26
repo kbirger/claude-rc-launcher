@@ -366,12 +366,12 @@ export function sshApi(options: SshApiOptions): Hono {
   const retiring = new Set<string>();
 
   // The body holds `state`, `nodes` or both. A new list of nodes changes the `from=` part of the key line of the target:
-  // a managed target gets the new line before the answer, and a failed install puts the old list back (502), because a
-  // list that the machine does not match would let the hub approve a node that the machine refuses. An external target
+  // a managed target gets the new line before the list is stored, and a failed install leaves the list as it was (502),
+  // because a list that the machine does not match would let the hub approve a node that the machine refuses. An external target
   // gets the new line in the answer (`installLine`), and `GET /targets/:id/provision` gives it later. The grants of a
   // node that left the list end. The nodes of the old and the new list get the target list.
   hono.patch("/targets/:id", async (context) => {
-    const target = needTarget(context);
+    needTarget(context);
     const body = await readObject(context);
     const hasState = body.state !== undefined;
     const hasNodes = body.nodes !== undefined;
@@ -380,31 +380,34 @@ export function sshApi(options: SshApiOptions): Hono {
       throw new HttpError(400, "state must be disabled or draft");
     const nodes = hasNodes ? parseNodes(body.nodes) : undefined;
     const state = hasState ? (body.state as TargetState) : undefined;
-    if (retiring.has(target.id)) throw new TargetError(409, "this target is being retired");
-    if (editing.has(target.id)) throw new TargetError(409, "this target is being changed");
+    const id = context.req.param("id") ?? "";
+    if (retiring.has(id)) throw new TargetError(409, "this target is being retired");
+    if (editing.has(id)) throw new TargetError(409, "this target is being changed");
+    editing.add(id);
 
     let newLine: string | undefined;
     let lineUpdated = false;
-    let pushHosts = target.nodes;
-    editing.add(target.id);
+    let pushHosts: string[] = [];
 
     try {
+      // Read again under the lock: the target can have changed while the body was read.
+      const target = needTarget(context);
+      pushHosts = target.nodes;
+
       if (nodes !== undefined) {
         const next = { ...target, nodes };
         const withKey = hasKey(target.id);
-        const sources = sourcesOf(next);
         // A target with a key keeps a valid line only while one node has access and a source address.
-        if (withKey && sources.length === 0)
+        if (withKey && sourcesOf(next).length === 0)
           throw new TargetError(409, "no node of the new list has access enabled with a source address");
-        const sourcesChange = sources.join(",") !== sourcesOf(target).join(",");
-        await targets.setNodes(target.id, nodes);
 
-        if (withKey && target.managedHost !== undefined && sourcesChange) {
+        if (withKey && target.managedHost !== undefined) {
+          // The line goes to the machine before the list is stored, so a failed install leaves the store as it was and
+          // no node of the new list is trusted meanwhile. The script writes nothing when the exact line is there.
           try {
-            await service.authorizeManaged(target.id);
+            await service.authorizeManaged(target.id, nodes);
             lineUpdated = true;
           } catch (error) {
-            await targets.setNodes(target.id, target.nodes);
             // The machine may have taken the new line before the failure: try to put the old line back.
             await service.authorizeManaged(target.id).catch((again: unknown) => {
               audit(`audit ssh target=${logToken(target.id)} line restore failed=${logToken(message(again))}`);
@@ -414,7 +417,20 @@ export function sshApi(options: SshApiOptions): Hono {
               `the key line on the machine was not updated, so the node list is as it was: ${message(error)}`,
             );
           }
-        } else if (withKey && target.managedHost === undefined) newLine = installLine(next);
+
+          try {
+            await targets.setNodes(target.id, nodes);
+          } catch (error) {
+            // The machine has the new line, the store the old list: put the old line back and keep this error.
+            await service.authorizeManaged(target.id).catch((again: unknown) => {
+              audit(`audit ssh target=${logToken(target.id)} line restore failed=${logToken(message(again))}`);
+            });
+            throw error;
+          }
+        } else {
+          await targets.setNodes(target.id, nodes);
+          if (withKey) newLine = installLine(next);
+        }
 
         const removed = target.nodes.filter((node) => !nodes.includes(node));
         if (removed.length > 0) endGrantsOf(target.id, removed);
@@ -426,12 +442,12 @@ export function sshApi(options: SshApiOptions): Hono {
         await targets.setState(target.id, state);
       }
     } finally {
-      editing.delete(target.id);
+      editing.delete(id);
     }
 
     const pushed = await push(pushHosts);
     return context.json({
-      ...targets.get(target.id),
+      ...targets.get(id),
       ...(nodes !== undefined ? { pushed } : {}),
       ...(newLine !== undefined ? { installLine: newLine } : {}),
       ...(lineUpdated ? { lineUpdated } : {}),
