@@ -71,12 +71,18 @@ describe("sshTargetUpdate", () => {
   });
 
   test("an external dropbear target says that its key line stays the same", async () => {
-    const { out, run } = rig({ id: "nas", nodes: ["pi"], systemType: "dropbear" });
+    const { out, run } = rig({ id: "nas", nodes: ["pi"], systemType: "dropbear", keyFingerprint: "SHA256:k" });
     await run({ node: "pi" });
     expect(out).toEqual([
       "target nas nodes: pi",
       "the key line on the router stays the same, because Dropbear does not limit a key by address",
     ]);
+  });
+
+  test("an external dropbear target with no key says nothing about a key line", async () => {
+    const { out, run } = rig({ id: "nas", nodes: ["pi"], systemType: "dropbear" });
+    await run({ node: "pi" });
+    expect(out).toEqual(["target nas nodes: pi"]);
   });
 
   test("it says so when a node could not be told, and when a managed target has no key yet", async () => {
@@ -145,6 +151,16 @@ describe("sshTargetUpdate with a provisioner", () => {
     expect(rg.out).toContain("target nas nodes: pi");
     expect(rg.out.at(-1)).toBe("the key line on the machine was updated");
     expect(JSON.stringify(rg.calls)).not.toContain("my passphrase");
+  });
+
+  test("an approved change of a dropbear target says that the key line stays the same", async () => {
+    const done = { ...DONE, target: { id: "nas", nodes: ["pi"], systemType: "dropbear" } };
+    const rg = rig({ maintenance: GRANT }, { [STATUS]: () => ({ method: "passphrase" }), [APPROVE]: () => done });
+    await rg.run({ node: "pi" });
+    expect(rg.out.at(-1)).toBe(
+      "the key line on the router stays the same, because Dropbear does not limit a key by address",
+    );
+    expect(rg.out).not.toContain("the key line on the machine was updated");
   });
 
   test("with a passkey it prints the link and waits for the end of the grant", async () => {

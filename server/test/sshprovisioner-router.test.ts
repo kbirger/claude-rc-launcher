@@ -649,6 +649,19 @@ for (const shell of SHELLS) {
       expect((await rt.run("status", { SSH_CONNECTION: "", SSH_CLIENT: `${LOCAL} 5 22` })).code).toBe(0);
     });
 
+    test("another address gets bad-source for every command, also for one that the grammar refuses", async () => {
+      const rt = await router(shell.argv);
+      const other = { SSH_CONNECTION: "192.168.1.104 50000 192.168.1.1 22" };
+
+      for (const text of ["ls", "status", "sources 10.0.0.1", vectors.reject[0] ?? "x"]) {
+        const result = await rt.run(text, other);
+        expect(result.code, text).toBe(2);
+        expect(result.err, text).toMatch(/^error bad-source /);
+      }
+
+      expect((await rt.run(undefined, other)).err).toMatch(/^error bad-source /);
+    });
+
     test("on without a state list fails with exit 5", async () => {
       const rt = await router(shell.argv);
       await rt.run("off");

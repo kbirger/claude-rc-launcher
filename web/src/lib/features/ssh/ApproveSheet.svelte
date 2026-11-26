@@ -51,8 +51,14 @@
   const work = $derived(grant.maintenance);
   const list = (items: string[]) => (items.length ? items.join(", ") : "none");
   const nodeNames = (ids: string[]) => (ids.length ? ids.map((id) => hostLabel(id, hosts.data)).join(", ") : "none");
-  const headline = (maintenance: Maintenance, id: string) =>
-    maintenance.action === "uninstall" ? `This removes the key line on ${id}.` : `This changes the key line on ${id}.`;
+  const headline = (maintenance: Maintenance, id: string, router: boolean) => {
+    if (maintenance.action === "uninstall") return `This removes the key line on ${id}.`;
+    if (router && maintenance.action === "sources") return `This changes the list of the router script on ${id}.`;
+    return `This changes the key line on ${id}.`;
+  };
+  // A Dropbear router has no address limit on the key line (Dropbear has no `from=`), so the address texts are false.
+  const ROUTER_NO_LIMIT = "The router does not limit this key by address. Your approval is the control.";
+  const ROUTER_SAME_LINE = "The key line on the router stays the same. Only the list of the router script changes.";
   const sameAddresses = $derived(work?.action === "sources" && list(work.fromSources) === list(work.toSources ?? []));
   // After a failed run the grant has ended, so a second approve can only give 409.
   let finished = $state(false);
@@ -60,6 +66,7 @@
   let notice = $state("");
 
   const target = $derived(targets.data?.find((item) => item.id === grant.targetId));
+  const router = $derived(target?.systemType === "dropbear");
   // A number input binds a number, or null while the field is empty.
   let minutes = $state<number | null>(untrack(() => grant.minutes));
   let passphrase = $state("");
@@ -198,8 +205,18 @@
       {#if work}
         <Alert.Root role="note" variant="destructive">
           <Alert.Description class="{wrap} grid gap-1">
-            <span class="font-semibold">{headline(work, grant.targetId)}</span>
-            {#if work.action === "sources"}
+            <span class="font-semibold">{headline(work, grant.targetId, router)}</span>
+            {#if router}
+              {#if work.action === "sources"}
+                <span data-router-text>{ROUTER_SAME_LINE}</span>
+                <span class="text-xs">
+                  Nodes now: {nodeNames(work.fromNodes)}. Nodes after: {nodeNames(work.toNodes ?? [])}.
+                </span>
+              {:else}
+                <span class="text-xs">Nodes: {nodeNames(work.fromNodes)}</span>
+              {/if}
+              <span data-router-text>{ROUTER_NO_LIMIT}</span>
+            {:else if work.action === "sources"}
               {#if sameAddresses}
                 <span>The list of addresses does not change: {list(work.fromSources)}</span>
               {:else}

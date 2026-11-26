@@ -572,7 +572,11 @@ interface UpdatedTarget {
   lineUpdated?: boolean;
   pushed?: boolean;
   systemType?: string;
+  keyFingerprint?: string;
 }
+
+/** A Dropbear line has no address limit, so a change of the nodes does not change it. */
+const ROUTER_SAME_LINE = "the key line on the router stays the same, because Dropbear does not limit a key by address";
 
 const updateUsage = (reason: string) => new ExitError(`${SSH_TARGET_UPDATE_USAGE}\n${reason}`, 1);
 
@@ -635,7 +639,7 @@ export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<
         ...(options.sleep ? { sleep: options.sleep } : {}),
       });
       out(`target ${id} nodes: ${(done.target?.nodes ?? done.maintenance?.toNodes ?? nodes).join(", ")}`);
-      out("the key line on the machine was updated");
+      out(done.target?.systemType === "dropbear" ? ROUTER_SAME_LINE : "the key line on the machine was updated");
       if (done.pushed === false)
         out("some nodes could not be told about the change. They get it when they connect again");
     } catch (error) {
@@ -655,7 +659,6 @@ export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<
     out(`claude-rc:${id} with this line:`);
     out(updated.installLine);
   } else if (updated.lineUpdated === true) out("the key line on the machine was updated");
-  else if (updated.systemType === "dropbear")
-    out("the key line on the router stays the same, because Dropbear does not limit a key by address");
+  else if (updated.systemType === "dropbear" && updated.keyFingerprint !== undefined) out(ROUTER_SAME_LINE);
   else if (updated.managedHost !== undefined) out("the target has no key yet, so it has no key line on the machine");
 }

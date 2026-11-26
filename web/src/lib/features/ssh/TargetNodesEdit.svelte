@@ -103,9 +103,14 @@
       <Alert.Description class="grid gap-1 [overflow-wrap:anywhere]">
         <span class="font-semibold">The change is not saved yet. You must approve the request.</span>
         <span>
-          The request to change the nodes of {target.id} waits in the list of access requests. The hub changes the key line
-          on the machine only after you approve it. Until then the nodes stay as they are. If you do not approve, nothing
-          changes.
+          The request to change the nodes of {target.id} waits in the list of access requests.
+          {#if target.systemType === "dropbear"}
+            The hub changes the node list and the list of the router script only after you approve it. The router does
+            not limit the key by address.
+          {:else}
+            The hub changes the key line on the machine only after you approve it.
+          {/if}
+          Until then the nodes stay as they are. If you do not approve, nothing changes.
         </span>
       </Alert.Description>
     </Alert.Root>
@@ -145,7 +150,7 @@
       <Alert.Description>
         The nodes of {target.id} are saved.
         {#if result.lineUpdated}The key line on the machine was updated.{/if}
-        {#if target.systemType === "dropbear"}
+        {#if target.systemType === "dropbear" && hasKey}
           The key line on the router stays the same, because Dropbear does not limit a key by address.{/if}
         {#if result.pushed === false}
           Some nodes could not be told yet. They get the change when they connect again.{/if}
