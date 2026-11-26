@@ -19,6 +19,7 @@ const target = (extra: Partial<Target> = {}): Target => ({
   systemType: "synology",
   nodes: ["node1"],
   state: "ready",
+  keyFingerprint: "SHA256:abc",
   ...extra,
 });
 
@@ -296,4 +297,43 @@ test("a refusal of the hub shows its text and keeps the form", async () => {
   button("Save", shown)!.click();
   await vi.waitFor(() => expect(shown.textContent).toContain("the key line on the machine was not updated"));
   expect(button("Save", shown)).toBeDefined();
+});
+
+test("a target without a key says nothing about a key line and accepts an empty list", async () => {
+  const shown = await openEditor([target({ keyFingerprint: undefined })]);
+  expect(shown.textContent).toContain("This target has no key yet");
+  expect(shown.textContent).not.toContain("you get the new key line");
+  expect(shown.textContent).not.toContain("The hub updates the key line");
+  boxes(shown)[0]!.click();
+  flushSync();
+  expect(button("Save", shown)!.disabled).toBe(false);
+});
+
+test("a target with a key needs one node, and the screen says so", async () => {
+  const shown = await openEditor([target()]);
+  expect(shown.textContent).toContain("At least one node must have access turned on.");
+});
+
+test("while the status loads, no node is offered and none is marked as off", async () => {
+  const base = globalThis.fetch;
+  vi.stubGlobal("fetch", (url: RequestInfo | URL, init?: RequestInit) =>
+    String(url) === "/api/ssh/status" ? new Promise<Response>(() => {}) : base(url, init),
+  );
+  const shown = await show([target()]);
+  button("Edit nodes", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain("Loading the nodes..."));
+  expect(shown.textContent).not.toContain("(access is off)");
+  expect(boxes(shown)).toEqual([]);
+  expect(button("Save", shown)!.disabled).toBe(true);
+});
+
+test("the key line text does not name a file that a Windows account does not use", async () => {
+  const line = "ssh-ed25519 AAAA claude-rc:nas";
+  patchReply = { ...target({ nodes: ["node1", "node2"], systemType: "windows" }), installLine: line };
+  const shown = await openEditor([target({ systemType: "windows" })]);
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain(line));
+  expect(shown.textContent).not.toContain("authorized_keys");
 });
