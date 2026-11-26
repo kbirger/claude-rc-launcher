@@ -83,22 +83,22 @@ A maintenance grant is a grant that runs one action with the provisioner key. Th
 - Each step writes an audit line that starts with `audit ssh maintenance`. No line holds a key, a signature, an unlock or the full output of the script.
 - The push message holds the target id and a short text. It holds no address and no key.
 
-What a stolen provisioner key can do, when it is used from the source address of `local`:
+A thief with the provisioner key and the source address of `local` can do these things:
 
 - Switch the main line on and off. Off is a denial of service. On puts back a line that you approved earlier.
-- Change the `from=` list of the main line. The list rule allows the wildcards `*` and `?`. So the command `sources *` lets the main key in from any address. The thief still needs the main private key to log in.
+- Change the `from=` list of the main line with `sources <list>`. The list holds up to 200 exact addresses or host names. The thief chooses them, so the thief can let the main key in from an address that the thief controls. The thief still needs the main private key to log in.
 - Run `uninstall`. This removes both lines and is a denial of service.
 
 It cannot add a key, read a file, open a terminal or forward a port. The flags `restrict` and `command=` stop that. The `from=` part stops a use from any other address.
 
-The wildcard rule is a known limit. The hub uses the same rule for the node source addresses of the main line. A subnet or a CIDR range is not supported. Use only a source address that you trust, and do not enter a pattern that is wider than you need.
+The provisioner takes exact addresses and host names only. It refuses the wildcards `*` and `?` and a CIDR range. This rule is stricter than the rule for the main line, which allows patterns. So a target with a provisioner needs exact source addresses on all of its nodes. Else the hub refuses the install and each maintenance request with 409.
 
 A root session on the host of the hub can use the socket of a maintenance grant for its one minute. This is the known limit of the host `local`. The session can then run any of the five commands. The short window and the audit lines limit the harm.
 
 A bug in the script can expose the account, because the script runs as the account. These parts carry the risk:
 
 - The parse of the command that the caller sends. The script uses `case` patterns and quoted variables only, and it never uses `eval`.
-- The write of the key file. A wrong edit can drop other keys. A check counts the two known lines before each write, and tests check that other lines keep their bytes.
+- The write of the key file. A wrong edit can drop other keys. Before each write, a check counts the two known lines. The same check compares all other lines with the old file and stops the write on a difference.
 - A link attack. The script refuses a symbolic link at the folder, the key file and the state file.
 - The script file itself. Anyone who can write it runs code as the account. Its folder has mode 700.
 

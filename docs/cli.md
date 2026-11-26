@@ -212,7 +212,7 @@ To change the nodes of a target, run the command `ssh target update`. It needs t
 claude-rc ssh target update slon --node local,pi
 ```
 
-The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. A target without a key has no line, and the command says so. For an external target with a provisioner, read the next section. For an external target without one, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
+The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. A target without a key has no line, and the command says so. For an external target with a provisioner, read the next section. For an external target without one, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. A `dropbear` target is an exception. Its line has no address limit, so the command says that the line stays the same. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
 
 ### The provisioner key
 
@@ -248,7 +248,8 @@ claude-rc ssh target update slon --node local,pi
 - If the new list shares no address with the old list, the hub asks for agreement. Add `--yes` to agree.
 - If the run fails, the hub restores the old list on the machine. The command exits with an error.
 - After a change of a `dropbear` target, the command says that the key line stays the same.
-- If you deny the request or it expires, nothing changes. The request still waits on the hub until you deny it on the page or it expires.
+- If you deny the request or it expires, nothing changes.
+- The command can stop before the end, for example after a wrong passphrase or after 10 minutes. Then the request still waits on the hub. Approve or deny it on the page.
 
 The CLI has no retire command. Retire a target with a provisioner on the web page.
 
