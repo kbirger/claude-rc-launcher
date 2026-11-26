@@ -2,10 +2,15 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HOST_ID_RE } from "../../server/src/hostid";
+import { keyFingerprint } from "../../server/src/sshagentproto";
+import { parseAnswer } from "../../server/src/sshprovisioner";
 import { keyFileProblem } from "../../server/src/sshtargets";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
+import { HubError } from "./hub";
 import type { HubClient } from "./hub";
+import { isObject } from "./json";
+import { approveMaintenance, asGrant } from "./sshmaintenance";
 
 const SYSTEM_TYPES = ["linux", "windows", "synology", "dropbear"];
 // The same rules as the hub. A value that starts with "-" would be read by ssh as an option.
@@ -15,11 +20,16 @@ const DEFAULT_PORT = 22;
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 10 * 60 * 1000;
 const BASE = "/cli/api/ssh";
+const CONFIRM_TEXT = ": send it again with confirm";
 
 export const SSH_TARGET_USAGE =
-  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it";
+  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--provisioner] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it\n--provisioner (an external linux, synology or dropbear target) also installs the provisioner key, so that the hub changes the node list later with one approval";
 
-export const SSH_TARGET_UPDATE_USAGE = "usage: claude-rc ssh target update <id> --node <id>[,<id>...]";
+export const SSH_TARGET_UPDATE_USAGE =
+  "usage: claude-rc ssh target update <id> --node <id>[,<id>...] [--yes]\n--yes confirms a new list that allows none of the addresses that work now";
+
+export const SSH_TARGET_PROVISIONER_USAGE =
+  "usage: claude-rc ssh target provisioner <id> --identity <file> [--fingerprint <f>] [--no-test]\nInstalls the provisioner key on an external target, or installs it again (also after the source address of the node local changed)";
 
 interface Unlock {
   method: "prf" | "passphrase";
@@ -47,7 +57,7 @@ export interface SshTargetAddOptions {
   /** Asks for a secret and does not show what is typed. */
   readSecret: (prompt: string) => Promise<string>;
   /** Runs a program on this machine with `stdin` as its input. */
-  runLocal: (argv: string[], stdin: string) => Promise<{ code: number; stderr: string }>;
+  runLocal: (argv: string[], stdin: string) => Promise<{ code: number; stderr: string; stdout?: string }>;
   out: (line: string) => void;
   /** Waits between polls. Tests replace it so that they do not wait in real time. */
   sleep?: (ms: number) => Promise<void>;
@@ -85,11 +95,18 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   if (address !== undefined && !ADDRESS_RE.test(address)) throw usage("--address is not valid");
   if (flags.managed !== undefined && !HOST_ID_RE.test(flags.managed)) throw usage("--managed is not a host id");
   const keyFileName = flags["key-file"];
+
   if (keyFileName !== undefined) {
     // The same rule as the hub: a managed linux or synology target, and a name that starts with authorized_keys.
     const bad = keyFileProblem(keyFileName, type, isManaged);
     if (bad) throw usage(`--key-file: ${bad}`);
   }
+
+  if (flags.provisioner) {
+    if (isManaged) throw usage("--provisioner does not work with --managed: a managed node keeps its own key file");
+    if (type === "windows") throw usage("--provisioner does not work with a windows target: the script needs sh");
+  }
+
   const nodes = flags.node.split(",");
   if (nodes.length === 0 || !nodes.every((node) => HOST_ID_RE.test(node))) throw usage("--node must list host ids");
   const port = flags.port === undefined ? DEFAULT_PORT : Number(flags.port);
@@ -212,46 +229,27 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
 
   async function installWithSsh(): Promise<void> {
     const pinned = (await hub.request<TargetView>("GET", target)).hostKey ?? hostKey;
-    const script = await hub.request<{ shell: "sh" | "powershell"; script: string }>("GET", `${target}/provision`);
-    const command = script.shell === "powershell" ? "powershell -NoProfile -NonInteractive -Command -" : "sh -s";
-    const folder = mkdtempSync(path.join(os.tmpdir(), "claude-rc-ssh-"));
-
-    try {
-      const knownHosts = path.join(folder, "known_hosts");
-      const name = port === DEFAULT_PORT ? sshAddress : `[${sshAddress}]:${port}`;
-      writeFileSync(knownHosts, `${name} ${pinned}\n`, { mode: 0o600 });
-      chmodSync(knownHosts, 0o600);
-      const result = await options.runLocal(
-        [
-          "ssh",
-          "-i",
-          keyFile,
-          "-o",
-          "IdentitiesOnly=yes",
-          "-o",
-          `UserKnownHostsFile=${knownHosts}`,
-          "-o",
-          "StrictHostKeyChecking=yes",
-          "-o",
-          "GlobalKnownHostsFile=/dev/null",
-          "-p",
-          String(port),
-          "--",
-          `${account}@${sshAddress}`,
-          command,
-        ],
-        script.script,
-      );
-
-      if (result.code !== 0) {
-        // The text of ssh may name the identity file. The path stays on this machine, so it is not shown.
-        const text = result.stderr.replaceAll(keyFile, "<identity>").trim();
-        throw new Error(`ssh exited with code ${result.code}${text ? `: ${text}` : ""}`);
-      }
-    } finally {
-      rmSync(folder, { recursive: true, force: true });
-    }
+    const script = await hub.request<Script>("GET", `${target}/provision`);
+    const result = await runSsh(options, {
+      keyFile,
+      address: sshAddress,
+      account: account ?? "",
+      port,
+      pinned,
+      script,
+    });
+    if (result.code !== 0) throw new Error(sshFailure(result, keyFile));
   }
+
+  const proof = { id, hub, hubUrl: options.hubUrl, method, readSecret: options.readSecret, out, sleep };
+  const setUp = {
+    ...proof,
+    options,
+    keyFile,
+    link,
+    step: step,
+  };
+  if (flags.provisioner) await setUpProvisioner(setUp, { address: sshAddress, account, port, hostKey });
 
   // The test.
   if (flags["no-test"]) return;
@@ -279,13 +277,248 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   }
 
   out(`test passed: ${id} is ready`);
+  if (flags.provisioner) await proveProvisioner(proof);
+}
+
+type StepRunner = <Value>(name: string, action: () => Promise<Value>) => Promise<Value>;
+
+interface Script {
+  shell: "sh" | "powershell";
+  script: string;
+}
+
+/** The text of a failed ssh run. The text of ssh can name the identity file: the path stays on this machine. */
+function sshFailure(result: { code: number; stderr: string }, keyFile: string): string {
+  const text = result.stderr.replaceAll(keyFile, "<identity>").trim();
+  return `ssh exited with code ${result.code}${text ? `: ${text}` : ""}`;
+}
+
+/**
+ * Runs a script on the target through ssh with the identity of the owner and the pinned host key. The known hosts file
+ * is a temporary file with mode 600 that goes away after the run.
+ */
+async function runSsh(
+  options: Pick<SshTargetAddOptions, "runLocal">,
+  run: { keyFile: string; address: string; account: string; port: number; pinned: string; script: Script },
+): Promise<{ code: number; stderr: string; stdout?: string }> {
+  const command = run.script.shell === "powershell" ? "powershell -NoProfile -NonInteractive -Command -" : "sh -s";
+  const folder = mkdtempSync(path.join(os.tmpdir(), "claude-rc-ssh-"));
+
+  try {
+    const knownHosts = path.join(folder, "known_hosts");
+    const name = run.port === DEFAULT_PORT ? run.address : `[${run.address}]:${run.port}`;
+    writeFileSync(knownHosts, `${name} ${run.pinned}\n`, { mode: 0o600 });
+    chmodSync(knownHosts, 0o600);
+    return await options.runLocal(
+      [
+        "ssh",
+        "-i",
+        run.keyFile,
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        `UserKnownHostsFile=${knownHosts}`,
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-p",
+        String(run.port),
+        "--",
+        `${run.account}@${run.address}`,
+        command,
+      ],
+      run.script.script,
+    );
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+interface ProofContext {
+  id: string;
+  hub: HubClient;
+  hubUrl: string;
+  method: "prf" | "passphrase";
+  readSecret: (prompt: string) => Promise<string>;
+  out: (line: string) => void;
+  sleep: ((ms: number) => Promise<void>) | undefined;
+}
+
+interface SetUpContext extends ProofContext {
+  options: Pick<SshTargetAddOptions, "runLocal">;
+  keyFile: string;
+  /** The link to the page of the target on the hub. */
+  link: string;
+  step: StepRunner;
+}
+
+const unlockOf = (typed: string): Unlock => ({
+  method: "passphrase",
+  secret: Buffer.from(typed, "utf8").toString("base64url"),
+});
+
+/**
+ * The provisioner key and its install on the target, with the key of the owner. The key comes first: with a passphrase
+ * the hub makes it here, with a passkey the owner makes it on the web page and this command waits for it. A key that
+ * exists already is replaced (a passphrase) or used (a passkey). The install script comes from the hub. Its answer
+ * holds the path of the script, which goes back to the hub. The key of the owner never goes to the hub.
+ */
+async function setUpProvisioner(
+  ctx: SetUpContext,
+  where: { address: string; account: string; port: number; hostKey: string },
+): Promise<void> {
+  const { id, hub, out, step } = ctx;
+  const target = `${BASE}/targets/${encodeURIComponent(id)}`;
+  let script: Script | undefined;
+
+  if (ctx.method === "passphrase") {
+    const typed = await step("reading the passphrase", () => ctx.readSecret("Passphrase for the SSH keys: "));
+    if (!typed) throw new ExitError("reading the passphrase failed: no passphrase", 1);
+    const made = await step("creating the provisioner key", async () => {
+      const body = { unlock: unlockOf(typed) };
+
+      try {
+        return await hub.request<{ fingerprint: string }>("POST", `${target}/provisioner-key`, body);
+      } catch (error) {
+        if (!(error instanceof HubError) || error.status !== 409 || !error.message.includes("provisioner key already"))
+          throw error;
+        out("the target has a provisioner key already: it is replaced");
+        await hub.request("DELETE", `${target}/provisioner-key`);
+        return await hub.request<{ fingerprint: string }>("POST", `${target}/provisioner-key`, body);
+      }
+    });
+    out(`provisioner key created (${made.fingerprint})`);
+  } else {
+    // The route of the install script answers 409 until the key exists.
+    let first = true;
+    script = await step("waiting for the provisioner key", async () => {
+      for (let waited = 0; waited <= POLL_LIMIT_MS; waited += POLL_MS) {
+        try {
+          const found = await hub.request<Script>("GET", `${target}/provisioner-install`);
+          if (first) out("the hub holds a provisioner key already: it is used");
+          return found;
+        } catch (error) {
+          if (!(error instanceof HubError) || error.status !== 409 || !error.message.includes("no provisioner key"))
+            throw error;
+        }
+
+        if (first) out(`open ${ctx.link}&provisioner=1 to make the provisioner key with your passkey`);
+        first = false;
+        await (ctx.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(POLL_MS);
+      }
+
+      throw new Error("the provisioner key was not made in 10 minutes");
+    });
+    out("provisioner key created");
+  }
+
+  const toRun =
+    script ??
+    (await step("reading the install script", () => hub.request<Script>("GET", `${target}/provisioner-install`)));
+  const installed = await step("installing the provisioner", async () => {
+    const pinned = (await hub.request<TargetView>("GET", target)).hostKey ?? where.hostKey;
+    const result = await runSsh(ctx.options, { keyFile: ctx.keyFile, ...where, pinned, script: toRun });
+    if (result.code !== 0) throw new Error(sshFailure(result, ctx.keyFile));
+    const answer = parseAnswer(result.stdout ?? "");
+    if (answer?.kind !== "installed") throw new Error("the install script gave no valid answer");
+    return answer.path;
+  });
+  await step("storing the provisioner", () =>
+    hub.request("POST", `${target}/provisioner-installed`, { script: installed }),
+  );
+  out(`provisioner installed: ${installed}`);
+}
+
+/** Proves the chain: the hub runs the maintenance install through the provisioner key, with one approval. */
+async function proveProvisioner(ctx: ProofContext): Promise<void> {
+  const target = `${BASE}/targets/${encodeURIComponent(ctx.id)}`;
+  const repair = `The provisioner is installed. To try the proof again, run: claude-rc ssh target provisioner ${ctx.id} --identity <file>`;
+
+  try {
+    const reply = await ctx.hub.request<unknown>("POST", `${target}/reinstall`);
+    const grant = isObject(reply) ? asGrant(reply.maintenance) : undefined;
+    if (!grant) throw new Error("the hub gave no maintenance grant");
+    await approveMaintenance(grant, ctx);
+  } catch (error) {
+    throw new ExitError(`testing the provisioner failed: ${messageOf(error)}. ${repair}`, 1);
+  }
+
+  ctx.out(`provisioner works: ${ctx.id} can change its node list with one approval`);
+}
+
+/**
+ * `claude-rc ssh target provisioner <id> --identity <file>`: installs the provisioner key on an external target that
+ * exists, or installs it again. The target needs a pinned host key. The key of the owner stays on this machine.
+ */
+export async function sshTargetProvisioner(options: SshTargetAddOptions): Promise<void> {
+  const { id, flags, hub, out } = options;
+  const sleep = options.sleep;
+  const fail = (reason: string) => new ExitError(`${SSH_TARGET_PROVISIONER_USAGE}\n${reason}`, 1);
+  if (!HOST_ID_RE.test(id)) throw fail("the target id is not valid");
+  if (flags.identity === undefined || flags.identity === "") throw new ExitError(SSH_TARGET_PROVISIONER_USAGE, 1);
+  const keyFile = path.resolve(flags.identity);
+  const target = `${BASE}/targets/${encodeURIComponent(id)}`;
+
+  const step: StepRunner = async (name, action) => {
+    try {
+      return await action();
+    } catch (error) {
+      throw new ExitError(`${name} failed: ${messageOf(error)}`, 1);
+    }
+  };
+
+  const status = await step("reading the SSH status", () =>
+    hub.request<{ setUp?: boolean; method?: "prf" | "passphrase" }>("GET", `${BASE}/status`),
+  );
+  if (!status.setUp || !status.method) throw new ExitError("SSH access is not set up on the hub", 1);
+  const view = await step("reading the target", () =>
+    hub.request<
+      TargetView & { address?: string; account?: string; port?: number; systemType?: string; managedHost?: string }
+    >("GET", target),
+  );
+
+  if (view.managedHost !== undefined) throw new ExitError("a managed target has no provisioner key", 1);
+  if (view.systemType === "windows")
+    throw new ExitError("a windows target has no provisioner key: the script needs sh", 1);
+  if (!view.hostKey)
+    throw new ExitError(
+      `the target ${id} has no pinned host key: pin its host key first (add the target again, or use the web page)`,
+      1,
+    );
+  const { address, account } = view;
+  const port = view.port ?? DEFAULT_PORT;
+  if (address === undefined || !ADDRESS_RE.test(address) || account === undefined || !ACCOUNT_RE.test(account))
+    throw new ExitError("the hub gave no valid address and account for the target", 1);
+
+  if (flags.fingerprint !== undefined) {
+    const blob = view.hostKey.split(" ")[1] ?? "";
+    const actual = keyFingerprint(new Uint8Array(Buffer.from(blob, "base64")));
+    if (actual !== flags.fingerprint)
+      throw new ExitError(
+        `the pinned host key does not match --fingerprint (it is ${actual}). Nothing was installed`,
+        1,
+      );
+  }
+
+  const proof = { id, hub, hubUrl: options.hubUrl, method: status.method, readSecret: options.readSecret, out, sleep };
+  const link = `${options.hubUrl.replace(/\/+$/, "")}/ssh?target=${encodeURIComponent(id)}`;
+  await setUpProvisioner({ ...proof, options, keyFile, link, step }, { address, account, port, hostKey: view.hostKey });
+  if (flags["no-test"]) return;
+  await proveProvisioner(proof);
 }
 
 export interface SshTargetUpdateOptions {
   id: string;
   flags: Flags;
   hub: HubClient;
+  /** The address of the hub, for the link to the web UI. */
+  hubUrl: string;
+  /** Asks for a secret and does not show what is typed. */
+  readSecret: (prompt: string) => Promise<string>;
   out: (line: string) => void;
+  /** Waits between polls. Tests replace it so that they do not wait in real time. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 interface UpdatedTarget {
@@ -299,9 +532,12 @@ interface UpdatedTarget {
 const updateUsage = (reason: string) => new ExitError(`${SSH_TARGET_UPDATE_USAGE}\n${reason}`, 1);
 
 /**
- * `claude-rc ssh target update <id> --node <ids>`: replaces the list of nodes of a target. It prints the new list. For
- * an external target it prints the new key line, which the owner must install in place of the old line. For a managed
- * target the hub has changed the line on the machine already, and the command says so.
+ * `claude-rc ssh target update <id> --node <ids> [--yes]`: replaces the list of nodes of a target. The hub answers in
+ * one of two shapes. For a target with a provisioner it answers 202 with a maintenance grant: nothing has changed yet,
+ * the owner approves the grant, and the hub then changes the key line on the machine and stores the list. This command
+ * waits for that approve (a passphrase typed here, or a passkey on the web page) and prints the result. For every other
+ * target the answer is the target: an external target gets the new key line to install by hand, and for a managed
+ * target the hub has changed the line already. `--yes` confirms a list that allows none of the addresses that work now.
  */
 export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<void> {
   const { id, flags, hub, out } = options;
@@ -312,14 +548,50 @@ export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<
   const repeated = nodes.find((node, index) => nodes.indexOf(node) !== index);
   if (repeated !== undefined) throw updateUsage(`the node id "${repeated}" is named more than once in --node`);
 
-  let updated: UpdatedTarget;
+  let reply: unknown;
 
   try {
-    updated = await hub.request<UpdatedTarget>("PATCH", `${BASE}/targets/${encodeURIComponent(id)}`, { nodes });
+    reply = await hub.request<unknown>("PATCH", `${BASE}/targets/${encodeURIComponent(id)}`, {
+      nodes,
+      ...(flags.yes ? { confirm: true } : {}),
+    });
   } catch (error) {
+    if (error instanceof HubError && error.status === 409 && error.message.endsWith(CONFIRM_TEXT))
+      throw new ExitError(
+        `updating the target failed: ${error.message.slice(0, -CONFIRM_TEXT.length)}. Nothing was changed. To go on, run the command again with --yes`,
+        1,
+      );
     throw new ExitError(`updating the target failed: ${messageOf(error)}`, 1);
   }
 
+  const grant = isObject(reply) ? asGrant(reply.maintenance) : undefined;
+
+  if (grant) {
+    out(`target ${id}: the change waits for the approval of the owner. Nothing has changed yet`);
+
+    try {
+      const status = await hub.request<{ method?: "prf" | "passphrase" }>("GET", `${BASE}/status`);
+      if (status.method !== "prf" && status.method !== "passphrase") throw new Error("SSH access is not set up");
+      const done = await approveMaintenance(grant, {
+        hub,
+        hubUrl: options.hubUrl,
+        method: status.method,
+        readSecret: options.readSecret,
+        out,
+        ...(options.sleep ? { sleep: options.sleep } : {}),
+      });
+      out(`target ${id} nodes: ${(done.target?.nodes ?? done.maintenance?.toNodes ?? nodes).join(", ")}`);
+      out("the key line on the machine was updated");
+      if (done.pushed === false)
+        out("some nodes could not be told about the change. They get it when they connect again");
+    } catch (error) {
+      throw new ExitError(`updating the target failed: ${messageOf(error)}`, 1);
+    }
+
+    return;
+  }
+
+  const updated = (isObject(reply) ? reply : {}) as UpdatedTarget;
   out(`target ${id} nodes: ${(updated.nodes ?? nodes).join(", ")}`);
   if (updated.pushed === false)
     out("some nodes could not be told about the change. They get it when they connect again");
