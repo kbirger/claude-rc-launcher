@@ -36,7 +36,7 @@ function keyFileName(keyFile: string | undefined): string {
 }
 
 /** Quote a value for a POSIX shell: single quotes, and each single quote becomes `'\''`. */
-function shQuote(value: string): string {
+export function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
@@ -51,7 +51,7 @@ function psQuote(value: string): string {
 // Two scripts on one account at the same time could lose a line. With flock, they wait for each other. The lock file is
 // in the `.ssh` folder and belongs to the account. Without flock, or when the lock file cannot be made, the script runs
 // without a lock. The node also runs the scripts of one account one after the other.
-const LOCK_LINES = [
+export const LOCK_LINES = [
   'if command -v flock >/dev/null 2>&1 && ( : >> "$dir/.claude-rc.lock" ) 2>/dev/null; then',
   '  exec 9>> "$dir/.claude-rc.lock"',
   "  flock 9",
@@ -62,7 +62,7 @@ const LOCK_LINES = [
 // of another key does not match. A first field that starts with `#` is a comment line and stays. A CR at the end of the
 // last field (CRLF file) is ignored for the match, and the kept lines keep their bytes. A missing final newline stays
 // missing, unless the last line goes.
-const AWK_PROGRAM = [
+export const AWK_PROGRAM = [
   '{ c = $NF; sub(/\\r$/, "", c); hit = 0',
   '  if (NF >= 3 && substr($1, 1, 1) != "#" && c == ENVIRON["RC_COMMENT"] && $(NF - 1) == ENVIRON["RC_BLOB"] && $(NF - 2) == "ssh-ed25519") hit = 1',
   '  if (ENVIRON["RC_MODE"] == "count") n += hit',
