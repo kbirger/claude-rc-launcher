@@ -579,10 +579,7 @@ export function sshApi(options: SshApiOptions): Hono {
           !toSources.some((source) => fromSources.includes(source)) &&
           body.confirm !== true
         )
-          throw new TargetError(
-            409,
-            `${CONFIRM_NODES_TEXT}${CONFIRM_NODES_SUFFIX}`,
-          );
+          throw new TargetError(409, `${CONFIRM_NODES_TEXT}${CONFIRM_NODES_SUFFIX}`);
         const grant = service.requestMaintenance({
           targetId: target.id,
           action: "sources",

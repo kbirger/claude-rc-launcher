@@ -5,6 +5,11 @@ import { isObject } from "./json";
 export const SSH_BASE = "/cli/api/ssh";
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 10 * 60 * 1000;
+const STILL_WAITS = "The request still waits on the hub: deny it on the web page or wait for it to expire";
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The grant ended or is gone: no request waits on the hub. */
+class EndedError extends Error {}
 
 export interface MaintenanceWork {
   action: "install" | "sources" | "uninstall";
@@ -58,27 +63,32 @@ export async function approveMaintenance(
   const id = encodeURIComponent(grant.id);
   let final: MaintenanceGrant | undefined;
 
-  if (deps.method === "passphrase") {
-    deps.out("This change needs one approval with the provisioner key.");
-    const typed = await deps.readSecret("Passphrase for the SSH keys: ");
-    if (!typed) throw new Error("no passphrase");
-    const unlock = { method: "passphrase", secret: Buffer.from(typed, "utf8").toString("base64url") };
+  // A failure before the hub gave a result leaves the request on the hub: say so.
+  try {
+    if (deps.method === "passphrase") {
+      deps.out("This change needs one approval with the provisioner key.");
+      const typed = await deps.readSecret("Passphrase for the SSH keys: ");
+      if (!typed) throw new Error("no passphrase");
+      const unlock = { method: "passphrase", secret: Buffer.from(typed, "utf8").toString("base64url") };
 
-    try {
-      final = asGrant(await deps.hub.request("POST", `${SSH_BASE}/grants/${id}/approve`, { unlock }));
-    } catch (error) {
-      // A wrong passphrase leaves the grant pending. A failed run ends it.
-      if (error instanceof HubError && error.status === 403)
-        throw new Error(
-          `${error.message}. The request still waits on the hub: deny it on the web page, or wait for it to expire, then run the command again`,
-        );
-      throw error;
+      try {
+        final = asGrant(await deps.hub.request("POST", `${SSH_BASE}/grants/${id}/approve`, { unlock }));
+      } catch (error) {
+        // A wrong passphrase leaves the grant pending. A failed run ends it.
+        if (error instanceof HubError && error.status === 403) throw new Error(error.message);
+        throw error;
+      }
+    } else {
+      const target = grant.targetId === undefined ? "" : `?target=${encodeURIComponent(grant.targetId)}`;
+      const link = `${deps.hubUrl.replace(/\/+$/, "")}/ssh${target}`;
+      deps.out(`open ${link} and approve the change with your passkey (one approval)`);
+      final = await waitForEnd(grant.id, link, deps, sleep);
     }
-  } else {
-    const target = grant.targetId === undefined ? "" : `?target=${encodeURIComponent(grant.targetId)}`;
-    const link = `${deps.hubUrl.replace(/\/+$/, "")}/ssh${target}`;
-    deps.out(`open ${link} and approve the change with your passkey (one approval)`);
-    final = await waitForEnd(grant.id, link, deps, sleep);
+  } catch (error) {
+    // A refusal of the hub other than 403 means that the request ended: a failed run, or a grant that is out of date.
+    if (error instanceof HubError && error.status !== 403) throw error;
+    if (error instanceof EndedError) throw error;
+    throw new Error(`${messageOf(error)}. ${STILL_WAITS}`);
   }
 
   return judge(final);
@@ -94,7 +104,7 @@ async function waitForEnd(
     const list = await deps.hub.request<unknown>("GET", `${SSH_BASE}/grants`);
     const found = Array.isArray(list) ? list.map(asGrant).find((item) => item?.id === grantId) : undefined;
     if (!found)
-      throw new Error(
+      throw new EndedError(
         "the grant is gone from the hub (it expired, or the hub restarted). The change did not happen unless the web page shows it: check the target there",
       );
     if (found.state === "ended") return found;

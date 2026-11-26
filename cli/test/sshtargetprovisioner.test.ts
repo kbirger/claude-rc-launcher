@@ -249,6 +249,136 @@ describe("add --provisioner", () => {
   });
 });
 
+const REPAIR = "run: claude-rc ssh target provisioner nas --identity <file>";
+
+describe("part-way failures and repair texts", () => {
+  test("add: a wrong passphrase with an existing key deletes nothing", async () => {
+    const rg = rig({
+      [`POST ${B}/targets/nas/provisioner-key`]: () => {
+        throw new HubError("the unlock does not open the key", 403, undefined);
+      },
+    });
+    const error = await rejection(rg.add(external));
+    expect(exitCode(error)).toBe(1);
+    expect(rg.paths().some((p) => p.startsWith("DELETE"))).toBe(false);
+  });
+
+  test("the key was removed and the new POST fails: the text says so and names the repair", async () => {
+    let posts = 0;
+    const rg = rig({
+      [`POST ${B}/targets/nas/provisioner-key`]: () => {
+        posts += 1;
+        if (posts === 1) throw new HubError("the target has a provisioner key already", 409, undefined);
+        throw new HubError("disk full", 500, undefined);
+      },
+      [`DELETE ${B}/targets/nas/provisioner-key`]: () => undefined,
+    });
+    const error = await rejection(rg.prov({ identity: IDENTITY }));
+    expect(error.message).toContain("disk full");
+    expect(error.message).toContain("old provisioner key was removed");
+    expect(error.message).toContain(REPAIR);
+  });
+
+  test("add: provisioner-installed fails after the install: repair command and no test", async () => {
+    const rg = rig({
+      [`POST ${B}/targets/nas/provisioner-installed`]: () => {
+        throw new HubError("the source address of local changed", 409, undefined);
+      },
+    });
+    const error = await rejection(rg.add(external));
+    expect(error.message).toContain(REPAIR);
+    expect(error.message).toContain("The test did not run");
+    expect(rg.paths()).not.toContain("POST /targets/nas/test");
+  });
+
+  test("add: an install answer that is not ok installed gives the repair command and no test", async () => {
+    const rg = rig({}, { installStdout: "hello\n" });
+    const error = await rejection(rg.add(external));
+    expect(error.message).toContain(REPAIR);
+    expect(error.message).toContain("The test did not run");
+  });
+
+  test("provisioner: the same two failures name the repair command without the test sentence", async () => {
+    const bad = rig({}, { installStdout: "hello\n" });
+    const first = await rejection(bad.prov({ identity: IDENTITY }));
+    expect(first.message).toContain(REPAIR);
+    expect(first.message).not.toContain("The test did not run");
+    const stored = rig({
+      [`POST ${B}/targets/nas/provisioner-installed`]: () => {
+        throw new HubError("no", 409, undefined);
+      },
+    });
+    const second = await rejection(stored.prov({ identity: IDENTITY }));
+    expect(second.message).toContain(REPAIR);
+  });
+
+  test("a failed proof says to run the command after the request ends", async () => {
+    const rg = rig({
+      [`POST ${B}/grants/g1/approve`]: () => {
+        throw new HubError("ssh exited with 255", 502, undefined);
+      },
+    });
+    const error = await rejection(rg.add(external));
+    expect(error.message).toContain("after the request ends");
+  });
+});
+
+describe("dropbear, unrelated flags and a target with no key", () => {
+  test("add --provisioner with dropbear is refused before any call", async () => {
+    const rg = rig();
+    const error = await rejection(rg.add({ ...external, type: "dropbear" }));
+    expect(exitCode(error)).toBe(1);
+    expect(error.message).toContain("router version is not available yet");
+    expect(rg.calls).toEqual([]);
+    expect(SSH_TARGET_USAGE).not.toContain("synology or dropbear");
+  });
+
+  test("provisioner for a dropbear target is refused after reading the view", async () => {
+    const rg = rig({
+      [`GET ${B}/targets/nas`]: () => ({
+        id: "nas",
+        hostKey: HOST_KEY,
+        keyFingerprint: FP,
+        address: "nas.lan",
+        account: "backup",
+        port: 22,
+        systemType: "dropbear",
+      }),
+    });
+    const error = await rejection(rg.prov({ identity: IDENTITY }));
+    expect(error.message).toContain("router version");
+    expect(rg.paths().some((p) => p.includes("provisioner-key"))).toBe(false);
+    expect(rg.ssh).toEqual([]);
+  });
+
+  test("provisioner refuses flags that it does not use", async () => {
+    for (const extra of [{ node: "pi" }, { type: "linux" }, { address: "x" }, { managed: "h" }]) {
+      const rg = rig();
+      const error = await rejection(rg.prov({ identity: IDENTITY, ...extra }));
+      expect(exitCode(error)).toBe(1);
+      expect(error.message).toContain("is not used by this command");
+      expect(rg.calls).toEqual([]);
+    }
+  });
+
+  test("provisioner on a target with no main key refuses before it makes a key", async () => {
+    const rg = rig({
+      [`GET ${B}/targets/nas`]: () => ({
+        id: "nas",
+        hostKey: HOST_KEY,
+        address: "nas.lan",
+        account: "backup",
+        port: 22,
+        systemType: "linux",
+      }),
+    });
+    const error = await rejection(rg.prov({ identity: IDENTITY }));
+    expect(error.message).toContain("no key yet");
+    expect(rg.paths().some((p) => p.includes("provisioner-key"))).toBe(false);
+    expect(rg.ssh).toEqual([]);
+  });
+});
+
 describe("target provisioner", () => {
   test("it needs --identity and refuses extra flags", async () => {
     const rg = rig();
@@ -260,7 +390,14 @@ describe("target provisioner", () => {
 
   test("it needs a pinned host key", async () => {
     const rg = rig({
-      [`GET ${B}/targets/nas`]: () => ({ id: "nas", state: "draft", address: "nas.lan", account: "backup", port: 22 }),
+      [`GET ${B}/targets/nas`]: () => ({
+        id: "nas",
+        state: "draft",
+        keyFingerprint: FP,
+        address: "nas.lan",
+        account: "backup",
+        port: 22,
+      }),
     });
     const error = await rejection(rg.prov({ identity: IDENTITY }));
     expect(exitCode(error)).toBe(1);

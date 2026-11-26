@@ -21,6 +21,8 @@ function rig(reply: unknown, extra: Record<string, () => unknown> = {}, secrets:
   const hub = {
     request: (method: string, requestPath: string, body?: unknown) => {
       calls.push({ method, path: requestPath, body });
+      if (method === "GET" && requestPath.endsWith("/status") && !extra[`GET ${requestPath}`])
+        return Promise.resolve({ method: "passphrase" });
       const extraHandler = extra[`${method} ${requestPath}`];
       if (extraHandler) {
         try {
@@ -45,7 +47,7 @@ function rig(reply: unknown, extra: Record<string, () => unknown> = {}, secrets:
       out: (line) => out.push(line),
       sleep: () => Promise.resolve(),
     });
-  return { calls, out, run, secrets };
+  return { calls, out, run, secrets, hub };
 }
 
 const exitCode = (error: Error) => (error instanceof ExitError ? error.code : undefined);
@@ -54,7 +56,9 @@ describe("sshTargetUpdate", () => {
   test("it sends the list in the order given and prints it", async () => {
     const { calls, out, run } = rig({ id: "nas", nodes: ["pi", "vm"], managedHost: "nas", lineUpdated: true });
     await run({ node: "pi,vm" });
-    expect(calls).toEqual([{ method: "PATCH", path: "/cli/api/ssh/targets/nas", body: { nodes: ["pi", "vm"] } }]);
+    expect(calls.filter((call) => call.method === "PATCH")).toEqual([
+      { method: "PATCH", path: "/cli/api/ssh/targets/nas", body: { nodes: ["pi", "vm"] } },
+    ]);
     expect(out).toEqual(["target nas nodes: pi, vm", "the key line on the machine was updated"]);
   });
 
@@ -166,13 +170,13 @@ describe("sshTargetUpdate with a provisioner", () => {
   test("--yes sends confirm true", async () => {
     const rg = rig({ maintenance: GRANT }, { [STATUS]: () => ({ method: "passphrase" }), [APPROVE]: () => DONE });
     await rg.run({ node: "pi", yes: true });
-    expect(rg.calls[0]?.body).toEqual({ nodes: ["pi"], confirm: true });
+    expect(rg.calls.find((call) => call.method === "PATCH")?.body).toEqual({ nodes: ["pi"], confirm: true });
   });
 
   test("without --yes the body has no confirm", async () => {
     const rg = rig({ id: "nas", nodes: ["pi"] });
     await rg.run({ node: "pi" });
-    expect(rg.calls[0]?.body).toEqual({ nodes: ["pi"] });
+    expect(rg.calls.find((call) => call.method === "PATCH")?.body).toEqual({ nodes: ["pi"] });
   });
 
   test("a failed run exits 1 and prints the text of the hub", async () => {
@@ -223,6 +227,70 @@ describe("sshTargetUpdate with a provisioner", () => {
   });
 });
 
+describe("sshTargetUpdate failures after the 202", () => {
+  const STILL = "still waits on the hub: deny it on the web page or wait for it to expire";
+
+  test("the status is read before the change", async () => {
+    const rg = rig({ maintenance: GRANT }, { [APPROVE]: () => DONE });
+    await rg.run({ node: "pi" });
+    expect(rg.calls.map((call) => call.method)[0]).toBe("GET");
+    expect(rg.calls[0]?.path).toEndWith("/status");
+  });
+
+  test("a failed status read stops before the change", async () => {
+    const rg = rig(
+      {},
+      {
+        [STATUS]: () => {
+          throw new HubError("down", 500, undefined);
+        },
+      },
+    );
+    const error = await rejection(rg.run({ node: "pi" }));
+    expect(error.message).toContain("reading the SSH status failed");
+    expect(rg.calls.some((call) => call.method === "PATCH")).toBe(false);
+  });
+
+  test("an empty passphrase and a network error say that the request still waits", async () => {
+    const empty = rig({ maintenance: GRANT }, {});
+    const error = await rejection(
+      sshTargetUpdate({
+        id: "nas",
+        flags: { node: "pi" },
+        hub: empty.hub,
+        hubUrl: "https://h",
+        readSecret: () => Promise.resolve(""),
+        out: () => {},
+      }),
+    );
+    expect(error.message).toContain("no passphrase");
+    expect(error.message).toContain(STILL);
+    const down = rig(
+      { maintenance: GRANT },
+      {
+        [APPROVE]: () => {
+          throw new ExitError("cannot reach the hub", 1);
+        },
+      },
+    );
+    const second = await rejection(down.run({ node: "pi" }));
+    expect(second.message).toContain(STILL);
+  });
+
+  test("a failed run does not say that the request waits", async () => {
+    const rg = rig(
+      { maintenance: GRANT },
+      {
+        [APPROVE]: () => {
+          throw new HubError("failed run", 502, undefined);
+        },
+      },
+    );
+    const error = await rejection(rg.run({ node: "pi" }));
+    expect(error.message).not.toContain(STILL);
+  });
+});
+
 describe("claude-rc ssh target update through main", () => {
   const stops: (() => void)[] = [];
   afterAll(() => {
@@ -264,7 +332,9 @@ describe("claude-rc ssh target update through main", () => {
   test("it patches the target and prints the line", async () => {
     const { seen, out, run } = harness();
     expect(await run("ssh", "target", "update", "nas", "--node", "pi")).toBe(0);
-    expect(seen).toEqual([{ method: "PATCH", path: "/cli/api/ssh/targets/nas", body: '{"nodes":["pi"]}' }]);
+    expect(seen.filter((item) => item.method === "PATCH")).toEqual([
+      { method: "PATCH", path: "/cli/api/ssh/targets/nas", body: '{"nodes":["pi"]}' },
+    ]);
     expect(out.at(-1)).toBe(LINE);
   });
 
