@@ -1728,6 +1728,10 @@ describe("the provisioner key", () => {
     expect(keys.publicLine("nas", "provisioner")).toBe(made.body.publicLine);
     expect(keys.publicLine("nas")).toContain("claude-rc:nas");
     expect((await call("POST", "/targets/nas/provisioner-key", "admin", { unlock })).status).toBe(409);
+    // A wrong passphrase gives 403 and not 409, and the key stays.
+    const wrongOne = await call("POST", "/targets/nas/provisioner-key", "admin", { unlock: wrongUnlock });
+    expect(wrongOne.status).toBe(403);
+    expect(keys.publicLine("nas", "provisioner")).toBe(made.body.publicLine);
     expect((await call("POST", "/targets/nope/provisioner-key", "admin", { unlock })).status).toBe(404);
 
     // A grant is made with the main key only: the provisioner key never signs for a grant.

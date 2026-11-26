@@ -10,7 +10,13 @@ import type { Grant, GrantStore, Maintenance } from "./sshgrants";
 import { KeyError } from "./sshkeystore";
 import type { KeySlot, SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
-import { linuxInstallScript } from "./sshprovisioner";
+import {
+  CONFIRM_NODES_SUFFIX,
+  CONFIRM_NODES_TEXT,
+  HAS_PROVISIONER_KEY_TEXT,
+  linuxInstallScript,
+  NO_PROVISIONER_KEY_TEXT,
+} from "./sshprovisioner";
 import { errorKind, MAINTENANCE_BUSY, NodeError } from "./sshservice";
 import type { MaintenanceCommit, SshService } from "./sshservice";
 import {
@@ -575,7 +581,7 @@ export function sshApi(options: SshApiOptions): Hono {
         )
           throw new TargetError(
             409,
-            "the new list allows none of the addresses that work now: send it again with confirm",
+            `${CONFIRM_NODES_TEXT}${CONFIRM_NODES_SUFFIX}`,
           );
         const grant = service.requestMaintenance({
           targetId: target.id,
@@ -763,8 +769,10 @@ export function sshApi(options: SshApiOptions): Hono {
     needProvisionerTarget(target);
 
     return locked(target.id, async () => {
-      if (hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has a provisioner key already");
+      // The unlock is checked first: a 409 must never hide a wrong passphrase, because the CLI replaces a key that
+      // exists, and a replace with a typo would remove the working key.
       await checkUnlock(unlock);
+      if (hasKey(target.id, "provisioner")) throw new TargetError(409, HAS_PROVISIONER_KEY_TEXT);
       const made = await keys.create(target.id, unlock, "provisioner");
       return context.json({ publicLine: made.publicLine, fingerprint: made.fingerprint });
     });
@@ -775,7 +783,7 @@ export function sshApi(options: SshApiOptions): Hono {
 
     return locked(target.id, async () => {
       if (!hasKey(target.id, "provisioner") && !hasProvisioner(target))
-        throw new TargetError(404, "the target has no provisioner key");
+        throw new TargetError(404, NO_PROVISIONER_KEY_TEXT);
       await keys.removeSlot(target.id, "provisioner");
       await targets.setProvisioner(target.id, undefined);
       audit(`audit ssh target=${logToken(target.id)} provisioner key removed user=${logToken(options.user(context))}`);
@@ -793,7 +801,7 @@ export function sshApi(options: SshApiOptions): Hono {
     if (target.systemType === "dropbear")
       throw new TargetError(409, "the provisioner script for a dropbear target is not available yet");
     if (!hasKey(target.id)) throw new TargetError(409, "the target has no key: make the main key first");
-    if (!hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has no provisioner key");
+    if (!hasKey(target.id, "provisioner")) throw new TargetError(409, NO_PROVISIONER_KEY_TEXT);
   };
 
   hono.get("/targets/:id/provisioner-install", (context) => {

@@ -12,6 +12,14 @@ import { ADDRESS_RE, SCRIPT_PATH_RE } from "./sshtargets";
 // element is `ADDRESS_RE` of `sshtargets.ts`. The shared vectors in `sshprovisioner.vectors.json` keep the hub and
 // the script equal.
 
+// Texts of the hub that the CLI matches. One definition keeps both sides equal.
+/** 409 of `POST /targets/:id/provisioner-key` and of `GET /targets/:id/provisioner-install` (key missing). */
+export const NO_PROVISIONER_KEY_TEXT = "the target has no provisioner key";
+export const HAS_PROVISIONER_KEY_TEXT = "the target has a provisioner key already";
+/** 409 of a PATCH of nodes that allows none of the addresses that work now. The CLI asks for `--yes`. */
+export const CONFIRM_NODES_TEXT = "the new list allows none of the addresses that work now";
+export const CONFIRM_NODES_SUFFIX = ": send it again with confirm";
+
 /** Tests only: the kind of forced bad edit that `linuxScript` can build in. */
 export type GuardTest = true | "main" | "other";
 
