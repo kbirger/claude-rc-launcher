@@ -439,3 +439,41 @@ test("a leading byte order mark is not counted, as the hub decodes it away", asy
   press("Continue");
   await waitText("Each target needs one re-lock");
 });
+
+test("the recovery flow lists a re-lock row for each provisioner key", async () => {
+  answers["GET /api/ssh/status"] = {
+    status: 200,
+    body: { ...STATUS, pendingRewrap: ["nas"], pendingProvisionerRewrap: ["nas"] },
+  };
+  answers["POST /api/ssh/recovery/begin"] = { status: 200, body: { targets: ["nas"] } };
+  await toRelock("passphrase");
+  expect(buttons("Re-lock")).toHaveLength(2);
+  expect(document.body.textContent).toContain("provisioner key");
+  document.querySelector<HTMLButtonElement>('button[aria-label="Re-lock the provisioner key of nas"]')!.click();
+  await waitText("Done");
+  expect(posts("/rewrap")).toEqual([
+    {
+      method: "POST",
+      url: "/api/ssh/targets/nas/rewrap",
+      body: { code: CODE, unlock: { method: "passphrase", secret: PASS_B64 }, key: "provisioner" },
+    },
+  ]);
+  expect(buttons("Re-lock")).toHaveLength(1);
+  buttons("Re-lock")[0]!.click();
+  await waitText("Recovery is complete.");
+});
+
+test("a provisioner key with a passkey asks for the provisioner salt", async () => {
+  answers["GET /api/ssh/status"] = { status: 200, body: { ...STATUS, pendingProvisionerRewrap: ["web"] } };
+  answers["POST /api/ssh/recovery/begin"] = { status: 200, body: { targets: [] } };
+  show();
+  typeCode();
+  pick("prf");
+  press("Continue");
+  await waitText("Each target needs one re-lock");
+  document.querySelector<HTMLButtonElement>('button[aria-label="Re-lock the provisioner key of web"]')!.click();
+  await waitText("Done");
+  expect(calls.filter((call) => call.url.includes("/salt")).map((call) => call.url)).toEqual([
+    "/api/ssh/targets/web/salt?key=provisioner",
+  ]);
+});

@@ -178,3 +178,28 @@ test("the list shows the badge maintenance and the action in place of the instan
   expect(text).not.toContain("1 minutes");
   expect(text).not.toContain("· maintenance ·");
 });
+
+test("an ended maintenance grant that never started says that nothing ran on the target", async () => {
+  grants = [
+    {
+      ...base,
+      id: "m1",
+      state: "ended",
+      requestedAt: 9,
+      endReason: "denied",
+      maintenance: { action: "uninstall", fromNodes: [], fromSources: [] },
+    },
+    {
+      ...base,
+      id: "m2",
+      state: "ended",
+      requestedAt: 8,
+      endReason: "revoked",
+      maintenance: { action: "sources", fromNodes: [], fromSources: [], started: true },
+    },
+  ];
+  show();
+  await vi.waitFor(() => expect(rows()).toHaveLength(2));
+  expect(rows()[0]!.textContent).toContain("Nothing ran on the target.");
+  expect(rows()[1]!.textContent).not.toContain("Nothing ran on the target.");
+});

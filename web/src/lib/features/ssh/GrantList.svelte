@@ -99,6 +99,8 @@
                 <span class="[overflow-wrap:anywhere]">
                   Result: {grant.maintenance.result}{grant.maintenance.detail ? `. ${grant.maintenance.detail}` : ""}
                 </span>
+              {:else if grant.state === "ended" && grant.maintenance.started !== true}
+                <span>Nothing ran on the target.</span>
               {/if}
             {:else}
               <span class="[overflow-wrap:anywhere]">

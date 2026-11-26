@@ -76,7 +76,7 @@ const READY = {
   nodes: [{ host: "node1", enabled: true, sourceAddress: "10.0.0.2" }],
 };
 
-function showReady(props: { target?: string | null; onclose?: () => void } = {}) {
+function showReady(props: { target?: string | null; provisioner?: boolean; onclose?: () => void } = {}) {
   statusAnswer = { status: 200, body: READY };
   vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
     const path = String(url);
@@ -399,4 +399,15 @@ test("the notify switch shows for an admin in a browser with push, and not for a
   } finally {
     Reflect.deleteProperty(navigator, "serviceWorker");
   }
+});
+
+test("a link with provisioner=1 shows the card that makes the provisioner key", async () => {
+  const onclose = vi.fn();
+  showReady({ target: "box", provisioner: true, onclose });
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Make the provisioner key"));
+  expect(document.body.textContent).toContain("Target box");
+  expect(document.body.textContent).not.toContain("Step 2 of 6");
+  button("Cancel").click();
+  expect(onclose).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(document.body.textContent).not.toContain("Make the provisioner key"));
 });

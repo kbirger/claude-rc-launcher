@@ -4,6 +4,7 @@ import {
   authorizeManaged,
   beginRecovery,
   createKey,
+  createProvisionerKey,
   createTarget,
   deleteTarget,
   denyGrant,
@@ -13,6 +14,7 @@ import {
   pinManaged,
   putNode,
   revokeGrant,
+  reinstallTarget,
   rewrapTarget,
   scanHostKey,
   setup,
@@ -47,16 +49,38 @@ export const patchTargetMutation = (client: QueryClient) => ({
   onSettled: () => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
 });
 
+// A target with a provisioner answers these three with a maintenance grant, so the list of grants refetches too.
+const refreshTargetsAndGrants = (client: QueryClient) =>
+  Promise.all([
+    client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
+    client.invalidateQueries({ queryKey: [...SSH_KEY, "grants"] }),
+  ]);
+
 export const patchTargetNodesMutation = (client: QueryClient) => ({
   mutationKey: [...SSH_KEY, "patch-target-nodes"] as const,
-  mutationFn: ({ id, nodes }: { id: string; nodes: string[] }) => patchTargetNodes(id, nodes),
-  onSettled: () => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
+  mutationFn: ({ id, nodes, confirm }: { id: string; nodes: string[]; confirm?: boolean }) =>
+    patchTargetNodes(id, nodes, confirm),
+  onSettled: () => refreshTargetsAndGrants(client),
 });
 
 export const deleteTargetMutation = (client: QueryClient) => ({
   mutationKey: [...SSH_KEY, "delete-target"] as const,
-  mutationFn: (id: string) => deleteTarget(id),
-  onSettled: () => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
+  mutationFn: ({ id, cleanup }: { id: string; cleanup?: "none" }) => deleteTarget(id, cleanup),
+  onSettled: () => refreshTargetsAndGrants(client),
+});
+
+export const reinstallTargetMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "reinstall-target"] as const,
+  mutationFn: (id: string) => reinstallTarget(id),
+  onSettled: () => refreshTargetsAndGrants(client),
+});
+
+// Like the main key: the unlock is in the variables only for the call.
+export const createProvisionerKeyMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "create-provisioner-key"] as const,
+  mutationFn: ({ id, unlock }: { id: string; unlock: Unlock }) => createProvisionerKey(id, unlock),
+  gcTime: 0,
+  onSettled: () => refreshTargets(client),
 });
 
 // The wizard calls. The two that carry an unlock (`key` and `test`) keep no data: `gcTime: 0` drops the mutation as
@@ -116,7 +140,8 @@ export const approveGrantMutation = (client: QueryClient) => ({
   mutationFn: ({ id, unlock, minutes }: { id: string; unlock: Unlock; minutes?: number }) =>
     approveGrant(id, unlock, minutes),
   gcTime: 0,
-  onSettled: () => refreshGrants(client),
+  // A maintenance approval changes the targets too: the nodes, or the delete of the target.
+  onSettled: () => refreshTargetsAndGrants(client),
 });
 
 export const denyGrantMutation = (client: QueryClient) => ({
@@ -145,8 +170,8 @@ export const beginRecoveryMutation = (client: QueryClient) => ({
 
 export const rewrapTargetMutation = (client: QueryClient) => ({
   mutationKey: [...SSH_KEY, "rewrap-target"] as const,
-  mutationFn: ({ id, code, unlock }: { id: string; code: string; unlock: Unlock }) =>
-    rewrapTarget(id, { code, unlock }),
+  mutationFn: ({ id, code, unlock, key }: { id: string; code: string; unlock: Unlock; key?: "provisioner" }) =>
+    rewrapTarget(id, { code, unlock, ...(key ? { key } : {}) }),
   gcTime: 0,
   onSettled: () => refreshStatus(client),
 });

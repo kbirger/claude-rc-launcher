@@ -12,6 +12,7 @@
   import { getSalt, listGrants, type Grant, type Maintenance, type SshStatus, type Unlock } from "./api";
   import { hostLabel } from "./hostlabel";
   import { approveGrantMutation } from "./mutations";
+  import { retireNotice } from "./retirenotice";
   import { toBase64Url, unlockWithPasskey } from "./prf";
   import { targetsQuery } from "./queries";
 
@@ -53,6 +54,8 @@
   const sameAddresses = $derived(work?.action === "sources" && list(work.fromSources) === list(work.toSources ?? []));
   // After a failed run the grant has ended, so a second approve can only give 409.
   let finished = $state(false);
+  // The text after a retire: the run is done and the target is gone, whatever the run gave.
+  let notice = $state("");
 
   const target = $derived(targets.data?.find((item) => item.id === grant.targetId));
   // A number input binds a number, or null while the field is empty.
@@ -91,6 +94,13 @@
       const done = await withUnlock((unlock) =>
         approve.mutateAsync({ id: grant.id, unlock, ...(work || count === null ? {} : { minutes: count }) }),
       );
+
+      // An uninstall always retires once it was approved. The notice tells what happened to the lines on the machine.
+      if (done.retired) {
+        notice = retireNotice(done.retired);
+        finished = true;
+        return;
+      }
 
       // A maintenance run that failed ends the grant, and the hub still answers 200. The owner must read why.
       if (done.maintenance?.result === "failed") {
@@ -222,7 +232,9 @@
           />
         </div>
       {/if}
-      {#if status.method === "prf"}
+      {#if finished}
+        <!-- The run is over: nothing to unlock. -->
+      {:else if status.method === "prf"}
         <p class="text-sm text-muted-foreground">The passkey asks you to confirm.</p>
       {:else}
         <div class="grid gap-1">
@@ -240,6 +252,11 @@
             bind:value={passphrase}
           />
         </div>
+      {/if}
+      {#if notice}
+        <Alert.Root role="status">
+          <Alert.Description class={wrap}>{notice}</Alert.Description>
+        </Alert.Root>
       {/if}
       {#if problem}
         <Alert.Root variant="destructive" role="alert">

@@ -6,22 +6,41 @@
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { hostsQuery } from "../hosts";
   import ConfirmDialog, { type Ask } from "../../shared/ui/ConfirmDialog.svelte";
-  import type { Target, TargetState } from "./api";
+  import { isMaintenanceAnswer, type Grant, type MaintenanceAction, type Target, type TargetState } from "./api";
   import { retireNotice } from "./retirenotice";
   import { hostLabel } from "./hostlabel";
-  import { deleteTargetMutation, patchTargetMutation } from "./mutations";
-  import { statusQuery, targetsQuery } from "./queries";
+  import { deleteTargetMutation, patchTargetMutation, reinstallTargetMutation } from "./mutations";
+  import { grantsQuery, statusQuery, targetsQuery } from "./queries";
   import TargetNodesEdit from "./TargetNodesEdit.svelte";
 
   // The targets of SSH delegation with their state and the actions for it. A key is never rotated here: to rotate,
   // the owner retires the target and adds it again. An admin can change the nodes of a target. A retire deletes the
   // target. A one-time notice tells what happened to the key line on the machine.
+  //
+  // A target with a provisioner changes through a request that the owner approves: the save of the nodes, the retire and
+  // the reinstall of the key line only ask, and the card shows the request that waits. A retire that was denied, that
+  // expired or that ended before it ran leaves the target disabled with both keys: the card then offers a new retire and
+  // a retire without cleanup.
+  let { onapprove }: { onapprove?: (grant: Grant) => void } = $props();
+
   const client = useQueryClient();
   const targets = createQuery(() => targetsQuery());
   const hosts = createQuery(() => hostsQuery());
   const status = createQuery(() => statusQuery());
+  const grants = createQuery(() => grantsQuery());
   const patch = createMutation(() => patchTargetMutation(client));
   const retire = createMutation(() => deleteTargetMutation(client));
+  const reinstall = createMutation(() => reinstallTargetMutation(client));
+  const ACTIONS: Record<MaintenanceAction, string> = {
+    sources: "change the nodes",
+    uninstall: "retire",
+    install: "put the key line back",
+  };
+  const ENDED: Record<string, string> = {
+    denied: "was denied",
+    expired: "ran out of time",
+    revoked: "was revoked",
+  };
 
   const VARIANT: Record<TargetState, BadgeVariant> = {
     draft: "outline",
@@ -48,16 +67,65 @@
   const setState = (target: Target, state: "disabled" | "draft") =>
     run(() => patch.mutateAsync({ id: target.id, state }));
 
+  const hasProvisioner = (target: Target) =>
+    target.managedHost === undefined && target.provisionerFingerprint !== undefined;
+  const maintenanceOf = (target: Target) =>
+    (grants.data ?? []).filter((grant) => grant.targetId === target.id && grant.maintenance !== undefined);
+  /** The request of this target that waits for the approval of the owner. */
+  const pendingOf = (target: Target) => maintenanceOf(target).find((grant) => grant.state === "pending");
+  /** A retire that ended without a retire: the target stays disabled with both keys. */
+  const stuckRetire = (target: Target) => {
+    if (!hasProvisioner(target) || target.state !== "disabled" || pendingOf(target)) return undefined;
+    const last = maintenanceOf(target)
+      .filter((grant) => grant.maintenance?.action === "uninstall")
+      .sort((left, right) => right.requestedAt - left.requestedAt)[0];
+    return last?.state === "ended" ? last : undefined;
+  };
+  const stuckText = (grant: Grant) =>
+    `The request to retire this target ${ENDED[grant.endReason ?? ""] ?? "ended"}. Nothing was removed from the machine. The target is disabled and keeps its keys.`;
+  /** The provisioner line allows the source address of the node local as it was at the install. */
+  const staleSource = (target: Target) => {
+    const local = status.data?.nodes.find((node) => node.host === "local");
+    return (
+      hasProvisioner(target) &&
+      local !== undefined &&
+      (!local.enabled || local.sourceAddress !== target.provisionerSource)
+    );
+  };
+
+  // A target with a provisioner answers with a request: nothing has changed yet.
+  const waitingNotice = (target: Target, action: MaintenanceAction) =>
+    `The request to ${ACTIONS[action]} for ${target.id} waits for your approval. Nothing has changed yet. Tap Approve on the card of ${target.id}, or find the request in the list of access requests.`;
+
+  const handleRetire = (target: Target, answer: Awaited<ReturnType<typeof retire.mutateAsync>>) => {
+    notice = isMaintenanceAnswer(answer) ? waitingNotice(target, "uninstall") : retireNotice(answer);
+  };
+
   const askRetire = (target: Target) =>
     (ask = {
       title: `Retire ${target.id}?`,
-      body: "The hub ends the grants of this target and deletes the target and its key. For a managed target, the hub also tries to remove the key line from the machine. To use the target again, add it as a new target.",
+      body: hasProvisioner(target)
+        ? "You approve the retire with your passkey or passphrase. Then the hub removes the key lines from the machine, ends the grants and deletes the target and its keys. Until you approve, the target is disabled and nothing is removed. To use the target again, add it as a new target."
+        : "The hub ends the grants of this target and deletes the target and its key. For a managed target, the hub also tries to remove the key line from the machine. To use the target again, add it as a new target.",
       label: "Retire",
       destructive: true,
+      run: () => void run(async () => handleRetire(target, await retire.mutateAsync({ id: target.id }))),
+    });
+
+  const askRetireWithoutCleanup = (target: Target) =>
+    (ask = {
+      title: `Retire ${target.id} without cleanup?`,
+      body: `The hub deletes the target and both keys now. It does not remove anything from the machine. You must remove the lines that end with claude-rc:${target.id} and claude-rc-provisioner:${target.id} yourself.`,
+      label: "Retire without cleanup",
+      destructive: true,
       run: () =>
-        void run(async () => {
-          notice = retireNotice(await retire.mutateAsync(target.id));
-        }),
+        void run(async () => handleRetire(target, await retire.mutateAsync({ id: target.id, cleanup: "none" }))),
+    });
+
+  const askReinstall = (target: Target) =>
+    run(async () => {
+      await reinstall.mutateAsync(target.id);
+      notice = waitingNotice(target, "install");
     });
 </script>
 
@@ -87,7 +155,10 @@
         <li data-target class="grid min-w-0 gap-2 rounded-lg border bg-card p-3">
           <div class="flex min-w-0 items-center justify-between gap-2">
             <span class="min-w-0 font-medium [overflow-wrap:anywhere]">{target.id}</span>
-            <Badge variant={VARIANT[target.state]}>{target.state}</Badge>
+            <span class="flex shrink-0 items-center gap-1">
+              {#if hasProvisioner(target)}<Badge variant="outline">provisioner</Badge>{/if}
+              <Badge variant={VARIANT[target.state]}>{target.state}</Badge>
+            </span>
           </div>
           <div class="grid min-w-0 gap-0.5 text-sm text-muted-foreground">
             <span class="font-mono [overflow-wrap:anywhere]">{target.address}:{target.port}</span>
@@ -98,6 +169,47 @@
                 : "none"}
             </span>
           </div>
+          {#if pendingOf(target)}
+            {@const waiting = pendingOf(target)!}
+            <div data-pending class="grid gap-2 rounded-lg border border-primary/40 bg-muted p-3 text-sm">
+              <span class="font-medium">
+                Waiting for your approval: {ACTIONS[waiting.maintenance!.action]}.
+              </span>
+              <span class="text-muted-foreground">Nothing has changed yet.</span>
+              {#if onapprove}
+                <div><Button size="touch" onclick={() => onapprove(waiting)}>Approve</Button></div>
+              {/if}
+            </div>
+          {/if}
+          {#if stuckRetire(target)}
+            <div data-stuck-retire class="grid gap-2 rounded-lg border border-destructive/40 p-3 text-sm">
+              <span class="[overflow-wrap:anywhere]">{stuckText(stuckRetire(target)!)}</span>
+              <div class="flex flex-wrap gap-2">
+                <Button variant="outline" size="touch" onclick={() => askRetire(target)}>Retire again</Button>
+                <Button
+                  variant="outline"
+                  size="touch"
+                  class="text-destructive"
+                  onclick={() => askRetireWithoutCleanup(target)}
+                >
+                  Retire without cleanup
+                </Button>
+              </div>
+            </div>
+          {/if}
+          {#if staleSource(target)}
+            <Alert.Root variant="destructive" role="alert" data-stale-source>
+              <Alert.Description class="grid gap-1 [overflow-wrap:anywhere]">
+                <span>
+                  The source address of the node local changed after the provisioner was installed. The hub cannot
+                  change this target until you install the provisioner again. On your own machine, run:
+                </span>
+                <code class="block rounded border bg-muted p-2 font-mono text-xs select-all">
+                  claude-rc ssh target provisioner {target.id} --identity &lt;file&gt;
+                </code>
+              </Alert.Description>
+            </Alert.Root>
+          {/if}
           <div class="flex flex-wrap gap-2">
             {#if target.state === "draft"}
               <Button variant="outline" size="touch" href={resolve(`/ssh?target=${encodeURIComponent(target.id)}`)}>
@@ -108,13 +220,33 @@
             {:else if target.state === "disabled"}
               <Button variant="outline" size="touch" onclick={() => setState(target, "draft")}>Enable</Button>
             {/if}
-            <Button variant="outline" size="touch" onclick={() => (editing = target.id)}>Edit nodes</Button>
-            <Button variant="outline" size="touch" class="text-destructive" onclick={() => askRetire(target)}>
-              Retire
-            </Button>
+            {#if !pendingOf(target)}
+              <Button variant="outline" size="touch" onclick={() => (editing = target.id)}>Edit nodes</Button>
+              {#if hasProvisioner(target) && target.state !== "draft"}
+                <Button
+                  variant="outline"
+                  size="touch"
+                  disabled={reinstall.isPending}
+                  onclick={() => askReinstall(target)}
+                >
+                  Reinstall key line
+                </Button>
+              {/if}
+              {#if !stuckRetire(target)}
+                <Button variant="outline" size="touch" class="text-destructive" onclick={() => askRetire(target)}>
+                  Retire
+                </Button>
+              {/if}
+            {/if}
           </div>
           {#if editing === target.id}
-            <TargetNodesEdit {target} nodes={status.data?.nodes} hosts={hosts.data} ondone={() => (editing = null)} />
+            <TargetNodesEdit
+              {target}
+              nodes={status.data?.nodes}
+              hosts={hosts.data}
+              {onapprove}
+              ondone={() => (editing = null)}
+            />
           {/if}
         </li>
       {/each}
