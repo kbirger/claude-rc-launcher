@@ -6,6 +6,7 @@
   import type { HostInfo } from "../hosts";
   import type { NewTarget, NodeStatus, SystemType } from "./api";
   import { hostLabel } from "./hostlabel";
+  import NodePicker from "./NodePicker.svelte";
 
   // The first step of the wizard: the data of a new target. The hub checks the same rules again.
   let {
@@ -192,17 +193,7 @@
     </div>
   {/if}
 
-  <fieldset class="grid gap-2">
-    <legend class="text-sm font-medium">Nodes that can reach the target</legend>
-    {#each nodes as node (node.host)}
-      <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
-        <input type="checkbox" value={node.host} bind:group={picked} />
-        <span class="min-w-0 [overflow-wrap:anywhere]">{hostLabel(node.host, hosts)}</span>
-      </Label>
-    {:else}
-      <p class="text-sm text-muted-foreground">No node has SSH access turned on. Turn one on in the list of nodes.</p>
-    {/each}
-  </fieldset>
+  <NodePicker nodes={nodes.map((node) => node.host)} {hosts} bind:picked />
 
   {#if problem}
     <Alert.Root variant="destructive" role="alert"><Alert.Description>{problem}</Alert.Description></Alert.Root>

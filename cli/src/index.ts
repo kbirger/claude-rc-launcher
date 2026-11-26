@@ -15,7 +15,7 @@ import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 import { sshRequest, sshTargets, SSH_OFF_MESSAGE } from "./sshcmd";
-import { sshTargetAdd, SSH_TARGET_USAGE } from "./sshtarget";
+import { sshTargetAdd, sshTargetUpdate, SSH_TARGET_UPDATE_USAGE, SSH_TARGET_USAGE } from "./sshtarget";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, parseNodeIds, updateAll, updateNodes } from "./updateall";
 
@@ -62,6 +62,8 @@ Commands:
                                      [--port n] [--key-file name] [--fingerprint f] [--no-test]
                                      (--key-file: managed linux or synology, a file in ~/.ssh that starts with authorized_keys)
                                      add a machine that sessions may ask to reach
+  ssh target update <id> --node <id>[,<id>...]
+                                     replace the nodes of a target (an external target prints the new key line)
   node update [--binary file] [--release tag]
                                      update this node's server binary and restart it
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
@@ -328,9 +330,15 @@ export async function main(
     });
 
     if (name === "ssh") {
-      // `ssh target add` goes through the hub, as the owner, with the saved login.
+      // `ssh target add` and `ssh target update` go through the hub, as the owner, with the saved login.
+      if (args[1] === "update" && args[2] && args.length === 3) {
+        await sshTargetUpdate({ id: args[2], flags, hub, out: io.out });
+        return 0;
+      }
+
+      if (args[1] === "update") throw new ExitError(SSH_TARGET_UPDATE_USAGE, 1);
       if (args[0] !== "target" || args[1] !== "add" || !args[2] || args.length > 3)
-        throw new ExitError(SSH_TARGET_USAGE, 1);
+        throw new ExitError(`${SSH_TARGET_USAGE}\n${SSH_TARGET_UPDATE_USAGE}`, 1);
       await sshTargetAdd({
         id: args[2],
         flags,

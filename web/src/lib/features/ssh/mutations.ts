@@ -8,6 +8,7 @@ import {
   deleteTarget,
   denyGrant,
   patchTarget,
+  patchTargetNodes,
   pinHostKey,
   pinManaged,
   putNode,
@@ -43,6 +44,12 @@ export const putNodeMutation = (client: QueryClient) => ({
 export const patchTargetMutation = (client: QueryClient) => ({
   mutationKey: [...SSH_KEY, "patch-target"] as const,
   mutationFn: ({ id, state }: { id: string; state: "disabled" | "draft" }) => patchTarget(id, state),
+  onSettled: () => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
+});
+
+export const patchTargetNodesMutation = (client: QueryClient) => ({
+  mutationKey: [...SSH_KEY, "patch-target-nodes"] as const,
+  mutationFn: ({ id, nodes }: { id: string; nodes: string[] }) => patchTargetNodes(id, nodes),
   onSettled: () => client.invalidateQueries({ queryKey: [...SSH_KEY, "targets"] }),
 });
 
