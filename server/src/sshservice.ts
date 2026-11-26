@@ -1,3 +1,5 @@
+import { realTimers } from "./changesource";
+import type { Timers } from "./changesource";
 import type { HostClient } from "./hostclient";
 import { HOST_ID_RE, LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
@@ -38,6 +40,14 @@ export const MAINTENANCE_INSTANCE = "maintenance";
 export const MAINTENANCE_BUSY = "a maintenance request waits for this target";
 export const OUT_OF_DATE = "the change is out of date: start it again";
 const NO_SSH_PROGRAM = "the hub has no ssh program: install the OpenSSH client on the hub machine";
+/** The time that the `commit` of a maintenance run gets. The grant lasts one minute, and the restore needs time too. */
+const COMMIT_TIMEOUT_MS = 10_000;
+export const COMMIT_TIMEOUT_TEXT = "the change could not be stored in time";
+/**
+ * The exit codes of the script that mean it refused before it wrote anything: bad-command (2), unsafe-file (3),
+ * guard (4) and no-sources (5). A write-failed (6) can follow a write of the key line, so it is not in the list.
+ */
+const NOTHING_WRITTEN_CODES = new Set([2, 3, 4, 5]);
 
 /** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
 export class NodeError extends Error {
@@ -70,7 +80,18 @@ interface Deps {
   hasSsh?: () => boolean;
   /** Whether the host `local` has the grant routes (not on Windows). Default: a client for `local` exists. */
   localReady?: () => boolean;
+  /** The timers of the commit time limit. Default: real timers. */
+  timers?: Timers;
+  /** The time limit of the `commit` of a maintenance run, in ms. Default: 10 seconds. */
+  commitTimeoutMs?: number;
 }
+
+/**
+ * The hook that stores the change of a good maintenance run, while the grant is still active. `signal` aborts when the
+ * time limit passes: the run then counts as failed and the old list goes back on the target, so a commit that ends
+ * late must undo its write.
+ */
+export type MaintenanceCommit = (grant: Grant, signal: AbortSignal) => Promise<void>;
 
 /** One step of a maintenance run: a command and the check of its answer. */
 interface Step {
@@ -165,13 +186,14 @@ export class SshService {
    * answer holds `maintenance.result`. A maintenance grant whose change is out of date ends at once (409).
    * `options.commit` (maintenance only) runs after a good run and before the grant ends. When it throws, the old list
    * goes back on the target in the same grant, the result is `failed`, and the call throws the error of `commit`.
+   * A `commit` that does not end within the time limit fails the same way, with `COMMIT_TIMEOUT_TEXT`.
    */
   async approve(
     grantId: string,
     by: string,
     unlock: UnlockSecret,
     minutes?: number,
-    options: { commit?: (grant: Grant) => Promise<void> } = {},
+    options: { commit?: MaintenanceCommit } = {},
   ): Promise<Grant> {
     const { grants, keys } = this.deps;
     const grant = grants.get(grantId);
@@ -412,8 +434,9 @@ export class SshService {
 
     try {
       const now = this.planMaintenance(this.needTarget(grant.targetId), work.action, work.toNodes);
+      // An uninstall removes the line whatever its list, so only the other actions care about the sources.
       if (
-        !sameList(now.fromSources, work.fromSources) ||
+        (work.action !== "uninstall" && !sameList(now.fromSources, work.fromSources)) ||
         !sameList(now.toSources ?? [], work.toSources ?? []) ||
         (work.action === "sources" && !sameList(now.fromNodes, work.fromNodes))
       )
@@ -472,7 +495,7 @@ export class SshService {
     grant: Grant,
     config: string,
     by: string,
-    commit: ((grant: Grant) => Promise<void>) | undefined,
+    commit: MaintenanceCommit | undefined,
   ): Promise<Grant> {
     let outcome: Outcome = { result: "failed", detail: "the run stopped", changed: false };
     let commitError: { error: unknown } | undefined;
@@ -482,9 +505,11 @@ export class SshService {
 
       if (outcome.result === "done" && commit) {
         try {
-          await commit(this.deps.grants.get(grant.id) ?? grant);
+          await this.boundedCommit(commit, this.deps.grants.get(grant.id) ?? grant);
+          this.maintenanceNote(grant, "event=committed");
         } catch (error) {
           commitError = { error };
+          this.maintenanceNote(grant, `event=commit-failed detail=${logToken(message(error))}`);
           const restored = await this.restore(grant, config);
           outcome = this.failure(`the change was not stored: ${message(error)}`, !restored.ok, restored);
         }
@@ -495,6 +520,32 @@ export class SshService {
 
     if (commitError) throw commitError.error;
     return this.deps.grants.get(grant.id) ?? grant;
+  }
+
+  /**
+   * Runs `commit` with a time limit, so that a hung commit cannot hold the lock of the target and the approve call for
+   * ever. At the limit the signal aborts and the call throws `COMMIT_TIMEOUT_TEXT`. A late end of `commit` is ignored.
+   */
+  private async boundedCommit(commit: MaintenanceCommit, grant: Grant): Promise<void> {
+    const timers = this.deps.timers ?? realTimers;
+    const controller = new AbortController();
+    let handle: unknown;
+
+    const limit = new Promise<never>((_resolve, reject) => {
+      handle = timers.setTimeout(() => {
+        controller.abort();
+        reject(new NodeError(COMMIT_TIMEOUT_TEXT));
+      }, this.deps.commitTimeoutMs ?? COMMIT_TIMEOUT_MS);
+    });
+    const work = commit(grant, controller.signal);
+    // A commit that fails after the limit has no one to tell.
+    work.catch(() => {});
+
+    try {
+      await Promise.race([work, limit]);
+    } finally {
+      timers.clearTimeout(handle);
+    }
   }
 
   private async runSteps(grant: Grant, work: Maintenance, config: string): Promise<Outcome> {
@@ -509,8 +560,12 @@ export class SshService {
 
       if (run.answer === undefined || !step.check(run.answer)) {
         const why = run.answer === undefined ? (run.error ?? "the run failed") : step.wrong;
+        // A changing step that failed can still have written: a timeout, a lost connection or a wrong answer can come
+        // after the write. Only a refusal of the script itself says that it wrote nothing.
+        const refused = run.answer === undefined && run.code !== undefined && NOTHING_WRITTEN_CODES.has(run.code);
+        const maybe = changed || (step.command.kind !== "status" && !refused);
         const restored = await this.restore(grant, config);
-        return this.failure(why, restored.attempted ? !restored.ok && changed : changed, restored);
+        return this.failure(why, restored.attempted ? !restored.ok && maybe : maybe, restored);
       }
 
       if (step.command.kind !== "status") changed = true;

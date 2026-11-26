@@ -329,7 +329,13 @@ describe("SSH for the hub-local host", () => {
     expect((await hub.call("POST", "/setup", { method: "passphrase" })).status).toBe(200);
     const put = await hub.call("PUT", "/nodes/local", { enabled: true, sourceAddress: "10.9.9.9" });
     expect(put.status).toBe(200);
-    expect(put.body).toEqual({ host: "local", enabled: true, sourceAddress: "10.9.9.9", pushed: true });
+    expect(put.body).toEqual({
+      host: "local",
+      enabled: true,
+      sourceAddress: "10.9.9.9",
+      pushed: true,
+      staleProvisioners: [],
+    });
     // The broker of the node answers the targets it was told.
     const targets = await talk(hub.controlSocket, '{"op":"targets"}\n');
     expect(targets).toEqual({ ok: true, targets: [{ id: "nas", account: "root", address: "10.0.0.5" }] });

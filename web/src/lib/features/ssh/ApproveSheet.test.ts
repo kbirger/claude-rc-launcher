@@ -242,6 +242,31 @@ test("the sheet shows the result detail after a 502 from the record of the grant
   expect(buttons("Approve")).toHaveLength(0);
 });
 
+test("an empty detail in the record falls back to the error text", async () => {
+  approveAnswer = { status: 502, body: { error: "the run on the target took too long" } };
+  listed = [{ ...MAINT, state: "ended", maintenance: { ...MAINT.maintenance!, result: "failed", detail: "" } }];
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() =>
+    expect(document.querySelector("[role=alert]")?.textContent).toContain("the run on the target took too long"),
+  );
+  expect(document.querySelector("[role=alert]")?.textContent).toContain("The change failed. the run");
+});
+
+test("an empty detail in a 200 answer says that the run failed", async () => {
+  approveAnswer = {
+    status: 200,
+    body: { ...MAINT, state: "ended", maintenance: { ...MAINT.maintenance, result: "failed", detail: "" } },
+  };
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() =>
+    expect(document.querySelector("[role=alert]")?.textContent).toContain("The change failed. The run gave no detail."),
+  );
+});
+
 test("the sheet keeps the error text when the record has no result", async () => {
   approveAnswer = { status: 502, body: { error: "the node is gone" } };
   listed = [MAINT];

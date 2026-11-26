@@ -94,7 +94,7 @@
 
       // A maintenance run that failed ends the grant, and the hub still answers 200. The owner must read why.
       if (done.maintenance?.result === "failed") {
-        problem = `The change failed. ${done.maintenance.detail ?? ""}`.trim();
+        problem = `The change failed. ${done.maintenance.detail || "The run gave no detail."}`;
         finished = true;
         return;
       }
@@ -107,8 +107,11 @@
       if (work) {
         try {
           const found = (await listGrants()).find((item) => item.id === grant.id)?.maintenance;
+
           if (found?.result === "failed") {
-            problem = `The change failed. ${found.detail ?? (error instanceof Error ? error.message : "")}`;
+            // An empty detail says nothing: the text of the error does.
+            const why = found.detail || (error instanceof Error ? error.message : "") || "The run gave no detail.";
+            problem = `The change failed. ${why}`;
             finished = true;
           }
         } catch {

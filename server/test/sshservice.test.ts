@@ -12,6 +12,7 @@ import { TargetError, TargetStore } from "../src/sshtargets";
 import type { Target } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
 import { fakeTimers } from "./faketimers";
+import { fakeRunner } from "./sshrunner";
 import { rejection } from "./support";
 
 const unlock: UnlockSecret = { method: "passphrase", secret: new TextEncoder().encode("correct horse") };
@@ -991,54 +992,6 @@ const LOCAL_SOURCE = "192.168.1.103";
 const SCRIPT = "/home/u/.claude-rc/provisioner-nas.sh";
 const CONFIG = "/run/rc-ssh/maintenance/g.config";
 
-interface RunReply {
-  code: number;
-  stdout?: string;
-  stderr?: string;
-}
-
-/** A runner that answers each command like the script does, unless `replies` says otherwise. It records each call. */
-function fakeRunner(
-  replies: Partial<Record<string, RunReply | ((command: string) => RunReply | Promise<RunReply>)>> = {},
-) {
-  const calls: { config: string; targetId: string; command: string; timeoutMs: number }[] = [];
-  let state = "";
-  let present = false;
-
-  const runner: SshRunner = async (config, targetId, command, timeoutMs) => {
-    calls.push({ config, targetId, command, timeoutMs });
-    const word = command.split(" ")[0] ?? "";
-    const scripted = replies[word];
-    const reply = typeof scripted === "function" ? await scripted(command) : scripted;
-    if (reply) return { code: reply.code, stdout: reply.stdout ?? "", stderr: reply.stderr ?? "" };
-
-    if (word === "sources") {
-      state = command.slice("sources ".length);
-      return { code: 0, stdout: `ok sources ${state}\n`, stderr: "" };
-    }
-
-    if (word === "on") {
-      present = true;
-      return { code: 0, stdout: `ok on ${state}\n`, stderr: "" };
-    }
-
-    if (word === "status")
-      return { code: 0, stdout: `ok status ${present ? "present" : "absent"} ${state}\n`, stderr: "" };
-    if (word === "uninstall") return { code: 0, stdout: "ok uninstall\n", stderr: "" };
-    return { code: 2, stdout: "", stderr: "error bad-command the command is not valid\n" };
-  };
-
-  return {
-    runner,
-    calls,
-    commands: () => calls.map((call) => call.command),
-    setPresent: (value: boolean, list: string) => {
-      present = value;
-      state = list;
-    },
-  };
-}
-
 async function maintenanceSetup(
   options: {
     state?: "ready" | "draft" | "disabled";
@@ -1050,6 +1003,7 @@ async function maintenanceSetup(
     provisioner?: boolean;
     notifyMaintenance?: (grant: Grant, target: Target) => void;
     notifyClose?: (grant: Grant) => void;
+    commitTimeoutMs?: number;
   } = {},
 ) {
   const timers = fakeTimers(1_000_000);
@@ -1112,6 +1066,8 @@ async function maintenanceSetup(
     runSsh: runner.runner,
     hasSsh: () => options.hasSsh ?? true,
     localReady: () => options.localReady ?? true,
+    timers,
+    ...(options.commitTimeoutMs !== undefined ? { commitTimeoutMs: options.commitTimeoutMs } : {}),
     ...(options.notifyMaintenance ? { notifyMaintenance: options.notifyMaintenance } : {}),
     ...(options.notifyClose ? { notifyClose: options.notifyClose } : {}),
   });
@@ -1132,7 +1088,7 @@ async function refusal(fn: () => unknown): Promise<{ status: number | undefined;
 
 describe("SshService maintenance", () => {
   test("requestMaintenance calls notifyMaintenance once", async () => {
-    const sent: Array<[Grant, Target]> = [];
+    const sent: [Grant, Target][] = [];
     const { service } = await maintenanceSetup({ notifyMaintenance: (grant, target) => sent.push([grant, target]) });
     const grant = service.requestMaintenance({ targetId: "nas", action: "install", by: "admin" });
     expect(sent).toHaveLength(1);
@@ -1400,7 +1356,12 @@ describe("SshService maintenance", () => {
     const { service } = await maintenanceSetup({ runner });
     const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
     const result = await service.approve(grant.id, "admin", unlock);
-    expect(result.maintenance).toMatchObject({ result: "failed", detail: "the script gave no valid answer" });
+    // The uninstall may have run before the answer went wrong, so the target counts as changed.
+    expect(result.maintenance).toMatchObject({
+      result: "failed",
+      changed: true,
+      detail: "the target already holds part of the change. the script gave no valid answer",
+    });
   });
 
   test("a status that does not show the new list is a failure", async () => {
@@ -1645,6 +1606,97 @@ describe("SshService maintenance commit, changed and the sign cap", () => {
     const result = await service.approve(grant.id, "admin", unlock);
     expect(result.maintenance).toMatchObject({ result: "failed", changed: false });
     expect(result.maintenance?.detail).toContain("guard");
+  });
+
+  test("a changing step that times out counts as changed when the restore fails too", async () => {
+    const runner = fakeRunner({ sources: { code: 124, stderr: "ssh: timed out" } });
+    const { service } = await maintenanceSetup({ runner });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    const result = await service.approve(grant.id, "admin", unlock);
+    // The script may have written the line before the time ran out.
+    expect(runner.commands()).toEqual(["sources 192.168.1.20", "sources 192.168.1.10"]);
+    expect(result.maintenance).toMatchObject({ result: "failed", changed: true });
+    expect(result.maintenance?.detail?.startsWith("the target already holds part of the change")).toBe(true);
+  });
+
+  test("a changing step with an answer that does not parse counts as changed", async () => {
+    const runner = fakeRunner({ uninstall: { code: 0, stdout: "garbage\n" } });
+    const { service } = await maintenanceSetup({ runner });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    const result = await service.approve(grant.id, "admin", unlock);
+    expect(result.maintenance).toMatchObject({ result: "failed", changed: true });
+  });
+
+  test("a changing step that times out is not changed when the restore works", async () => {
+    const runner = fakeRunner({
+      sources: (command) =>
+        command === "sources 192.168.1.20"
+          ? { code: 124, stderr: "ssh: timed out" }
+          : { code: 0, stdout: `ok ${command}\n` },
+    });
+    const { service } = await maintenanceSetup({ runner });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    const result = await service.approve(grant.id, "admin", unlock);
+    expect(result.maintenance).toMatchObject({ result: "failed", changed: false });
+  });
+
+  test("a script refusal on a changing step wrote nothing and is not changed", async () => {
+    const runner = fakeRunner({ uninstall: { code: 3, stderr: "error unsafe-file the key file is a link\n" } });
+    const { service } = await maintenanceSetup({ runner });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    const result = await service.approve(grant.id, "admin", unlock);
+    expect(result.maintenance).toMatchObject({ result: "failed", changed: false });
+  });
+
+  test("a commit that hangs fails after the time limit, restores in the same grant and says so", async () => {
+    const { service, grants, inner, timers, audit } = await (async () => {
+      const inner = fakeRunner();
+      inner.setPresent(true, "192.168.1.10");
+      const made = await maintenanceSetup({ runner: inner, commitTimeoutMs: 5_000 });
+      return { ...made, inner };
+    })();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    let signal: AbortSignal | undefined;
+    const pending = service.approve(grant.id, "admin", unlock, undefined, {
+      commit: (_current, given) => {
+        signal = given;
+        return new Promise<void>(() => {});
+      },
+    });
+    await until(() => signal !== undefined);
+    expect(service.maintenanceFor("nas")?.id).toBe(grant.id);
+    const caught = rejection(pending);
+    await timers.advance(5_000);
+    const failure = await caught;
+    expect(failure.message).toBe("the change could not be stored in time");
+    expect(signal?.aborted).toBe(true);
+    expect(inner.commands()).toEqual(["sources 192.168.1.20", "status", "sources 192.168.1.10"]);
+    expect(grants.get(grant.id)).toMatchObject({
+      state: "ended",
+      endReason: "done",
+      maintenance: {
+        result: "failed",
+        changed: false,
+        detail: "the change was not stored: the change could not be stored in time",
+      },
+    });
+    expect(service.maintenanceFor("nas")).toBeUndefined();
+    expect(audit.some((line) => line.includes(" event=commit-failed "))).toBe(true);
+  });
+
+  test("a commit that works writes the committed audit line", async () => {
+    const { service, audit } = await maintenanceSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "install", by: "admin" });
+    await service.approve(grant.id, "admin", unlock, undefined, { commit: () => Promise.resolve() });
+    expect(audit.some((line) => line.endsWith(" event=committed"))).toBe(true);
+  });
+
+  test("an uninstall is not out of date when an address of a node changed", async () => {
+    const { service, targets } = await maintenanceSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    await targets.setNodeAccess("node1", { enabled: true, sourceAddress: "192.168.1.99" });
+    const result = await service.approve(grant.id, "admin", unlock);
+    expect(result.maintenance).toMatchObject({ result: "done" });
   });
 
   test("the grant gives no more signatures than its planned runs", async () => {
