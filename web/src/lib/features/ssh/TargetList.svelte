@@ -7,6 +7,7 @@
   import { hostsQuery } from "../hosts";
   import ConfirmDialog, { type Ask } from "../../shared/ui/ConfirmDialog.svelte";
   import { isMaintenanceAnswer, type Grant, type MaintenanceAction, type Target, type TargetState } from "./api";
+  import { isMaintenanceRefusal } from "./refusals";
   import { retireNotice } from "./retirenotice";
   import { hostLabel } from "./hostlabel";
   import { deleteTargetMutation, patchTargetMutation, reinstallTargetMutation } from "./mutations";
@@ -122,8 +123,9 @@
           try {
             handleRetire(target, await retire.mutateAsync({ id: target.id }));
           } catch (error) {
-            // The hub refused the request (409 or 501): no request exists, so the owner needs a way out.
-            if (!hasProvisioner(target)) throw error;
+            // The hub refused to make the request because the maintenance path does not work: the owner needs a way out.
+            // Every other error (a request that waits, a 403, a failure) is shown as it is.
+            if (!hasProvisioner(target) || !isMaintenanceRefusal(error)) throw error;
             refused[target.id] = error instanceof Error ? error.message : "The hub refused the retire.";
           }
         }),

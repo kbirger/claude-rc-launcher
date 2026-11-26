@@ -544,28 +544,67 @@ const clickRetire = async (shown: HTMLElement) => {
   button("Retire", dialog)!.click();
 };
 
+const REFUSALS: Array<[number, string]> = [
+  [409, "this target has no provisioner"],
+  [409, "the hub has no ssh program: install the OpenSSH client on the hub machine"],
+  [409, "turn on SSH access for the node local with a source address"],
+  [
+    409,
+    "the source address of local changed since the provisioner was installed: run claude-rc ssh target provisioner nas --identity <file>",
+  ],
+  [409, "this target needs its key to be recovered"],
+  [409, "the host key of the target is not pinned"],
+  [501, "the hub cannot run maintenance on this system"],
+];
+
+test.each(REFUSALS)(
+  "a retire that the hub refuses with %i (%s) shows its text and Retire without cleanup",
+  async (code, text) => {
+    reply("DELETE /api/ssh/targets/nas", code, { error: text });
+    const shown = await show([prov()]);
+    await clickRetire(shown);
+    const box = await vi.waitFor(() => {
+      const found = shown.querySelector<HTMLElement>("[data-retire-refused]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(squash(box)).toContain(`The hub did not start the retire: ${text}`);
+    expect(button("Retire again", box)).toBeUndefined();
+    button("Retire without cleanup", box)!.click();
+    const dialog = await vi.waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[role="alertdialog"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(dialog.textContent).toContain("claude-rc:nas");
+    expect(dialog.textContent).toContain("claude-rc-provisioner:nas");
+  },
+);
+
 test.each([
-  [409, "the source address of local changed: install the provisioner again"],
-  [501, "the node local has no ssh"],
-])("a retire that the hub refuses with %i shows its text and Retire without cleanup", async (code, text) => {
+  [409, "a maintenance request waits for this target"],
+  [409, "this target is being changed"],
+  [403, "your role cannot do this"],
+  [500, "the hub failed"],
+])("a retire that fails with %i (%s) shows the error and no Retire without cleanup", async (code, text) => {
   reply("DELETE /api/ssh/targets/nas", code, { error: text });
   const shown = await show([prov()]);
   await clickRetire(shown);
-  const box = await vi.waitFor(() => {
-    const found = shown.querySelector<HTMLElement>("[data-retire-refused]");
-    expect(found).not.toBeNull();
-    return found!;
+  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain(text));
+  expect(shown.querySelector("[data-retire-refused]")).toBeNull();
+  expect(button("Retire without cleanup", shown)).toBeUndefined();
+});
+
+test("a network error on the retire shows the error and no Retire without cleanup", async () => {
+  const shown = await show([prov()]);
+  const base = fetch;
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") throw new TypeError("network down");
+    return base(url, init);
   });
-  expect(squash(box)).toContain(`The hub did not start the retire: ${text}`);
-  expect(button("Retire again", box)).toBeUndefined();
-  button("Retire without cleanup", box)!.click();
-  const dialog = await vi.waitFor(() => {
-    const found = document.querySelector<HTMLElement>('[role="alertdialog"]');
-    expect(found).not.toBeNull();
-    return found!;
-  });
-  expect(dialog.textContent).toContain("claude-rc:nas");
-  expect(dialog.textContent).toContain("claude-rc-provisioner:nas");
+  await clickRetire(shown);
+  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain("network down"));
+  expect(button("Retire without cleanup", shown)).toBeUndefined();
 });
 
 test("a stale source offers Retire without cleanup, and a turned-off local says to turn it on", async () => {
