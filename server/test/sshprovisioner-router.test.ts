@@ -330,6 +330,34 @@ for (const shell of SHELLS) {
       expect(await times()).toEqual(before);
     });
 
+    test("a reinstall with a new provisioner key leaves one provisioner line, and uninstall removes every one", async () => {
+      const rt = await router(shell.argv);
+      const pblob2 = "AAAAC3NzaC1lZDI1NTE5AAAAIGnewnewnewnewnewnewnewnewnewnewnewnewnew";
+      const prov2 = `ssh-ed25519 ${pblob2} claude-rc-provisioner:rt`;
+      const anyProv = (text: string) => count(text, "claude-rc-provisioner:rt");
+      const done = await rt.install({ provisionerPublicLine: prov2 });
+      expect(done.err).toBe("");
+      expect(done.code).toBe(0);
+      for (const text of [await rt.value(), await rt.live()]) {
+        expect(anyProv(text)).toBe(1);
+        expect(text).toContain(pblob2);
+        expect(text).not.toContain(PBLOB);
+        expect(text).toContain(OWNER);
+        expect(mainCount(text)).toBe(1);
+      }
+
+      // A stale line of an older key (from a version before this fix) also goes at uninstall.
+      await rt.setValue(`${await rt.value()}>${provLine(rt.root)}`);
+      expect(anyProv(await rt.value())).toBe(2);
+      await rt.reboot();
+      const uninstall = await rt.run("uninstall");
+      expect(uninstall.err).toBe("");
+      expect(uninstall.code).toBe(0);
+      expect(anyProv(await rt.value())).toBe(0);
+      expect(anyProv(await rt.live())).toBe(0);
+      expect(await rt.value()).toBe(`${OWNER}>${OWNER2}`);
+    });
+
     test("the install refuses a router without /jffs", async () => {
       const rt = await router(shell.argv, { install: false });
       await rm(join(rt.root, "jffs"), { recursive: true });

@@ -60,11 +60,12 @@ export const LOCK_LINES = [
 
 // A line goes only when its last three fields are `ssh-ed25519`, the blob and the comment. So a blob inside the options
 // of another key does not match. A first field that starts with `#` is a comment line and stays. A CR at the end of the
-// last field (CRLF file) is ignored for the match, and the kept lines keep their bytes. A missing final newline stays
+// last field (CRLF file) is ignored for the match, and the kept lines keep their bytes. The blob `*` matches any key
+// with the comment: a real blob is base64, so it is never `*`. A missing final newline stays
 // missing, unless the last line goes.
 export const AWK_PROGRAM = [
   '{ c = $NF; sub(/\\r$/, "", c); hit = 0',
-  '  if (NF >= 3 && substr($1, 1, 1) != "#" && c == ENVIRON["RC_COMMENT"] && $(NF - 1) == ENVIRON["RC_BLOB"] && $(NF - 2) == "ssh-ed25519") hit = 1',
+  '  if (NF >= 3 && substr($1, 1, 1) != "#" && c == ENVIRON["RC_COMMENT"] && (ENVIRON["RC_BLOB"] == "*" || $(NF - 1) == ENVIRON["RC_BLOB"]) && $(NF - 2) == "ssh-ed25519") hit = 1',
   '  if (ENVIRON["RC_MODE"] == "count") n += hit',
   "  else if (hit) kept = 0",
   '  else { if (have) printf "\\n"; printf "%s", $0; have = 1; kept = 1 } }',
