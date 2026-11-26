@@ -38,11 +38,13 @@ const TARGET = {
 let calls: Call[];
 let approveAnswer: { status: number; body: unknown };
 let closed: number;
+let listed: Grant[];
 const open: Array<() => void> = [];
 
 beforeEach(() => {
   calls = [];
   closed = 0;
+  listed = [];
   approveAnswer = { status: 200, body: { ...GRANT, state: "active" } };
   prf.unlockWithPasskey.mockReset();
   prf.unlockWithPasskey.mockResolvedValue("c2VjcmV0");
@@ -52,6 +54,7 @@ beforeEach(() => {
     calls.push({ method, url: path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     let out: { status: number; body: unknown } = { status: 200, body: {} };
     if (path === "/api/ssh/targets") out = { status: 200, body: [TARGET] };
+    else if (path === "/api/ssh/grants") out = { status: 200, body: listed };
     else if (path === "/api/hosts") out = { status: 200, body: [] };
     else if (path === "/api/ssh/targets/nas/salt?key=provisioner") out = { status: 200, body: { salt: "cHJvdg" } };
     else if (path === "/api/ssh/targets/nas/salt") out = { status: 200, body: { salt: "c2FsdA" } };
@@ -81,6 +84,8 @@ function show(status: SshStatus = PRF, grant: Grant = GRANT) {
 
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label)!;
+const buttons = (label: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>("button")].filter((item) => item.textContent?.trim() === label);
 const approves = () => calls.filter((call) => call.url === "/api/ssh/grants/g1/approve");
 
 function type(input: HTMLInputElement, text: string) {
@@ -207,8 +212,9 @@ test("the sheet shows the old and the new nodes with their addresses for sources
   const text = document.body.textContent!;
   expect(text).toContain("Change the nodes");
   expect(text).toContain("This changes the key line on nas");
-  expect(text).toContain("from: node1 (addresses: 192.168.1.10)");
-  expect(text).toContain("to: node2 (addresses: 192.168.1.20)");
+  expect(text).toContain("SSH will be allowed only from: 192.168.1.20");
+  expect(text).toContain("from: 192.168.1.10");
+  expect(text).toContain("Nodes now: node1. Nodes after: node2.");
 });
 
 test("the sheet shows the maintenance warning in place of the account warning", async () => {
@@ -221,14 +227,45 @@ test("the sheet shows the maintenance warning in place of the account warning", 
   expect(text).toContain("provisioner key");
 });
 
-test("the sheet shows the result detail after a 502", async () => {
-  approveAnswer = { status: 502, body: { error: "the change was not stored", detail: "the script failed" } };
+test("the sheet shows the result detail after a 502 from the record of the grant", async () => {
+  // The real hub answers an error with a text only. The detail is in the record of the grant.
+  approveAnswer = { status: 502, body: { error: "the change was not stored" } };
+  listed = [
+    { ...MAINT, state: "ended", maintenance: { ...MAINT.maintenance!, result: "failed", detail: "the script failed" } },
+  ];
   show(PRF, MAINT);
   await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
   button("Approve").click();
   await vi.waitFor(() => expect(document.querySelector("[role=alert]")?.textContent).toContain("the script failed"));
-  expect(document.querySelector("[role=alert]")?.textContent).toContain("the change was not stored");
+  expect(document.querySelector("[role=alert]")?.textContent).toContain("The change failed");
   expect(closed).toBe(0);
+  expect(buttons("Approve")).toHaveLength(0);
+});
+
+test("the sheet keeps the error text when the record has no result", async () => {
+  approveAnswer = { status: 502, body: { error: "the node is gone" } };
+  listed = [MAINT];
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() => expect(document.querySelector("[role=alert]")?.textContent).toContain("the node is gone"));
+  expect(buttons("Approve")).toHaveLength(1);
+});
+
+test("the sheet says that the list of addresses does not change", async () => {
+  show(PRF, { ...MAINT, maintenance: { ...MAINT.maintenance!, toSources: ["192.168.1.10"], toNodes: ["node3"] } });
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  expect(document.body.textContent).toContain("The list of addresses does not change: 192.168.1.10");
+  expect(document.body.textContent).not.toContain("SSH will be allowed only from");
+});
+
+test("the sheet shows none for an empty list and a retire text", async () => {
+  show(PRF, { ...MAINT, maintenance: { action: "uninstall", fromNodes: [], fromSources: [] } });
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  const text = document.body.textContent!;
+  expect(text).toContain("This removes the key line on nas.");
+  expect(text).not.toContain("This changes the key line");
+  expect(text).toContain("The addresses now allowed: none");
 });
 
 test("the sheet shows a failed result that the hub answers with 200", async () => {
@@ -241,6 +278,9 @@ test("the sheet shows a failed result that the hub answers with 200", async () =
   button("Approve").click();
   await vi.waitFor(() => expect(document.querySelector("[role=alert]")?.textContent).toContain("no luck"));
   expect(closed).toBe(0);
+  expect(buttons("Approve")).toHaveLength(0);
+  button("Close").click();
+  expect(closed).toBe(1);
 });
 
 test("a session sheet still asks for the main salt", async () => {
