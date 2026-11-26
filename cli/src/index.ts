@@ -67,7 +67,7 @@ Commands:
                                      ask the owner for SSH access and wait (inside an instance)
   ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>)
                                      [--port n] [--key-file name] [--fingerprint f] [--provisioner] [--no-test]
-                                     (--provisioner: an external linux, synology or dropbear target also gets a provisioner key)
+                                     (--provisioner: an external linux or synology target also gets a provisioner key)
                                      (--key-file: managed linux or synology, a file in ~/.ssh that starts with authorized_keys)
                                      add a machine that sessions may ask to reach
   ssh target update <id> --node <id>[,<id>...] [--yes]
@@ -169,7 +169,7 @@ async function runProgram(argv: string[], stdin: string): Promise<{ code: number
     new Response(child.stderr).text(),
     child.exited,
   ]);
-  // The first line of stdout is the answer of an install script. The rest is not needed.
+  // The first 4096 characters of stdout are kept: the first line is the answer of an install script.
   return { code, stderr, stdout: stdout.slice(0, 4096) };
 }
 
