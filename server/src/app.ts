@@ -23,6 +23,7 @@ import type { Presence } from "./nodewatcher";
 import type { AdoptDir } from "./ownedir";
 import { PathError, within } from "./paths";
 import { permissionsApi } from "./permissionsapi";
+import { pushApi } from "./pushapi";
 import type { createReleaseList } from "./releaselist";
 import {
   isObject,
@@ -47,7 +48,6 @@ import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
 import { WatchFlag } from "./sessionwatch";
 import { sseResponse, trackStreams } from "./sse";
-import { pushApi } from "./pushapi";
 import { sshApi } from "./sshapi";
 import type { GrantStore } from "./sshgrants";
 import type { SshKeyStore } from "./sshkeystore";
@@ -62,8 +62,8 @@ import type { UpdateLog } from "./updatelog";
 import type { UpdateRecord } from "./updaterecord";
 import { createUpdateTracker } from "./updatetracker";
 import type { User, UserAuthStrategy } from "./userauth";
-import type { PushService } from "./webpush";
 import { VERSION } from "./version";
+import type { PushService } from "./webpush";
 import type { DefinitionStatus } from "./win/definition";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */

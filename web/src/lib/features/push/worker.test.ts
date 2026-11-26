@@ -84,7 +84,10 @@ test("a close message shows a notification with the same tag and closes it and t
     getNotifications: vi.fn(async (_filter?: { tag?: string }) => [earlier, fresh]),
   };
 
-  await showPush({ title: "SSH request answered", body: "", url: "/ssh", tag: "ssh-g1", grantId: "g1", close: true }, registration);
+  await showPush(
+    { title: "SSH request answered", body: "", url: "/ssh", tag: "ssh-g1", grantId: "g1", close: true },
+    registration,
+  );
 
   expect(registration.showNotification).toHaveBeenCalledTimes(1);
   expect(registration.showNotification.mock.calls[0]![1]).toMatchObject({ tag: "ssh-g1" });
@@ -114,7 +117,9 @@ test("a close message never rejects when the lookup fails once, and nothing of t
     }),
   };
 
-  await expect(showPush({ title: "x", body: "", url: "/ssh", tag: "ssh-g1", close: true }, registration)).resolves.toBeUndefined();
+  await expect(
+    showPush({ title: "x", body: "", url: "/ssh", tag: "ssh-g1", close: true }, registration),
+  ).resolves.toBeUndefined();
   expect(open.size).toBe(0);
 });
 
@@ -125,5 +130,7 @@ test("a close message does not reject when every lookup fails", async () => {
       throw new Error("down");
     }),
   };
-  await expect(showPush({ title: "x", body: "", url: "/ssh", tag: "ssh-g1", close: true }, registration)).resolves.toBeUndefined();
+  await expect(
+    showPush({ title: "x", body: "", url: "/ssh", tag: "ssh-g1", close: true }, registration),
+  ).resolves.toBeUndefined();
 });
