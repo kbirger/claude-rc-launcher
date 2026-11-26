@@ -9,8 +9,7 @@
   import { untrack } from "svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { hostsQuery } from "../hosts";
-  import { ApiError } from "../../shared/http";
-  import { getSalt, type Grant, type Maintenance, type SshStatus, type Unlock } from "./api";
+  import { getSalt, listGrants, type Grant, type Maintenance, type SshStatus, type Unlock } from "./api";
   import { hostLabel } from "./hostlabel";
   import { approveGrantMutation } from "./mutations";
   import { toBase64Url, unlockWithPasskey } from "./prf";
@@ -40,16 +39,20 @@
   const WARNING = "This gives the full power of the account on the target. The target cannot limit it to read-only.";
 
   const MAINTENANCE_WARNING =
-    "This changes the key line on the target. It uses the provisioner key, not the key of a session. The change runs as soon as you approve.";
+    "It uses the provisioner key, not the key of a session. The change runs as soon as you approve.";
   const ACTIONS: Record<Maintenance["action"], string> = {
     sources: "Change the nodes",
     uninstall: "Retire: remove the key lines",
     install: "Put the key line back",
   };
-  const work = untrack(() => grant.maintenance);
-
-  const nodeList = (nodes: string[], addresses: string[]) =>
-    `${nodes.length ? nodes.map((id) => hostLabel(id, hosts.data)).join(", ") : "none"} (addresses: ${addresses.length ? addresses.join(", ") : "none"})`;
+  const work = $derived(grant.maintenance);
+  const list = (items: string[]) => (items.length ? items.join(", ") : "none");
+  const nodeNames = (ids: string[]) => (ids.length ? ids.map((id) => hostLabel(id, hosts.data)).join(", ") : "none");
+  const headline = (maintenance: Maintenance, id: string) =>
+    maintenance.action === "uninstall" ? `This removes the key line on ${id}.` : `This changes the key line on ${id}.`;
+  const sameAddresses = $derived(work?.action === "sources" && list(work.fromSources) === list(work.toSources ?? []));
+  // After a failed run the grant has ended, so a second approve can only give 409.
+  let finished = $state(false);
 
   const target = $derived(targets.data?.find((item) => item.id === grant.targetId));
   // A number input binds a number, or null while the field is empty.
@@ -92,17 +95,26 @@
       // A maintenance run that failed ends the grant, and the hub still answers 200. The owner must read why.
       if (done.maintenance?.result === "failed") {
         problem = `The change failed. ${done.maintenance.detail ?? ""}`.trim();
+        finished = true;
         return;
       }
 
       onclose();
     } catch (error) {
-      const detail = error instanceof ApiError && typeof error.body.detail === "string" ? error.body.detail : "";
-      problem = !(error instanceof Error)
-        ? "The approval failed."
-        : detail
-          ? `${error.message}. ${detail}`
-          : error.message;
+      problem = error instanceof Error ? error.message : "The approval failed.";
+
+      // The hub answers an error with a text only. The record of the grant holds the result and the detail.
+      if (work) {
+        try {
+          const found = (await listGrants()).find((item) => item.id === grant.id)?.maintenance;
+          if (found?.result === "failed") {
+            problem = `The change failed. ${found.detail ?? (error instanceof Error ? error.message : "")}`;
+            finished = true;
+          }
+        } catch {
+          /* keep the error text */
+        }
+      }
     } finally {
       approve.reset();
       busy = false;
@@ -165,12 +177,23 @@
       {#if work}
         <Alert.Root role="note" variant="destructive">
           <Alert.Description class="{wrap} grid gap-1">
-            <span class="font-semibold">This changes the key line on {grant.targetId}.</span>
+            <span class="font-semibold">{headline(work, grant.targetId)}</span>
             {#if work.action === "sources"}
-              <span>from: {nodeList(work.fromNodes, work.fromSources)}</span>
-              <span>to: {nodeList(work.toNodes ?? [], work.toSources ?? [])}</span>
+              {#if sameAddresses}
+                <span>The list of addresses does not change: {list(work.fromSources)}</span>
+              {:else}
+                <span>SSH will be allowed only from: {list(work.toSources ?? [])}</span>
+                <span>from: {list(work.fromSources)}</span>
+              {/if}
+              <span class="text-xs">
+                Nodes now: {nodeNames(work.fromNodes)}. Nodes after: {nodeNames(work.toNodes ?? [])}.
+              </span>
+            {:else if work.action === "install"}
+              <span>SSH will be allowed only from: {list(work.fromSources)}</span>
+              <span class="text-xs">Nodes: {nodeNames(work.fromNodes)}</span>
             {:else}
-              <span>nodes: {nodeList(work.fromNodes, work.fromSources)}</span>
+              <span>The addresses now allowed: {list(work.fromSources)}</span>
+              <span class="text-xs">Nodes: {nodeNames(work.fromNodes)}</span>
             {/if}
             <span>{MAINTENANCE_WARNING}</span>
           </Alert.Description>
@@ -222,8 +245,12 @@
       {/if}
     </div>
     <Sheet.Footer class="px-4">
-      <Button type="button" size="touch" disabled={busy} onclick={submit}>{busy ? "Approving..." : "Approve"}</Button>
-      <Button type="button" variant="outline" size="touch" disabled={busy} onclick={onclose}>Cancel</Button>
+      {#if !finished}
+        <Button type="button" size="touch" disabled={busy} onclick={submit}>{busy ? "Approving..." : "Approve"}</Button>
+      {/if}
+      <Button type="button" variant="outline" size="touch" disabled={busy} onclick={onclose}>
+        {finished ? "Close" : "Cancel"}
+      </Button>
     </Sheet.Footer>
   </Sheet.Content>
 </Sheet.Root>
