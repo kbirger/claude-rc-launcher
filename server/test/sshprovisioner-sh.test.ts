@@ -454,6 +454,35 @@ for (const shell of SHELLS) {
       expect(mainCount(await bx.read())).toBe(1);
     });
 
+    test("a reinstall with a new provisioner key leaves one provisioner line, and uninstall removes every one", async () => {
+      const bx = await box(shell.argv);
+      const pblob2 = "AAAAC3NzaC1lZDI1NTE5AAAAIGnewnewnewnewnewnewnewnewnewnewnewnewnew";
+      const prov2 = `ssh-ed25519 ${pblob2} claude-rc-provisioner:nas`;
+      const anyProv = (text: string) => lineCount(text, "claude-rc-provisioner:nas");
+      const again = linuxInstallScript({
+        targetId: "nas",
+        mainPublicLine: MAIN,
+        provisionerPublicLine: prov2,
+        localSource: LOCAL,
+        sources: ["10.0.0.1"],
+      });
+      expect((await spawnShell(shell.argv, ["-s"], bx.home, again.script)).code).toBe(0);
+      const text = await bx.read();
+      expect(anyProv(text)).toBe(1);
+      expect(text).toContain(prov2);
+      expect(text).not.toContain(PBLOB);
+      expect(text).toContain(OWNER);
+      expect(mainCount(text)).toBe(1);
+
+      // A stale line of an older key, left by a version before this fix, also goes at uninstall.
+      await writeFile(bx.keys, `${await bx.read()}from="${LOCAL}",restrict,command="${bx.script}" ${PROV}\n`);
+      expect(anyProv(await bx.read())).toBe(2);
+      expect((await bx.run("status")).code).toBe(0);
+      expect((await bx.run("uninstall")).code).toBe(0);
+      expect(anyProv(await bx.read())).toBe(0);
+      expect(await bx.read()).toContain(OWNER);
+    });
+
     test("the install refuses a symbolic link and a home path that the line cannot hold", async () => {
       const bx = await box(shell.argv);
       await rename(bx.keys, `${bx.keys}.real`);
