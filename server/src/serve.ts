@@ -26,6 +26,16 @@ const GITHUB_PATH_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?github\/(?:repos|lo
 const INSTANCE_CHANGE_RE = /^\/(?:cli\/)?api\/(?:hosts\/[^/]+\/)?instances\/[0-9a-f]{12}(?:\/restart)?$/;
 
 /**
+ * The approve of a maintenance grant runs the provisioner script on the target before it answers: a connect of up to
+ * 10 s, runs of up to 15 s each, a restore after a failure and the commit of up to 10 s. A failed run can take about
+ * 55 s. The answer of a retire holds the only notice that names the lines to remove, so it must not be cut. 90 s is
+ * above that and below Bun's maximum of 255 s. A session grant answers at once, so the longer limit does it no harm.
+ */
+export const SSH_APPROVE_IDLE_TIMEOUT_SECONDS = 90;
+
+const SSH_APPROVE_RE = /^\/(?:cli\/)?api\/ssh\/grants\/[^/]+\/approve$/;
+
+/**
  * An event stream sends nothing between events (only a keepalive every 15 s), so it must not hit the idle limit.
  * `/api/events` and `/cli/api/events` carry the update stream. `/api/sessions/events` carries the browser session list.
  * The CLI has no sessions stream.
@@ -54,6 +64,8 @@ export function withLongUpdates(
       ((req.method === "GET" && pathname.endsWith("/repos")) || (req.method === "POST" && pathname.endsWith("/login")))
     )
       server.timeout(req, githubSeconds);
+    else if (req.method === "POST" && SSH_APPROVE_RE.test(pathname))
+      server.timeout(req, SSH_APPROVE_IDLE_TIMEOUT_SECONDS);
     return app.fetch(req, server);
   };
 }

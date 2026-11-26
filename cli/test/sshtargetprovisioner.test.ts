@@ -493,6 +493,25 @@ describe("approveMaintenance", () => {
     expect(error.message).toContain("still waits");
   });
 
+  test("a lost connection does not claim that the request still waits", async () => {
+    const rg = rig({
+      [`POST ${B}/grants/g1/approve`]: () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    const error = await rejection(rg.approve());
+    expect(error.message).toContain("fetch failed");
+    expect(error.message).not.toContain("still waits");
+    expect(error.message).toContain("Check the target on the web page");
+  });
+
+  test("with a passkey, the link opens the page of the target, where the approval opens", async () => {
+    const rg = rig({ [`GET ${B}/grants`]: () => [done()] }, { method: "prf" });
+    await rg.approve();
+    expect(rg.out.join("\n")).toContain(`open ${HUB}/ssh?target=nas and approve the change with your passkey`);
+    expect(rg.out.join("\n")).not.toContain("provisioner=1 and approve");
+  });
+
   test("a grant that ends without a result is reported", async () => {
     const rg = rig({ [`GET ${B}/grants`]: () => [grant({ state: "ended", endReason: "denied" })] }, { method: "prf" });
     const error = await rejection(rg.approve());

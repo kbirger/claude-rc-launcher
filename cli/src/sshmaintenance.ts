@@ -6,7 +6,12 @@ export const SSH_BASE = "/cli/api/ssh";
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 10 * 60 * 1000;
 const STILL_WAITS = "The request still waits on the hub: deny it on the web page or wait for it to expire";
+/** After a lost connection, the hub can have run the change: the CLI cannot tell. */
+const UNKNOWN_END = "The connection to the hub failed, so the change can have run. Check the target on the web page";
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The request is still pending on the hub: no approve reached it (no passphrase, a wrong one, or a timeout). */
+class StillWaitsError extends Error {}
 
 /** The grant ended or is gone: no request waits on the hub. */
 class EndedError extends Error {}
@@ -68,14 +73,14 @@ export async function approveMaintenance(
     if (deps.method === "passphrase") {
       deps.out("This change needs one approval with the provisioner key.");
       const typed = await deps.readSecret("Passphrase for the SSH keys: ");
-      if (!typed) throw new Error("no passphrase");
+      if (!typed) throw new StillWaitsError("no passphrase");
       const unlock = { method: "passphrase", secret: Buffer.from(typed, "utf8").toString("base64url") };
 
       try {
         final = asGrant(await deps.hub.request("POST", `${SSH_BASE}/grants/${id}/approve`, { unlock }));
       } catch (error) {
         // A wrong passphrase leaves the grant pending. A failed run ends it.
-        if (error instanceof HubError && error.status === 403) throw new Error(error.message);
+        if (error instanceof HubError && error.status === 403) throw new StillWaitsError(error.message);
         throw error;
       }
     } else {
@@ -88,7 +93,9 @@ export async function approveMaintenance(
     // A refusal of the hub other than 403 means that the request ended: a failed run, or a grant that is out of date.
     if (error instanceof HubError && error.status !== 403) throw error;
     if (error instanceof EndedError) throw error;
-    throw new Error(`${messageOf(error)}. ${STILL_WAITS}`);
+    if (error instanceof StillWaitsError) throw new Error(`${messageOf(error)}. ${STILL_WAITS}`);
+    // A lost connection: the approve can have reached the hub, so the request does not surely wait.
+    throw new Error(`${messageOf(error)}. ${UNKNOWN_END}`);
   }
 
   return judge(final);
@@ -111,7 +118,7 @@ async function waitForEnd(
     await sleep(POLL_MS);
   }
 
-  throw new Error(
+  throw new StillWaitsError(
     `the grant did not end in 10 minutes. It can still wait on the hub: open the web page ${link} to approve or deny it, then check the target`,
   );
 }
