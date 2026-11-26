@@ -114,6 +114,7 @@ const RULES: Rule[] = [
     "/ssh/targets/:id/rewrap",
     "/ssh/targets",
     "/ssh/targets/:id/key",
+    "/ssh/targets/:id/provisioner-key",
     "/ssh/targets/:id/scan",
     "/ssh/targets/:id/pin",
     "/ssh/targets/:id/pin-managed",
@@ -125,7 +126,7 @@ const RULES: Rule[] = [
   ]),
   ...rows("admin", "PUT", ["/ssh/nodes/:host"]),
   ...rows("admin", "PATCH", ["/ssh/targets/:id"]),
-  ...rows("admin", "DELETE", ["/ssh/targets/:id"]),
+  ...rows("admin", "DELETE", ["/ssh/targets/:id", "/ssh/targets/:id/provisioner-key"]),
   // Push notifications: registering a device is for admins, who approve SSH requests.
   ...rows("admin", "GET", ["/push/key"]),
   ...rows("admin", "POST", ["/push/subscribe", "/push/unsubscribe"]),

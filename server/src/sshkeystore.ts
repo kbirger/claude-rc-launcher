@@ -15,21 +15,47 @@ import {
 } from "./sshwrap";
 import type { Sealed } from "./sshwrap";
 
-// Encrypted key store for SSH delegation. The hub holds one Ed25519 key for each target. The private key (the 32 byte
-// seed) is never stored in the clear. Each key has two sealed copies: one under the wrap key of the owner's unlock
-// (passkey PRF or passphrase, with a salt of its own for each target) and one sealed to the recovery public key that
-// the owner created at setup. The hub needs no secret to add the recovery copy. The target id is the `aad` of both
-// copies, so a copy cannot be moved to another target.
+// Encrypted key store for SSH delegation. The hub holds one main Ed25519 key for each target, and an external target
+// can have a second one, the provisioner key (see `KeySlot`). The private key (the 32 byte seed) is never stored in
+// the clear. Each key has two sealed copies: one under the wrap key of the owner's unlock (passkey PRF or passphrase,
+// with a salt of its own for each key) and one sealed to the recovery public key that the owner created at setup. The
+// hub needs no secret to add the recovery copy. The store key of the slot (the target id, or `provisioner:<id>`) is the
+// `aad` of both copies, so a copy cannot be moved to another target or to the other slot.
 // The store is a small JSON file (`<state_dir>/ssh/keys.json`, mode 600). A file that is missing, too big or not valid
-// is an empty store. At most 200 keys. A write goes through a temporary file and a rename. Unlike the name memory, a
+// is an empty store. At most 400 keys (two for each of 200 targets). A write goes through a temporary file and a rename. Unlike the name memory, a
 // failed write is an error: a key that was not saved must not look saved.
 
-const MAX_KEYS = 200;
+// Each target can hold a main key and a provisioner key, so the store takes twice the number of targets.
+const MAX_KEYS = 400;
 const MAX_BYTES = 1024 * 1024;
 const SALT_LEN = 16;
+// Do not change VERSION to add a field or a slot: an old binary reads another version as an empty store, and would then
+// write that empty store over the main keys at its next change. The provisioner slot only adds entries that an old
+// binary skips (it keeps the main keys, and drops the provisioner ones on its next write).
 const VERSION = 1;
 // The PKCS8 prefix of an Ed25519 private key. The 32 byte seed follows.
 const ED25519_PKCS8 = Buffer.from("302e020100300506032b657004220420", "hex");
+
+/**
+ * The slot of a key. `main` is the key of the delegation (the grants). `provisioner` is an optional second key of an
+ * external target, which only the maintenance of the script on the target uses. A slot has its own store key, salt,
+ * `aad` and fingerprint, so a copy of one slot never opens in the other.
+ */
+export type KeySlot = "main" | "provisioner";
+
+const PROVISIONER_PREFIX = "provisioner:";
+
+/** The key of a slot in the maps of the store, and its `aad`: the target id for `main`, `provisioner:<id>` for the other. */
+const slotKey = (targetId: string, slot: KeySlot): string =>
+  slot === "main" ? targetId : `${PROVISIONER_PREFIX}${targetId}`;
+
+/** The comment of the public line of a slot. */
+const slotComment = (targetId: string, slot: KeySlot): string =>
+  slot === "main" ? `claude-rc:${targetId}` : `claude-rc-provisioner:${targetId}`;
+
+/** True for a store key that is a target id, or `provisioner:` and a target id. */
+const isStoreKey = (key: string): boolean =>
+  HOST_ID_RE.test(key) || (key.startsWith(PROVISIONER_PREFIX) && HOST_ID_RE.test(key.slice(PROVISIONER_PREFIX.length)));
 
 /** A secret that opens a key: the PRF output of the passkey, or the bytes of the passphrase. */
 export interface UnlockSecret {
@@ -112,13 +138,13 @@ function parse(text: string): State {
 
   if (isRecord(parsed.salts)) {
     for (const [id, salt] of Object.entries(parsed.salts)) {
-      if (HOST_ID_RE.test(id) && typeof salt === "string") state.salts.set(id, salt);
+      if (isStoreKey(id) && typeof salt === "string") state.salts.set(id, salt);
     }
   }
 
   if (isRecord(parsed.keys)) {
     for (const [id, record] of Object.entries(parsed.keys)) {
-      if (!HOST_ID_RE.test(id) || !isRecord(record)) continue;
+      if (!isStoreKey(id) || !isRecord(record)) continue;
       if (typeof record.publicKey !== "string" || !isSealed(record.wrapped) || typeof record.recovery !== "string")
         continue;
       state.keys.set(id, { publicKey: record.publicKey, wrapped: record.wrapped, recovery: record.recovery });
@@ -204,16 +230,23 @@ export class SshKeyStore {
     });
   }
 
-  /** The targets that wait for `rewrapWithRecovery`. */
-  pendingRewraps(): string[] {
-    return [...this.state.pending];
+  /** The targets that wait for `rewrapWithRecovery` for the key of a slot. */
+  pendingRewraps(slot: KeySlot = "main"): string[] {
+    const ids: string[] = [];
+
+    for (const key of this.state.pending) {
+      if (slot === "main" && !key.startsWith(PROVISIONER_PREFIX)) ids.push(key);
+      if (slot === "provisioner" && key.startsWith(PROVISIONER_PREFIX)) ids.push(key.slice(PROVISIONER_PREFIX.length));
+    }
+
+    return ids;
   }
 
   /**
    * Starts a recovery after a lost passkey. The code must belong to this hub (its public key is compared in constant
-   * time with the stored one). The new method replaces the old one, and every key is marked as pending a re-wrap: the
-   * old wrap belongs to the old method. A second call replaces the method again and marks every key again. Returns the
-   * ids of the keys to re-wrap. Throws `KeyError` `not-set-up` or `wrong-recovery-code`, and changes nothing then.
+   * time with the stored one). The new method replaces the old one, and every key of both slots is marked as pending a
+   * re-wrap: the old wrap belongs to the old method. A second call replaces the method again and marks every key again. Returns the
+   * target ids of the main keys to re-wrap (the provisioner keys are listed by `pendingRewraps("provisioner")`). Throws `KeyError` `not-set-up` or `wrong-recovery-code`, and changes nothing then.
    */
   async beginRecovery(options: {
     code: string;
@@ -232,30 +265,36 @@ export class SshKeyStore {
       if (options.method === "prf") draft.credentialId = options.credentialId;
       else delete draft.credentialId;
       draft.pending = new Set(draft.keys.keys());
-      return { targets: [...draft.pending] };
+      return { targets: [...draft.pending].filter((key) => !key.startsWith(PROVISIONER_PREFIX)) };
     });
   }
 
-  /** The salt of a target, base64url. It is made on the first call and stays the same after that, until `remove`. */
-  async saltFor(targetId: string): Promise<string> {
+  /** The salt of a key slot of a target, base64url. It is made on the first call and stays the same after that, until `remove`. Each slot has its own. */
+  async saltFor(targetId: string, slot: KeySlot = "main"): Promise<string> {
     checkTarget(targetId);
     this.needSetup();
+    const id = slotKey(targetId, slot);
     return this.mutate((draft) => {
-      const known = draft.salts.get(targetId);
+      const known = draft.salts.get(id);
       if (known) return known;
       if (draft.salts.size >= MAX_KEYS) throw new Error("too many targets");
       const salt = b64(randomBytes(SALT_LEN));
-      draft.salts.set(targetId, salt);
+      draft.salts.set(id, salt);
       return salt;
     });
   }
 
   /** Makes the key of a target and stores both sealed copies. Returns the line for authorized_keys (without options). */
-  async create(targetId: string, unlock: UnlockSecret): Promise<{ publicLine: string; fingerprint: string }> {
+  async create(
+    targetId: string,
+    unlock: UnlockSecret,
+    slot: KeySlot = "main",
+  ): Promise<{ publicLine: string; fingerprint: string }> {
     checkTarget(targetId);
     this.needSetup();
     this.needMethod(unlock);
-    const salt = await this.saltFor(targetId);
+    const id = slotKey(targetId, slot);
+    const salt = await this.saltFor(targetId, slot);
     const wrapKey = await deriveWrapKey(unlock.method, unlock.secret, unb64(salt));
     const { privateKey } = generateKeyPairSync("ed25519");
     const jwk = privateKey.export({ format: "jwk" });
@@ -265,16 +304,16 @@ export class SshKeyStore {
     try {
       const record: KeyRecord = {
         publicKey: b64(raw),
-        wrapped: seal(wrapKey, seed, targetId),
-        recovery: sealToRecovery(this.state.recoveryPublicKey ?? "", seed, targetId),
+        wrapped: seal(wrapKey, seed, id),
+        recovery: sealToRecovery(this.state.recoveryPublicKey ?? "", seed, id),
       };
       await this.mutate((draft) => {
-        if (draft.keys.has(targetId)) throw new Error("the target has a key already");
+        if (draft.keys.has(id)) throw new Error("the target has a key already");
         if (draft.keys.size >= MAX_KEYS) throw new Error("too many keys");
-        draft.keys.set(targetId, record);
+        draft.keys.set(id, record);
       });
       return {
-        publicLine: publicKeyLine(raw, `claude-rc:${targetId}`),
+        publicLine: publicKeyLine(raw, slotComment(targetId, slot)),
         fingerprint: keyFingerprint(publicKeyBlob(raw)),
       };
     } finally {
@@ -284,23 +323,23 @@ export class SshKeyStore {
   }
 
   /** The line for authorized_keys (without options) of the key of a target. It needs no unlock, because the public key is stored in the clear. Throws `KeyError` `no-key` for an unknown target. */
-  publicLine(targetId: string): string {
-    return publicKeyLine(unb64(this.record(targetId).publicKey), `claude-rc:${targetId}`);
+  publicLine(targetId: string, slot: KeySlot = "main"): string {
+    return publicKeyLine(unb64(this.record(targetId, slot).publicKey), slotComment(targetId, slot));
   }
 
   /** Decrypts the key into memory. Throws `KeyError`: `wrong-unlock` for a wrong secret, `no-key` for an unknown target. */
-  async open(targetId: string, unlock: UnlockSecret): Promise<UnlockedKey> {
+  async open(targetId: string, unlock: UnlockSecret, slot: KeySlot = "main"): Promise<UnlockedKey> {
     this.needSetup();
-    const record = this.record(targetId);
-    if (this.state.pending.has(targetId))
-      throw new KeyError("needs-rewrap", "this target needs its key to be recovered");
+    const record = this.record(targetId, slot);
+    const id = slotKey(targetId, slot);
+    if (this.state.pending.has(id)) throw new KeyError("needs-rewrap", "this target needs its key to be recovered");
     this.needMethod(unlock);
-    const salt = this.state.salts.get(targetId);
+    const salt = this.state.salts.get(id);
     if (!salt) throw new KeyError("no-key", "no key for this target");
     const wrapKey = await deriveWrapKey(unlock.method, unlock.secret, unb64(salt));
 
     try {
-      const seed = unseal(wrapKey, record.wrapped, targetId);
+      const seed = unseal(wrapKey, record.wrapped, id);
       return this.unlocked(seed, unb64(record.publicKey));
     } catch (error) {
       if (error instanceof WrapError) throw new KeyError("wrong-unlock", "the unlock secret does not open this key");
@@ -315,18 +354,24 @@ export class SshKeyStore {
    * and the unchanged salt of the target. Clears the pending mark. Throws `KeyError` `wrong-recovery-code` for a code
    * that does not open the key. A failed write leaves the old wrap and the mark.
    */
-  async rewrapWithRecovery(targetId: string, code: string, unlock: UnlockSecret): Promise<void> {
+  async rewrapWithRecovery(
+    targetId: string,
+    code: string,
+    unlock: UnlockSecret,
+    slot: KeySlot = "main",
+  ): Promise<void> {
     this.needSetup();
-    const record = this.record(targetId);
+    const record = this.record(targetId, slot);
+    const id = slotKey(targetId, slot);
     this.needMethod(unlock);
-    const salt = this.state.salts.get(targetId);
+    const salt = this.state.salts.get(id);
     if (!salt) throw new KeyError("no-key", "no key for this target");
     let seed: Uint8Array | undefined;
     let wrapKey: Uint8Array | undefined;
 
     try {
       try {
-        seed = openWithRecovery(code, record.recovery, targetId);
+        seed = openWithRecovery(code, record.recovery, id);
       } catch (error) {
         if (error instanceof WrapError)
           throw new KeyError("wrong-recovery-code", "the recovery code does not open this key");
@@ -334,14 +379,14 @@ export class SshKeyStore {
       }
 
       wrapKey = await deriveWrapKey(unlock.method, unlock.secret, unb64(salt));
-      const wrapped = seal(wrapKey, seed, targetId);
+      const wrapped = seal(wrapKey, seed, id);
       await this.mutate((draft) => {
-        const current = draft.keys.get(targetId);
+        const current = draft.keys.get(id);
         if (!current) throw new KeyError("no-key", "no key for this target");
         // Another recovery may have changed the method while the key was derived.
         if (draft.method !== unlock.method) throw new KeyError("wrong-unlock", "the unlock method changed");
-        draft.keys.set(targetId, { ...current, wrapped });
-        draft.pending.delete(targetId);
+        draft.keys.set(id, { ...current, wrapped });
+        draft.pending.delete(id);
       });
     } finally {
       seed?.fill(0);
@@ -349,12 +394,30 @@ export class SshKeyStore {
     }
   }
 
-  /** Deletes the key and the salt of a target. */
+  /**
+   * Deletes the key, the salt and the pending mark of one slot in one write. Only the provisioner slot can be removed
+   * alone: the main key goes with `remove` (the retire of the target), so `main` is refused.
+   */
+  async removeSlot(targetId: string, slot: KeySlot): Promise<void> {
+    if (slot !== "provisioner") throw new Error("only the provisioner key can be removed alone");
+    checkTarget(targetId);
+    const id = slotKey(targetId, slot);
+
+    await this.mutate((draft) => {
+      draft.keys.delete(id);
+      draft.salts.delete(id);
+      draft.pending.delete(id);
+    });
+  }
+
+  /** Deletes the keys, the salts and the pending marks of both slots of a target. */
   async remove(targetId: string): Promise<void> {
     await this.mutate((draft) => {
-      draft.keys.delete(targetId);
-      draft.salts.delete(targetId);
-      draft.pending.delete(targetId);
+      for (const id of [slotKey(targetId, "main"), slotKey(targetId, "provisioner")]) {
+        draft.keys.delete(id);
+        draft.salts.delete(id);
+        draft.pending.delete(id);
+      }
     });
   }
 
@@ -399,8 +462,8 @@ export class SshKeyStore {
       throw new KeyError("wrong-unlock", "the unlock method is not the one of the store");
   }
 
-  private record(targetId: string): KeyRecord {
-    const record = HOST_ID_RE.test(targetId) ? this.state.keys.get(targetId) : undefined;
+  private record(targetId: string, slot: KeySlot = "main"): KeyRecord {
+    const record = HOST_ID_RE.test(targetId) ? this.state.keys.get(slotKey(targetId, slot)) : undefined;
     if (!record) throw new KeyError("no-key", "no key for this target");
     return record;
   }

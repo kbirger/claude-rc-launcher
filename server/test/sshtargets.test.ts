@@ -6,6 +6,7 @@ import {
   TargetError,
   TargetStore,
   authorizedKeysLine,
+  hasProvisioner,
   installNotes,
   isKeyFile,
   keyFileProblem,
@@ -395,5 +396,80 @@ describe("key file", () => {
     const text = (await readFile(file, "utf8")).replace('"authorized_keys2"', '"../x"');
     await Bun.write(file, text);
     expect(new TargetStore(file).list().map((target) => target.id)).toEqual(["other"]);
+  });
+});
+
+describe("the provisioner fields", () => {
+  const value = { fingerprint: "SHA256:abc", script: "/usr/local/sbin/claude-rc-provisioner", source: "10.0.0.2" };
+
+  test("setProvisioner stores the three fields, and an empty value clears them", async () => {
+    const store = new TargetStore(file);
+    await store.add(input);
+    expect(hasProvisioner(store.get("nas") as never)).toBe(false);
+    await store.setProvisioner("nas", value);
+    const target = store.get("nas");
+    expect(target?.provisionerFingerprint).toBe(value.fingerprint);
+    expect(target?.provisionerScript).toBe(value.script);
+    expect(target?.provisionerSource).toBe(value.source);
+    expect(hasProvisioner(target as never)).toBe(true);
+    expect(new TargetStore(file).get("nas")?.provisionerScript).toBe(value.script);
+
+    await store.setProvisioner("nas", undefined);
+    expect(hasProvisioner(store.get("nas") as never)).toBe(false);
+    expect(Object.keys(store.get("nas") ?? {})).not.toContain("provisionerScript");
+    expect(await status(store.setProvisioner("nope", value))).toBe(404);
+  });
+
+  test("a file without them loads", async () => {
+    const old = new TargetStore(file);
+    await old.add(input);
+    const reloaded = new TargetStore(file);
+    expect(reloaded.get("nas")?.provisionerFingerprint).toBeUndefined();
+    expect(hasProvisioner(reloaded.get("nas") as never)).toBe(false);
+  });
+
+  test("setProvisioner refuses a script path that SCRIPT_PATH_RE refuses", async () => {
+    const store = new TargetStore();
+    await store.add(input);
+    for (const script of ["relative/path", "/with space", '/quo"te', "/a\nb", "", "/x;rm"])
+      expect(await status(store.setProvisioner("nas", { ...value, script }))).toBe(400);
+    expect(await status(store.setProvisioner("nas", { ...value, fingerprint: "a\nb" }))).toBe(400);
+    expect(await status(store.setProvisioner("nas", { ...value, source: "" }))).toBe(400);
+    expect(hasProvisioner(store.get("nas") as never)).toBe(false);
+  });
+
+  test("a windows target takes no provisioner, and the fields of one in a file are dropped", async () => {
+    const store = new TargetStore(file);
+    await store.add({ ...input, id: "win", systemType: "windows" });
+    expect(await status(store.setProvisioner("win", value))).toBe(400);
+    await store.add({ ...input, id: "man", managedHost: "pve" });
+
+    const json = JSON.parse(await readFile(file, "utf8")) as { targets: Record<string, Record<string, unknown>> };
+    const fields = {
+      provisionerFingerprint: value.fingerprint,
+      provisionerScript: value.script,
+      provisionerSource: value.source,
+    };
+    json.targets.win = { ...json.targets.win, ...fields };
+    json.targets.man = { ...json.targets.man, ...fields };
+    await Bun.write(file, JSON.stringify(json));
+    const reloaded = new TargetStore(file);
+    expect(hasProvisioner(reloaded.get("win") as never)).toBe(false);
+    expect(hasProvisioner(reloaded.get("man") as never)).toBe(false);
+    expect(Object.keys(reloaded.get("win") ?? {})).not.toContain("provisionerScript");
+  });
+
+  test("a managed target takes no provisioner, and a bad script path in a file drops the fields", async () => {
+    const store = new TargetStore(file);
+    await store.add({ ...input, managedHost: "pve" });
+    expect(await status(store.setProvisioner("nas", value))).toBe(400);
+
+    const plain = new TargetStore(file);
+    await plain.add({ ...input, id: "ext" });
+    await plain.setProvisioner("ext", value);
+    const json = JSON.parse(await readFile(file, "utf8")) as { targets: Record<string, Record<string, unknown>> };
+    json.targets.ext = { ...json.targets.ext, provisionerScript: "relative" };
+    await Bun.write(file, JSON.stringify(json));
+    expect(hasProvisioner(new TargetStore(file).get("ext") as never)).toBe(false);
   });
 });

@@ -19,8 +19,11 @@ const VERSION = 1;
 const SYSTEM_TYPES: readonly string[] = ["linux", "windows", "synology", "dropbear"];
 // An old file can hold the state `retired` from an earlier version. It is not a state any more, so such a record is dropped on load.
 const STATES: readonly string[] = ["draft", "ready", "disabled"];
+/** An absolute path with no space, quote, comma or backslash. It is the value of `command=`, so a shell reads it. The provisioner module re-exports it. */
+export const SCRIPT_PATH_RE = /^\/[A-Za-z0-9._/+:@=-]{1,1023}$/;
+
 // A host name or an address: it cannot start with "-" (ssh would read it as an option), and has no space, no quote, no comma, so a value cannot add an option to the key line.
-const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
+export const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
 const SOURCE_RE = /^[A-Za-z0-9._:*?/-]{1,255}$/;
 // An account cannot start with "-" either. `user@domain` is allowed (a Windows domain account).
@@ -80,6 +83,12 @@ export interface Target {
   hostKey?: string;
   /** The fingerprint of the key that the hub holds for the target. */
   keyFingerprint?: string;
+  /** The fingerprint of the provisioner key that the hub holds for an external target. */
+  provisionerFingerprint?: string;
+  /** The path of the provisioner script on the target. */
+  provisionerScript?: string;
+  /** The source address that the script on the target accepts, as the hub sent it. */
+  provisionerSource?: string;
   state: TargetState;
 }
 
@@ -160,6 +169,21 @@ function parseTarget(id: string, value: unknown): Target | undefined {
   if (problem(target) || value.id !== id) return undefined;
   if (singleLine(value.hostKey)) target.hostKey = value.hostKey;
   if (singleLine(value.keyFingerprint)) target.keyFingerprint = value.keyFingerprint;
+
+  // The three fields of the provisioner go together, and only an external target has them.
+  if (
+    target.managedHost === undefined &&
+    target.systemType !== "windows" &&
+    singleLine(value.provisionerFingerprint) &&
+    typeof value.provisionerScript === "string" &&
+    SCRIPT_PATH_RE.test(value.provisionerScript) &&
+    singleLine(value.provisionerSource)
+  ) {
+    target.provisionerFingerprint = value.provisionerFingerprint;
+    target.provisionerScript = value.provisionerScript;
+    target.provisionerSource = value.provisionerSource;
+  }
+
   return copy(target);
 }
 
@@ -214,7 +238,12 @@ export class TargetStore {
   }
 
   /** Adds a draft target. Throws `TargetError`: 400 for bad input, 409 for an id that exists. */
-  async add(input: Omit<Target, "state" | "hostKey" | "keyFingerprint">): Promise<Target> {
+  async add(
+    input: Omit<
+      Target,
+      "state" | "hostKey" | "keyFingerprint" | "provisionerFingerprint" | "provisionerScript" | "provisionerSource"
+    >,
+  ): Promise<Target> {
     const bad = problem(input);
     if (bad) throw new TargetError(400, bad);
     const target: Target = {
@@ -240,6 +269,39 @@ export class TargetStore {
   async setKeyFingerprint(id: string, fingerprint: string): Promise<void> {
     if (!singleLine(fingerprint)) throw new TargetError(400, "the fingerprint is not valid");
     await this.update(id, (target) => ({ ...target, keyFingerprint: fingerprint }));
+  }
+
+  /**
+   * Sets or clears (with `undefined`) the three provisioner fields together. Only an external target has them. The
+   * script path must pass `SCRIPT_PATH_RE`.
+   */
+  async setProvisioner(
+    id: string,
+    value: { fingerprint: string; script: string; source: string } | undefined,
+  ): Promise<void> {
+    if (
+      value !== undefined &&
+      !(
+        singleLine(value.fingerprint) &&
+        singleLine(value.source) &&
+        typeof value.script === "string" &&
+        SCRIPT_PATH_RE.test(value.script)
+      )
+    )
+      throw new TargetError(400, "the provisioner fields are not valid");
+
+    await this.update(id, (target) => {
+      const { provisionerFingerprint: _f, provisionerScript: _s, provisionerSource: _o, ...rest } = target;
+      if (value === undefined) return rest;
+      if (target.managedHost !== undefined) throw new TargetError(400, "a managed target has no provisioner");
+      if (target.systemType === "windows") throw new TargetError(400, "a windows target has no provisioner");
+      return {
+        ...rest,
+        provisionerFingerprint: value.fingerprint,
+        provisionerScript: value.script,
+        provisionerSource: value.source,
+      };
+    });
   }
 
   /** `line` is one line in the `known_hosts` format. */
@@ -366,6 +428,18 @@ const UNIX_NOTES = [
   "Append the line to ~/.ssh/authorized_keys of the account.",
   "The folder ~/.ssh needs mode 700 and the file authorized_keys needs mode 600.",
 ];
+
+/**
+ * True when the record of the target holds the three provisioner fields. It does not look at the key store: a caller
+ * that trusts the key must also ask the store (`keys.publicLine(id, "provisioner")` does not throw).
+ */
+export function hasProvisioner(target: Target): boolean {
+  return (
+    target.provisionerFingerprint !== undefined &&
+    target.provisionerScript !== undefined &&
+    target.provisionerSource !== undefined
+  );
+}
 
 /** The install steps for a system type, as lines of text for the page and the CLI. */
 export function installNotes(systemType: SystemType): string[] {

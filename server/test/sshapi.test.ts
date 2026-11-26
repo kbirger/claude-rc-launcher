@@ -209,6 +209,8 @@ const ROLES: [string, string, "write" | "admin"][] = [
   ["DELETE", "/ssh/targets/:id", "admin"],
   ["GET", "/ssh/targets/:id/salt", "admin"],
   ["POST", "/ssh/targets/:id/key", "admin"],
+  ["POST", "/ssh/targets/:id/provisioner-key", "admin"],
+  ["DELETE", "/ssh/targets/:id/provisioner-key", "admin"],
   ["POST", "/ssh/targets/:id/scan", "admin"],
   ["POST", "/ssh/targets/:id/pin", "admin"],
   ["POST", "/ssh/targets/:id/pin-managed", "admin"],
@@ -246,6 +248,8 @@ describe("roles", () => {
     expect((await call("GET", "/targets", "write")).status).toBe(200);
     expect((await call("GET", "/status", "write")).status).toBe(200);
     expect((await call("GET", "/targets/nas", "write")).status).toBe(403);
+    expect((await call("POST", "/targets/nas/provisioner-key", "write", { unlock })).status).toBe(403);
+    expect((await call("POST", "/targets/nas/provisioner-key", "read", { unlock })).status).toBe(403);
   });
 
   test("the same routes answer under /cli/api/ssh", async () => {
@@ -1133,7 +1137,7 @@ describe("recovery", () => {
     expect(text).not.toContain(recovery.code);
     expect(text).not.toContain(recovery.code.replaceAll("-", ""));
     expect(text).not.toContain(next.secret);
-    expect(logs).toContain("audit ssh recovery user=ann method=prf targets=1");
+    expect(logs).toContain("audit ssh recovery user=ann method=prf targets=1 provisioner=0");
     expect(logs).toContain("audit ssh rewrap user=ann target=nas");
     expect(logs.filter((line) => line.startsWith("audit user=ann role=admin ssh POST /api/ssh/"))).toHaveLength(3);
   });
@@ -1515,15 +1519,19 @@ describe("PATCH /targets/:id changes the nodes", () => {
 
   test("while the install runs, a request from an added node is not accepted", async () => {
     const { call, node2, targets, grants, service } = await made("managed");
+
     let release: () => void = () => {};
+
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const original = node2.client.call;
+
     node2.client.call = async (method, path, options) => {
       if (path === "/api/ssh/authorize") await gate;
       return original(method, path, options);
     };
+
     const pending = call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
     await flush();
     service.onNodeEvent("node2", "ssh.request", { requestId: "late", instanceId: "i2", targetId: "self" });
@@ -1584,15 +1592,282 @@ describe("PATCH /targets/:id changes the nodes", () => {
     const gate: { release: () => void } = { release: () => {} };
     const wait = new Promise<void>((resolve) => (gate.release = resolve));
     const original = node2.client.call.bind(node2.client);
+
     node2.client.call = async (...args) => {
       await wait;
       return original(...args);
     };
+
     const first = call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
     await flush();
     expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node1"] })).status).toBe(409);
     expect((await call("DELETE", "/targets/self")).status).toBe(409);
     gate.release();
     expect((await first).status).toBe(200);
+  });
+});
+
+describe("the provisioner key", () => {
+  const next = { method: "prf" as const, secret: Buffer.from("new passkey output").toString("base64url") };
+  const external = (id: string, systemType = "linux") => ({
+    id,
+    address: "10.0.0.5",
+    port: 22,
+    account: "root",
+    systemType,
+    nodes: ["node1"],
+  });
+
+  test("POST /targets/:id/provisioner-key makes a key with its own line and fingerprint", async () => {
+    const { call, readyTarget, keys, targets, grants, request, node1 } = await setup();
+    await readyTarget();
+    const made = await call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    expect(made.status).toBe(200);
+    expect(made.body.publicLine).toMatch(/^ssh-ed25519 \S+ claude-rc-provisioner:nas$/);
+    expect(made.body.fingerprint).not.toBe(targets.get("nas")?.keyFingerprint);
+    expect(Object.keys(made.body).sort()).toEqual(["fingerprint", "publicLine"]);
+    expect(keys.publicLine("nas", "provisioner")).toBe(made.body.publicLine);
+    expect(keys.publicLine("nas")).toContain("claude-rc:nas");
+    expect((await call("POST", "/targets/nas/provisioner-key", "admin", { unlock })).status).toBe(409);
+    expect((await call("POST", "/targets/nope/provisioner-key", "admin", { unlock })).status).toBe(404);
+
+    // A grant is made with the main key only: the provisioner key never signs for a grant.
+    const grant = await request();
+    expect((await call("POST", `/grants/${grant.id}/approve`, "admin", { unlock })).status).toBe(200);
+    expect(grants.get(grant.id)?.state).toBe("active");
+    const sent = node1.calls.find((item) => item.method === "POST" && item.path.endsWith("/grants"));
+    expect((sent?.json as { publicKey: string }).publicKey).toBe(keys.publicLine("nas").split(" ")[1]);
+    expect((sent?.json as { publicKey: string }).publicKey).not.toBe(
+      keys.publicLine("nas", "provisioner").split(" ")[1],
+    );
+  });
+
+  test("provisioner-key refuses a managed target and a windows target with 400", async () => {
+    const { call, keys } = await setup();
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", { ...external("man"), managedHost: "node2" });
+    await call("POST", "/targets", "admin", external("win", "windows"));
+
+    for (const id of ["man", "win"]) {
+      const refused = await call("POST", `/targets/${id}/provisioner-key`, "admin", { unlock });
+      expect(refused.status).toBe(400);
+      expect(refused.text).not.toContain(SECRET);
+      expect(() => keys.publicLine(id, "provisioner")).toThrow();
+    }
+  });
+
+  test("provisioner-key checks a passphrase against an existing key", async () => {
+    const { call, readyTarget, keys } = await setup();
+    await readyTarget();
+    await call("POST", "/targets", "admin", external("web"));
+    const refused = await call("POST", "/targets/web/provisioner-key", "admin", { unlock: wrongUnlock });
+    expect(refused.status).toBe(403);
+    expect(refused.text).not.toContain(WRONG);
+    expect(() => keys.publicLine("web", "provisioner")).toThrow();
+    expect((await call("POST", "/targets/web/provisioner-key", "admin", { unlock })).status).toBe(200);
+    // The provisioner key counts as a key to check against, too.
+    expect((await call("POST", "/targets/web/provisioner-key", "admin", { unlock })).status).toBe(409);
+  });
+
+  test("provisioner-key needs a long passphrase when no key exists to check against", async () => {
+    const { call } = await setup();
+    await call("POST", "/targets", "admin", external("web"));
+    const short = { method: "passphrase", secret: Buffer.from("short").toString("base64url") };
+    expect((await call("POST", "/targets/web/provisioner-key", "admin", { unlock: short })).status).toBe(400);
+    expect((await call("POST", "/targets/web/provisioner-key", "admin", {})).status).toBe(400);
+  });
+
+  test("salt with key=provisioner gives the provisioner salt", async () => {
+    const { call, readyTarget, keys } = await setup();
+    await readyTarget();
+    const main = await call("GET", "/targets/nas/salt");
+    const other = await call("GET", "/targets/nas/salt?key=provisioner");
+    expect(other.status).toBe(200);
+    expect(other.body.salt).toBe(await keys.saltFor("nas", "provisioner"));
+    expect(other.body.salt).not.toBe(main.body.salt);
+    expect(main.body.salt).toBe(await keys.saltFor("nas"));
+    expect((await call("GET", "/targets/nas/salt?key=main")).body.salt).toBe(main.body.salt);
+    expect((await call("GET", "/targets/nas/salt?key=other")).status).toBe(400);
+  });
+
+  test("status lists pendingProvisionerRewrap after a recovery, and rewrap with key clears only that slot", async () => {
+    const { call, readyTarget, recovery, keys } = await setup();
+    await readyTarget();
+    await call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    expect((await call("GET", "/status", "write")).body.pendingProvisionerRewrap).toEqual([]);
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "prf", credentialId: "c2" });
+    const status = await call("GET", "/status", "write");
+    expect(status.body.pendingRewrap).toEqual(["nas"]);
+    expect(status.body.pendingProvisionerRewrap).toEqual(["nas"]);
+
+    const done = await call("POST", "/targets/nas/rewrap", "admin", {
+      code: recovery.code,
+      unlock: next,
+      key: "provisioner",
+    });
+    expect(done.status).toBe(204);
+    expect(keys.pendingRewraps()).toEqual(["nas"]);
+    expect(keys.pendingRewraps("provisioner")).toEqual([]);
+    const again = await call("POST", "/targets/nas/rewrap", "admin", {
+      code: recovery.code,
+      unlock: next,
+      key: "provisioner",
+    });
+    expect(again.status).toBe(409);
+    expect(
+      (await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: next, key: "x" })).status,
+    ).toBe(400);
+    expect((await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: next })).status).toBe(
+      204,
+    );
+    expect(keys.pendingRewraps()).toEqual([]);
+  });
+
+  test("a retire deletes both keys", async () => {
+    const { call, readyTarget, keys } = await setup();
+    await readyTarget();
+    await call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    expect((await call("DELETE", "/targets/nas")).status).toBe(200);
+    expect(() => keys.publicLine("nas")).toThrow();
+    expect(() => keys.publicLine("nas", "provisioner")).toThrow();
+  });
+
+  test("the audit line of a recovery counts the provisioner keys", async () => {
+    const { call, readyTarget, recovery } = await setup();
+    await readyTarget();
+    await call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "prf", credentialId: "c2" });
+    expect(logs).toContain("audit ssh recovery user=ann method=prf targets=1 provisioner=1");
+  });
+
+  test("salt with key=provisioner gives 400 for a managed and a windows target", async () => {
+    const { call } = await setup();
+    await call("POST", "/targets", "admin", { ...external("man"), managedHost: "node2" });
+    await call("POST", "/targets", "admin", external("win", "windows"));
+    for (const id of ["man", "win"])
+      expect((await call("GET", `/targets/${id}/salt?key=provisioner`)).status).toBe(400);
+    expect((await call("GET", "/targets/man/salt")).status).toBe(200);
+  });
+
+  test("a passphrase re-lock of the provisioner key is checked against a key that is open", async () => {
+    const { call, readyTarget, recovery, keys } = await setup();
+    await readyTarget();
+    await call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    await call("POST", "/recovery/begin", "admin", { code: recovery.code, method: "passphrase" });
+    const good = { method: "passphrase", secret: Buffer.from("the new passphrase").toString("base64url") };
+    const typo = { method: "passphrase", secret: Buffer.from("the new passphrasf").toString("base64url") };
+    expect((await call("POST", "/targets/nas/rewrap", "admin", { code: recovery.code, unlock: good })).status).toBe(
+      204,
+    );
+    const refused = await call("POST", "/targets/nas/rewrap", "admin", {
+      code: recovery.code,
+      unlock: typo,
+      key: "provisioner",
+    });
+    expect(refused.status).toBe(403);
+    expect(keys.pendingRewraps("provisioner")).toEqual(["nas"]);
+    const done = await call("POST", "/targets/nas/rewrap", "admin", {
+      code: recovery.code,
+      unlock: good,
+      key: "provisioner",
+    });
+    expect(done.status).toBe(204);
+    expect(keys.pendingRewraps("provisioner")).toEqual([]);
+  });
+
+  /** Holds the next call of a key store method until `release` runs. */
+  function gate(keys: object, name: "create" | "remove") {
+    let release: () => void = () => {};
+
+    const open = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const target = keys as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    const original = target[name].bind(keys);
+
+    let entered: () => void = () => {};
+
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    target[name] = async (...args) => {
+      entered();
+      await open;
+      return original(...args);
+    };
+
+    return { release, reached };
+  }
+
+  test("a retire while the provisioner key is made gives 409, and a parallel create gives 409", async () => {
+    const { call, readyTarget, keys } = await setup();
+    await readyTarget();
+    const held = gate(keys, "create");
+    const first = call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    await held.reached;
+    expect((await call("DELETE", "/targets/nas")).status).toBe(409);
+    expect((await call("POST", "/targets/nas/provisioner-key", "admin", { unlock })).status).toBe(409);
+    expect((await call("DELETE", "/targets/nas/provisioner-key")).status).toBe(409);
+    held.release();
+    expect((await first).status).toBe(200);
+    expect(keys.publicLine("nas", "provisioner")).toContain("claude-rc-provisioner:nas");
+    expect((await call("DELETE", "/targets/nas")).status).toBe(200);
+    expect(() => keys.publicLine("nas", "provisioner")).toThrow();
+  });
+
+  test("a create while a retire runs gives 409 and leaves no key behind", async () => {
+    const { call, readyTarget, keys } = await setup();
+    await readyTarget();
+    const held = gate(keys, "remove");
+    const retire = call("DELETE", "/targets/nas");
+    await held.reached;
+    expect((await call("POST", "/targets/nas/provisioner-key", "admin", { unlock })).status).toBe(409);
+    expect((await call("DELETE", "/targets/nas/provisioner-key")).status).toBe(409);
+    expect((await call("GET", "/targets/nas/salt?key=provisioner")).status).toBe(409);
+    held.release();
+    expect((await retire).status).toBe(200);
+    expect(() => keys.publicLine("nas", "provisioner")).toThrow();
+  });
+
+  test("two parallel main key creates give one 200 and one 409", async () => {
+    const { call, keys } = await setup();
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", external("web"));
+    const held = gate(keys, "create");
+    const first = call("POST", "/targets/web/key", "admin", { unlock });
+    await held.reached;
+    expect((await call("POST", "/targets/web/key", "admin", { unlock })).status).toBe(409);
+    expect((await call("DELETE", "/targets/web")).status).toBe(409);
+    held.release();
+    expect((await first).status).toBe(200);
+  });
+
+  test("DELETE provisioner-key clears the key and the fields and keeps the main key", async () => {
+    const { call, readyTarget, keys, targets } = await setup();
+    await readyTarget();
+    expect((await call("DELETE", "/targets/nas/provisioner-key", "write")).status).toBe(403);
+    expect((await call("DELETE", "/targets/nope/provisioner-key")).status).toBe(404);
+    expect((await call("DELETE", "/targets/nas/provisioner-key")).status).toBe(404);
+
+    await call("POST", "/targets/nas/provisioner-key", "admin", { unlock });
+    await targets.setProvisioner("nas", { fingerprint: "SHA256:x", script: "/usr/local/bin/p", source: "10.0.0.2" });
+    await keys.saltFor("nas", "provisioner");
+    expect((await call("DELETE", "/targets/nas/provisioner-key")).status).toBe(204);
+    expect(() => keys.publicLine("nas", "provisioner")).toThrow();
+    expect(targets.get("nas")?.provisionerScript).toBeUndefined();
+    expect(keys.publicLine("nas")).toContain("claude-rc:nas");
+    expect(
+      (await keys.open("nas", { method: "passphrase", secret: new TextEncoder().encode("correct horse") })).fingerprint,
+    ).toBe(targets.get("nas")?.keyFingerprint ?? "");
+    // The store holds no trace of the slot, so a new key can be made.
+    expect((await call("POST", "/targets/nas/provisioner-key", "admin", { unlock })).status).toBe(200);
+    expect(
+      await keys.removeSlot("nas", "main").then(
+        () => "ok",
+        () => "refused",
+      ),
+    ).toBe("refused");
+    expect(keys.publicLine("nas")).toContain("claude-rc:nas");
   });
 });
