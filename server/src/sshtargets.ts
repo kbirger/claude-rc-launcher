@@ -20,7 +20,7 @@ const SYSTEM_TYPES: readonly string[] = ["linux", "windows", "synology", "dropbe
 // An old file can hold the state `retired` from an earlier version. It is not a state any more, so such a record is dropped on load.
 const STATES: readonly string[] = ["draft", "ready", "disabled"];
 // A host name or an address: it cannot start with "-" (ssh would read it as an option), and has no space, no quote, no comma, so a value cannot add an option to the key line.
-const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
+export const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
 const SOURCE_RE = /^[A-Za-z0-9._:*?/-]{1,255}$/;
 // An account cannot start with "-" either. `user@domain` is allowed (a Windows domain account).
