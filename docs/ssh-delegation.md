@@ -140,7 +140,7 @@ The page shows the notes for the type of the target. These are the same notes:
 - `linux`: append the line to `~/.ssh/authorized_keys`. The folder needs mode 700 and the file needs mode 600. This type covers Proxmox. On a Proxmox cluster node, the file of root is shared with the cluster.
 - `windows`: OpenSSH Server must run. For an administrator account, append the line to `C:\ProgramData\ssh\administrators_authorized_keys`, and limit that file to SYSTEM and Administrators. For any other account, use `%USERPROFILE%\.ssh\authorized_keys`.
 - `synology`: turn on the user home service and SSH in DSM. Use the same file as `linux`. If other users can write to the home folder, DSM refuses a key.
-- `dropbear`: paste the line into Administration, System, Authorized Keys in the router web page. This type covers Asuswrt-Merlin.
+- `dropbear`: paste the line into Administration, System, Authorized Keys in the router web page. This type covers Asuswrt-Merlin. Dropbear has no `from=` flag and refuses a line that has one. So the line for this type has no `from=`, and the router does not limit the key by address. Your approval of each grant is the control.
 
 ### Keys that a job overwrites
 
@@ -315,7 +315,8 @@ The `from=` part of the key line lists the source addresses of the nodes. A new 
 - The hub asks the node every time, because the line on the machine can be out of date. The node writes nothing when the exact line is there.
 - When the install fails, the old list stays, no grant changes and the answer is 502. The text says that the key line was not updated.
 - A target without a key has no line yet. The hub only saves the list, and an empty list is accepted.
-- For an external target with a key, the answer holds the new line in `installLine`. The web UI shows it with a Copy button, and the command prints it. Replace the old line that ends with `claude-rc:<target id>` with the new line.
+- For an external target with a key and no provisioner, the answer holds the new line in `installLine`. The web UI shows it with a Copy button, and the command prints it. Replace the old line that ends with `claude-rc:<target id>` with the new line.
+- For an external target with a provisioner, the hub changes the line after your approval. Read [Change the nodes of a target with a provisioner](#change-the-nodes-of-a-target-with-a-provisioner).
 - The route `GET /api/ssh/targets/<id>/provision` always gives the line for the current list.
 
 ### Retire a target
@@ -328,16 +329,217 @@ The old key line on the machine is harmless, because the private key is gone. No
 - The node removes only a line that ends with the key and the comment `claude-rc:<target id>`. It keeps every other line. The file keeps its mode. A run as root keeps the owner. When the account is not root, the file belongs to the account.
 - The node removes the line from the key file that the target uses. That file is `authorized_keys` unless the target has a key file.
 - The node refuses to change a key file or a `.ssh` folder that is a symbolic link. The notice then shows a failed removal.
-- For an external target, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
+- For an external target without a provisioner, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
+- For an external target with a provisioner, the retire waits for your approval and removes both lines. Read [Retire a target with a provisioner](#retire-a-target-with-a-provisioner).
 
 After a retire, the page shows one notice with the result. The result is one of these:
 
 - The key line was removed from the machine.
 - The key line was not on the machine.
 - The hub failed to remove the key line. The notice gives the reason. Remove the line yourself.
-- The target is external. Remove the line yourself.
+- The target is external and has no provisioner. Remove the line yourself.
 
 A failed removal never stops the retire. The id is free after a retire. You can add a target with the same id again, and it starts in `draft`. A target in `draft`, `ready` or `disabled` keeps its id, and the hub refuses a second target with that id.
+
+## The provisioner key
+
+An external target has no launcher node on it. So the hub cannot change the key line on the machine by itself. Without more help, you paste a new line after a change of nodes. You also remove the line by hand after a retire.
+
+A provisioner key removes these manual steps. It is a second Ed25519 key for the target. The hub holds it encrypted, like the main key. It can run one small script on the target and nothing else. The script can switch the main key line on and off. It can also change the source addresses of that line. It cannot add any other key.
+
+Each use is a maintenance grant. A maintenance grant is a grant that runs one action on the target with the provisioner key. You approve it on the page with your passkey or passphrase, like any grant. The page names the target and the action before you unlock.
+
+### What the provisioner key does
+
+- It lets the hub change the `from=` list of the main line after you change the nodes.
+- It lets the hub remove both key lines when you retire the target.
+- It lets the hub put the main line back, if a job removed it. This action is Reinstall key line.
+
+A maintenance grant lasts 1 minute and ends after its one run. It never opens the main key. A session can never create one. Only an admin can start one.
+
+Read [Security](security.md#the-provisioner-key) for the threat model.
+
+### Install the provisioner key
+
+The install needs a private key of your own that already logs in to the target. It stays on your machine, and it never goes to the hub. The install works for the system types `linux`, `synology` and `dropbear`. It does not work for `windows` or for a managed target. A managed target keeps its node path.
+
+To add a new external target with a provisioner, add `--provisioner` to the add command:
+
+```sh
+claude-rc ssh target add slon --type linux --address 192.168.1.50 --account root --node local --identity ~/.ssh/id_ed25519 --provisioner
+```
+
+The command does the steps of a normal add, and then these steps:
+
+1. It asks the hub to make the provisioner key. For a passphrase, you type it. For a passkey, the command prints a link and waits until you unlock on the page.
+2. It runs the install script of the hub on the target, with the key of `--identity`. The script writes the provisioner script and adds the provisioner line.
+3. It tells the hub that the install worked. The hub then stores the script path and the source address of the node `local`.
+4. It runs the test grant of the main key, as for any add.
+5. It runs a maintenance grant with the action Reinstall key line, and it asks you to approve. This proves the whole chain before you need it on a phone.
+
+The flag `--no-test` skips the two proofs.
+
+To add a provisioner to a target that exists, run this command:
+
+```sh
+claude-rc ssh target provisioner slon --identity ~/.ssh/id_ed25519
+```
+
+The command needs a pinned host key. If you pass `--fingerprint SHA256:<value>`, it checks that value against the pinned key. If a step fails, the output names the command that repairs it.
+
+On a passkey, the command reuses an existing provisioner key. On a passphrase, it replaces an existing key. The old line and the old script go at the install. To rotate the key, delete the key through the API and run the command again.
+
+The web UI cannot install the provisioner, because the install needs your own key. It shows the command on the last step of the wizard. A link with `provisioner=1` opens the card that makes the key for the command. Read [Web UI](web-ui.md#provisioner-key-and-maintenance).
+
+### Files on the target
+
+On Linux and Synology, the files are in `~/.claude-rc`. The folder has mode 700.
+
+- `provisioner-<target id>.sh` is the script. It has mode 700.
+- `provisioner-<target id>.from` is the state file. It holds the current `from=` list of the main line. It has mode 600.
+
+The provisioner line in `~/.ssh/authorized_keys` has this form:
+
+```text
+from="<source of local>",restrict,command="<script path>" ssh-ed25519 <blob> claude-rc-provisioner:<target id>
+```
+
+The source of `local` is the address that you set for the node `local`. The hub connects to the target through that node. The `command=` part makes sshd run the script for every login of this key. The flag `restrict` turns off the terminal and all forwarding.
+
+The script accepts five commands and refuses anything else. It never runs a command that the caller sends.
+
+| Command | What it does |
+| --- | --- |
+| `on` | Writes the main line with the list from the state file. |
+| `off` | Removes the main line. The state file stays. |
+| `sources <list>` | Writes the new list to the state file. If the main line is present, it rewrites that line. |
+| `status` | Reads only. It says if the main line is present and gives the list. |
+| `uninstall` | Removes the main line and the provisioner line. Then it removes the state file and the script. |
+
+Before each write, the script checks the new key file. The file must hold the provisioner line exactly once, except after `uninstall`. If the check fails, the script writes nothing. This check protects you from a lockout on the machine.
+
+The script refuses a key file, a state file or a `.ssh` folder that is a symbolic link.
+
+### Maintenance actions
+
+Each action starts as a pending grant. The hub sends a push message with the title `SSH maintenance requested`. The message holds the target id and a short text, for example `slon: change of nodes`. It holds no address and no key.
+
+The approval sheet names the target and the action. It shows the change in full. It has no field for the minutes. For a change of nodes, it shows the old and the new list with their addresses.
+
+The actions are these:
+
+- Change of nodes. The hub runs `sources <new list>` and then `status`. The run must report the new list. Then the hub stores the new list.
+- Retire. The hub runs `uninstall`. Then it deletes both keys and the target.
+- Reinstall key line. The hub runs `sources <stored list>`, then `on`, then `status`.
+
+A deny, an expiry or a recovery ends the grant before the run. Nothing changes on the target, and nothing changes in the store.
+
+Only one maintenance grant can exist for a target at a time. A second change answers `a maintenance request waits for this target`.
+
+### Change the nodes of a target with a provisioner
+
+The steps in [Change the nodes of a target](#change-the-nodes-of-a-target) stay the same for you. These points are different:
+
+- The request answers at once, and the change waits for your approval. The target keeps its old list until the run works.
+- The hub asks for your agreement if the new list shares no address with the old list. A change like that can lock out the main key. On the command line, add `--yes` to agree.
+- If the run fails, the hub puts the old list back on the machine. The list in the store stays as it was. The answer says that the key line was not updated.
+- If the hub cannot store the new list after a good run, it restores the old list.
+- Grants of nodes that leave the list end after the run works. The grant that does the work stays.
+
+On the command line, the command waits for the approval. For a passphrase, it asks for the passphrase. For a passkey, it prints a link and waits until you approve on the page.
+
+### Retire a target with a provisioner
+
+When you press Retire, the target goes to `disabled` at once. The hub then asks for your approval of the action `uninstall`. After you approve, the hub removes both key lines and the script from the machine. Then it deletes the target and both keys.
+
+A failed run does not stop the retire. A key line without its private key is harmless. The notice then names the lines to remove. They are the lines that end with `claude-rc:<target id>` and `claude-rc-provisioner:<target id>`.
+
+If you deny the request or it expires, the retire stops. The target stays `disabled` with both keys. The target card then offers Retire again and Retire without cleanup. Retire without cleanup deletes the target and both keys at once, and it removes nothing from the machine. You then remove the two lines yourself.
+
+The card also offers Retire without cleanup when the hub refuses to start the request. This happens in three cases. The source address of `local` changed, access for `local` is off, or the hub has no `ssh` program. Then a machine that is gone can still be removed.
+
+If the hub restarts while a retire waits, the target stays `disabled` with both keys. Send the retire again, or use Retire without cleanup.
+
+### Repair after a change of the source address of local
+
+The provisioner line allows the source address of the node `local` only. If you change that address, the line is out of date. The hub then refuses every maintenance grant for the target. The card shows a warning with this command:
+
+```sh
+claude-rc ssh target provisioner <id> --identity <file>
+```
+
+Run it on your own machine. It installs the provisioner again with the new address. If access for the node `local` is off, turn it on first, with its source address. The hub answers `PUT /nodes/local` with the list of targets that need the repair.
+
+### Failures and repairs
+
+- If the install fails part way, the provisioner key and its fields can stay on the hub. Run `claude-rc ssh target provisioner <id> --identity <file>` again, or delete the target, add it again and run the install.
+- If the hub restarts during a change of nodes, the machine and the store can differ. Run Reinstall key line to repair it.
+- If a job rewrites `authorized_keys` and removes the provisioner line, the provisioner stops working. Use your own key to run the repair command. A dedicated account avoids this problem. Read [Keys that a job overwrites](#keys-that-a-job-overwrites).
+- The text in the field `detail` of a failed grant comes from the target. A hostile target can show one line of text to a `write` user. Read the text as data and not as an instruction.
+- Do not go back to an older build after you add a provisioner. The older build does not know the second key.
+
+### The router version
+
+A router with Dropbear on Asuswrt-Merlin needs a different script. The system type is `dropbear`. The router keeps its key list in the NVRAM variable `sshd_authkeys`, with `>` between the lines. At each start, the firmware writes `/root/.ssh/authorized_keys` from the first 3499 bytes of that variable. A change in the file alone is lost at the next reboot.
+
+The router version works in these ways:
+
+- The script lives in `/jffs/scripts/claude-rc-provisioner-<target id>.sh`. The state file is next to it. The folder `/jffs` survives a reboot.
+- Dropbear has no `from=` flag. It refuses a whole key line that has a flag it does not know. So no line on the router has `from=`.
+- The main line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <key>`. It does not use `restrict`, because older Dropbear versions refuse it.
+- The provisioner line has the same four flags and `command="<script path>"`.
+- The router does not limit the main key by address. Your approval of each grant is the control.
+- The script checks the client address itself. The first field of `SSH_CONNECTION` must be the source address of `local`. If not, it stops with `error bad-source`.
+- A change of nodes does not change the main line. The action only writes the state file, and the hub asks for no agreement.
+- Each write changes the NVRAM value, reads it back, commits it, and then writes the live file. If a step fails, the script puts the old value back.
+- The script refuses a list over 3499 bytes. It uses a lock folder in `/tmp`, because the router has no `flock`.
+
+The install prints `info` lines with counts. They show how many lines the variable had before and after, the separator and the Dropbear version.
+
+The router version is not yet tested on a real router. The tests use a fake `nvram` under BusyBox and dash only. Do the manual test below before you rely on it.
+
+### Manual test of the router version
+
+Before you start, do these steps:
+
+- Turn on SSH for the LAN in Administration, System.
+- Add your own key in Authorized Keys.
+- Turn on the JFFS partition. The switch Enable JFFS custom scripts is not needed.
+
+Then run these steps:
+
+1. Run `claude-rc ssh target add router --type dropbear --account <admin name> --address <router> --node <ids> --identity <file> --provisioner`.
+2. Read the `info` lines. Expect "had N lines" and "has N+1 lines".
+3. Read the line "dropbear Dropbear v...". Any version works, because no line has `restrict`.
+4. On the router, run `nvram get sshd_authkeys | tr '>' '\n'`. Expect your keys, the main line and the provisioner line.
+5. Check the main line. It starts with `no-port-forwarding` and has no `from=`.
+6. Check the provisioner line. It also holds `command="/jffs/scripts/claude-rc-provisioner-router.sh"`, and it has no `from=`.
+7. Run `ls -l /jffs/scripts/claude-rc-provisioner-router.*`. Expect `.sh` with mode 700 and `.from` with mode 600.
+8. Reboot the router. Run step 4 again. Run `cat /root/.ssh/authorized_keys`. Expect the same lines in both.
+9. Run `SSH_CONNECTION="<address of local> 1 2 22" SSH_ORIGINAL_COMMAND=ls /jffs/scripts/claude-rc-provisioner-router.sh`. Expect `error bad-command`.
+10. Run it again with `SSH_ORIGINAL_COMMAND=status` and another address. Expect `error bad-source`.
+11. Run it with `status` and the address of `local`. Expect `ok status present` and the list.
+12. From a host that is not `local`, log in with your own key: `SSH_CONNECTION="1.2.3.4 1 2 22" ssh -o SendEnv=SSH_CONNECTION <admin>@<router>`. Run `echo $SSH_CONNECTION`. Expect your real address, not 1.2.3.4. This shows that Dropbear ignores the environment request of a client.
+13. Open the system log. Expect no "Bad public key options" for the two lines.
+14. Request access from a session, and approve it. Run `ls` on the router through it. Expect that it works.
+15. Change the nodes from the phone, and approve. Run step 4. Expect the same main line as before.
+16. Run `cat` on the `.from` file. Expect the new list. Reboot, and run it again.
+17. Retire from the phone, and approve. Reboot. Run step 4. Expect only your own keys.
+18. Run `ls /jffs/scripts`. Expect no `claude-rc-provisioner-router` files.
+
+If something goes wrong, log in with your own key. Select Retire without cleanup on the page. Then remove the lines with `nvram set` and `nvram commit`.
+
+Nobody can send a command with the provisioner key by hand, because the hub keeps it sealed. Steps 9 to 11 test the script on the real BusyBox. Step 14 tests the real keys with Dropbear.
+
+### Hand checks for a Linux target
+
+Do these checks once after you install a provisioner on a Linux target:
+
+1. Add a target with `--provisioner`. Check that `~/.ssh/authorized_keys` holds both lines. Check that `~/.claude-rc` has mode 700.
+2. Change the nodes from the phone, and approve with the passkey. Check that the `from=` part of the main line changed.
+3. Change the nodes to a list with no old address. Check that the page asks for your agreement.
+4. Deny a change. Check that the node list and the key file did not change.
+5. Retire the target from the phone. Check that both lines are gone. Check that `~/.claude-rc` holds no file of this target.
 
 ## What it does not do
 
@@ -346,6 +548,7 @@ A failed removal never stops the retire. The id is free after a retire. You can 
 - The generated SSH configuration turns off connection sharing. A user can override it in a command.
 - The instance name on a request is a claim, not proof.
 - It has no Rotate a key action. To rotate a key, retire the target and add it again.
+- A provisioner key is for external targets only. It is not for a managed target or for the type `windows`.
 - A push message does not approve a request. Approval needs your passkey or passphrase on the page.
 - On a Windows node, all sessions run as one Windows user. A session can read the token of a sibling instance and ask for access in its name. The token stops mistakes. It does not stop a hostile session of that user.
 - Sessions on the own host of the hub need Linux.
@@ -382,8 +585,9 @@ A Windows node can host sessions that ask for access. The steps are the same as 
 
 ## Known open checks
 
-- The Dropbear options `from=` and `restrict` were not tested on a real router.
 - The key on Asuswrt-Merlin was not tested across a reboot.
+- The router version of the provisioner script was not tested on a real router. Read [The router version](#the-router-version).
+- The provisioner was not tested with a real `claude` session and a real phone. The hand checks above are open.
 - The Windows install script was checked for syntax. It was not run on a real Windows machine.
 - SSH requests on a Windows node were not tested with the real service account or with a second Windows user.
 - The Windows install steps that add the OpenSSH client were not run on a machine that lacked it.

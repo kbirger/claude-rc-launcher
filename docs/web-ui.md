@@ -365,13 +365,43 @@ On the first visit, the page asks you to choose an unlock method, a passkey or a
 
 - Access requests. Each request shows the target, the node, the instance and the time. A pending request has Approve and Deny buttons. An active grant has a Revoke button. The list refreshes every 5 seconds.
 - Nodes. A switch turns SSH access on for a node. Enter the source address that targets see when the node connects.
-- Targets. Each target shows its state: `draft`, `ready` or `disabled`. The buttons are Continue setup, Disable, Enable, Edit nodes and Retire. Edit nodes needs the `admin` role. It lists the nodes with access turned on. After you press Save, an external target shows the new key line with a Copy button. Install it in place of the old line. A managed target gets the new line from the hub. A retire deletes the target. A notice then tells what happened to the key line on the machine.
+- Targets. Each target shows its state: `draft`, `ready` or `disabled`. The buttons are Continue setup, Disable, Enable, Edit nodes and Retire. Edit nodes needs the `admin` role. It lists the nodes with access turned on. After you press Save, an external target without a provisioner shows the new key line with a Copy button. Install it in place of the old line. A managed target gets the new line from the hub. A target with a provisioner waits for your approval. Read [Provisioner key and maintenance](#provisioner-key-and-maintenance). A retire deletes the target. A notice then tells what happened to the key line on the machine.
 - Add target. This opens a wizard with these steps: the form, the key, the host key, the install and the test. The form has an optional Key file field for a managed target of the type `linux` or `synology`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
 - Lost your passkey? Recover. This button starts a recovery with the recovery code. When targets wait for a re-lock, a banner names how many, and its button opens the same flow. Read [SSH delegation](ssh-delegation.md#recover-with-the-recovery-code).
 
 The page also has the switch Notify this device. If you turn it on, the browser asks for permission to show notifications. The hub then sends a push message to this device for each new request. If you turn it off, the hub forgets the device. The switch is hidden if the browser cannot do push. If the permission is blocked, the page tells you to allow notifications for the site in the browser settings. Read [SSH delegation](ssh-delegation.md#notifications).
 
 Approve opens a sheet. The sheet shows the node, the instance, the target, the account and a warning about the power of the account. The instance name is a claim of the session. Set the minutes, from 1 to 480, and unlock with your passkey or passphrase.
+
+### Provisioner key and maintenance
+
+A target with a provisioner key shows a badge `provisioner` on its card. Read [The provisioner key](ssh-delegation.md#the-provisioner-key) for what the key does.
+
+The page cannot install the provisioner, because the install needs your own key. The last step of the wizard shows the command `claude-rc ssh target provisioner <id> --identity <file>`. Run it on your own machine.
+
+A change of nodes, a retire and Reinstall key line start a maintenance request. These parts of the page change for it:
+
+- The target card shows a box with the text Waiting for your approval and the action. The box has an Approve button. The text says that nothing has changed yet. Edit nodes, Reinstall key line and Retire are hidden while a request waits.
+- In Access requests, a maintenance request has the badge `maintenance` and the action in place of the instance.
+- The approve sheet is titled Approve SSH maintenance. It names the target and the action, and it has no field for the minutes. For a change of nodes, it shows the old and the new list with their addresses.
+- The sheet warns that the request runs one command on the target with the provisioner key. For a router, it says that the router does not limit the key by address. Your approval is the control.
+- You unlock with your passkey or passphrase, as for any grant. The passkey opens the provisioner key and not the main key.
+- If the run fails, the sheet shows the reason. The target is then as it was.
+
+Edit nodes shows a yes-or-no question when the new list shares no address with the old list. Answer yes only if you can still reach the target another way.
+
+The card has these extra parts:
+
+- Reinstall key line puts the main line back. It asks for an approval. Use it when a job removed the line.
+- A warning shows when the source address of the node `local` changed after the install. It names the repair command. A warning also shows when access for `local` is off.
+- After you press Retire, the card waits for an approval. If you deny it or it expires, the card shows Retire again and Retire without cleanup. Retire without cleanup deletes the target and both keys. It removes nothing from the machine. Its question names the two lines that you must remove yourself.
+- Retire without cleanup also shows when the hub refuses to start the retire. This lets you remove a target whose machine is gone.
+
+A retire notice names both lines that end with `claude-rc:<id>` and `claude-rc-provisioner:<id>` when the removal failed.
+
+A link with `provisioner=1` opens the card that makes the provisioner key. The command prints this link when you use a passkey.
+
+When a recovery needs a re-lock, a provisioner key is a second row for the target. The hub refuses a maintenance request for the target until you re-lock both keys.
 
 Only an `admin` can use this page.
 

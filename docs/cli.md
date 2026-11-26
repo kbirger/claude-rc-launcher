@@ -129,8 +129,9 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 |---|---|
 | `ssh targets` | Run in a session: list the targets that the instance can ask for. |
 | `ssh request <target> [--minutes <n>] [--reason <text>]` | Run in a session: ask the owner for SSH access, wait for the approval, and print the `ssh` command. |
-| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
-| `ssh target update <id> --node <id>[,<id>...]` | Replace the nodes of a target. Needs the `admin` role. |
+| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--provisioner] [--no-test]` | Add a target. Needs the `admin` role. |
+| `ssh target update <id> --node <id>[,<id>...] [--yes]` | Replace the nodes of a target. With a provisioner, wait for one approval. Needs the `admin` role. |
+| `ssh target provisioner <id> --identity <file> [--fingerprint <f>] [--no-test]` | Install the provisioner key on an external target, or install it again. Needs the `admin` role. |
 
 ### Updates
 
@@ -200,7 +201,8 @@ These flags apply:
 - `--port` is the SSH port. The default is 22.
 - `--key-file <name>` sets the file in `~/.ssh` for a managed target of the type `linux` or `synology`. The default is `authorized_keys`. The name starts with `authorized_keys`, for example `authorized_keys2`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
 - `--fingerprint SHA256:<value>` answers the host key question in advance for an external target.
-- `--no-test` skips the one-minute test grant.
+- `--provisioner` also gives an external target of the type `linux`, `synology` or `dropbear` a provisioner key. Read [The provisioner key](#the-provisioner-key).
+- `--no-test` skips the one-minute test grant. With `--provisioner`, it also skips the proof of the provisioner.
 
 The command makes the key, pins the host key, installs the key and runs the test. For a passphrase, you type it in the terminal. For a passkey, the command prints a link to the web UI and waits until you unlock there. The key of `--identity` stays on your machine and never goes to the hub. If a step fails, the target stays in `draft` on the hub.
 
@@ -210,7 +212,45 @@ To change the nodes of a target, run the command `ssh target update`. It needs t
 claude-rc ssh target update slon --node local,pi
 ```
 
-The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. A target without a key has no line, and the command says so. For an external target, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
+The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. A target without a key has no line, and the command says so. For an external target with a provisioner, read the next section. For an external target without one, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
+
+### The provisioner key
+
+An external target can have a provisioner key. The hub uses it to change the key line on the machine after you approve. Read [The provisioner key](ssh-delegation.md#the-provisioner-key) for what it is and what it can do.
+
+To give a new external target a provisioner, add `--provisioner` to `ssh target add`. The target needs the type `linux`, `synology` or `dropbear`. The command refuses the flag for `windows` and for a managed target.
+
+```sh
+claude-rc ssh target add slon --type linux --address 192.168.1.50 --account root --node local --identity ~/.ssh/id_ed25519 --provisioner
+```
+
+To give a target that exists a provisioner, or to repair one, run `ssh target provisioner`:
+
+```sh
+claude-rc ssh target provisioner slon --identity ~/.ssh/id_ed25519
+```
+
+- The command needs a pinned host key. `--fingerprint SHA256:<value>` checks that value against the pinned key.
+- The key of `--identity` stays on your machine.
+- With a passphrase, the command replaces an existing provisioner key. With a passkey, it reuses an existing key.
+- If a step fails, the output names the command that repairs it.
+- The command also repairs a provisioner after a change of the source address of the node `local`.
+- `--no-test` skips the proof. The proof is a maintenance grant that you approve.
+
+After you add a provisioner, `ssh target update` does not print a key line. Instead, it waits for your approval:
+
+```sh
+claude-rc ssh target update slon --node local,pi
+```
+
+- For a passphrase, the command asks for it and approves the request.
+- For a passkey, the command prints a link. Approve on the page. The command polls until the request ends and prints the result. It stops waiting after 10 minutes.
+- If the new list shares no address with the old list, the hub asks for agreement. Add `--yes` to agree.
+- If the run fails, the hub restores the old list on the machine. The command exits with an error.
+- After a change of a `dropbear` target, the command says that the key line stays the same.
+- If you deny the request or it expires, nothing changes. The request still waits on the hub until you deny it on the page or it expires.
+
+The CLI has no retire command. Retire a target with a provisioner on the web page.
 
 ## Instance settings
 
