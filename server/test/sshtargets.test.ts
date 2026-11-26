@@ -221,6 +221,56 @@ describe("TargetStore", () => {
     expect(store.list()).toEqual([]);
   });
 
+  test("setNodes replaces the list, keeps the other fields and survives a reload", async () => {
+    const store = new TargetStore(file);
+    await store.add(input);
+    await store.setKeyFingerprint("nas", "SHA256:abc");
+    await store.setState("nas", "ready");
+    const before = store.get("nas");
+    await store.setNodes("nas", ["a", "b"]);
+    expect(store.get("nas")).toEqual({ ...before!, nodes: ["a", "b"] });
+    expect(before?.nodes).toEqual(["pve"]);
+    expect(new TargetStore(file).get("nas")?.nodes).toEqual(["a", "b"]);
+    await store.setNodes("nas", []);
+    expect(new TargetStore(file).get("nas")?.nodes).toEqual([]);
+  });
+
+  test("setNodes copies the list it gets and refuses a bad list", async () => {
+    const store = new TargetStore();
+    await store.add(input);
+    const list = ["a"];
+    await store.setNodes("nas", list);
+    list.push("b");
+    expect(store.get("nas")?.nodes).toEqual(["a"]);
+    const returned = store.get("nas")!;
+    returned.nodes.push("x");
+    expect(store.get("nas")?.nodes).toEqual(["a"]);
+    expect(await status(store.setNodes("nope", ["a"]))).toBe(404);
+    expect(await status(store.setNodes("nas", ["a", "a"]))).toBe(400);
+    expect(await status(store.setNodes("nas", ["../x"]))).toBe(400);
+    expect(await status(store.setNodes("nas", "a" as never))).toBe(400);
+    expect(await status(store.setNodes("nas", [5] as never))).toBe(400);
+    expect(
+      await status(
+        store.setNodes(
+          "nas",
+          Array.from({ length: 201 }, (_, index) => `n${index}`),
+        ),
+      ),
+    ).toBe(400);
+    expect(store.get("nas")?.nodes).toEqual(["a"]);
+  });
+
+  test("a failed write of setNodes leaves the nodes as they were", async () => {
+    const store = new TargetStore(join(dir, "ssh", "targets.json"));
+    await store.add(input);
+    // Replace the folder of the file with a regular file, so the next write fails.
+    await rm(join(dir, "ssh"), { recursive: true, force: true });
+    await Bun.write(join(dir, "ssh"), "x");
+    expect(await status(store.setNodes("nas", ["a", "b"]))).toBe(-1);
+    expect(store.get("nas")?.nodes).toEqual(["pve"]);
+  });
+
   test("entries with a bad id or type in the file are skipped", async () => {
     await Bun.write(
       file,

@@ -12,7 +12,7 @@ import { HOST_ID_RE } from "./hostid";
 // committed is never changed in place.
 
 const MAX_TARGETS = 200;
-const MAX_NODES = 200;
+export const MAX_NODES = 200;
 const MAX_BYTES = 1024 * 1024;
 const MAX_TEXT = 4096;
 const VERSION = 1;
@@ -251,6 +251,21 @@ export class TargetStore {
   async setState(id: string, state: TargetState): Promise<void> {
     if (!isState(state)) throw new TargetError(400, "the state is not valid");
     await this.update(id, (target) => ({ ...target, state }));
+  }
+
+  /**
+   * Replaces the list of nodes of a target. The list needs host ids, at most MAX_NODES, without a duplicate. It does
+   * not check that a host exists: the caller knows the hosts.
+   */
+  async setNodes(id: string, nodes: string[]): Promise<void> {
+    if (
+      !Array.isArray(nodes) ||
+      nodes.length > MAX_NODES ||
+      !nodes.every((node) => typeof node === "string" && HOST_ID_RE.test(node))
+    )
+      throw new TargetError(400, "the node list is not valid");
+    if (new Set(nodes).size !== nodes.length) throw new TargetError(400, "the node list has a duplicate");
+    await this.update(id, (target) => ({ ...target, nodes: [...nodes] }));
   }
 
   async remove(id: string): Promise<void> {
