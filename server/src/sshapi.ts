@@ -13,6 +13,7 @@ import { NodeError } from "./sshservice";
 import type { SshService } from "./sshservice";
 import {
   authorizedKeysLine,
+  hasProvisioner,
   HOST_KEY_RE,
   installNotes,
   isSystemType,
@@ -138,6 +139,44 @@ export function sshApi(options: SshApiOptions): Hono {
     const target = targets.get(context.req.param("id") ?? "");
     if (!target) throw new TargetError(404, "no such target");
     return target;
+  };
+
+  // The per-target locks of the routes that change a target. `editing` is held by PATCH, by the key routes and by the
+  // provisioner key routes, `retiring` by DELETE. A route that takes the lock adds the id before its first await.
+
+  /** Runs `work` under the lock of a target: 409 when a retire or another change runs, and the lock is always freed. */
+  const locked = async <T>(id: string, work: () => Promise<T>): Promise<T> => {
+    if (retiring.has(id)) throw new TargetError(409, "this target is being retired");
+    if (editing.has(id)) throw new TargetError(409, "this target is being changed");
+    editing.add(id);
+
+    try {
+      return await work();
+    } finally {
+      editing.delete(id);
+    }
+  };
+
+  /** Only an external target of a POSIX type has a provisioner key. */
+  const needProvisionerTarget = (target: Target): void => {
+    if (target.managedHost !== undefined) throw new HttpError(400, "a managed target has no provisioner key");
+    if (target.systemType === "windows") throw new HttpError(400, "a windows target has no provisioner key");
+  };
+
+  /**
+   * A passphrase is shared by all keys, so a typo would seal a key under a passphrase that no one knows: check it
+   * against a key that is open (any target, any slot). Without one, only the length is checked. A passkey makes
+   * another secret for each salt, so there is nothing to check against.
+   */
+  const checkUnlock = async (unlock: UnlockSecret): Promise<void> => {
+    if (unlock.method !== "passphrase") return;
+    const other = targets
+      .list()
+      .flatMap((item) => (["main", "provisioner"] as const).map((slot) => ({ id: item.id, slot })))
+      .find((item) => hasOpenKey(item.id, item.slot));
+
+    if (other) (await keys.open(other.id, unlock, other.slot)).destroy();
+    else needLongPassphrase(unlock);
   };
 
   /** A key that a passphrase can be checked against: it exists and a recovery has not made it wait for a re-wrap. */
@@ -307,7 +346,9 @@ export function sshApi(options: SshApiOptions): Hono {
     });
     // A recovery follows a lost or stolen unlock: a grant that it approved must not outlive it.
     grants.endWhere((grant) => grant.state === "active", "revoked");
-    audit(`audit ssh recovery user=${logToken(options.user(context))} method=${method} targets=${pending.length}`);
+    audit(
+      `audit ssh recovery user=${logToken(options.user(context))} method=${method} targets=${pending.length} provisioner=${keys.pendingRewraps("provisioner").length}`,
+    );
     return context.json({ targets: pending });
   });
 
@@ -501,10 +542,14 @@ export function sshApi(options: SshApiOptions): Hono {
 
   hono.get("/targets/:id/salt", async (context) => {
     const target = needTarget(context);
+    const slot = slotOf(context.req.query("key"));
+    if (slot === "provisioner") needProvisionerTarget(target);
+    // A salt that is made while a retire runs could stay behind after the retire.
+    if (retiring.has(target.id)) throw new TargetError(409, "this target is being retired");
     const method = keys.method();
     const credentialId = keys.credentialId();
     return context.json({
-      salt: await keys.saltFor(target.id, slotOf(context.req.query("key"))),
+      salt: await keys.saltFor(target.id, slot),
       method,
       ...(credentialId ? { credentialId } : {}),
     });
@@ -516,10 +561,12 @@ export function sshApi(options: SshApiOptions): Hono {
     const code = text(body, "code");
     if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
     const unlock = parseUnlock(context, body.unlock);
-    needLongPassphrase(unlock);
     const slot = slotOf(body.key);
     if (!keys.pendingRewraps(slot).includes(target.id))
       throw new TargetError(409, "this target does not need a re-wrap");
+    // A typed passphrase is checked against a key that is open already, so a typo cannot seal this key under it.
+    // The re-wrap itself is safe against a retire: it fails when the key is gone, and writes nothing then.
+    await checkUnlock(unlock);
     await keys.rewrapWithRecovery(target.id, code, unlock, slot);
     audit(
       `audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}${slot === "main" ? "" : ` key=${slot}`}`,
@@ -531,56 +578,56 @@ export function sshApi(options: SshApiOptions): Hono {
     const target = needTarget(context);
     const body = await readObject(context);
     const unlock = parseUnlock(context, body.unlock);
-    if (hasKey(target.id)) throw new TargetError(409, "the target has a key already");
-    const sources = sourcesOf(target);
-    if (sources.length === 0)
-      throw new TargetError(409, "no node of this target has access enabled with a source address");
+    // The lock keeps a retire from deleting the target between the checks and the write of the key.
+    return locked(target.id, async () => {
+      if (hasKey(target.id)) throw new TargetError(409, "the target has a key already");
+      const sources = sourcesOf(target);
+      if (sources.length === 0)
+        throw new TargetError(409, "no node of this target has access enabled with a source address");
 
-    // All keys share one passphrase, so a typo would make a key that no one opens: check it against a key that exists.
-    // A passkey makes another secret for each target (each has its own salt), so there is nothing to check against.
-    const other =
-      keys.method() === "passphrase"
-        ? targets.list().find((item) => item.id !== target.id && hasOpenKey(item.id))
-        : undefined;
-
-    if (other) (await keys.open(other.id, unlock)).destroy();
-    else needLongPassphrase(unlock);
-
-    const made = await keys.create(target.id, unlock);
-    await targets.setKeyFingerprint(target.id, made.fingerprint);
-    return context.json({
-      publicLine: made.publicLine,
-      fingerprint: made.fingerprint,
-      installLine: authorizedKeysLine(made.publicLine, sources),
-      notes: installNotes(target.systemType),
+      await checkUnlock(unlock);
+      const made = await keys.create(target.id, unlock);
+      await targets.setKeyFingerprint(target.id, made.fingerprint);
+      return context.json({
+        publicLine: made.publicLine,
+        fingerprint: made.fingerprint,
+        installLine: authorizedKeysLine(made.publicLine, sources),
+        notes: installNotes(target.systemType),
+      });
     });
   });
 
   // The provisioner key: a second key that the hub holds for an external target. It is made like the main key, with
   // its own salt. A managed target and a windows target have none (a managed node maintains its own key file, and the
-  // script is a POSIX sh script).
+  // script is a POSIX sh script). A second POST gives 409. To repair or replace the key: DELETE the key here, POST a new
+  // one, and install it on the target with the owner's own `--identity` key (the bootstrap path). The DELETE does not
+  // touch the main key, and the owner is not locked out, because the script on the target still takes the old line
+  // until the owner replaces it by hand. Both routes hold the lock of the target, so a retire or a PATCH waits (409).
   hono.post("/targets/:id/provisioner-key", async (context) => {
     const target = needTarget(context);
     const body = await readObject(context);
     const unlock = parseUnlock(context, body.unlock);
-    if (target.managedHost !== undefined) throw new HttpError(400, "a managed target has no provisioner key");
-    if (target.systemType === "windows") throw new HttpError(400, "a windows target has no provisioner key");
-    if (hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has a provisioner key already");
+    needProvisionerTarget(target);
 
-    // Same check as for the main key: a typed passphrase is compared with a key that exists, of any slot.
-    const other =
-      keys.method() === "passphrase"
-        ? targets
-            .list()
-            .flatMap((item) => (["main", "provisioner"] as const).map((slot) => ({ id: item.id, slot })))
-            .find((item) => hasOpenKey(item.id, item.slot))
-        : undefined;
+    return locked(target.id, async () => {
+      if (hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has a provisioner key already");
+      await checkUnlock(unlock);
+      const made = await keys.create(target.id, unlock, "provisioner");
+      return context.json({ publicLine: made.publicLine, fingerprint: made.fingerprint });
+    });
+  });
 
-    if (other) (await keys.open(other.id, unlock, other.slot)).destroy();
-    else needLongPassphrase(unlock);
+  hono.delete("/targets/:id/provisioner-key", (context) => {
+    const target = needTarget(context);
 
-    const made = await keys.create(target.id, unlock, "provisioner");
-    return context.json({ publicLine: made.publicLine, fingerprint: made.fingerprint });
+    return locked(target.id, async () => {
+      if (!hasKey(target.id, "provisioner") && !hasProvisioner(target))
+        throw new TargetError(404, "the target has no provisioner key");
+      await keys.removeSlot(target.id, "provisioner");
+      await targets.setProvisioner(target.id, undefined);
+      audit(`audit ssh target=${logToken(target.id)} provisioner key removed user=${logToken(options.user(context))}`);
+      return context.body(null, 204);
+    });
   });
 
   hono.post("/targets/:id/scan", async (context) => {

@@ -438,6 +438,27 @@ describe("the provisioner fields", () => {
     expect(hasProvisioner(store.get("nas") as never)).toBe(false);
   });
 
+  test("a windows target takes no provisioner, and the fields of one in a file are dropped", async () => {
+    const store = new TargetStore(file);
+    await store.add({ ...input, id: "win", systemType: "windows" });
+    expect(await status(store.setProvisioner("win", value))).toBe(400);
+    await store.add({ ...input, id: "man", managedHost: "pve" });
+
+    const json = JSON.parse(await readFile(file, "utf8")) as { targets: Record<string, Record<string, unknown>> };
+    const fields = {
+      provisionerFingerprint: value.fingerprint,
+      provisionerScript: value.script,
+      provisionerSource: value.source,
+    };
+    json.targets.win = { ...json.targets.win, ...fields };
+    json.targets.man = { ...json.targets.man, ...fields };
+    await Bun.write(file, JSON.stringify(json));
+    const reloaded = new TargetStore(file);
+    expect(hasProvisioner(reloaded.get("win") as never)).toBe(false);
+    expect(hasProvisioner(reloaded.get("man") as never)).toBe(false);
+    expect(Object.keys(reloaded.get("win") ?? {})).not.toContain("provisionerScript");
+  });
+
   test("a managed target takes no provisioner, and a bad script path in a file drops the fields", async () => {
     const store = new TargetStore(file);
     await store.add({ ...input, managedHost: "pve" });

@@ -517,4 +517,71 @@ describe("the provisioner slot", () => {
     await both();
     expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
+
+  test("a copy moved between two targets, or into the main slot, does not open", async () => {
+    const store = await ready();
+    await store.create("web", provSecret, "provisioner");
+    const json = JSON.parse(await readFile(file, "utf8")) as Stored;
+    json.keys["provisioner:nas"] = json.keys["provisioner:web"];
+    json.salts["provisioner:nas"] = json.salts["provisioner:web"];
+    await writeFile(file, JSON.stringify(json));
+    const moved = new SshKeyStore(file);
+    expect((await failure(moved.open("nas", provSecret, "provisioner"))).code).toBe("wrong-unlock");
+    expect((await failure(moved.rewrapWithRecovery("nas", recovery.code, provSecret, "provisioner"))).code).toBe(
+      "wrong-recovery-code",
+    );
+  });
+
+  test("the recovery copy of the main slot moved into the provisioner slot does not open", async () => {
+    const store = await ready();
+    await store.create("web", secret);
+    const json = JSON.parse(await readFile(file, "utf8")) as Stored;
+    json.keys["provisioner:web"] = json.keys.web;
+    json.salts["provisioner:web"] = json.salts.web;
+    await writeFile(file, JSON.stringify(json));
+    const moved = new SshKeyStore(file);
+    expect((await failure(moved.rewrapWithRecovery("web", recovery.code, secret, "provisioner"))).code).toBe(
+      "wrong-recovery-code",
+    );
+    // The provisioner to main direction also fails for the recovery copy.
+    const reverse = await ready(join(dir, "r", "keys.json"));
+    await reverse.create("web", provSecret, "provisioner");
+    const other = JSON.parse(await readFile(join(dir, "r", "keys.json"), "utf8")) as Stored;
+    other.keys.web = other.keys["provisioner:web"];
+    other.salts.web = other.salts["provisioner:web"];
+    await writeFile(join(dir, "r", "keys.json"), JSON.stringify(other));
+    expect(
+      (await failure(new SshKeyStore(join(dir, "r", "keys.json")).rewrapWithRecovery("web", recovery.code, provSecret)))
+        .code,
+    ).toBe("wrong-recovery-code");
+  });
+
+  test("a keys.json that the version before the provisioner wrote loads unchanged", async () => {
+    // Written by the store before the provisioner slot existed: one main key `web`, the passkey secret is 32 bytes of 7.
+    const literal =
+      '{"version":1,"method":"prf","credentialId":"cred","recoveryPublicKey":"h4TT6ZoZLGQBg5K7Ww7RJk8qnbqpWVg6njATL46m8Vo","salts":{"web":"wz63K2ySyh5Ml0wwXndJIA"},"keys":{"web":{"publicKey":"XLYbfPHavlkECOAWVwCg7sJquDP07E5DgYTBAS3Sc9Y","wrapped":{"iv":"UjOahOGar_PQV6EC","ct":"Hpa6Zo-RxM_wwxjBVFuYQlwIC1R2tyNYqkxuplXE7YFbMgX5UdgQ3NIJE7xVtoFK"},"recovery":"0eBgHbBg3IDuIC51hdIi4SFapKOUf-QprrXvadxEUXGb-zXbqYfWkH8oK3IZvrvAoSw-TJJPJbCDbbKLOr8VvSKQssTIF5bISbuIU3B3V_bTX_lNEA5rGCL3Qx0"}}}';
+    await mkdir(join(dir, "ssh"), { recursive: true });
+    await writeFile(file, literal);
+    const store = new SshKeyStore(file);
+    expect(store.isSetUp()).toBe(true);
+    expect(store.method()).toBe("prf");
+    expect(store.pendingRewraps()).toEqual([]);
+    expect(store.pendingRewraps("provisioner")).toEqual([]);
+    expect(store.publicLine("web")).toBe(
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFy2G3zx2r5ZBAjgFlcAoO7Cargz9OxOQ4GEwQEt0nPW claude-rc:web",
+    );
+    expect((await store.open("web", secret)).fingerprint).toBeTruthy();
+    expect((await failure(store.open("web", secret, "provisioner"))).code).toBe("no-key");
+  });
+
+  test("removeSlot deletes one slot in one write and refuses main", async () => {
+    const store = await both();
+    await store.removeSlot("web", "provisioner");
+    const json = await readJson();
+    expect(Object.keys(json.keys)).toEqual(["web"]);
+    expect(Object.keys(json.salts)).toEqual(["web"]);
+    expect((await store.open("web", secret)).fingerprint).toBeTruthy();
+    expect(await rejection(store.removeSlot("web", "main"))).toBeInstanceOf(Error);
+    expect((await readJson()).keys.web).toBeDefined();
+  });
 });
