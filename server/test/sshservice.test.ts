@@ -1509,6 +1509,9 @@ describe("SshService maintenance commit, changed and the sign cap", () => {
       maintenance: { result: "failed", changed: false, detail: "the change was not stored: setNodes failed" },
     });
     expect(audit.some((line) => line.endsWith("event=restored"))).toBe(true);
+    // The audit line names the class of the error, never its text.
+    expect(audit.some((line) => line.endsWith(" event=commit-failed error=Error"))).toBe(true);
+    expect(audit.join("\n")).not.toContain("setNodes failed");
     expect(service.maintenanceFor("nas")).toBeUndefined();
   });
 
@@ -1680,8 +1683,30 @@ describe("SshService maintenance commit, changed and the sign cap", () => {
         detail: "the change was not stored: the change could not be stored in time",
       },
     });
-    expect(service.maintenanceFor("nas")).toBeUndefined();
+    // The hung commit can still write the store: the lock of the target holds until it settles.
+    expect(service.maintenanceFor("nas")?.id).toBe(grant.id);
     expect(audit.some((line) => line.includes(" event=commit-failed "))).toBe(true);
+  });
+
+  test("a late commit keeps the lock until it settles, then the lock clears", async () => {
+    const runner = fakeRunner();
+    runner.setPresent(true, "192.168.1.10");
+    const { service, timers } = await maintenanceSetup({ runner, commitTimeoutMs: 5_000 });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    let finish: (() => void) | undefined;
+    const pending = service.approve(grant.id, "admin", unlock, undefined, {
+      commit: () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    await until(() => finish !== undefined);
+    const caught = rejection(pending);
+    await timers.advance(5_000);
+    await caught;
+    expect(service.maintenanceFor("nas")?.id).toBe(grant.id);
+    finish?.();
+    await until(() => service.maintenanceFor("nas") === undefined);
   });
 
   test("a commit that works writes the committed audit line", async () => {

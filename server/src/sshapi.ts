@@ -11,7 +11,7 @@ import { KeyError } from "./sshkeystore";
 import type { KeySlot, SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
 import { linuxInstallScript } from "./sshprovisioner";
-import { MAINTENANCE_BUSY, NodeError } from "./sshservice";
+import { errorKind, MAINTENANCE_BUSY, NodeError } from "./sshservice";
 import type { MaintenanceCommit, SshService } from "./sshservice";
 import {
   authorizedKeysLine,
@@ -79,6 +79,7 @@ function maintenanceProjection(work: Maintenance) {
     ...(work.result !== undefined ? { result: work.result } : {}),
     ...(work.detail !== undefined ? { detail: work.detail } : {}),
     ...(work.changed !== undefined ? { changed: work.changed } : {}),
+    ...(work.started !== undefined ? { started: work.started } : {}),
   };
 }
 
@@ -786,13 +787,18 @@ export function sshApi(options: SshApiOptions): Hono {
   // (`--identity`), next to the install of the main line. It writes the script and its state file and adds the
   // provisioner line, which allows the source of `local` only. Then `provisioner-installed` stores the path that the
   // script printed, and `reinstall` ends the add with one maintenance `install` (one more unlock).
-  hono.get("/targets/:id/provisioner-install", (context) => {
-    const target = needTarget(context);
+  /** The checks of an install of a provisioner, for the script and for the record of its result. */
+  const needInstallable = (target: Target): void => {
     needProvisionerTarget(target);
     if (target.systemType === "dropbear")
       throw new TargetError(409, "the provisioner script for a dropbear target is not available yet");
     if (!hasKey(target.id)) throw new TargetError(409, "the target has no key: make the main key first");
     if (!hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has no provisioner key");
+  };
+
+  hono.get("/targets/:id/provisioner-install", (context) => {
+    const target = needTarget(context);
+    needInstallable(target);
     const localSource = needLocalSource();
     const sources = sourcesOf(target);
     if (sources.length === 0)
@@ -824,7 +830,7 @@ export function sshApi(options: SshApiOptions): Hono {
       throw new HttpError(400, "script must be the absolute path of the provisioner script of this target");
 
     return locked(target.id, async () => {
-      if (!hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has no provisioner key");
+      needInstallable(target);
       const source = needLocalSource();
       const blob = keys.publicLine(target.id, "provisioner").split(" ")[1] ?? "";
       const fingerprint = keyFingerprint(new Uint8Array(Buffer.from(blob, "base64")));
@@ -886,7 +892,9 @@ export function sshApi(options: SshApiOptions): Hono {
 
   /** Holds a lock of one request for the approve of a maintenance grant. Nobody else takes it while the grant waits. */
   const hold = (set: Set<string>, id: string): void => {
-    if (retiring.has(id) || editing.has(id)) throw new TargetError(409, "this target is being changed");
+    // The DELETE that made an uninstall grant still holds its lock for a moment after the push to the phone.
+    if (retiring.has(id) || editing.has(id))
+      throw new TargetError(409, "the request is still being set up or another change runs: try again in a moment");
     set.add(id);
   };
 
@@ -902,12 +910,14 @@ export function sshApi(options: SshApiOptions): Hono {
 
       if (signal.aborted) {
         // The time limit passed during the write, and the old list went back on the target: so it goes back here too.
-        await targets.setNodes(targetId, plan.fromNodes).then(
-          () => {
-            audit(`audit ssh target=${logToken(targetId)} late commit undone`);
+        // Only while the store still holds this list, in one change of the store: a newer change is never undone.
+        // The lock of the target holds until this settles, so no newer change can start meanwhile.
+        await targets.setNodesIf(targetId, toNodes, plan.fromNodes).then(
+          (undone) => {
+            audit(`audit ssh target=${logToken(targetId)} late commit ${undone ? "undone" : "not-undone"}`);
           },
           (error: unknown) => {
-            audit(`audit ssh target=${logToken(targetId)} late commit undo failed=${logToken(message(error))}`);
+            audit(`audit ssh target=${logToken(targetId)} late commit undo failed=${errorKind(error)}`);
           },
         );
         return;
@@ -945,6 +955,19 @@ export function sshApi(options: SshApiOptions): Hono {
     const grant = grants.get(grantId);
     if (!target || grant?.approvedAt === undefined)
       throw failure ? failure.error : new GrantError(404, "no such grant");
+
+    // A revoke or an expiry before any step ran touched nothing on the target: it is a deny. The target stays
+    // `disabled` with both keys, and the owner can send the retire again or retire without cleanup.
+    const endedEarly = grant.endReason === "revoked" || grant.endReason === "expired";
+
+    if (endedEarly && grant.maintenance?.started !== true) {
+      if (failure) throw failure.error;
+      throw new TargetError(
+        409,
+        "the grant ended before the run started, so the target stays disabled: retire it again, or retire it without cleanup",
+      );
+    }
+
     const removed = !failure && grant.maintenance?.result === "done";
     const why = failure ? message(failure.error) : detailOf(grant);
     const removal: Removal = removed

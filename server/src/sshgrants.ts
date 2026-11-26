@@ -42,6 +42,8 @@ export interface Maintenance {
   detail?: string;
   /** Set with a result: a step that changes the target finished, and the hub did not store or undo it. */
   changed?: boolean;
+  /** A step of the run started: the target can have changed. Until then an end of the grant is like a deny. */
+  started?: boolean;
 }
 
 /**
@@ -239,6 +241,13 @@ export class GrantStore {
     else grant.maintenance.changed = changed;
     if (detail === undefined) delete grant.maintenance.detail;
     else grant.maintenance.detail = oneLine(detail);
+  }
+
+  /** Records that a step of the run of a maintenance grant starts now. */
+  markStarted(id: string): void {
+    const grant = this.need(id);
+    if (!grant.maintenance) throw new GrantError(409, "the grant is not a maintenance grant");
+    grant.maintenance.started = true;
   }
 
   /** Ends an active maintenance grant after its run, with the reason `done`. */
