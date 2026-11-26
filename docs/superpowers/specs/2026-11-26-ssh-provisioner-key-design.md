@@ -1,6 +1,6 @@
 # A provisioner key for external targets: design
 
-Date: 2026-11-26. Status: a draft for the owner. It follows the idea note `2026-11-26-ssh-provisioner-key-idea.md` and the choices of the owner. The calls of the author are in the section "Calls made by the author".
+Date: 2026-11-26. Status: a draft for the owner, revised once. It follows the idea note `2026-11-26-ssh-provisioner-key-idea.md` and the choices of the owner. The calls of the author are in the section "Calls made by the author".
 
 ## Intent
 
@@ -123,6 +123,8 @@ The script writes one line to stdout and exits with code 0 on success:
 
 `present` means that the exact main line is in the key file once. `<list>` is the list in the state file.
 
+The script and `sshprovision.ts` must write the main line in the same form: `from="<list>",restrict ssh-ed25519 <blob> claude-rc:<id>`. Both build it from `authorizedKeysLine` of `sshtargets.ts`. A test checks that `status` reports `present` for a line that the provision script of today wrote.
+
 On failure, the script writes one line `error <code> <text>` to stderr. It exits with a code other than 0:
 
 - Exit 2, code `bad-command`: the value does not match the grammar.
@@ -176,7 +178,7 @@ The field `maintenance` holds:
 - `fromSources` and `toSources`: the source lists before and after, as the hub computes them.
 - `result` and `detail`, set after the run: `done` or `failed`, and one short line of text.
 
-The action `install` runs `on`. If the main line is missing, it puts the line back. The owner starts it with Reinstall key line on the target. The script runs `status` inside every grant as a check after the action.
+The action `install` runs three commands in one grant: `sources <stored list>`, then `on`, then `status`. The state file on the target can differ from the list of the hub, so `install` sends the list first. The action ends every provisioner install, as the test grant ends the add of a main key. The owner also starts it with Reinstall key line on the target. The script runs `status` inside every grant as a check after the action.
 
 #### What changes in the code
 
@@ -232,13 +234,13 @@ ssh -F <config> -T -o BatchMode=yes -o ConnectTimeout=10 <target id> <command>
 
 - `<config>` is the configuration file that the node router of `local` wrote for the grant. It names the agent socket, the public key file, the pinned host key and `IdentitiesOnly yes`.
 - `<command>` is one argument, for example `sources 192.168.1.103,192.168.1.50`. No shell runs on the hub.
-- The runner kills the child after 20 seconds.
+- The runner kills the child after 15 seconds.
 - The runner keeps at most 4096 bytes of stdout and of stderr.
 - The runner gives `{ code, stdout, stderr }`. If `ssh` cannot start, the code is 127.
 
 The hub parses the first line of stdout with the pure parser. A code 0 with an answer that does not parse counts as a failure. The detail then says `the script gave no valid answer`.
 
-The whole maintenance run stays inside the one minute of the grant. It runs the action, then `status`. A restore run (read below) also fits.
+The whole maintenance run stays inside the one minute of the grant. The worst case is three runs of 15 seconds. Before each run, the hub checks that the grant is still active. If the grant ended, the hub records `failed`, skips the other runs and does not call `finish`.
 
 ### Add, change of nodes and retire
 
@@ -251,12 +253,13 @@ The whole maintenance run stays inside the one minute of the grant. It runs the 
 3. The CLI gets the install script with `GET /targets/:id/provisioner-install`. It runs the script with `--identity` through the pinned host key. The script writes the script file and the state file, and it adds the provisioner line.
 4. The CLI tells the hub the result with `POST /targets/:id/provisioner-installed`. The body holds the script path that the install printed. The hub stores the three target fields.
 5. The test grant of today follows.
+6. The CLI starts the maintenance action `install` and approves it, as for the test. This proves the provisioner chain before the owner needs it on a phone. With `--no-test`, the CLI skips this step too.
 
 The flag needs the system type `linux`, `synology` or `dropbear`. The CLI refuses it for `windows` and for a managed target. The type `dropbear` uses the router version.
 
 #### A provisioner for an existing target
 
-`claude-rc ssh target provisioner <id> --identity <file>` runs steps 2 to 4 for a target that exists. It needs a pinned host key. A target that has a provisioner already gets a new key. The install replaces the old provisioner line and the old script. The same command repairs a provisioner after the source address of `local` changed.
+`claude-rc ssh target provisioner <id> --identity <file>` runs steps 2, 3, 4 and 6 for a target that exists. It needs a pinned host key. A target that has a provisioner already gets a new key. The install replaces the old provisioner line and the old script. The same command repairs a provisioner after the source address of `local` changed.
 
 #### Change of nodes
 
@@ -401,7 +404,7 @@ The hub becomes a larger target, as before. It now holds two keys for each exter
 ## Calls made by the author
 
 - The provisioner line allows only the source address of `local`.
-- The action `install` exists as a repair, started by the owner.
+- The action `install` ends each provisioner install as a test. The owner can also start it as a repair.
 - The `status` command runs inside each grant as a check. No action exists for `status` alone.
 - A failed `uninstall` does not stop the retire. A deny or an expiry does stop it.
 - A swap of all addresses needs the agreement of the owner. A partial change does not.

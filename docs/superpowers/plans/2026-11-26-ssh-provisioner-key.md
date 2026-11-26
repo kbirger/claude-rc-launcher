@@ -1,4 +1,4 @@
-# SSH provisioner key: Implementation Plan
+# SSH provisioner key Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -20,8 +20,8 @@
 - A session can never create a maintenance grant. A maintenance grant never opens the main key.
 - Managed targets keep their behavior. The existing tests of the managed path stay green with no change.
 - Docs and UI text use plain English: steps of 20 words at most, descriptions of 25 words at most.
-- Docs and UI text use no contractions, no semicolons, no em-dashes and no modal verbs of doubt or advice.
-- Docs put a condition before its command and use no bold lead-ins. Use the word `configuration` where the hook asks for it.
+- Docs and UI text use no contractions, no semicolons, no em-dashes and none of `should`, `may`, `might`, `could` and `would`.
+- Docs put a condition before its command and use no bold lead-ins. Use `configuration` in place of `config`, `settings` and `options` where the hook asks for it.
 - Run `bun run typecheck` and `bun run lint` before each commit. Web tasks also run `svelte-check` and `svelte-autofixer`.
 
 ## Review Focus
@@ -73,6 +73,7 @@
   - `on adds the main line once`, `on twice changes nothing` and `off removes only the main line`.
   - `sources rewrites from of a present line` and `sources on an absent line only writes the state file`.
   - `status reports present and absent with the list`.
+  - `status reports present for a line that the provision script of today wrote`.
   - `uninstall removes both lines, the state file and the script`.
   - `keeps other lines with their bytes` (a CRLF line, a comment line and a line with no final newline).
   - `refuses a symbolic link at .ssh, at the key file and at the state file with exit 3`.
@@ -145,7 +146,7 @@
   - `finish(id: string, by: string): Grant` ends an active maintenance grant with `done`.
 - Produces in `sshmaintenance.ts`:
   - `export type SshRunner = (config: string, targetId: string, command: string, timeoutMs: number) => Promise<{ code: number, stdout: string, stderr: string }>`
-  - `export const defaultRunner: SshRunner` (spawns `ssh -F <config> -T -o BatchMode=yes -o ConnectTimeout=10`, kills at 20 seconds, keeps 4096 bytes of each stream)
+  - `export const defaultRunner: SshRunner` (spawns `ssh -F <config> -T -o BatchMode=yes -o ConnectTimeout=10`, kills at 15 seconds, keeps 4096 bytes of each stream)
   - `export async function runProvisioner(runner, config, targetId, command): Promise<ProvisionerAnswer>` (throws `NodeError` with one short line)
 - Produces in `SshService`:
   - New deps: `runSsh?: SshRunner`, `hasSsh?: () => boolean`, `localReady?: () => boolean`.
@@ -168,6 +169,8 @@
   - `requestMaintenance refuses a stale local source with the repair command in the text`.
   - `requestMaintenance refuses a target that waits for a re-lock`.
   - `approve runs the action then status and ends the grant with done`.
+  - `install sends the stored sources before on`.
+  - `a grant that expires during the run records failed, skips the next run and does not call finish`.
   - `approve refuses with 409 when the sources changed since the request`.
   - `approve records failed and ends the grant when the runner exits 4`.
   - `a runner answer that does not parse is a failure`.
@@ -274,6 +277,8 @@
 - [ ] **Step 1: Write failing tests** with a fake hub and a fake `runLocal`.
   - `--provisioner refuses windows and --managed`.
   - `--provisioner makes the key, runs the install with the pinned host key and reports the path`.
+  - `--provisioner ends with a maintenance install and prints its result`.
+  - `--no-test skips the maintenance install too`.
   - `the identity path never reaches the hub` (no request body holds it).
   - `provisioner on an existing target needs a pinned host key`.
   - `update with a 202 asks for the passphrase and prints the result`.
