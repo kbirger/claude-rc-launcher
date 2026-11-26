@@ -220,11 +220,15 @@ export class SshService {
     return found;
   }
 
-  /** Puts the key line of the target into the `authorized_keys` of the account, through the node that is the target. */
-  async authorizeManaged(targetId: string): Promise<void> {
+  /**
+   * Puts the key line of the target into the `authorized_keys` of the account, through the node that is the target.
+   * With `nodes`, the line holds the sources of that proposed list instead of the stored list, so that a change of the
+   * list can be installed before it is stored.
+   */
+  async authorizeManaged(targetId: string, nodes?: string[]): Promise<void> {
     const target = this.needManaged(targetId);
     const { keys, targets } = this.deps;
-    const sources = targets.sourcesOf(target);
+    const sources = targets.sourcesOf(nodes === undefined ? target : { nodes });
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
     const line = authorizedKeysLine(keys.publicLine(targetId), sources);

@@ -1459,26 +1459,51 @@ describe("PATCH /targets/:id changes the nodes", () => {
     });
   });
 
-  test("a managed target gets no call when only the order or a node without access changes", async () => {
-    const { call, node2 } = await made("managed");
+  test("a managed target installs the line again even when the sources do not change", async () => {
+    const { call, node2, keys } = await made("managed");
     await call("PUT", "/nodes/node2", "admin", { enabled: false, sourceAddress: "192.168.1.20" });
     node2.calls.length = 0;
+    // The sources of the new list equal the old ones, but the machine can be out of date (a change of node access
+    // does not install a line), so the hub asks the node anyway. The script writes nothing when the line is there.
     const patched = await call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
     expect(patched.status).toBe(200);
-    expect(node2.paths().filter((item) => item.endsWith("/authorize"))).toEqual([]);
+    expect(patched.body.lineUpdated).toBe(true);
+    const sent = node2.calls.filter((item) => item.path === "/api/ssh/authorize");
+    expect(sent.map((item) => (item.json as { line: string }).line)).toEqual([
+      `from="192.168.1.10",restrict ${keys.publicLine("self")}`,
+    ]);
   });
 
-  test("a failed install puts the old list back, tries to restore the old line, answers 502 and keeps the grants", async () => {
-    const { call, node2, targets, grants, service } = await made("managed", {
+  test("an install with the same list still reaches the node, so a line that went out of date is fixed", async () => {
+    const { call, node2 } = await made("managed");
+    // Node access changed after the install: the stored line on the machine is older than the sources now.
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.11" });
+    node2.calls.length = 0;
+    expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node1"] })).status).toBe(200);
+    const lines = node2.calls
+      .filter((item) => item.path === "/api/ssh/authorize")
+      .map((item) => (item.json as { line: string }).line);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('from="192.168.1.11"');
+  });
+
+  test("a failed install leaves the list as it was, with no grant for an added node and nothing pushed", async () => {
+    const { call, node1, node2, targets, grants, service } = await made("managed", {
       "POST /api/ssh/authorize": { status: 500, body: { error: "cannot write" } },
     });
     service.onNodeEvent("node1", "ssh.request", { requestId: "r1", instanceId: "i1", targetId: "self" });
     await flush();
+    const before = grants.list().length;
+    node1.calls.length = 0;
+    node2.calls.length = 0;
     const refused = await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] });
     expect(refused.status).toBe(502);
     expect(refused.body.error).toContain("node list is as it was");
     expect(targets.get("self")?.nodes).toEqual(["node1"]);
+    expect(grants.list()).toHaveLength(before);
     expect(grants.list().filter((item) => item.state === "ended")).toEqual([]);
+    expect(puts(node1)).toEqual([]);
+    expect(puts(node2)).toEqual([]);
     // First the new line, then the best-effort restore of the old one.
     const lines = node2.calls
       .filter((item) => item.path === "/api/ssh/authorize")
@@ -1488,18 +1513,52 @@ describe("PATCH /targets/:id changes the nodes", () => {
     expect(lines[1]).toContain('from="192.168.1.10"');
   });
 
+  test("while the install runs, a request from an added node is not accepted", async () => {
+    const { call, node2, targets, grants, service } = await made("managed");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = node2.client.call;
+    node2.client.call = async (method, path, options) => {
+      if (path === "/api/ssh/authorize") await gate;
+      return original(method, path, options);
+    };
+    const pending = call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
+    await flush();
+    service.onNodeEvent("node2", "ssh.request", { requestId: "late", instanceId: "i2", targetId: "self" });
+    await flush();
+    expect(targets.get("self")?.nodes).toEqual(["node1"]);
+    expect(grants.list().filter((item) => item.requestId === "late")).toEqual([]);
+    release();
+    expect((await pending).status).toBe(200);
+    expect(targets.get("self")?.nodes).toEqual(["node1", "node2"]);
+  });
+
   test("a node that is down is a 502 too and the list stays", async () => {
     const { call, targets } = await made("managed", { "POST /api/ssh/authorize": new Error("connect refused") });
     expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] })).status).toBe(502);
     expect(targets.get("self")?.nodes).toEqual(["node1"]);
   });
 
-  test("a failed write of the list gives an error and the old list stays, with no call to the node", async () => {
+  test("a failed write of the list after the install gives the original error, restores the old line, keeps the list", async () => {
     const { call, targets, node2 } = await made("managed");
     targets.setNodes = () => Promise.reject(new Error("disk full"));
-    expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] })).status).toBe(500);
+    const answer = await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] });
+    expect(answer.status).toBe(500);
     expect(targets.get("self")?.nodes).toEqual(["node1"]);
-    expect(node2.calls).toEqual([]);
+    const lines = node2.calls
+      .filter((item) => item.path === "/api/ssh/authorize")
+      .map((item) => (item.json as { line: string }).line);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('from="192.168.1.10"');
+  });
+
+  test("a failed write of the list on an external target gives an error and the old list stays", async () => {
+    const { call, targets } = await made("external");
+    targets.setNodes = () => Promise.reject(new Error("disk full"));
+    expect((await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"] })).status).toBe(500);
+    expect(targets.get("nas")?.nodes).toEqual(["node1"]);
   });
 
   test("a target without a key changes its list and sends nothing to a machine", async () => {

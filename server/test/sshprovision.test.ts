@@ -523,6 +523,27 @@ describe("provisionScript replaces an older line of the same key", () => {
     expect(await readFile(join(elsewhere, "real"), "utf8")).toBe(`${oldLine}\n`);
   });
 
+  test("it refuses a symbolic link as the folder and changes nothing", async () => {
+    const dir = await home();
+    const elsewhere = await home();
+    await mkdir(join(elsewhere, "real"), { mode: 0o700 });
+    await writeFile(join(elsewhere, "real", "authorized_keys"), `${oldLine}\n`, { mode: 0o600 });
+    await symlink(join(elsewhere, "real"), join(dir, ".ssh"));
+    const result = await run(install, dir);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("symbolic link");
+    expect(await readFile(join(elsewhere, "real", "authorized_keys"), "utf8")).toBe(`${oldLine}\n`);
+    expect((await readdir(join(elsewhere, "real"))).filter((name) => name !== ".claude-rc.lock")).toEqual([
+      "authorized_keys",
+    ]);
+  });
+
+  test("the rewrite removes its temporary file on exit and on a signal", () => {
+    const { script } = provisionScript("linux", newLine);
+    expect(script).toContain("trap 'rm -f \"$tmp\"' EXIT");
+    expect(script).toContain("trap 'exit 1' HUP INT TERM");
+  });
+
   test("a failed temporary file leaves the old file as it was", async () => {
     const dir = await home();
     const text = `${oldLine}\nssh-rsa KEEP x\n`;
@@ -560,7 +581,9 @@ describe("provisionScript replaces an older line of the same key", () => {
     expect(script).toContain(`$blob = '${BLOB}'`);
     expect(script).toContain("$comment = 'claude-rc:nas'");
     expect(script).toContain("[IO.File]::Replace($tmp, $file, $null)");
-    expect(script).toContain("$matched -eq 1 -and $lines -contains $line");
+    expect(script).toContain("$matched -eq 1 -and $lines -ccontains $line");
+    // the exact-line check is case sensitive, like the match of the key fields
+    expect(script).not.toMatch(/\$lines -(not)?contains/);
     expect(script.indexOf("$matched -eq 0")).toBeGreaterThan(script.indexOf("foreach"));
     // icacls runs after the write in each case
     expect(script.indexOf("icacls.exe")).toBeGreaterThan(script.indexOf("[IO.File]::Replace"));
