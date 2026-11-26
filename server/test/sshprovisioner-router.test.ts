@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { provisionScript } from "../src/sshprovision";
 import {
   ROUTER_APPLETS,
   ROUTER_MAX_VALUE,
@@ -12,7 +13,7 @@ import {
   routerScriptPath,
 } from "../src/sshprovisioner";
 import vectors from "../src/sshprovisioner.vectors.json";
-import { authorizedKeysLine } from "../src/sshtargets";
+import { authorizedKeysLine, DROPBEAR_OPTIONS } from "../src/sshtargets";
 
 // The router version of the provisioner script (Dropbear on Asuswrt-Merlin). There is no router here, so the tests run
 // the script under `busybox sh` and `dash` with a fake `nvram` program and a temporary folder that stands in for `/`.
@@ -28,6 +29,8 @@ const LOCAL = "192.168.1.103";
 const OWNER = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB owner@laptop";
 const OWNER2 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIother phone";
 const FROM_LOCAL = `${LOCAL} 50000 192.168.1.1 22`;
+/** The main line of a Dropbear target: the four flags and no `from=`, whatever the list (a ruling of the owner). */
+const ML = authorizedKeysLine(MAIN, ["10.0.0.1"], "dropbear");
 
 const SHELLS: { name: string; argv: string[] }[] = [];
 const busyboxPath = Bun.which("busybox");
@@ -125,7 +128,7 @@ async function router(
   await mkdir(join(root, "root", ".ssh"), { recursive: true, mode: 0o700 });
   await writeFile(join(bin, "nvram"), fakeNvram(nv), { mode: 0o755 });
   const sources = options.sources ?? ["10.0.0.1"];
-  const value = options.value ?? [OWNER, OWNER2, authorizedKeysLine(MAIN, sources)].join(">");
+  const value = options.value ?? [OWNER, OWNER2, authorizedKeysLine(MAIN, sources, "dropbear")].join(">");
   const keys = join(root, "root", ".ssh", "authorized_keys");
   await writeFile(join(nv, "ram.sshd_authkeys"), value);
   await writeFile(join(nv, "flash.sshd_authkeys"), value);
@@ -265,14 +268,14 @@ for (const shell of SHELLS) {
       expect(done.err).toBe("");
       const [first, ...info] = done.out.trim().split("\n");
       expect(first).toBe(`ok installed ${rt.script}`);
-      const before = [OWNER, OWNER2, authorizedKeysLine(MAIN, ["10.0.0.1"])].join(">");
+      const before = [OWNER, OWNER2, ML].join(">");
       const value = await rt.value();
       expect(info).toEqual([
         `info nvram sshd_authkeys had 3 lines, separator >, ${before.length} of 3499 bytes`,
         `info nvram sshd_authkeys has 4 lines, separator >, ${value.length} of 3499 bytes`,
       ]);
 
-      expect(value).toBe([OWNER, OWNER2, authorizedKeysLine(MAIN, ["10.0.0.1"]), provLine(rt.root)].join(">"));
+      expect(value).toBe([OWNER, OWNER2, ML, provLine(rt.root)].join(">"));
       expect(await rt.flash()).toBe(value);
       expect(await rt.live()).toBe(tr(value));
       expect(await rt.log()).toEqual(["set sshd_authkeys", "commit"]);
@@ -283,15 +286,23 @@ for (const shell of SHELLS) {
       expect(await gone(join(rt.root, "tmp", "claude-rc-provisioner.lock"))).toBe(true);
     });
 
-    test("the install carries a main line that is only in the live file into nvram, as after the add", async () => {
-      const main = authorizedKeysLine(MAIN, ["10.0.0.1"]);
+    test("the install carries the main line of the add into nvram, and a reboot keeps both lines", async () => {
       const rt = await router(shell.argv, { value: OWNER, install: false });
-      // The add wrote the main line into the live file only (provisionScript of today).
-      await writeFile(rt.keys, `${OWNER}\n${main}\n`);
+      // The add of today: the provision script writes the main line into the live file only.
+      const add = provisionScript("dropbear", authorizedKeysLine(MAIN, ["10.0.0.1"], "dropbear")).script;
+      const added = await spawn([...shell.argv, "-s"], { PATH: rt.path, HOME: join(rt.root, "root") }, add);
+      expect(added.code).toBe(0);
+      expect(await rt.live()).toBe(`${OWNER}\n${ML}\n`);
+      expect(await rt.value()).toBe(OWNER);
+
       const done = await rt.install();
       expect(done.code).toBe(0);
-      expect(await rt.value()).toBe(`${OWNER}>${provLine(rt.root)}>${main}`);
-      expect(await rt.live()).toBe(`${OWNER}\n${provLine(rt.root)}\n${main}`);
+      expect(await rt.value()).toBe(`${OWNER}>${provLine(rt.root)}>${ML}`);
+      expect(await rt.flash()).toBe(await rt.value());
+      expect(await rt.live()).toBe(`${OWNER}\n${provLine(rt.root)}\n${ML}`);
+
+      await rt.reboot();
+      expect(linesOf(await rt.live())).toEqual([OWNER, provLine(rt.root), ML]);
       expect((await rt.run("status")).out).toBe("ok status present 10.0.0.1\n");
     });
 
@@ -331,7 +342,8 @@ for (const shell of SHELLS) {
     test("every write calls nvram set and then nvram commit", async () => {
       const rt = await router(shell.argv);
 
-      for (const command of ["off", "on", "sources 10.0.0.2,10.0.0.3", "uninstall"]) {
+      // `sources` writes no line on a router (the line has no list), so it is not in this list.
+      for (const command of ["off", "on", "uninstall"]) {
         await writeFile(join(rt.nv, "log"), "");
         const result = await rt.run(command);
         expect(result.err, command).toBe("");
@@ -376,15 +388,31 @@ for (const shell of SHELLS) {
       expect((await rt.run("status")).out).toBe("ok status absent 10.0.0.1\n");
     });
 
-    test("sources rewrites from of a present line in nvram and in the live file", async () => {
+    test("the main line has the four flags and no from, and sources does not touch it", async () => {
       const rt = await router(shell.argv);
+      expect(ML).toBe(`${DROPBEAR_OPTIONS} ${MAIN}`);
+      const before = await rt.value();
+      const live = await readFile(rt.keys);
+      await writeFile(join(rt.nv, "log"), "");
       const result = await rt.run("sources 10.0.0.2,fe80::1");
       expect(result).toEqual({ code: 0, out: "ok sources 10.0.0.2,fe80::1\n", err: "" });
-      const value = await rt.value();
-      expect(linesOf(value)).toContain(authorizedKeysLine(MAIN, ["10.0.0.2", "fe80::1"]));
-      expect(mainCount(value)).toBe(1);
-      expect(provCount(value)).toBe(1);
+      expect(await rt.value()).toBe(before);
+      expect(Buffer.compare(await readFile(rt.keys), live)).toBe(0);
+      expect(await rt.log()).toEqual([]);
       expect(await readFile(rt.state, "utf8")).toBe("10.0.0.2,fe80::1\n");
+      expect((await rt.run("status")).out).toBe("ok status present 10.0.0.2,fe80::1\n");
+    });
+
+    test("sources replaces an older main line with from by the line without it", async () => {
+      const old = authorizedKeysLine(MAIN, ["10.0.0.1"]);
+      const rt = await router(shell.argv, { value: `${OWNER}>${old}` });
+      expect((await rt.run("status")).out).toBe("ok status absent 10.0.0.1\n");
+      expect((await rt.run("sources 10.0.0.1")).code).toBe(0);
+      const lines = linesOf(await rt.value());
+      expect(lines).toContain(ML);
+      expect(lines).not.toContain(old);
+      expect(mainCount(await rt.value())).toBe(1);
+      expect((await rt.run("status")).out).toBe("ok status present 10.0.0.1\n");
     });
 
     test("sources on an absent line writes only the state file", async () => {
@@ -395,7 +423,7 @@ for (const shell of SHELLS) {
       expect(await rt.log()).toEqual([]);
       expect(await readFile(rt.state, "utf8")).toBe("10.0.0.9\n");
       expect((await rt.run("on")).out).toBe("ok on 10.0.0.9\n");
-      expect(linesOf(await rt.value())).toContain(authorizedKeysLine(MAIN, ["10.0.0.9"]));
+      expect(linesOf(await rt.value())).toContain(ML);
     });
 
     test("owner keys survive in both the nvram value and the live file", async () => {
@@ -422,15 +450,17 @@ for (const shell of SHELLS) {
 
     test("after a reboot the live file holds what the script wrote", async () => {
       const rt = await router(shell.argv);
+      await rt.run("off");
       await rt.run("sources 10.0.0.7");
+      await rt.run("on");
       await rt.reboot();
-      expect(linesOf(await rt.live())).toContain(authorizedKeysLine(MAIN, ["10.0.0.7"]));
+      expect(linesOf(await rt.live())).toContain(ML);
       expect(provCount(await rt.live())).toBe(1);
       expect((await rt.run("status")).out).toBe("ok status present 10.0.0.7\n");
     });
 
     test("the format found in nvram is preserved", async () => {
-      const main = authorizedKeysLine(MAIN, ["10.0.0.1"]);
+      const main = ML;
 
       // A value with newlines and a newline at the end stays so.
       const nl = await router(shell.argv, { value: `${OWNER}\n${main}\n` });
@@ -469,26 +499,24 @@ for (const shell of SHELLS) {
     });
 
     test("a value over the size limit is refused before nvram set", async () => {
-      const main = authorizedKeysLine(MAIN, ["10.0.0.1"]);
-      const rt = await router(shell.argv, { value: `${OWNER}>${main}` });
-      // Pad a line of the owner so that `sources 10.0.0.12` makes the value one byte longer than the limit.
+      const rt = await router(shell.argv, { value: OWNER });
+      // Pad a line of the owner so that `on` (a new main line and one separator) makes the value one byte too long.
       const now = (await rt.value()).length;
-      const grow = authorizedKeysLine(MAIN, ["10.0.0.12"]).length - main.length;
+      const grow = ML.length + 1;
       const pad = (extra: number) => `${OWNER}${"x".repeat(ROUTER_MAX_VALUE - now - grow + extra)}`;
 
       await rt.setValue((await rt.value()).replace(OWNER, pad(1)));
       await writeFile(join(rt.nv, "log"), "");
       const live = await readFile(rt.keys);
-      const refused = await rt.run("sources 10.0.0.12");
+      const refused = await rt.run("on");
       expect(refused.code).toBe(4);
       expect(refused.err).toMatch(/^error guard .*3499/);
       expect(await rt.log()).toEqual([]);
       expect(Buffer.compare(await readFile(rt.keys), live)).toBe(0);
-      expect(await readFile(rt.state, "utf8")).toBe("10.0.0.1\n");
 
       // Exactly at the limit, the write goes through.
       await rt.setValue((await rt.value()).replace(pad(1), pad(0)));
-      const taken = await rt.run("sources 10.0.0.12");
+      const taken = await rt.run("on");
       expect(taken.err).toBe("");
       expect(taken.code).toBe(0);
       expect((await rt.value()).length).toBe(ROUTER_MAX_VALUE);
@@ -526,8 +554,8 @@ for (const shell of SHELLS) {
         const before = await rt.value();
         const live = await readFile(rt.keys);
 
-        // `on` with the main line present writes nothing, so only commands that write are here.
-        for (const command of ["off", "sources 10.0.0.2", "uninstall"]) {
+        // With the main line present, `on` and `sources` write nothing, so only commands that write are here.
+        for (const command of ["off", "uninstall"]) {
           // Without the provisioner line is what uninstall wants, so that bad edit passes there.
           if (kind === true && command === "uninstall") continue;
           const result = await rt.run(command);

@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 import { HOST_ID_RE } from "./hostid";
 import { AWK_PROGRAM, LOCK_LINES, shQuote } from "./sshprovision";
 import type { Script } from "./sshprovision";
-import { ADDRESS_RE, SCRIPT_PATH_RE } from "./sshtargets";
+import { ADDRESS_RE, DROPBEAR_OPTIONS, SCRIPT_PATH_RE } from "./sshtargets";
 
 // The provisioner key of an external target. The pure part: the grammar of the commands that the script on the target
 // takes, the parse of its answers, the line that goes into `authorized_keys`, and the text of the Linux scripts.
@@ -447,8 +447,9 @@ export function linuxInstallScript(input: {
 //   into a newline and writes `/root/.ssh/authorized_keys`. A longer value is cut at boot, maybe in a line.
 // - The `nvram` program exits with 0 even when a set or a commit fails. So the script reads the value back after
 //   `nvram set`, and it cannot see a failed `commit` unless the program reports it.
-// - Dropbear has no `from=` option, and it refuses a whole key line with an option that it does not know. So the
-//   provisioner line has no `from=`, and the script compares the client address itself (`SSH_CONNECTION`).
+// - Dropbear has no `from=` option, and it refuses a whole key line with an option that it does not know. So no line on
+//   the router has `from=`. The provisioner script compares the client address itself (`SSH_CONNECTION`). The main key
+//   is not limited by address on the router: the approval of the hub is the control.
 // - `restrict` exists since Dropbear 2022.82. `command=` sets `SSH_ORIGINAL_COMMAND`.
 // - BusyBox ash of Merlin is built without the builtin `command`, so the script never uses it.
 // NOT VERIFIED on a router: the exact BusyBox applets of each model, whether /jffs allows exec, the Dropbear version of
@@ -487,9 +488,9 @@ export function routerScriptPath(targetId: string): string {
   return `/jffs/scripts/claude-rc-provisioner-${targetId}.sh`;
 }
 
-// In Dropbear, `restrict` sets exactly these four flags (svr-authpubkeyoptions.c). `restrict` came in 2022.82, and an
-// older Dropbear refuses a line with it. The four flags work in every version, so the provisioner line uses them.
-const ROUTER_OPTIONS = "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty";
+// In Dropbear, `restrict` sets exactly the four flags of `DROPBEAR_OPTIONS`, and `restrict` came in 2022.82. The four
+// flags work in every version, so the provisioner line uses them too.
+const ROUTER_OPTIONS = DROPBEAR_OPTIONS;
 
 /** The provisioner line for Dropbear: the four `no-` flags and command, no `from=` (Dropbear refuses it). The script checks the source. */
 export function routerProvisionerLine(input: { publicLine: string; scriptPath: string }): string {
@@ -638,10 +639,11 @@ const ROUTER_NVRAM_LINES = [
   "}",
 ];
 
-// The main line has the same form as on Linux (`authorizedKeysLine`): `from="<list>",restrict <main key>`.
-// OPEN QUESTION FOR THE OWNER: Dropbear refuses a line with `from=`, so this main line does not log in on a router.
-// The form lives only here (and in `authorizedKeysLine`), so a ruling is one edit.
-const ROUTER_MAIN_LINE = 'from=\\"$1\\",restrict $mainkey';
+// The main line on a router: `authorizedKeysLine` with the system type `dropbear`, that is the four flags of
+// `DROPBEAR_OPTIONS` and no `from=` (a ruling of the owner: Dropbear refuses `from=`, and old versions refuse
+// `restrict`). The line does not depend on the list, so `mainline` ignores its argument. The state file still holds
+// the list of the hub, for `status` and `on`.
+const ROUTER_MAIN_LINE = `${DROPBEAR_OPTIONS} $mainkey`;
 
 function routerScriptLines(
   targetId: string,
@@ -729,9 +731,11 @@ function routerScriptLines(
     '    if [ -n "$cur" ]; then printf \'ok status %s %s\\n\' "$here" "$cur"; else printf \'ok status %s\\n\' "$here"; fi',
     "    ;;",
     "  sources)",
-    '    if [ "$m" != 0 ]; then',
+    // The line has no list: a present exact line stays as it is, and only the state file changes.
+    '    line=$(mainline "$list")',
+    '    if [ "$m" = 1 ] && grep -qxF -- "$line" "$oldl"; then :; elif [ "$m" != 0 ]; then',
     '      strip "$mblob" "$mcomment" "$oldl" "$newl"',
-    '      append "$newl" "$(mainline "$list")"',
+    '      append "$newl" "$line"',
     '      put "$oldl" "$newl" 1 1',
     "    fi",
     '    put_state "$list"',

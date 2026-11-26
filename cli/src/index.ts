@@ -74,6 +74,7 @@ Commands:
                                      replace the nodes of a target. With a provisioner it waits for one approval
                                      (--yes: confirm a list that allows none of the addresses that work now).
                                      Without a provisioner an external target prints the new key line
+                                     (not dropbear: its line has no address limit and stays the same)
   ssh target provisioner <id> --identity <file> [--fingerprint f] [--no-test]
                                      install the provisioner key on an external target, or install it again
   node update [--binary file] [--release tag]

@@ -9,9 +9,9 @@
   import { putNodeMutation } from "./mutations";
 
   // The nodes that may carry a grant. Each row has a switch and the source address: the address that the targets see
-  // when this node connects, which the hub writes into the `from=` limit of the key line. A node cannot be turned on
-  // without an address. Turning a node off keeps the address. For a node that is on, a changed address needs Save: it
-  // goes into the `from=` limit of the next install line.
+  // when this node connects, which the hub writes into the `from=` limit of the key line. A Dropbear router gets no
+  // `from=` (Dropbear has none). A node cannot be turned on without an address. Turning a node off keeps the address.
+  // For a node that is on, a changed address needs Save: it goes into the `from=` limit of the next install line.
   let { nodes }: { nodes: NodeStatus[] } = $props();
 
   const client = useQueryClient();

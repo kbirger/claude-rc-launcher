@@ -12,7 +12,7 @@ import { GrantAgent } from "./sshnodeagent";
 import type { AgentTransport } from "./sshnodeagent";
 import { deprovisionScript, provisionScript } from "./sshprovision";
 import type { Script } from "./sshprovision";
-import { HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
+import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
 import type { SystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
 import { ensurePrivateFolder, writeGrantFile } from "./win/sshfiles";
@@ -698,9 +698,12 @@ function authorizeLine(value: unknown): string {
     typeof value !== "string" ||
     value.length > MAX_LINE ||
     /[\r\n\0]/.test(value) ||
-    !(value.startsWith('from="') || value.startsWith("ssh-ed25519 "))
+    !(value.startsWith('from="') || value.startsWith("ssh-ed25519 ") || value.startsWith(`${DROPBEAR_OPTIONS} `))
   )
-    throw new HttpError(400, 'line must be one line of at most 2000 characters that starts with from=" or ssh-ed25519');
+    throw new HttpError(
+      400,
+      'line must be one line of at most 2000 characters that starts with from=", ssh-ed25519 or the Dropbear options',
+    );
   return value;
 }
 

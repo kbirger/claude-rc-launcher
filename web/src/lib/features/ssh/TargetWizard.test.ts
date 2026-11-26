@@ -216,6 +216,14 @@ test("the install step shows the line of the key answer with a Copy button", asy
   await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(LINE));
 });
 
+test("the install step of a dropbear target says that the router does not limit the key by address", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, systemType: "dropbear" });
+  const text = document.querySelector("[data-dropbear-line]")!.textContent!.replace(/\s+/g, " ");
+  expect(text).toContain("Dropbear does not support from=");
+  expect(text).toContain("Your approval of each request is the control.");
+  expect(document.body.textContent).not.toContain("The line limits the key to the source addresses");
+});
+
 test("the wizard resumes at the unlock step for a target with no key", async () => {
   await resumeAt({});
   expect(document.body.textContent).toContain("Step 2 of 6: Key");

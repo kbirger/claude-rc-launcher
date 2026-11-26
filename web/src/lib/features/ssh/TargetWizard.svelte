@@ -316,10 +316,17 @@
           {/if}
         {:else if step === "install"}
           {#if external}
-            <p class="text-sm">
-              Add this line to the authorized_keys file of {target?.account} on the target. The line limits the key to the
-              source addresses of the nodes.
-            </p>
+            {#if target?.systemType === "dropbear"}
+              <p class="text-sm" data-dropbear-line>
+                Add this line to the Authorized Keys of the router. Dropbear does not support from=, so the router does
+                not limit this key by address. Your approval of each request is the control.
+              </p>
+            {:else}
+              <p class="text-sm">
+                Add this line to the authorized_keys file of {target?.account} on the target. The line limits the key to the
+                source addresses of the nodes.
+              </p>
+            {/if}
             {#if installLine}
               <code class="block rounded-lg border bg-muted p-3 font-mono text-xs break-all select-all">
                 {installLine}

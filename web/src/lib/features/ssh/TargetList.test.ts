@@ -275,6 +275,19 @@ test("an external target shows the new key line after the save, with a Copy butt
   await vi.waitFor(() => expect(button("Done", shown)).toBeUndefined());
 });
 
+test("a dropbear target says that the key line on the router stays the same", async () => {
+  patchReply = target({ nodes: ["node1", "node2"], systemType: "dropbear" });
+  const shown = await openEditor([target({ systemType: "dropbear" })]);
+  expect(shown.textContent).toContain("The key line on the router stays the same");
+  expect(shown.textContent).not.toContain("you get the new key line");
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain("The nodes of nas are saved."));
+  expect(shown.textContent).toContain("Dropbear does not limit a key by address");
+  expect(shown.textContent).not.toContain("replace the old line");
+});
+
 test("a managed target says that the line on the machine was updated", async () => {
   patchReply = { ...target({ nodes: ["node1", "node2"], managedHost: "node2" }), lineUpdated: true };
   const shown = await openEditor([target({ managedHost: "node2" })]);

@@ -70,6 +70,15 @@ describe("sshTargetUpdate", () => {
     expect(out.join("\n")).toContain("replace the old line");
   });
 
+  test("an external dropbear target says that its key line stays the same", async () => {
+    const { out, run } = rig({ id: "nas", nodes: ["pi"], systemType: "dropbear" });
+    await run({ node: "pi" });
+    expect(out).toEqual([
+      "target nas nodes: pi",
+      "the key line on the router stays the same, because Dropbear does not limit a key by address",
+    ]);
+  });
+
   test("it says so when a node could not be told, and when a managed target has no key yet", async () => {
     const { out, run } = rig({ id: "nas", nodes: ["pi"], managedHost: "nas", pushed: false });
     await run({ node: "pi" });

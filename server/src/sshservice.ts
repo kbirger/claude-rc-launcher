@@ -731,7 +731,7 @@ export class SshService {
     const sources = targets.sourcesOf(nodes === undefined ? target : { nodes });
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
-    const line = authorizedKeysLine(keys.publicLine(targetId), sources);
+    const line = authorizedKeysLine(keys.publicLine(targetId), sources, target.systemType);
     const reply = await this.nodeReply(
       target.managedHost,
       "POST",

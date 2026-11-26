@@ -221,7 +221,11 @@ async function setup(
    * An external target with a main key, a pinned host key, a provisioner key and an installed script, `ready`. The
    * nodes node1, node2 and local have access with a source address. The fake target holds the main line.
    */
-  const provisionerTarget = async (id = "nas", nodeList: string[] = ["node1", "node2"]) => {
+  const provisionerTarget = async (
+    id = "nas",
+    nodeList: string[] = ["node1", "node2"],
+    systemType: "linux" | "dropbear" = "linux",
+  ) => {
     await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
     await call("PUT", "/nodes/node2", "admin", { enabled: true, sourceAddress: "192.168.1.20" });
     await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
@@ -229,14 +233,17 @@ async function setup(
       id,
       address: "10.0.0.5",
       account: "u",
-      systemType: "linux",
+      systemType,
       nodes: nodeList,
     });
     expect((await call("POST", `/targets/${id}/key`, "admin", { unlock })).status).toBe(200);
     expect((await call("POST", `/targets/${id}/pin`, "admin", { hostKey: HOST_KEY })).status).toBe(200);
     expect((await call("POST", `/targets/${id}/provisioner-key`, "admin", { unlock })).status).toBe(200);
     const installed = await call("POST", `/targets/${id}/provisioner-installed`, "admin", {
-      script: `/home/u/.claude-rc/provisioner-${id}.sh`,
+      script:
+        systemType === "dropbear"
+          ? `/jffs/scripts/claude-rc-provisioner-${id}.sh`
+          : `/home/u/.claude-rc/provisioner-${id}.sh`,
     });
     expect(installed.status).toBe(200);
     await targets.setState(id, "ready");
@@ -507,6 +514,21 @@ describe("targets", () => {
     const made = await call("POST", "/targets/nas/key", "admin", { unlock });
     expect(made.status).toBe(200);
     expect(str(made.body.installLine)).toBe(`from="192.168.1.10",restrict ${str(made.body.publicLine)}`);
+    // The same for a dropbear target: no from=, the four flags (a ruling of the owner).
+    await call("POST", "/targets", "admin", {
+      id: "rt",
+      address: "10.0.0.6",
+      account: "admin",
+      systemType: "dropbear",
+      nodes: ["node1"],
+    });
+    const router = await call("POST", "/targets/rt/key", "admin", { unlock });
+    expect(str(router.body.installLine)).toBe(
+      `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ${str(router.body.publicLine)}`,
+    );
+    expect(router.body.notes).toContain(
+      "This type covers Asuswrt-Merlin. Dropbear does not support from=, so the router does not limit this key by address.",
+    );
     expect(made.body.publicLine).toMatch(/^ssh-ed25519 \S+ claude-rc:nas$/);
     expect(made.body.fingerprint).toMatch(/^SHA256:/);
     expect(targets.get("nas")?.keyFingerprint).toBe(made.body.fingerprint as unknown as string);
@@ -1424,6 +1446,7 @@ describe("PATCH /targets/:id changes the nodes", () => {
   const made = async (
     kind: "external" | "managed",
     replies2: Record<string, { status: number; body?: unknown } | Error> = AUTH_OK,
+    systemType: "linux" | "dropbear" = "linux",
   ) => {
     const ctx = await setup({ replies2 });
     await ctx.call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
@@ -1432,7 +1455,7 @@ describe("PATCH /targets/:id changes the nodes", () => {
     const created = await ctx.call("POST", "/targets", "admin", {
       id,
       account: "root",
-      systemType: "linux",
+      systemType,
       nodes: ["node1"],
       ...(kind === "managed" ? { managedHost: "node2" } : { address: "10.0.0.5" }),
     });
@@ -1486,6 +1509,29 @@ describe("PATCH /targets/:id changes the nodes", () => {
     const script = await call("GET", "/targets/nas/provision");
     expect(script.body.script).toContain("192.168.1.20");
     expect(script.body.script).toContain(expected);
+  });
+
+  test("an external dropbear target: the line has no from, and a change of the nodes gives no new line", async () => {
+    const { call, targets, keys } = await made("external", AUTH_OK, "dropbear");
+    const line = `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ${keys.publicLine("nas")}`;
+    const before = await call("GET", "/targets/nas/provision");
+    expect(str(before.body.script)).toContain(line);
+    expect(str(before.body.script)).not.toContain("from=");
+    const patched = await call("PATCH", "/targets/nas", "admin", { nodes: ["node1", "node2"] });
+    expect(patched.status).toBe(200);
+    expect(targets.get("nas")?.nodes).toEqual(["node1", "node2"]);
+    expect(patched.body.installLine).toBeUndefined();
+    const after = await call("GET", "/targets/nas/provision");
+    expect(after.body.script).toBe(before.body.script);
+  });
+
+  test("a managed dropbear target sends the line without from to its node", async () => {
+    const { call, node2 } = await made("managed", AUTH_OK, "dropbear");
+    expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] })).status).toBe(200);
+    const sent = node2.calls.find((item) => item.path.endsWith("/authorize"));
+    expect(str((sent?.json as { line: string }).line)).toStartWith(
+      "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 ",
+    );
   });
 
   test("the new list can leave out a node, and a state in the same body applies too", async () => {
@@ -2174,6 +2220,17 @@ describe("the provisioner routes: add, change of nodes and retire", () => {
     const accepted = await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"], confirm: true });
     expect(accepted.status).toBe(202);
     expect(targets.get("nas")?.nodes).toEqual(["node1"]);
+  });
+
+  test("PATCH of a dropbear target with a provisioner needs no confirm: the line has no address to lose", async () => {
+    const { call, provisionerTarget, targets } = await setup({ local: {} });
+    await provisionerTarget("rt", ["node1"], "dropbear");
+    const accepted = await call("PATCH", "/targets/rt", "admin", { nodes: ["node2"] });
+    expect(accepted.status).toBe(202);
+    expect(accepted.body.maintenance).toMatchObject({
+      maintenance: { action: "sources", toSources: ["192.168.1.20"] },
+    });
+    expect(targets.get("rt")?.nodes).toEqual(["node1"]);
   });
 
   test("PATCH with state and nodes together is refused for a target with a provisioner, and state alone works", async () => {
