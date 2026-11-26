@@ -375,3 +375,37 @@ describe("GrantStore maintenance", () => {
     expect(status(() => store.finish(plain.id, "admin"))).toBe(409);
   });
 });
+
+describe("GrantStore maintenance sign cap", () => {
+  const local = { nodeId: "local", instanceId: "maintenance", targetId: "nas" };
+
+  test("a maintenance grant signs once for each planned run, then refuses with one audit line each", () => {
+    const { store, audit } = setup();
+    const grant = store.request({ ...local, maintenance: { action: "uninstall", fromNodes: [], fromSources: [] } });
+    const { key, calls } = fakeKey();
+    store.approve(grant.id, "admin", key);
+    store.sign(grant.id, key.publicBlob, new Uint8Array([1]));
+    expect(status(() => store.sign(grant.id, key.publicBlob, new Uint8Array([2])))).toBe(403);
+    expect(calls.sign).toBe(1);
+    expect(
+      audit.filter((line) => line.includes(" event=sign-refused ") && line.endsWith(" reason=run-cap")),
+    ).toHaveLength(1);
+  });
+
+  test("install and sources sign three times, and a plain grant has no cap", () => {
+    const { store } = setup();
+
+    for (const action of ["install", "sources"] as const) {
+      const grant = store.request({ ...local, maintenance: { action, fromNodes: [], fromSources: [] } });
+      const { key } = fakeKey(action[0]);
+      store.approve(grant.id, "admin", key);
+      for (let round = 0; round < 3; round++) store.sign(grant.id, key.publicBlob, new Uint8Array([round]));
+      expect(status(() => store.sign(grant.id, key.publicBlob, new Uint8Array([9])))).toBe(403);
+    }
+
+    const plain = store.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    const { key } = fakeKey("p");
+    store.approve(plain.id, "admin", key);
+    for (let round = 0; round < 10; round++) store.sign(plain.id, key.publicBlob, new Uint8Array([round]));
+  });
+});

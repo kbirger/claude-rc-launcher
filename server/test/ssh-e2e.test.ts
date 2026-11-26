@@ -617,6 +617,15 @@ describe("SSH maintenance with a real sshd", () => {
         expect(text).toContain("event=run command=sources code=0 answer=sources");
         expect(text).toContain("event=run command=uninstall code=0 answer=uninstall");
         expect(text).not.toContain("10.9.9.9");
+        // A restore-failed line holds a fixed word and the exit code only, never the text of ssh.
+        for (const line of audit.filter((item) => item.includes("event=restore-failed")))
+          expect(line).toMatch(/ event=restore-failed code=\S+$/);
+        // The real ssh signs once for each run, so the sign cap of a grant (sources 3, uninstall 1) never stops a run.
+        const signed = (id: string) =>
+          audit.filter((line) => line.includes(`grant=${id} `) && line.includes(" event=signed ")).length;
+        expect(signed(change.id)).toBe(2);
+        expect(signed(retire.id)).toBe(1);
+        expect(audit.some((line) => line.includes("event=sign-refused"))).toBe(false);
         expect(text).not.toContain(provisioner.publicLine.split(" ")[1]);
       } finally {
         off();

@@ -12,6 +12,7 @@ import { TargetError, TargetStore } from "../src/sshtargets";
 import type { Target } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
 import { fakeTimers } from "./faketimers";
+import { rejection } from "./support";
 
 const unlock: UnlockSecret = { method: "passphrase", secret: new TextEncoder().encode("correct horse") };
 const wrong: UnlockSecret = { method: "passphrase", secret: new TextEncoder().encode("wrong") };
@@ -1321,7 +1322,11 @@ describe("SshService maintenance", () => {
     const result = await service.approve(grant.id, "admin", unlock);
     expect(runner.commands()).toEqual(["sources 192.168.1.10", "on"]);
     expect(result).toMatchObject({ state: "ended", endReason: "expired", maintenance: { result: "failed" } });
-    expect(result.maintenance?.detail).toBe("the grant ended before the run was over");
+    // The sources step had finished: the target holds the list, and the result says so.
+    expect(result.maintenance?.detail).toBe(
+      "the target already holds part of the change. the grant ended before the run was over",
+    );
+    expect(result.maintenance?.changed).toBe(true);
     expect(finish).not.toHaveBeenCalled();
     expect(service.maintenanceFor("nas")).toBeUndefined();
   });
@@ -1446,6 +1451,209 @@ describe("SshService maintenance", () => {
     gate.open?.();
     expect((await run).maintenance?.result).toBe("done");
     expect(service.maintenanceFor("nas")).toBeUndefined();
+  });
+});
+
+describe("SshService maintenance commit, changed and the sign cap", () => {
+  const blobOf = (keys: SshKeyStore) =>
+    new Uint8Array(Buffer.from(keys.publicLine("nas", "provisioner").split(" ")[1] ?? "", "base64"));
+
+  /** Each run signs once through the grant store, as ssh does through the agent of the grant. */
+  function signingRunner(
+    box: { grants?: GrantStore; keys?: SshKeyStore; signed: number },
+    inner: ReturnType<typeof fakeRunner>,
+  ): ReturnType<typeof fakeRunner> {
+    const runner: SshRunner = (...args) => {
+      const grants = box.grants;
+      const keys = box.keys;
+      if (!grants || !keys) throw new Error("not set up");
+      const active = grants.list().find((grant) => grant.maintenance && grant.state === "active");
+      if (!active) return Promise.resolve({ code: 255, stdout: "", stderr: "agent refused operation\n" });
+
+      try {
+        grants.sign(active.id, blobOf(keys), new Uint8Array([1, 2, 3]));
+        box.signed++;
+      } catch {
+        return Promise.resolve({ code: 255, stdout: "", stderr: "agent refused operation\n" });
+      }
+
+      return inner.runner(...args);
+    };
+
+    return { ...inner, runner };
+  }
+
+  async function signingSetup(replies: Parameters<typeof fakeRunner>[0] = {}) {
+    const box: { grants?: GrantStore; keys?: SshKeyStore; signed: number } = { signed: 0 };
+    const inner = fakeRunner(replies);
+    // The main line is on the target with the old list.
+    inner.setPresent(true, "192.168.1.10");
+    const made = await maintenanceSetup({ runner: signingRunner(box, inner) });
+    box.grants = made.grants;
+    box.keys = made.keys;
+    return { ...made, inner, box };
+  }
+
+  test("a good run and a commit that fails: the old list goes back in the same grant and the error comes out", async () => {
+    const { service, grants, inner, box, audit } = await signingSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    const states: (string | undefined)[] = [];
+    const failure = await rejection(
+      service.approve(grant.id, "admin", unlock, undefined, {
+        commit: (current) => {
+          states.push(grants.get(current.id)?.state);
+          return Promise.reject(new Error("setNodes failed"));
+        },
+      }),
+    );
+    expect(failure.message).toBe("setNodes failed");
+    expect(states).toEqual(["active"]);
+    expect(inner.commands()).toEqual(["sources 192.168.1.20", "status", "sources 192.168.1.10"]);
+    expect(box.signed).toBe(3);
+    expect(grants.get(grant.id)).toMatchObject({
+      state: "ended",
+      endReason: "done",
+      maintenance: { result: "failed", changed: false, detail: "the change was not stored: setNodes failed" },
+    });
+    expect(audit.some((line) => line.endsWith("event=restored"))).toBe(true);
+    expect(service.maintenanceFor("nas")).toBeUndefined();
+  });
+
+  test("a commit that works: no restore, and the grant ends with done", async () => {
+    const { service, grants, inner } = await signingSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    let commits = 0;
+    const done = await service.approve(grant.id, "admin", unlock, undefined, {
+      commit: () => {
+        commits++;
+        return Promise.resolve();
+      },
+    });
+    expect(commits).toBe(1);
+    expect(inner.commands()).toEqual(["sources 192.168.1.20", "status"]);
+    expect(done).toMatchObject({ state: "ended", endReason: "done", maintenance: { result: "done", changed: true } });
+    expect(grants.get(grant.id)?.state).toBe("ended");
+  });
+
+  test("no commit after a failed run", async () => {
+    const { service } = await signingSetup({ status: { code: 0, stdout: "ok status absent 192.168.1.20\n" } });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    let commits = 0;
+    const result = await service.approve(grant.id, "admin", unlock, undefined, {
+      commit: () => {
+        commits++;
+        return Promise.resolve();
+      },
+    });
+    expect(commits).toBe(0);
+    expect(result.maintenance).toMatchObject({ result: "failed", changed: false });
+  });
+
+  test("a restore that fails is audited with a fixed word and the code, and the text stays in the detail", async () => {
+    const { service, grants, audit } = await signingSetup({
+      sources: (command) =>
+        command === "sources 192.168.1.10"
+          ? { code: 255, stderr: "ssh: connect to host 10.0.0.5 port 22: Connection refused\n" }
+          : { code: 0, stdout: `ok ${command}\n` },
+      status: { code: 0, stdout: "ok status present 192.168.1.20\n" },
+    });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "admin" });
+    const failure = await rejection(
+      service.approve(grant.id, "admin", unlock, undefined, { commit: () => Promise.reject(new Error("disk full")) }),
+    );
+    expect(failure.message).toBe("disk full");
+    const work = grants.get(grant.id)?.maintenance;
+    expect(work).toMatchObject({ result: "failed", changed: true });
+    expect(
+      work?.detail?.startsWith("the target already holds part of the change. the old list could not be put back"),
+    ).toBe(true);
+    expect(work?.detail).toContain("10.0.0.5");
+    const failed = audit.filter((line) => line.includes("event=restore-failed"));
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatch(/ event=restore-failed code=255$/);
+    expect(audit.join("\n")).not.toContain("10.0.0.5");
+    expect(grants.get(grant.id)?.state).toBe("ended");
+  });
+
+  test("a commit that fails on uninstall says that the target changed", async () => {
+    const { service, grants } = await signingSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    await rejection(
+      service.approve(grant.id, "admin", unlock, undefined, { commit: () => Promise.reject(new Error("no")) }),
+    );
+    expect(grants.get(grant.id)?.maintenance).toMatchObject({ result: "failed", changed: true });
+  });
+
+  test("sources works, then the grant ends before status: failed with changed", async () => {
+    const box: { grants?: GrantStore } = {};
+    const runner = fakeRunner({
+      sources: (command) => {
+        const active = box.grants?.list().find((grant) => grant.maintenance && grant.state === "active");
+        if (active) box.grants?.revoke(active.id, "admin");
+        return { code: 0, stdout: `ok ${command}\n` };
+      },
+    });
+    const made = await maintenanceSetup({ runner });
+    box.grants = made.grants;
+    const grant = made.service.requestMaintenance({ targetId: "nas", action: "sources", toNodes: ["node2"], by: "a" });
+    const result = await made.service.approve(grant.id, "admin", unlock);
+    expect(runner.commands()).toEqual(["sources 192.168.1.20"]);
+    expect(result).toMatchObject({
+      state: "ended",
+      endReason: "revoked",
+      maintenance: { result: "failed", changed: true },
+    });
+    expect(result.maintenance?.detail?.startsWith("the target already holds part of the change")).toBe(true);
+  });
+
+  test("a failure before any changing step has changed false", async () => {
+    const runner = fakeRunner({ sources: { code: 4, stderr: "error guard nothing was written\n" } });
+    const { service } = await maintenanceSetup({ runner });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "install", by: "admin" });
+    const result = await service.approve(grant.id, "admin", unlock);
+    expect(result.maintenance).toMatchObject({ result: "failed", changed: false });
+    expect(result.maintenance?.detail).toContain("guard");
+  });
+
+  test("the grant gives no more signatures than its planned runs", async () => {
+    const { service, grants, keys, audit } = await signingSetup();
+    const extra: string[] = [];
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    await service.approve(grant.id, "admin", unlock, undefined, {
+      commit: () => {
+        // A root process on the hub that reaches the socket asks the agent once more while the grant is active.
+        try {
+          grants.sign(grant.id, blobOf(keys), new Uint8Array([4]));
+        } catch (error) {
+          extra.push(error instanceof GrantError ? `${error.status} ${error.message}` : "other");
+        }
+
+        return Promise.resolve();
+      },
+    });
+    expect(extra).toEqual(["403 the grant has no run left"]);
+    expect(
+      audit.filter((line) => line.includes(" event=sign-refused ") && line.endsWith(" reason=run-cap")),
+    ).toHaveLength(1);
+  });
+
+  test("a pending maintenance grant whose target went away ends at approve", async () => {
+    const { service, targets, grants } = await maintenanceSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    await targets.remove("nas");
+    expect((await refusal(() => service.approve(grant.id, "admin", unlock))).status).toBe(404);
+    expect(grants.get(grant.id)?.state).toBe("ended");
+    expect(service.maintenanceFor("nas")).toBeUndefined();
+  });
+
+  test("a finish that throws still ends the grant with done, not revoked", async () => {
+    const { service, grants } = await maintenanceSetup();
+    const grant = service.requestMaintenance({ targetId: "nas", action: "uninstall", by: "admin" });
+    spyOn(grants, "finish").mockImplementation(() => {
+      throw new Error("boom");
+    });
+    await service.approve(grant.id, "admin", unlock);
+    expect(grants.get(grant.id)).toMatchObject({ state: "ended", endReason: "done", maintenance: { result: "done" } });
   });
 });
 

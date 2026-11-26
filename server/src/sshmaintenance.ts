@@ -121,6 +121,9 @@ export function createRunner(options: { path?: string } = {}): SshRunner {
     const out = capped(child.stdout);
     const err = capped(child.stderr);
     const run = { timedOut: false };
+    // The kill reaches the ssh process only, by its own handle. That is enough: with this configuration ssh starts no
+    // child (no ProxyCommand, no LocalCommand, no ControlMaster). A child that a hub crash leaves behind can never sign
+    // again: the agent socket lives in the hub process and goes with it, and the grant store holds the key in memory only.
     const timer = setTimeout(() => {
       run.timedOut = true;
       child.kill("SIGKILL");
