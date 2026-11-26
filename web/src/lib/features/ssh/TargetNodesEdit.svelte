@@ -17,8 +17,8 @@
     ondone,
   }: {
     target: Target;
-    /** The nodes of the status: the ones with access on are offered. */
-    nodes: NodeStatus[];
+    /** The nodes of the status: the ones with access on are offered. Undefined while the status loads. */
+    nodes: NodeStatus[] | undefined;
     hosts: HostInfo[] | undefined;
     ondone: () => void;
   } = $props();
@@ -26,7 +26,10 @@
   const client = useQueryClient();
   const save = createMutation(() => patchTargetNodesMutation(client));
 
-  const enabled = $derived(nodes.filter((node) => node.enabled).map((node) => node.host));
+  const enabled = $derived((nodes ?? []).filter((node) => node.enabled).map((node) => node.host));
+  // A target that has a key needs one node with access, because its key line holds the source addresses. Without a key,
+  // the hub accepts an empty list.
+  const hasKey = $derived(target.keyFingerprint !== undefined);
   // svelte-ignore state_referenced_locally
   let picked = $state<string[]>([...target.nodes]);
   let problem = $state("");
@@ -36,7 +39,7 @@
   const changed = $derived(
     picked.length !== target.nodes.length || picked.some((host) => !target.nodes.includes(host)),
   );
-  const valid = $derived(picked.length > 0 && changed);
+  const valid = $derived(nodes !== undefined && changed && (picked.length > 0 || !hasKey));
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -73,8 +76,8 @@
     </Alert.Root>
     {#if result.installLine}
       <p class="text-sm">
-        The key line changed. On the target, replace the old line that ends with claude-rc:{target.id} in the authorized_keys
-        file of {target.account} with this line.
+        The key line changed. On the target, replace the old line that ends with claude-rc:{target.id} in the authorized keys
+        file of the account {target.account} with this line.
       </p>
       <code class="block rounded-lg border bg-muted p-3 font-mono text-xs break-all select-all">
         {result.installLine}
@@ -91,13 +94,24 @@
   </div>
 {:else}
   <form class="grid min-w-0 gap-3" onsubmit={submit}>
-    <NodePicker nodes={enabled} {hosts} bind:picked legend="Nodes that can reach {target.id}" off={target.nodes} />
-    {#if target.managedHost !== undefined}
-      <p class="text-xs text-muted-foreground">
-        The hub updates the key line on the machine. If that fails, the nodes stay as they are.
-      </p>
+    {#if nodes === undefined}
+      <p class="text-sm text-muted-foreground">Loading the nodes...</p>
     {:else}
-      <p class="text-xs text-muted-foreground">After the save, you get the new key line to install on the target.</p>
+      <NodePicker nodes={enabled} {hosts} bind:picked legend="Nodes that can reach {target.id}" off={target.nodes} />
+      {#if !hasKey}
+        <p class="text-xs text-muted-foreground">
+          This target has no key yet. The list is saved and nothing else changes.
+        </p>
+      {:else if target.managedHost !== undefined}
+        <p class="text-xs text-muted-foreground">
+          The hub updates the key line on the machine. If that fails, the nodes stay as they are.
+        </p>
+      {:else}
+        <p class="text-xs text-muted-foreground">After the save, you get the new key line to install on the target.</p>
+      {/if}
+      {#if hasKey}
+        <p class="text-xs text-muted-foreground">At least one node must have access turned on.</p>
+      {/if}
     {/if}
     {#if problem}
       <Alert.Root variant="destructive" role="alert"><Alert.Description>{problem}</Alert.Description></Alert.Root>

@@ -210,7 +210,7 @@ To change the nodes of a target, run the command `ssh target update`. It needs t
 claude-rc ssh target update slon --node local,pi
 ```
 
-The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. For an external target, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
+The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. A target without a key has no line, and the command says so. For an external target, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
 
 ## Instance settings
 

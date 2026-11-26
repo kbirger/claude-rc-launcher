@@ -114,12 +114,7 @@
             </Button>
           </div>
           {#if editing === target.id}
-            <TargetNodesEdit
-              {target}
-              nodes={status.data?.nodes ?? []}
-              hosts={hosts.data}
-              ondone={() => (editing = null)}
-            />
+            <TargetNodesEdit {target} nodes={status.data?.nodes} hosts={hosts.data} ondone={() => (editing = null)} />
           {/if}
         </li>
       {/each}

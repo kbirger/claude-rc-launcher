@@ -311,9 +311,11 @@ An admin can change the nodes of a target after it exists. The target keeps its 
 
 The `from=` part of the key line lists the source addresses of the nodes. A new list can change it.
 
-- For a managed target, the hub installs the new line on the machine. The install replaces the old line of the same key, so no second line stays. It keeps the file mode and works for `authorized_keys` and for a key file.
-- When the install fails, the hub puts the old list back and answers with 502. The text says that the key line was not updated.
-- For an external target, the answer holds the new line in `installLine`. The web UI shows it with a Copy button, and the command prints it. Replace the old line that ends with `claude-rc:<target id>` with the new line.
+- For a managed target with a key, the hub installs the line before it stores the list. The install replaces the old line of the same key, so no second line stays. It keeps the file mode and works for `authorized_keys` and for a key file.
+- The hub asks the node every time, because the line on the machine can be out of date. The node writes nothing when the exact line is there.
+- When the install fails, the old list stays, no grant changes and the answer is 502. The text says that the key line was not updated.
+- A target without a key has no line yet. The hub only saves the list, and an empty list is accepted.
+- For an external target with a key, the answer holds the new line in `installLine`. The web UI shows it with a Copy button, and the command prints it. Replace the old line that ends with `claude-rc:<target id>` with the new line.
 - The route `GET /api/ssh/targets/<id>/provision` always gives the line for the current list.
 
 ### Retire a target
