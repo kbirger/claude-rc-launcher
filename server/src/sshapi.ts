@@ -5,7 +5,7 @@ import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";
-import type { Grant, GrantStore } from "./sshgrants";
+import type { Grant, GrantStore, Maintenance } from "./sshgrants";
 import { KeyError } from "./sshkeystore";
 import type { KeySlot, SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
@@ -53,6 +53,20 @@ export interface SshApiOptions {
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/** The work of a maintenance grant: the action, the lists as plain strings and the result. No key, no secret. */
+function maintenanceProjection(work: Maintenance) {
+  return {
+    action: work.action,
+    fromNodes: [...work.fromNodes],
+    ...(work.toNodes ? { toNodes: [...work.toNodes] } : {}),
+    fromSources: [...work.fromSources],
+    ...(work.toSources ? { toSources: [...work.toSources] } : {}),
+    ...(work.result !== undefined ? { result: work.result } : {}),
+    ...(work.detail !== undefined ? { detail: work.detail } : {}),
+    ...(work.changed !== undefined ? { changed: work.changed } : {}),
+  };
+}
+
 /** The grant without anything that the page does not need. */
 function projection(grant: Grant) {
   return {
@@ -69,6 +83,7 @@ function projection(grant: Grant) {
     ...(grant.endsAt !== undefined ? { endsAt: grant.endsAt } : {}),
     ...(grant.approvedBy !== undefined ? { approvedBy: grant.approvedBy } : {}),
     ...(grant.endReason !== undefined ? { endReason: grant.endReason } : {}),
+    ...(grant.maintenance ? { maintenance: maintenanceProjection(grant.maintenance) } : {}),
   };
 }
 

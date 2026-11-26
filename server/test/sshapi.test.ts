@@ -888,6 +888,32 @@ describe("grants", () => {
     expect(listed.body[0]).toMatchObject({ id: grant.id, nodeId: "node1", instanceId: "inst1", state: "pending" });
   });
 
+  test("GET /grants shows the maintenance field with plain lists only", async () => {
+    const { call, grants, readyTarget } = await setup();
+    await readyTarget();
+    const made = grants.request({
+      nodeId: "local",
+      instanceId: "maintenance",
+      targetId: "nas",
+      maintenance: {
+        action: "sources",
+        fromNodes: ["node1"],
+        toNodes: ["node2"],
+        fromSources: ["1.1.1.1"],
+        toSources: ["2.2.2.2"],
+      },
+    });
+    const listed = await call("GET", "/grants");
+    const item = listed.body.find((entry: { id: string }) => entry.id === made.id);
+    expect(item.maintenance).toEqual({
+      action: "sources",
+      fromNodes: ["node1"],
+      toNodes: ["node2"],
+      fromSources: ["1.1.1.1"],
+      toSources: ["2.2.2.2"],
+    });
+  });
+
   test("POST /grants/:id/approve with a wrong unlock gives 403 and the grant stays pending", async () => {
     const { call, grants, readyTarget, request, node1 } = await setup();
     await readyTarget();

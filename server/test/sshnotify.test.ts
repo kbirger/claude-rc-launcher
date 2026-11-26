@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { Grant } from "../src/sshgrants";
-import { closeMessage, createRequestNotifier, requestMessage } from "../src/sshnotify";
+import {
+  closeMessage,
+  createMaintenanceNotifier,
+  createRequestNotifier,
+  maintenanceMessage,
+  requestMessage,
+} from "../src/sshnotify";
 import type { PushMessage } from "../src/webpush";
 import type { Target } from "../src/sshtargets";
 
@@ -150,5 +156,50 @@ describe("createRequestNotifier with a grant that is answered during the lookup"
     release([{ id: "inst1", name: "work" }]);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(sent.map((m) => m.close === true)).toEqual([true]);
+  });
+});
+
+describe("maintenanceMessage", () => {
+  const work = (action: "install" | "sources" | "uninstall") =>
+    grant({
+      nodeId: "local",
+      instanceId: "maintenance",
+      reason: "secret reason",
+      maintenance: {
+        action,
+        fromNodes: ["node1"],
+        toNodes: ["node9"],
+        fromSources: ["192.168.1.10"],
+        toSources: ["192.168.9.9"],
+      },
+    });
+
+  test("maintenanceMessage names the target and the action", () => {
+    expect(maintenanceMessage(work("sources"), target)).toEqual({
+      title: "SSH maintenance requested",
+      body: "nas: change of nodes",
+      url: "/ssh",
+      tag: "ssh-g1",
+      grantId: "g1",
+    });
+    expect(maintenanceMessage(work("uninstall"), target).body).toBe("nas: remove the key lines (retire)");
+    expect(maintenanceMessage(work("install"), target).body).toBe("nas: put the key line back");
+  });
+
+  test("maintenanceMessage holds no address and no node id", () => {
+    const text = JSON.stringify(maintenanceMessage(work("sources"), target));
+    for (const bad of ["10.0.0.5", "192.168", "node1", "node9", "secret reason", "AAAA"])
+      expect(text).not.toContain(bad);
+  });
+
+  test("the maintenance notifier sends once and skips a grant that is not pending", () => {
+    const sent: PushMessage[] = [];
+    createMaintenanceNotifier({ send: (message) => sent.push(message) })(work("install"), target);
+    expect(sent).toHaveLength(1);
+    createMaintenanceNotifier({ send: (message) => sent.push(message), isPending: () => false })(
+      work("install"),
+      target,
+    );
+    expect(sent).toHaveLength(1);
   });
 });

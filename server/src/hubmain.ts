@@ -39,7 +39,7 @@ import { SshKeyStore } from "./sshkeystore";
 import { defaultRunner } from "./sshmaintenance";
 import { createLocalSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
-import { closeMessage, createRequestNotifier } from "./sshnotify";
+import { closeMessage, createMaintenanceNotifier, createRequestNotifier } from "./sshnotify";
 import { SshService } from "./sshservice";
 import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
@@ -317,6 +317,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     hasSsh: () => Bun.which("ssh") !== null,
     localReady: () => localSsh.client !== undefined,
     notifyClose: (grant) => void push.send(closeMessage(grant)),
+    notifyMaintenance: createMaintenanceNotifier({
+      send: (message) => push.send(message),
+      isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
+    }),
     notify: createRequestNotifier({
       send: (message) => push.send(message),
       isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
