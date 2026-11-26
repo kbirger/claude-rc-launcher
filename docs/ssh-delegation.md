@@ -297,6 +297,25 @@ Access ends in these ways:
 
 Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again. A session cannot request a `draft` target, so the target is not usable until the test passes.
 
+### Change the nodes of a target
+
+An admin can change the nodes of a target after it exists. The target keeps its key and its state.
+
+- In the web UI, press Edit nodes on the target, check the nodes, and press Save. Only nodes with access turned on are offered. A node that the target has now stays on the list, so that you can take it out.
+- On the command line, run `claude-rc ssh target update <id> --node <id>[,<id>...]`. The list replaces the old list.
+- A client can send `PATCH /api/ssh/targets/<id>` with the body `{"nodes": ["<host id>", ...]}`. The body can also carry `state`, and it needs at least one of the two fields.
+- The hub refuses a host id that is not valid, a duplicate and an unknown host. A list has at most 200 nodes. The answer is 400.
+- If the target has a key, one node of the new list needs access with a source address. If none has, the answer is 409.
+- The hub tells the old nodes and the new nodes about the new list.
+- When a node leaves the list, the pending and the active grants of this target on that node end. Grants on the other nodes stay.
+
+The `from=` part of the key line lists the source addresses of the nodes. A new list can change it.
+
+- For a managed target, the hub installs the new line on the machine. The install replaces the old line of the same key, so no second line stays. It keeps the file mode and works for `authorized_keys` and for a key file.
+- When the install fails, the hub puts the old list back and answers with 502. The text says that the key line was not updated.
+- For an external target, the answer holds the new line in `installLine`. The web UI shows it with a Copy button, and the command prints it. Replace the old line that ends with `claude-rc:<target id>` with the new line.
+- The route `GET /api/ssh/targets/<id>/provision` always gives the line for the current list.
+
 ### Retire a target
 
 A retire deletes the target and its key. The target does not stay in the list, and the hub keeps no record of it. The audit log still shows who retired the target.

@@ -365,7 +365,7 @@ On the first visit, the page asks you to choose an unlock method, a passkey or a
 
 - Access requests. Each request shows the target, the node, the instance and the time. A pending request has Approve and Deny buttons. An active grant has a Revoke button. The list refreshes every 5 seconds.
 - Nodes. A switch turns SSH access on for a node. Enter the source address that targets see when the node connects.
-- Targets. Each target shows its state: `draft`, `ready` or `disabled`. The buttons are Continue setup, Disable, Enable and Retire. A retire deletes the target. A notice then tells what happened to the key line on the machine.
+- Targets. Each target shows its state: `draft`, `ready` or `disabled`. The buttons are Continue setup, Disable, Enable, Edit nodes and Retire. Edit nodes needs the `admin` role. It lists the nodes with access turned on. After you press Save, an external target shows the new key line with a Copy button. Install it in place of the old line. A managed target gets the new line from the hub. A retire deletes the target. A notice then tells what happened to the key line on the machine.
 - Add target. This opens a wizard with these steps: the form, the key, the host key, the install and the test. The form has an optional Key file field for a managed target of the type `linux` or `synology`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
 - Lost your passkey? Recover. This button starts a recovery with the recovery code. When targets wait for a re-lock, a banner names how many, and its button opens the same flow. Read [SSH delegation](ssh-delegation.md#recover-with-the-recovery-code).
 
