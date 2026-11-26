@@ -71,18 +71,25 @@
     target.managedHost === undefined && target.provisionerFingerprint !== undefined;
   const maintenanceOf = (target: Target) =>
     (grants.data ?? []).filter((grant) => grant.targetId === target.id && grant.maintenance !== undefined);
-  /** The request of this target that waits for the approval of the owner. */
-  const pendingOf = (target: Target) => maintenanceOf(target).find((grant) => grant.state === "pending");
-  /** A retire that ended without a retire: the target stays disabled with both keys. */
+  /** The request of this target that is open: it waits for the approval, or its run is in progress. */
+  const pendingOf = (target: Target) =>
+    maintenanceOf(target).find((grant) => grant.state === "pending" || grant.state === "active");
+  /**
+   * A retire that ended without a retire: the target stays disabled with both keys. Only the newest grant of the
+   * target counts, of any kind: a later grant of any kind means that the owner has moved on.
+   */
   const stuckRetire = (target: Target) => {
     if (!hasProvisioner(target) || target.state !== "disabled" || pendingOf(target)) return undefined;
-    const last = maintenanceOf(target)
-      .filter((grant) => grant.maintenance?.action === "uninstall")
+    const newest = (grants.data ?? [])
+      .filter((grant) => grant.targetId === target.id)
       .sort((left, right) => right.requestedAt - left.requestedAt)[0];
-    return last?.state === "ended" ? last : undefined;
+    return newest?.state === "ended" && newest.maintenance?.action === "uninstall" ? newest : undefined;
   };
+  // The text of the hub when it refused the retire request, by target id. The owner can still retire without cleanup.
+  let refused = $state<Record<string, string>>({});
   const stuckText = (grant: Grant) =>
     `The request to retire this target ${ENDED[grant.endReason ?? ""] ?? "ended"}. Nothing was removed from the machine. The target is disabled and keeps its keys.`;
+  const localOff = () => status.data?.nodes.find((node) => node.host === "local")?.enabled === false;
   /** The provisioner line allows the source address of the node local as it was at the install. */
   const staleSource = (target: Target) => {
     const local = status.data?.nodes.find((node) => node.host === "local");
@@ -98,6 +105,7 @@
     `The request to ${ACTIONS[action]} for ${target.id} waits for your approval. Nothing has changed yet. Tap Approve on the card of ${target.id}, or find the request in the list of access requests.`;
 
   const handleRetire = (target: Target, answer: Awaited<ReturnType<typeof retire.mutateAsync>>) => {
+    delete refused[target.id];
     notice = isMaintenanceAnswer(answer) ? waitingNotice(target, "uninstall") : retireNotice(answer);
   };
 
@@ -109,7 +117,16 @@
         : "The hub ends the grants of this target and deletes the target and its key. For a managed target, the hub also tries to remove the key line from the machine. To use the target again, add it as a new target.",
       label: "Retire",
       destructive: true,
-      run: () => void run(async () => handleRetire(target, await retire.mutateAsync({ id: target.id }))),
+      run: () =>
+        void run(async () => {
+          try {
+            handleRetire(target, await retire.mutateAsync({ id: target.id }));
+          } catch (error) {
+            // The hub refused the request (409 or 501): no request exists, so the owner needs a way out.
+            if (!hasProvisioner(target)) throw error;
+            refused[target.id] = error instanceof Error ? error.message : "The hub refused the retire.";
+          }
+        }),
     });
 
   const askRetireWithoutCleanup = (target: Target) =>
@@ -128,6 +145,17 @@
       notice = waitingNotice(target, "install");
     });
 </script>
+
+{#snippet retireWays(target: Target, again = true)}
+  <div class="flex flex-wrap gap-2">
+    {#if again}
+      <Button size="touch" onclick={() => askRetire(target)}>Retire again</Button>
+    {/if}
+    <Button variant="outline" size="touch" class="text-destructive" onclick={() => askRetireWithoutCleanup(target)}>
+      Retire without cleanup
+    </Button>
+  </div>
+{/snippet}
 
 <section class="grid gap-3">
   <h3 class="font-heading text-base font-bold">Targets</h3>
@@ -184,29 +212,37 @@
           {#if stuckRetire(target)}
             <div data-stuck-retire class="grid gap-2 rounded-lg border border-destructive/40 p-3 text-sm">
               <span class="[overflow-wrap:anywhere]">{stuckText(stuckRetire(target)!)}</span>
-              <div class="flex flex-wrap gap-2">
-                <Button variant="outline" size="touch" onclick={() => askRetire(target)}>Retire again</Button>
-                <Button
-                  variant="outline"
-                  size="touch"
-                  class="text-destructive"
-                  onclick={() => askRetireWithoutCleanup(target)}
-                >
-                  Retire without cleanup
-                </Button>
-              </div>
+              {@render retireWays(target)}
+            </div>
+          {/if}
+          {#if refused[target.id]}
+            <div data-retire-refused class="grid gap-2 rounded-lg border border-destructive/40 p-3 text-sm">
+              <span class="[overflow-wrap:anywhere]">The hub did not start the retire: {refused[target.id]}</span>
+              <span class="text-muted-foreground">Nothing was removed. You can retire without cleanup.</span>
+              {@render retireWays(target, false)}
             </div>
           {/if}
           {#if staleSource(target)}
             <Alert.Root variant="destructive" role="alert" data-stale-source>
               <Alert.Description class="grid gap-1 [overflow-wrap:anywhere]">
-                <span>
-                  The source address of the node local changed after the provisioner was installed. The hub cannot
-                  change this target until you install the provisioner again. On your own machine, run:
-                </span>
-                <code class="block rounded border bg-muted p-2 font-mono text-xs select-all">
-                  claude-rc ssh target provisioner {target.id} --identity &lt;file&gt;
-                </code>
+                {#if localOff()}
+                  <span>
+                    Access is turned off for the node local. The hub reaches this target through it, so it cannot change
+                    this target now. Turn on access for local, with its source address, in the list of nodes above.
+                  </span>
+                {:else}
+                  <span>
+                    The source address of the node local changed after the provisioner was installed. The hub cannot
+                    change this target until you install the provisioner again. On your own machine, run:
+                  </span>
+                  <code class="block rounded border bg-muted p-2 font-mono text-xs select-all">
+                    claude-rc ssh target provisioner {target.id} --identity &lt;file&gt;
+                  </code>
+                {/if}
+                {#if !stuckRetire(target) && !refused[target.id]}
+                  <span>If you want to give up on this target, you can retire it without cleanup.</span>
+                  {@render retireWays(target, false)}
+                {/if}
               </Alert.Description>
             </Alert.Root>
           {/if}

@@ -533,3 +533,116 @@ test("the target card shows the stale source warning with the repair command", a
   });
   expect(squash(warning)).toContain("claude-rc ssh target provisioner nas --identity <file>");
 });
+
+const clickRetire = async (shown: HTMLElement) => {
+  button("Retire", shown)!.click();
+  const dialog = await vi.waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  button("Retire", dialog)!.click();
+};
+
+test.each([
+  [409, "the source address of local changed: install the provisioner again"],
+  [501, "the node local has no ssh"],
+])("a retire that the hub refuses with %i shows its text and Retire without cleanup", async (code, text) => {
+  reply("DELETE /api/ssh/targets/nas", code, { error: text });
+  const shown = await show([prov()]);
+  await clickRetire(shown);
+  const box = await vi.waitFor(() => {
+    const found = shown.querySelector<HTMLElement>("[data-retire-refused]");
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(squash(box)).toContain(`The hub did not start the retire: ${text}`);
+  expect(button("Retire again", box)).toBeUndefined();
+  button("Retire without cleanup", box)!.click();
+  const dialog = await vi.waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(dialog.textContent).toContain("claude-rc:nas");
+  expect(dialog.textContent).toContain("claude-rc-provisioner:nas");
+});
+
+test("a stale source offers Retire without cleanup, and a turned-off local says to turn it on", async () => {
+  localSource = "10.0.0.77";
+  const shown = await show([prov()]);
+  const warning = await vi.waitFor(() => {
+    const found = shown.querySelector<HTMLElement>("[data-stale-source]");
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(squash(warning)).toContain("claude-rc ssh target provisioner nas --identity <file>");
+  expect(button("Retire without cleanup", warning)).toBeDefined();
+});
+
+test("a local node that is off says to turn on access and gives no command", async () => {
+  localSource = "10.0.0.9";
+  const base = fetch;
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (String(url) === "/api/ssh/status")
+      return new Response(
+        JSON.stringify({
+          setUp: true,
+          pendingRewrap: [],
+          nodes: [{ host: "local", enabled: false, sourceAddress: "10.0.0.9" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    return base(url, init);
+  });
+  const shown = await show([prov()]);
+  const warning = await vi.waitFor(() => {
+    const found = shown.querySelector<HTMLElement>("[data-stale-source]");
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(squash(warning)).toContain("Turn on access for local");
+  expect(squash(warning)).not.toContain("claude-rc ssh target provisioner");
+});
+
+test.each(["denied", "expired", "revoked"] as const)("a retire that ended as %s is stuck", async (reason) => {
+  grants = [stuck(reason)];
+  const shown = await show([prov({ state: "disabled" })]);
+  await vi.waitFor(() => expect(shown.querySelector("[data-stuck-retire]")).not.toBeNull());
+  expect(button("Retire without cleanup", shown)).toBeDefined();
+});
+
+test("a later grant of any kind clears the stuck retire", async () => {
+  grants = [
+    stuck("denied"),
+    grant({ id: "g2", state: "ended", endReason: "expired", requestedAt: 99, maintenance: undefined }),
+  ];
+  const shown = await show([prov({ state: "disabled" })]);
+  await vi.waitFor(() => expect(button("Retire", shown)).toBeDefined());
+  expect(shown.querySelector("[data-stuck-retire]")).toBeNull();
+});
+
+test("a provisioner card without an ended uninstall offers no cleanup", async () => {
+  grants = [grant({ state: "ended", endReason: "denied", requestedAt: 3 })];
+  const shown = await show([prov({ state: "disabled" })]);
+  await vi.waitFor(() => expect(button("Retire", shown)).toBeDefined());
+  expect(shown.querySelector("[data-stuck-retire]")).toBeNull();
+  expect(button("Retire without cleanup", shown)).toBeUndefined();
+});
+
+test("an active maintenance run hides Edit nodes, Reinstall and Retire", async () => {
+  grants = [grant({ state: "active" })];
+  const shown = await show([prov()]);
+  await vi.waitFor(() => expect(shown.querySelector("[data-pending]")).not.toBeNull());
+  for (const label of ["Edit nodes", "Reinstall key line", "Retire"]) expect(button(label, shown)).toBeUndefined();
+});
+
+test("a PATCH of a provisioner target that answers 200 shows the saved text", async () => {
+  patchReply = prov({ nodes: ["node1", "node2"] });
+  const shown = await openEditor([prov()]);
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain("The nodes of nas are saved."));
+  expect(shown.querySelector("[data-nodes-waiting]")).toBeNull();
+});

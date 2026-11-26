@@ -15,7 +15,7 @@ export function retireNotice(result: RetireResult): string {
     if (result.line === "manual") return `Retired ${result.id}. The hub did not clean up the machine. ${remove}`;
     // The detail of the hub can name the lines already: do not say it twice.
     const named = comments.every((item) => detail.includes(item));
-    return `Retired ${result.id}. The hub could not remove the key lines from ${where}: ${detail}.${named ? "" : ` ${remove}`}${named && script ? script : ""}`;
+    return `Retired ${result.id}. The hub did not remove the key lines from ${where}: ${detail}.${named ? "" : ` ${remove}`}${named && script ? script : ""}`;
   }
 
   switch (result.line) {

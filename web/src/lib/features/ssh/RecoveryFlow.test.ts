@@ -477,3 +477,19 @@ test("a provisioner key with a passkey asks for the provisioner salt", async () 
     "/api/ssh/targets/web/salt?key=provisioner",
   ]);
 });
+
+test("a failed read of the status after begin shows an error with Try again, never complete", async () => {
+  answers["GET /api/ssh/status"] = { status: 500, body: { error: "hub down" } };
+  answers["POST /api/ssh/recovery/begin"] = { status: 200, body: { targets: ["nas"] } };
+  await toRelock("passphrase");
+  buttons("Re-lock")[0]!.click();
+  await waitText("Done");
+  await waitText("The hub did not give the list of provisioner keys.");
+  expect(document.body.textContent).not.toContain("Recovery is complete.");
+  answers["GET /api/ssh/status"] = { status: 200, body: { ...STATUS, pendingProvisionerRewrap: ["nas"] } };
+  press("Try again");
+  await vi.waitFor(() => expect(buttons("Re-lock")).toHaveLength(1));
+  expect(document.body.textContent).not.toContain("The hub did not give the list");
+  buttons("Re-lock")[0]!.click();
+  await waitText("Recovery is complete.");
+});

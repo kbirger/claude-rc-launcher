@@ -35,8 +35,13 @@
   let wizard = $state<{ id?: string } | null>(null);
   let keying = $state<string | null>(null);
   $effect(() => {
-    if (target && provisioner) keying = target;
-    else if (target) wizard = { id: target };
+    if (target && provisioner) {
+      keying = target;
+      wizard = null;
+    } else if (target) {
+      wizard = { id: target };
+      keying = null;
+    }
   });
   const closeWizard = () => {
     wizard = null;
@@ -51,7 +56,10 @@
   let approving = $state<Grant | null>(null);
   // The recovery flow is outside the branches too: it holds the recovery code, so a failed refetch must not drop it.
   let recovering = $state(false);
-  const pending = $derived([...(query.data?.pendingRewrap ?? []), ...(query.data?.pendingProvisionerRewrap ?? [])]);
+  // Count each target once: a target with two keys to re-lock is one target.
+  const pending = $derived([
+    ...new Set([...(query.data?.pendingRewrap ?? []), ...(query.data?.pendingProvisionerRewrap ?? [])]),
+  ]);
   const nodeCount = $derived(query.data?.nodes.length ?? 0);
 </script>
 
@@ -99,7 +107,15 @@
     <NodeAccess nodes={query.data.nodes} />
     <TargetList onapprove={(grant) => (approving = grant)} />
     <div>
-      <Button size="touch" onclick={() => (wizard = {})}>Add target</Button>
+      <Button
+        size="touch"
+        onclick={() => {
+          wizard = {};
+          keying = null;
+        }}
+      >
+        Add target
+      </Button>
     </div>
   </div>
 {/if}
