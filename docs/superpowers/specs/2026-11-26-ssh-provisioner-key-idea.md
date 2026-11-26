@@ -16,12 +16,11 @@ The line for the provisioner key has these options:
 - `restrict`, so the key has no terminal and no forwarding.
 - `from="<hub source address>"`, so only the hub machine can use it.
 
-The script reads `SSH_ORIGINAL_COMMAND`. It accepts only `on`, `off`, `status`, `sources <list>` and `uninstall`. It holds the one public line of the main key. The owner pinned it at install. `on` puts that line into a key file. `off` takes it out. `sources` changes the `from=` option of that one line, and the script checks the list with the same pattern as the hub. The script never accepts a key line from the caller. So the provisioner key cannot add any other key. It can only switch the main key on and off.
+The script reads `SSH_ORIGINAL_COMMAND`. It accepts only `on`, `off`, `status`, `sources <list>` and `uninstall`. It holds the one public line of the main key. The owner pinned it at install. `on` puts that line into a key file. `off` takes it out. The hub uses them only at three moments: the add, the change of nodes and the retire. A grant never runs the script. `sources` changes the `from=` option of that one line, and the script checks the list with the same pattern as the hub. The script never accepts a key line from the caller. So the provisioner key cannot add any other key. It can only switch the main key on and off.
 
 ## What this gives the owner
 
-- **Short-lived lines on an external target.** At the start of a grant, the hub switches the line on. At the end, it switches the line off. A leftover line is then rare, even on a router.
-- **Retire without manual work.** The retire runs `off`, then removes the provisioner line with a last `uninstall`.
+- **Retire without manual work.** The retire runs `off`, then removes the provisioner line with a last `uninstall`. Today the owner removes the line by hand.
 - **A change of nodes without pasting.** The hub sends the new source list with `sources`.
 - **A check of the install.** `status` tells the hub whether the line is present.
 
@@ -32,6 +31,10 @@ The script reads `SSH_ORIGINAL_COMMAND`. It accepts only `on`, `off`, `status`, 
 - The script must be small, readable and safe. It must write the key file with the right mode and refuse symbolic links, like the install scripts in `server/src/sshprovision.ts`.
 - For a router, the script needs a version for BusyBox `sh` and for the place where the router keeps keys. On Asuswrt-Merlin a change must go through `nvram`, or the router loses it at a reboot. This part needs a real router to test.
 - The owner installs the script once. The docs must show the exact steps and how to check them.
+
+## Is it worth the cost
+
+The key line is written only when the owner adds, changes or retires a target. These events are rare. A cheaper way covers most of the gain: the CLI and the web page print the exact line to paste or to remove. This idea pays off only when the owner has many external targets, or wants no manual step on a router. Weigh it against the cost above before the build.
 
 ## Risks
 
