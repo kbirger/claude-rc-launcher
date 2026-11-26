@@ -16,11 +16,31 @@ const DEFAULT_MINUTES = 60;
 const MAX_MINUTES = 480;
 const PENDING_MINUTES = 10;
 const TEST_MINUTES = 1;
+const MAINTENANCE_MINUTES = 1;
+const MAX_DETAIL = 200;
 const MAX_ENDED = 200;
 const MINUTE_MS = 60_000;
 
 export type GrantState = "pending" | "active" | "ended";
-export type EndReason = "expired" | "revoked" | "denied" | "node-lost" | "target-disabled" | "hub-restart";
+export type EndReason = "expired" | "revoked" | "denied" | "node-lost" | "target-disabled" | "hub-restart" | "done";
+
+/** What a maintenance grant does on the target with the provisioner key. */
+export type MaintenanceAction = "install" | "sources" | "uninstall";
+
+/**
+ * The work of a maintenance grant. Only the hub sets it (`SshService.requestMaintenance`), never a node event. The
+ * lists are the node lists and source lists before and after, as the hub computed them at the request.
+ */
+export interface Maintenance {
+  action: MaintenanceAction;
+  fromNodes: string[];
+  toNodes?: string[];
+  fromSources: string[];
+  toSources?: string[];
+  result?: "done" | "failed";
+  /** One short line of text. */
+  detail?: string;
+}
 
 export interface Grant {
   id: string;
@@ -37,6 +57,33 @@ export interface Grant {
   endsAt?: number;
   approvedBy?: string;
   endReason?: EndReason;
+  maintenance?: Maintenance;
+}
+
+/** A copy of a grant that shares no array or object with the store. */
+function copy(grant: Grant): Grant {
+  const result = { ...grant };
+
+  if (grant.maintenance) {
+    const work = grant.maintenance;
+    result.maintenance = {
+      ...work,
+      fromNodes: [...work.fromNodes],
+      fromSources: [...work.fromSources],
+      ...(work.toNodes ? { toNodes: [...work.toNodes] } : {}),
+      ...(work.toSources ? { toSources: [...work.toSources] } : {}),
+    };
+  }
+
+  return result;
+}
+
+/** One line of at most 200 characters, with no control characters. */
+function oneLine(text: string): string {
+  return text
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim()
+    .slice(0, MAX_DETAIL);
 }
 
 /** `400`: bad input. `404`: no such grant. `409`: the grant is not in the state that the call needs. `403`: the grant does not allow this use. */
@@ -86,7 +133,10 @@ export class GrantStore {
     this.pendingMinutes = options.pendingMinutes ?? PENDING_MINUTES;
   }
 
-  /** A new pending grant. A test grant is always 1 minute. */
+  /**
+   * A new pending grant. A test grant is always 1 minute, and so is a maintenance grant. Only the hub passes
+   * `maintenance`: a grant is never both a test grant and a maintenance grant.
+   */
   request(input: {
     nodeId: string;
     instanceId: string;
@@ -95,39 +145,47 @@ export class GrantStore {
     minutes?: number;
     reason?: string;
     test?: boolean;
+    maintenance?: Maintenance;
   }): Grant {
     const test = input.test === true;
+    const maintenance = input.maintenance;
+    if (test && maintenance) throw new GrantError(400, "a grant is a test grant or a maintenance grant, not both");
     const grant: Grant = {
       id: randomUUID(),
       nodeId: input.nodeId,
       instanceId: input.instanceId,
       targetId: input.targetId,
-      minutes: test ? TEST_MINUTES : this.clamp(input.minutes ?? this.defaultMinutes),
+      minutes: test
+        ? TEST_MINUTES
+        : maintenance
+          ? MAINTENANCE_MINUTES
+          : this.clamp(input.minutes ?? this.defaultMinutes),
       test,
       state: "pending",
       requestedAt: this.now(),
     };
     if (input.requestId !== undefined) grant.requestId = input.requestId;
     if (input.reason !== undefined) grant.reason = input.reason;
+    if (maintenance) grant.maintenance = copy({ ...grant, maintenance }).maintenance;
 
     this.grants.set(grant.id, grant);
     this.handles.set(
       grant.id,
-      this.timers.setTimeout(() => this.finish(grant, "expired", "system"), this.pendingMinutes * MINUTE_MS),
+      this.timers.setTimeout(() => this.end(grant, "expired", "system"), this.pendingMinutes * MINUTE_MS),
     );
     this.line(grant, "requested", grant.nodeId);
-    return { ...grant };
+    return copy(grant);
   }
 
   /**
    * Gives the key to a pending grant and starts its clock. `minutes` can set a shorter or longer time than the
-   * request, up to the maximum. A call that fails destroys the key it was given, unless it is the key of the grant.
+   * request, up to the maximum. A test grant and a maintenance grant ignore `minutes`. A call that fails destroys the key it was given, unless it is the key of the grant.
    */
   approve(id: string, by: string, key: UnlockedKey, minutes?: number): Grant {
     try {
       const grant = this.need(id);
       if (grant.state !== "pending") throw new GrantError(409, `grant is ${grant.state}`);
-      if (minutes !== undefined && !grant.test) grant.minutes = this.clamp(minutes);
+      if (minutes !== undefined && !grant.test && !grant.maintenance) grant.minutes = this.clamp(minutes);
 
       this.clear(id);
       const at = this.now();
@@ -138,11 +196,11 @@ export class GrantStore {
       this.keys.set(id, key);
       this.handles.set(
         id,
-        this.timers.setTimeout(() => this.finish(grant, "expired", "system"), grant.minutes * MINUTE_MS),
+        this.timers.setTimeout(() => this.end(grant, "expired", "system"), grant.minutes * MINUTE_MS),
       );
       this.line(grant, "approved", by);
       this.leftPending(grant);
-      return { ...grant };
+      return copy(grant);
     } catch (error) {
       if (this.keys.get(id) !== key) key.destroy();
       throw error;
@@ -152,13 +210,30 @@ export class GrantStore {
   deny(id: string, by: string): Grant {
     const grant = this.need(id);
     if (grant.state !== "pending") throw new GrantError(409, `grant is ${grant.state}`);
-    return this.finish(grant, "denied", by);
+    return this.end(grant, "denied", by);
   }
 
   revoke(id: string, by: string): Grant {
     const grant = this.need(id);
     if (grant.state !== "active") throw new GrantError(409, `grant is ${grant.state}`);
-    return this.finish(grant, "revoked", by);
+    return this.end(grant, "revoked", by);
+  }
+
+  /** Records the result of the run of a maintenance grant, in any state. The detail is cut to one short line. */
+  setResult(id: string, result: "done" | "failed", detail?: string): void {
+    const grant = this.need(id);
+    if (!grant.maintenance) throw new GrantError(409, "the grant is not a maintenance grant");
+    grant.maintenance.result = result;
+    if (detail === undefined) delete grant.maintenance.detail;
+    else grant.maintenance.detail = oneLine(detail);
+  }
+
+  /** Ends an active maintenance grant after its run, with the reason `done`. */
+  finish(id: string, by: string): Grant {
+    const grant = this.need(id);
+    if (!grant.maintenance) throw new GrantError(409, "the grant is not a maintenance grant");
+    if (grant.state !== "active") throw new GrantError(409, `grant is ${grant.state}`);
+    return this.end(grant, "done", by);
   }
 
   /** Ends every pending or active grant that matches. The audit event is the reason. */
@@ -166,8 +241,8 @@ export class GrantStore {
     const result: Grant[] = [];
 
     for (const grant of [...this.grants.values()]) {
-      if (grant.state === "ended" || !match({ ...grant })) continue;
-      result.push(this.finish(grant, reason, "system"));
+      if (grant.state === "ended" || !match(copy(grant))) continue;
+      result.push(this.end(grant, reason, "system"));
     }
 
     return result;
@@ -178,7 +253,7 @@ export class GrantStore {
     const grant = this.need(id);
 
     if (grant.state === "active" && grant.endsAt !== undefined && this.now() >= grant.endsAt) {
-      this.finish(grant, "expired", "system");
+      this.end(grant, "expired", "system");
     }
 
     const key = this.keys.get(id);
@@ -193,11 +268,11 @@ export class GrantStore {
 
   get(id: string): Grant | undefined {
     const grant = this.grants.get(id);
-    return grant && { ...grant };
+    return grant && copy(grant);
   }
 
   list(): Grant[] {
-    return [...this.grants.values()].map((grant) => ({ ...grant }));
+    return [...this.grants.values()].map((grant) => copy(grant));
   }
 
   private need(id: string): Grant {
@@ -218,7 +293,7 @@ export class GrantStore {
   }
 
   /** The one end path: stop the timer, destroy the key, mark the grant, audit, and only then tell the owner. */
-  private finish(grant: Grant, reason: EndReason, by: string): Grant {
+  private end(grant: Grant, reason: EndReason, by: string): Grant {
     this.clear(grant.id);
     const wasPending = grant.state === "pending";
     const key = this.keys.get(grant.id);
@@ -232,16 +307,16 @@ export class GrantStore {
       this.line(grant, reason, by);
       this.prune();
       if (wasPending) this.leftPending(grant);
-      this.onEnd({ ...grant });
+      this.onEnd(copy(grant));
     }
 
-    return { ...grant };
+    return copy(grant);
   }
 
   /** A grant left `pending` (approve or any end path). A throw in the hook is audited and never fails the call. */
   private leftPending(grant: Grant): void {
     try {
-      this.onLeavePending?.({ ...grant });
+      this.onLeavePending?.(copy(grant));
     } catch {
       this.audit(`audit ssh grant=${logToken(grant.id)} event=leave-pending-hook-failed`);
     }
@@ -253,7 +328,8 @@ export class GrantStore {
   }
 
   private line(grant: Grant, event: string, by: string, extra?: string): void {
-    const base = `audit ssh grant=${logToken(grant.id)} event=${event} node=${logToken(grant.nodeId)} target=${logToken(grant.targetId)} by=${logToken(by)}`;
+    const action = grant.maintenance ? ` action=${grant.maintenance.action}` : "";
+    const base = `audit ssh grant=${logToken(grant.id)} event=${event} node=${logToken(grant.nodeId)} target=${logToken(grant.targetId)}${action} by=${logToken(by)}`;
     this.audit(extra ? `${base} ${extra}` : base);
   }
 }
