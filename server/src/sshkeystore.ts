@@ -15,19 +15,23 @@ import {
 } from "./sshwrap";
 import type { Sealed } from "./sshwrap";
 
-// Encrypted key store for SSH delegation. The hub holds one Ed25519 key for each target. The private key (the 32 byte
-// seed) is never stored in the clear. Each key has two sealed copies: one under the wrap key of the owner's unlock
-// (passkey PRF or passphrase, with a salt of its own for each target) and one sealed to the recovery public key that
-// the owner created at setup. The hub needs no secret to add the recovery copy. The target id is the `aad` of both
-// copies, so a copy cannot be moved to another target.
+// Encrypted key store for SSH delegation. The hub holds one main Ed25519 key for each target, and an external target
+// can have a second one, the provisioner key (see `KeySlot`). The private key (the 32 byte seed) is never stored in
+// the clear. Each key has two sealed copies: one under the wrap key of the owner's unlock (passkey PRF or passphrase,
+// with a salt of its own for each key) and one sealed to the recovery public key that the owner created at setup. The
+// hub needs no secret to add the recovery copy. The store key of the slot (the target id, or `provisioner:<id>`) is the
+// `aad` of both copies, so a copy cannot be moved to another target or to the other slot.
 // The store is a small JSON file (`<state_dir>/ssh/keys.json`, mode 600). A file that is missing, too big or not valid
-// is an empty store. At most 200 keys. A write goes through a temporary file and a rename. Unlike the name memory, a
+// is an empty store. At most 400 keys (two for each of 200 targets). A write goes through a temporary file and a rename. Unlike the name memory, a
 // failed write is an error: a key that was not saved must not look saved.
 
 // Each target can hold a main key and a provisioner key, so the store takes twice the number of targets.
 const MAX_KEYS = 400;
 const MAX_BYTES = 1024 * 1024;
 const SALT_LEN = 16;
+// Do not change VERSION to add a field or a slot: an old binary reads another version as an empty store, and would then
+// write that empty store over the main keys at its next change. The provisioner slot only adds entries that an old
+// binary skips (it keeps the main keys, and drops the provisioner ones on its next write).
 const VERSION = 1;
 // The PKCS8 prefix of an Ed25519 private key. The 32 byte seed follows.
 const ED25519_PKCS8 = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -242,7 +246,7 @@ export class SshKeyStore {
    * Starts a recovery after a lost passkey. The code must belong to this hub (its public key is compared in constant
    * time with the stored one). The new method replaces the old one, and every key of both slots is marked as pending a
    * re-wrap: the old wrap belongs to the old method. A second call replaces the method again and marks every key again. Returns the
-   * ids of the keys to re-wrap. Throws `KeyError` `not-set-up` or `wrong-recovery-code`, and changes nothing then.
+   * target ids of the main keys to re-wrap (the provisioner keys are listed by `pendingRewraps("provisioner")`). Throws `KeyError` `not-set-up` or `wrong-recovery-code`, and changes nothing then.
    */
   async beginRecovery(options: {
     code: string;
@@ -388,6 +392,22 @@ export class SshKeyStore {
       seed?.fill(0);
       wrapKey?.fill(0);
     }
+  }
+
+  /**
+   * Deletes the key, the salt and the pending mark of one slot in one write. Only the provisioner slot can be removed
+   * alone: the main key goes with `remove` (the retire of the target), so `main` is refused.
+   */
+  async removeSlot(targetId: string, slot: KeySlot): Promise<void> {
+    if (slot !== "provisioner") throw new Error("only the provisioner key can be removed alone");
+    checkTarget(targetId);
+    const id = slotKey(targetId, slot);
+
+    await this.mutate((draft) => {
+      draft.keys.delete(id);
+      draft.salts.delete(id);
+      draft.pending.delete(id);
+    });
   }
 
   /** Deletes the keys, the salts and the pending marks of both slots of a target. */

@@ -1,7 +1,7 @@
 import { HOST_ID_RE } from "./hostid";
 import { AWK_PROGRAM, LOCK_LINES, shQuote } from "./sshprovision";
 import type { Script } from "./sshprovision";
-import { ADDRESS_RE } from "./sshtargets";
+import { ADDRESS_RE, SCRIPT_PATH_RE } from "./sshtargets";
 
 // The provisioner key of an external target. The pure part: the grammar of the commands that the script on the target
 // takes, the parse of its answers, the line that goes into `authorized_keys`, and the text of the Linux scripts.
@@ -30,8 +30,8 @@ export const MAX_COMMAND_BYTES = 4096;
 /** The most characters in one element. */
 export const MAX_ELEMENT = 255;
 
-/** An absolute path with no space, quote, comma or backslash. It is the value of `command=`, so a shell reads it. */
-export const SCRIPT_PATH_RE = /^\/[A-Za-z0-9._/+:@=-]{1,1023}$/;
+// The pattern for a script path lives in `sshtargets.ts` (the target store uses it too), so the two modules do not import each other.
+export { SCRIPT_PATH_RE };
 const SCRIPT_PATH_CLASS = "A-Za-z0-9._/+:@=-";
 
 const BASE64 = "[A-Za-z0-9+/]{16,2048}={0,2}";

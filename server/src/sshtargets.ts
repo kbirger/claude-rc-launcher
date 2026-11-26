@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { HOST_ID_RE } from "./hostid";
-import { SCRIPT_PATH_RE } from "./sshprovisioner";
 
 // Target store for SSH delegation. A target is a machine that the hub opens an SSH connection to, with the key that
 // the key store holds for it. The store also keeps the source address of each node, which goes into the `from=` option
@@ -20,6 +19,9 @@ const VERSION = 1;
 const SYSTEM_TYPES: readonly string[] = ["linux", "windows", "synology", "dropbear"];
 // An old file can hold the state `retired` from an earlier version. It is not a state any more, so such a record is dropped on load.
 const STATES: readonly string[] = ["draft", "ready", "disabled"];
+/** An absolute path with no space, quote, comma or backslash. It is the value of `command=`, so a shell reads it. The provisioner module re-exports it. */
+export const SCRIPT_PATH_RE = /^\/[A-Za-z0-9._/+:@=-]{1,1023}$/;
+
 // A host name or an address: it cannot start with "-" (ssh would read it as an option), and has no space, no quote, no comma, so a value cannot add an option to the key line.
 export const ADDRESS_RE = /^[A-Za-z0-9_.:][A-Za-z0-9._:-]{0,254}$/;
 // A pattern for `from=` (OpenSSH allows `*`, `?` and CIDR ranges with `/`).
@@ -171,6 +173,7 @@ function parseTarget(id: string, value: unknown): Target | undefined {
   // The three fields of the provisioner go together, and only an external target has them.
   if (
     target.managedHost === undefined &&
+    target.systemType !== "windows" &&
     singleLine(value.provisionerFingerprint) &&
     typeof value.provisionerScript === "string" &&
     SCRIPT_PATH_RE.test(value.provisionerScript) &&
@@ -291,6 +294,7 @@ export class TargetStore {
       const { provisionerFingerprint: _f, provisionerScript: _s, provisionerSource: _o, ...rest } = target;
       if (value === undefined) return rest;
       if (target.managedHost !== undefined) throw new TargetError(400, "a managed target has no provisioner");
+      if (target.systemType === "windows") throw new TargetError(400, "a windows target has no provisioner");
       return {
         ...rest,
         provisionerFingerprint: value.fingerprint,
@@ -425,8 +429,10 @@ const UNIX_NOTES = [
   "The folder ~/.ssh needs mode 700 and the file authorized_keys needs mode 600.",
 ];
 
-/** The install steps for a system type, as lines of text for the page and the CLI. */
-/** True when the target has a provisioner: a key fingerprint, a script path and a source. */
+/**
+ * True when the record of the target holds the three provisioner fields. It does not look at the key store: a caller
+ * that trusts the key must also ask the store (`keys.publicLine(id, "provisioner")` does not throw).
+ */
 export function hasProvisioner(target: Target): boolean {
   return (
     target.provisionerFingerprint !== undefined &&
@@ -435,6 +441,7 @@ export function hasProvisioner(target: Target): boolean {
   );
 }
 
+/** The install steps for a system type, as lines of text for the page and the CLI. */
 export function installNotes(systemType: SystemType): string[] {
   switch (systemType) {
     case "linux":
