@@ -368,3 +368,153 @@ describe("recovery with the code", () => {
     expect(store.pendingRewraps()).toEqual(["nas"]);
   });
 });
+
+describe("the provisioner slot", () => {
+  const provSecret = { method: "prf" as const, secret: new Uint8Array(32).fill(9) };
+  const passphrase = { method: "passphrase" as const, secret: new TextEncoder().encode("new passphrase text") };
+  const begin = { method: "passphrase" as const };
+
+  async function both(path = file): Promise<SshKeyStore> {
+    const store = await ready(path);
+    await store.create("web", secret);
+    await store.create("web", provSecret, "provisioner");
+    return store;
+  }
+
+  test("an old keys.json without a provisioner slot loads unchanged", async () => {
+    const store = await ready();
+    await store.create("web", secret);
+    const reloaded = new SshKeyStore(file);
+    expect(reloaded.pendingRewraps("provisioner")).toEqual([]);
+    expect(reloaded.publicLine("web")).toBe(store.publicLine("web"));
+    expect((await failure(reloaded.open("web", secret, "provisioner"))).code).toBe("no-key");
+    await reloaded.saltFor("nas");
+    expect(Object.keys((JSON.parse(await readFile(file, "utf8")) as Stored).keys)).toEqual(["web"]);
+    expect((await reloaded.open("web", secret)).fingerprint).toBeTruthy();
+  });
+
+  test("the provisioner slot has its own salt, key and fingerprint", async () => {
+    const store = await both();
+    const json = await readJson();
+    expect(Object.keys(json.keys).sort()).toEqual(["provisioner:web", "web"]);
+    expect(json.salts["provisioner:web"]).toBeDefined();
+    expect(json.salts["provisioner:web"]).not.toBe(json.salts.web);
+    expect(await store.saltFor("web", "provisioner")).toBe(json.salts["provisioner:web"]);
+    expect(await store.saltFor("web")).toBe(json.salts.web);
+    const main = await store.open("web", secret);
+    const prov = await store.open("web", provSecret, "provisioner");
+    expect(prov.fingerprint).not.toBe(main.fingerprint);
+    // The two keys are different keys: their signatures differ.
+    const signature = prov.sign(data);
+    expect(signature.length).toBe(64);
+    expect(signature).not.toEqual(main.sign(data));
+  });
+
+  test("the provisioner public line ends with claude-rc-provisioner:<id>", async () => {
+    const store = await ready();
+    const made = await store.create("web", secret, "provisioner");
+    expect(made.publicLine).toMatch(/^ssh-ed25519 \S+ claude-rc-provisioner:web$/);
+    expect(store.publicLine("web", "provisioner")).toBe(made.publicLine);
+    await failure(Promise.resolve().then(() => store.publicLine("web")));
+  });
+
+  test("a main copy moved into the provisioner slot does not open", async () => {
+    const store = await ready();
+    await store.create("web", secret);
+    const json = (await readJson()) as Stored & Record<string, unknown>;
+    json.keys["provisioner:web"] = json.keys.web;
+    json.salts["provisioner:web"] = json.salts.web;
+    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, "utf8")), ...json }));
+    const moved = new SshKeyStore(file);
+    expect(moved.publicLine("web", "provisioner")).toContain("claude-rc-provisioner:web");
+    expect((await failure(moved.open("web", secret, "provisioner"))).code).toBe("wrong-unlock");
+    // The recovery copy does not open either: its aad is the target id.
+    expect((await failure(moved.rewrapWithRecovery("web", recovery.code, secret, "provisioner"))).code).toBe(
+      "wrong-recovery-code",
+    );
+    // And the other way round.
+    const reverse = await ready(join(dir, "other", "keys.json"));
+    await reverse.create("web", secret, "provisioner");
+    const other = JSON.parse(await readFile(join(dir, "other", "keys.json"), "utf8")) as Stored;
+    other.keys.web = other.keys["provisioner:web"];
+    other.salts.web = other.salts["provisioner:web"];
+    await writeFile(join(dir, "other", "keys.json"), JSON.stringify(other));
+    expect((await failure(new SshKeyStore(join(dir, "other", "keys.json")).open("web", secret))).code).toBe(
+      "wrong-unlock",
+    );
+  });
+
+  test("open of the provisioner slot with the main secret fails with wrong-unlock", async () => {
+    const store = await both();
+    expect((await failure(store.open("web", secret, "provisioner"))).code).toBe("wrong-unlock");
+    expect((await failure(store.open("web", provSecret))).code).toBe("wrong-unlock");
+    // A target with only a main key has no provisioner key, and the other way round.
+    const nas = await store.create("nas", secret);
+    expect(nas.fingerprint).toBeTruthy();
+    expect((await failure(store.open("nas", secret, "provisioner"))).code).toBe("no-key");
+    await store.create("solo", secret, "provisioner");
+    expect((await failure(store.open("solo", secret))).code).toBe("no-key");
+  });
+
+  test("create refuses a second provisioner key and keeps the old one", async () => {
+    const store = await both();
+    const before = store.publicLine("web", "provisioner");
+    await rejection(store.create("web", provSecret, "provisioner"));
+    expect(store.publicLine("web", "provisioner")).toBe(before);
+    expect(await rejection(store.create("web", provSecret, "provisioner"))).toBeInstanceOf(Error);
+  });
+
+  test("beginRecovery marks both slots and rewrap of one slot clears only that slot", async () => {
+    const store = await both();
+    const { targets } = await store.beginRecovery({ code: recovery.code, ...begin });
+    expect(targets).toEqual(["web"]);
+    expect(store.pendingRewraps()).toEqual(["web"]);
+    expect(store.pendingRewraps("provisioner")).toEqual(["web"]);
+    expect((await failure(store.open("web", passphrase, "provisioner"))).code).toBe("needs-rewrap");
+
+    await store.rewrapWithRecovery("web", recovery.code, passphrase, "provisioner");
+    expect(store.pendingRewraps("provisioner")).toEqual([]);
+    expect(store.pendingRewraps()).toEqual(["web"]);
+    expect((await failure(store.open("web", passphrase))).code).toBe("needs-rewrap");
+    const prov = await store.open("web", passphrase, "provisioner");
+    expect(prov.fingerprint).toBeTruthy();
+    // The marks survive a reload, and the salts stay.
+    const reloaded = new SshKeyStore(file);
+    expect(reloaded.pendingRewraps()).toEqual(["web"]);
+    expect(reloaded.pendingRewraps("provisioner")).toEqual([]);
+
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    expect(store.pendingRewraps()).toEqual([]);
+    const main = await store.open("web", passphrase);
+    expect(main.fingerprint).not.toBe(prov.fingerprint);
+  });
+
+  test("a rewrap keeps the fingerprint of each slot", async () => {
+    const store = await both();
+    const mainFp = (await store.open("web", secret)).fingerprint;
+    const provFp = (await store.open("web", provSecret, "provisioner")).fingerprint;
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.rewrapWithRecovery("web", recovery.code, passphrase, "provisioner");
+    await store.rewrapWithRecovery("web", recovery.code, passphrase);
+    expect((await store.open("web", passphrase)).fingerprint).toBe(mainFp);
+    expect((await store.open("web", passphrase, "provisioner")).fingerprint).toBe(provFp);
+  });
+
+  test("remove deletes both slots and both salts", async () => {
+    const store = await both();
+    await store.beginRecovery({ code: recovery.code, ...begin });
+    await store.remove("web");
+    const json = await readJson();
+    expect(json.keys).toEqual({});
+    expect(json.salts).toEqual({});
+    expect(store.pendingRewraps()).toEqual([]);
+    expect(store.pendingRewraps("provisioner")).toEqual([]);
+    expect((await failure(store.open("web", secret))).code).toBe("no-key");
+    expect((await failure(store.open("web", provSecret, "provisioner"))).code).toBe("no-key");
+  });
+
+  test("the file keeps mode 600 with both slots", async () => {
+    await both();
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+});

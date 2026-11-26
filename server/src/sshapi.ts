@@ -7,7 +7,7 @@ import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";
 import type { Grant, GrantStore } from "./sshgrants";
 import { KeyError } from "./sshkeystore";
-import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
+import type { KeySlot, SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
 import { NodeError } from "./sshservice";
 import type { SshService } from "./sshservice";
@@ -69,6 +69,13 @@ function projection(grant: Grant) {
     ...(grant.approvedBy !== undefined ? { approvedBy: grant.approvedBy } : {}),
     ...(grant.endReason !== undefined ? { endReason: grant.endReason } : {}),
   };
+}
+
+/** The key slot of a request: `main` when absent, else `main` or `provisioner`. */
+function slotOf(value: unknown): KeySlot {
+  if (value === undefined || value === "main") return "main";
+  if (value === "provisioner") return "provisioner";
+  throw new HttpError(400, "key must be main or provisioner");
 }
 
 function text(body: Record<string, unknown>, name: string): string {
@@ -134,11 +141,12 @@ export function sshApi(options: SshApiOptions): Hono {
   };
 
   /** A key that a passphrase can be checked against: it exists and a recovery has not made it wait for a re-wrap. */
-  const hasOpenKey = (targetId: string): boolean => hasKey(targetId) && !keys.pendingRewraps().includes(targetId);
+  const hasOpenKey = (targetId: string, slot: KeySlot = "main"): boolean =>
+    hasKey(targetId, slot) && !keys.pendingRewraps(slot).includes(targetId);
 
-  const hasKey = (targetId: string): boolean => {
+  const hasKey = (targetId: string, slot: KeySlot = "main"): boolean => {
     try {
-      keys.publicLine(targetId);
+      keys.publicLine(targetId, slot);
       return true;
     } catch {
       return false;
@@ -190,7 +198,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const known = options.hostIds();
     const unknown = value.find((node: string) => !known.includes(node));
     if (unknown !== undefined) throw new HttpError(400, `no such host: ${unknown}`);
-    return [...(value as string[])];
+    return [...value];
   };
 
   hono.onError((error, context) => {
@@ -247,6 +255,7 @@ export function sshApi(options: SshApiOptions): Hono {
       ...(method ? { method } : {}),
       ...(credentialId ? { credentialId } : {}),
       pendingRewrap: keys.pendingRewraps(),
+      pendingProvisionerRewrap: keys.pendingRewraps("provisioner"),
       hasKeys: targets.list().some((item) => hasOpenKey(item.id)),
       nodes,
     });
@@ -495,7 +504,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const method = keys.method();
     const credentialId = keys.credentialId();
     return context.json({
-      salt: await keys.saltFor(target.id),
+      salt: await keys.saltFor(target.id, slotOf(context.req.query("key"))),
       method,
       ...(credentialId ? { credentialId } : {}),
     });
@@ -508,9 +517,13 @@ export function sshApi(options: SshApiOptions): Hono {
     if (code.length > MAX_SECRET_CHARS) throw new HttpError(400, "code is too long");
     const unlock = parseUnlock(context, body.unlock);
     needLongPassphrase(unlock);
-    if (!keys.pendingRewraps().includes(target.id)) throw new TargetError(409, "this target does not need a re-wrap");
-    await keys.rewrapWithRecovery(target.id, code, unlock);
-    audit(`audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}`);
+    const slot = slotOf(body.key);
+    if (!keys.pendingRewraps(slot).includes(target.id))
+      throw new TargetError(409, "this target does not need a re-wrap");
+    await keys.rewrapWithRecovery(target.id, code, unlock, slot);
+    audit(
+      `audit ssh rewrap user=${logToken(options.user(context))} target=${logToken(target.id)}${slot === "main" ? "" : ` key=${slot}`}`,
+    );
     return context.body(null, 204);
   });
 
@@ -541,6 +554,33 @@ export function sshApi(options: SshApiOptions): Hono {
       installLine: authorizedKeysLine(made.publicLine, sources),
       notes: installNotes(target.systemType),
     });
+  });
+
+  // The provisioner key: a second key that the hub holds for an external target. It is made like the main key, with
+  // its own salt. A managed target and a windows target have none (a managed node maintains its own key file, and the
+  // script is a POSIX sh script).
+  hono.post("/targets/:id/provisioner-key", async (context) => {
+    const target = needTarget(context);
+    const body = await readObject(context);
+    const unlock = parseUnlock(context, body.unlock);
+    if (target.managedHost !== undefined) throw new HttpError(400, "a managed target has no provisioner key");
+    if (target.systemType === "windows") throw new HttpError(400, "a windows target has no provisioner key");
+    if (hasKey(target.id, "provisioner")) throw new TargetError(409, "the target has a provisioner key already");
+
+    // Same check as for the main key: a typed passphrase is compared with a key that exists, of any slot.
+    const other =
+      keys.method() === "passphrase"
+        ? targets
+            .list()
+            .flatMap((item) => (["main", "provisioner"] as const).map((slot) => ({ id: item.id, slot })))
+            .find((item) => hasOpenKey(item.id, item.slot))
+        : undefined;
+
+    if (other) (await keys.open(other.id, unlock, other.slot)).destroy();
+    else needLongPassphrase(unlock);
+
+    const made = await keys.create(target.id, unlock, "provisioner");
+    return context.json({ publicLine: made.publicLine, fingerprint: made.fingerprint });
   });
 
   hono.post("/targets/:id/scan", async (context) => {
