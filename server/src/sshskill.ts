@@ -12,7 +12,7 @@ import type { Runner } from "./runner";
 
 const FRONTMATTER = `---
 name: ssh-access
-description: Use this when you need to run a command on another machine over SSH from this instance, for example a machine that \`claude-rc ssh targets\` lists. It explains how to ask the owner for temporary access and how to use it.
+description: Use this when a command must run on another machine, when a plain \`ssh\` to a machine fails with \`Permission denied (publickey)\`, or when the owner mentions SSH access to a machine from \`claude-rc ssh targets\`. This instance has no SSH key of its own and must not look for one. The skill explains how to ask the owner for temporary access.
 ---
 `;
 
@@ -23,8 +23,8 @@ You have no SSH key. The owner gives you temporary access, one request at a time
 ## Steps
 
 1. Run \`claude-rc ssh targets\`. It lists the machines that you can ask for, as \`name  account@address\`. If it fails with \`SSH access is not turned on for this instance\`, stop. Tell the owner to turn on \`Allow SSH requests\` for this instance.
-2. Ask for one target for the time that you need. The default is 60 minutes and the most is 480 minutes. Run \`claude-rc ssh request <target> --minutes <n> --reason "<why>"\`. The command waits for the owner for up to 10 minutes. Run it in the background with the run_in_background option of the Bash tool. Tell the owner in plain words that a request is waiting on the SSH access page. Read the output of the command when it ends.
-3. The command prints a socket path, a config file path and a line \`ssh -F <config> <target>\`. Run that line with your remote command added, for example \`ssh -F <config> <target> 'uptime'\`. Use only that config file. Never add options that change the host key checks or the identity.
+2. Ask for one target for the time that you need. The default is 60 minutes and the most is 480 minutes. Run \`claude-rc ssh request <target> --minutes <n> --reason "<why>"\`. The command waits for the owner for up to 10 minutes. Run it in the background with the run_in_background option of the Bash tool. Tell the owner in plain words that a request is waiting on the SSH access page. Read the output of the command when it ends. The command prints \`waiting for approval\` first. That line does not mean the owner answered. Wait for the line \`approved\`. After it, the output has a socket path, a config path and an \`ssh -F ...\` line. If the output ends with an error line instead, see Messages. The line \`access ends at <time>\` shows the end of the access in UTC. It can be missing.
+3. Run the \`ssh -F <config> <target>\` line only after the output shows \`approved\`. Add your remote command to the end, for example \`ssh -F <config> <target> 'uptime'\`. Use only that config file. Never add options that change the host key checks or the identity.
 4. There is nothing to clean up. The access ends at the end time or when the owner revokes it. Do not leave connections, tunnels or ControlMaster sessions open.
 
 ## Rules
@@ -39,6 +39,7 @@ You have no SSH key. The owner gives you temporary access, one request at a time
 
 | Message | What to do |
 | --- | --- |
+| \`approved\` | The owner approved. Run the \`ssh -F ...\` line that follows the socket and config paths. |
 | \`SSH access is not turned on for this instance\` | Tell the owner to turn on \`Allow SSH requests\` for this instance. |
 | \`no answer from the hub\` | The request timed out. The owner did not answer in 10 minutes. Report it and stop. |
 | \`the unlock does not open the key\` | This is a problem on the side of the owner. Tell the owner. |

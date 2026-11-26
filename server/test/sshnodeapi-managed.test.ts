@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp, onError } from "../src/app";
@@ -96,6 +96,36 @@ describe("managed SSH targets on the node", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.account).toBe("alice");
     expect(calls[0]?.script.shell).toBe("sh");
+  });
+
+  test("two authorize calls with another from= leave one line, with the real sh script in a temporary home", async () => {
+    const home = join(dir, "home");
+    const runReal: SshManagedOptions["runAs"] = async (_account, script) => {
+      const proc = Bun.spawn(["sh", "-s"], {
+        stdin: new Blob([script.script]),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { PATH: process.env.PATH ?? "", HOME: home },
+      });
+      const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+      return { code: await proc.exited, stdout, stderr };
+    };
+    await mkdir(join(home, ".ssh"), { recursive: true, mode: 0o700 });
+    await writeFile(join(home, ".ssh", "authorized_keys"), "ssh-rsa KEEP me\n", { mode: 0o600 });
+    build({ runAs: runReal });
+    const key = "AAAAC3NzaC1lZDI1NTE5AAAAIAAA";
+    const line = (from: string) => `from="${from}",restrict ssh-ed25519 ${key} claude-rc:nas`;
+    const responses = await Promise.all(
+      ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"].map((from) => authorize({ line: line(from) })),
+    );
+    expect(responses.map((response) => response.status)).toEqual([204, 204, 204, 204]);
+    const lines = (await readFile(join(home, ".ssh", "authorized_keys"), "utf8")).split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe("ssh-rsa KEEP me");
+    expect(lines[1]).toMatch(
+      /^from="10\.0\.0\.[1-4]",restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA claude-rc:nas$/,
+    );
+    expect((await stat(join(home, ".ssh", "authorized_keys"))).mode & 0o777).toBe(0o600);
   });
 
   test("POST /authorize passes the line to the script unchanged", async () => {
@@ -393,5 +423,55 @@ describe("scripts of one account on the node", () => {
     });
     await remove();
     expect(limits).toEqual([8000]);
+  });
+});
+
+describe("key file on the node routes", () => {
+  const KEY = BLOB.toString("base64");
+
+  test("POST /authorize builds the script for the chosen key file", async () => {
+    const response = await authorize({ keyFile: "authorized_keys2" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ keyFile: "authorized_keys2" });
+    expect(calls[0]?.script.script).toContain("'authorized_keys2'");
+    // Without a key file the answer stays 204, for old hubs.
+    expect((await authorize()).status).toBe(204);
+    expect(calls[1]?.script.script).toContain("'authorized_keys'");
+  });
+
+  test("POST /deauthorize builds the removal script for the chosen key file", async () => {
+    result = { code: 0, stderr: "", stdout: "removed\n" };
+    const response = await call("POST", "/deauthorize", {
+      account: "alice",
+      systemType: "linux",
+      key: KEY,
+      id: "nas",
+      keyFile: "authorized_keys.claude-rc",
+    });
+    expect(response.status).toBe(200);
+    expect(calls[0]?.script.script).toContain("'authorized_keys.claude-rc'");
+  });
+
+  test("both routes refuse a bad key file, and dropbear and windows with one, with 400", async () => {
+    const bad = [
+      { keyFile: "../x" },
+      { keyFile: "authorized_keys/../x" },
+      { keyFile: "known_hosts" },
+      { keyFile: 5 },
+      { keyFile: "authorized_keys2", systemType: "dropbear" },
+      { keyFile: "authorized_keys2", systemType: "windows" },
+    ];
+    for (const overrides of bad) {
+      expect((await authorize(overrides)).status).toBe(400);
+      const removal = call("POST", "/deauthorize", {
+        account: "alice",
+        systemType: "linux",
+        key: KEY,
+        id: "nas",
+        ...overrides,
+      });
+      expect((await removal).status).toBe(400);
+    }
+    expect(calls).toHaveLength(0);
   });
 });

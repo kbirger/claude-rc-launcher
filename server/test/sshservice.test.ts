@@ -6,7 +6,7 @@ import { GrantError, GrantStore } from "../src/sshgrants";
 import type { Grant } from "../src/sshgrants";
 import { SshKeyStore } from "../src/sshkeystore";
 import type { UnlockSecret } from "../src/sshkeystore";
-import { SshService } from "../src/sshservice";
+import { NodeError, SshService } from "../src/sshservice";
 import { TargetError, TargetStore } from "../src/sshtargets";
 import type { Target } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
@@ -318,6 +318,24 @@ describe("SshService approve", () => {
       (caught: unknown) => caught,
     );
     expect((error as Error).message).toContain("boom");
+    expect(ctx.grants.get(grant.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
+  });
+
+  test("approve says in plain words that the session stopped waiting when the node has no waiting request", async () => {
+    const nodes = {
+      node1: fakeNode({ "POST /api/ssh/grants": { status: 409, body: { error: "no request waits for this answer" } } }),
+    };
+    const ctx = await setup({ nodes });
+    ctx.service.onNodeEvent("node1", "ssh.request", request());
+    await flush();
+    const grant = ctx.grants.list()[0];
+    const error = await ctx.service.approve(grant.id, "alice", unlock).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(GrantError);
+    expect((error as GrantError).status).toBe(409);
+    expect((error as Error).message).toBe("The session stopped waiting. Ask the session to request again.");
     expect(ctx.grants.get(grant.id)).toMatchObject({ state: "ended", endReason: "node-lost" });
   });
 
@@ -662,6 +680,76 @@ describe("SshService managed targets", () => {
       account: "root",
       systemType: "linux",
       line: `from="192.168.1.10",restrict ${keys.publicLine("pve")}`,
+    });
+  });
+
+  test("authorizeManaged and deauthorizeManaged send the key file of the target, and send none without one", async () => {
+    const { service, targets, keys, host } = await managed({
+      "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } },
+      "POST /api/ssh/authorize": (call) => {
+        const keyFile = (call.json as { keyFile?: string }).keyFile;
+        return keyFile === undefined ? { status: 204 } : { status: 200, body: { keyFile } };
+      },
+    });
+    await service.authorizeManaged("pve");
+    await service.deauthorizeManaged("pve");
+    expect(host.calls[0].json).not.toHaveProperty("keyFile");
+    expect(host.calls[1].json).not.toHaveProperty("keyFile");
+
+    await targets.add({
+      id: "alt",
+      address: "10.0.0.10",
+      port: 22,
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "pve",
+      keyFile: "authorized_keys2",
+    });
+    await keys.create("alt", unlock);
+    await service.authorizeManaged("alt");
+    expect(host.calls[2].json).toMatchObject({ account: "root", keyFile: "authorized_keys2" });
+    expect(await service.deauthorizeManaged("alt")).toEqual({ line: "removed" });
+    expect(host.calls[3].json).toMatchObject({ id: "alt", keyFile: "authorized_keys2" });
+  });
+
+  describe("authorizeManaged with a key file", () => {
+    async function withKeyFile(reply: Reply) {
+      const ctx = await managed({ "POST /api/ssh/authorize": reply });
+      await ctx.targets.add({
+        id: "alt",
+        address: "10.0.0.10",
+        port: 22,
+        account: "root",
+        systemType: "linux",
+        nodes: ["node1"],
+        managedHost: "pve",
+        keyFile: "authorized_keys2",
+      });
+      await ctx.keys.create("alt", unlock);
+      const error = await ctx.service.authorizeManaged("alt").then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      return { ...ctx, error };
+    }
+
+    test("a node that names the same file back is a success", async () => {
+      const { error } = await withKeyFile({ status: 200, body: { keyFile: "authorized_keys2" } });
+      expect(error).toBeUndefined();
+    });
+
+    test("an old node that answers 204 without a body fails with a plain text", async () => {
+      const { error, targets } = await withKeyFile({ status: 204 });
+      expect(error).toBeInstanceOf(NodeError);
+      expect((error as Error).message).toContain("the node does not know key files: update the node first");
+      expect(targets.get("alt")?.state).toBe("draft");
+    });
+
+    test("a node that answers another file name fails", async () => {
+      const { error, targets } = await withKeyFile({ status: 200, body: { keyFile: "authorized_keys" } });
+      expect(error).toBeInstanceOf(NodeError);
+      expect(targets.get("alt")?.state).toBe("draft");
     });
   });
 

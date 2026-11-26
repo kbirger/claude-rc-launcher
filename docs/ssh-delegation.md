@@ -73,6 +73,7 @@ Tap Add target on the SSH access page. Fill in the form:
 - The system type: `linux`, `windows`, `synology` or `dropbear`.
 - Whether the target is a managed target. A managed target runs the launcher as a node of this hub.
 - For a managed target of the host `local`, the address is required. Give the LAN address of this machine as the other nodes see it. The hub cannot tell it, and it never takes the address from `public_url`, because that name can lead to another machine. The wizard fills the field with the source address of the node `local` when you entered one.
+- The key file. This field is optional. It shows for a managed target of the type `linux` or `synology`. Read [Keys that a job overwrites](#keys-that-a-job-overwrites).
 - The nodes that can reach the target. Only nodes with access turned on are listed.
 
 An account name has no spaces, quotes, commas or backslashes. It does not start with a dash. For a Windows domain account, use the form `user@domain`.
@@ -118,6 +119,8 @@ For a managed target, name its host id. You need no key of your own:
 claude-rc ssh target add slon --managed slon --type linux --account root --node local
 ```
 
+To write the key line into another file in `~/.ssh`, add `--key-file <name>`. Read [Keys that a job overwrites](#keys-that-a-job-overwrites).
+
 For a remote managed host, the address is the host name from the URL of that host. For the host `local`, add `--address` with the LAN address of this machine as the other nodes see it. The hub refuses the command without it.
 
 The command works in this order:
@@ -138,6 +141,59 @@ The page shows the notes for the type of the target. These are the same notes:
 - `windows`: OpenSSH Server must run. For an administrator account, append the line to `C:\ProgramData\ssh\administrators_authorized_keys`, and limit that file to SYSTEM and Administrators. For any other account, use `%USERPROFILE%\.ssh\authorized_keys`.
 - `synology`: turn on the user home service and SSH in DSM. Use the same file as `linux`. If other users can write to the home folder, DSM refuses a key.
 - `dropbear`: paste the line into Administration, System, Authorized Keys in the router web page. This type covers Asuswrt-Merlin.
+
+### Keys that a job overwrites
+
+Some machines run a job that rewrites `authorized_keys`. For example, a cron job copies the file from a gist every hour. The job removes the key line of the hub. Three ways solve this problem.
+
+#### Way 1: a key file
+
+Use this way for a managed target of the type `linux` or `synology`. The hub then keeps its key line in another file in `~/.ssh`. Name the file with `--key-file`:
+
+```sh
+claude-rc ssh target add slon --managed slon --type linux --account root --node local --key-file authorized_keys2
+```
+
+The web wizard has the field Key file for the same setting. Leave it empty to use `authorized_keys`.
+
+- The name starts with `authorized_keys`. Up to 48 more letters, digits, dots, dashes or underscores can follow. Examples are `authorized_keys2` and `authorized_keys.claude-rc`.
+- The name is a plain file name in `~/.ssh`. A path or another ssh file, such as `known_hosts`, is refused with a 400.
+- An external target and the types `dropbear` and `windows` do not take a key file. The hub refuses it with a 400.
+- A retire removes the key line from the same file that the install used.
+- Way 2 is for an external target.
+- No route changes the key file of an existing target. To change it, retire the target and add it again.
+- The node must run a version that knows key files. Update the node first. An old node makes the install fail with a clear text.
+
+This way works only when sshd lists the file in `AuthorizedKeysFile`. To check this, run this command on the machine:
+
+```sh
+sudo sshd -T | grep -i authorizedkeysfile
+```
+
+If the output has no entry for your file, sshd ignores the file. Use way 2, or add the file to `AuthorizedKeysFile` in the sshd configuration.
+
+#### Way 2: an sshd drop-in
+
+Use this way when you cannot change the job. The target is an external target. A root user runs these steps once for each machine. Replace `<hub key line>` with the line of the target. Replace `<account>` with the account name on the machine.
+
+```sh
+sudo mkdir -p /etc/ssh/claude-rc
+echo '<hub key line>' | sudo tee /etc/ssh/claude-rc/<account> >/dev/null
+echo 'AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 /etc/ssh/claude-rc/%u' | sudo tee /etc/ssh/sshd_config.d/49-claude-rc.conf >/dev/null
+sudo chmod 755 /etc/ssh/claude-rc && sudo chmod 644 /etc/ssh/claude-rc/<account> /etc/ssh/sshd_config.d/49-claude-rc.conf
+sudo chown root:root /etc/ssh/claude-rc /etc/ssh/claude-rc/<account> /etc/ssh/sshd_config.d/49-claude-rc.conf
+sudo sshd -t && (sudo systemctl reload ssh || sudo systemctl reload sshd)
+```
+
+- The drop-in loads before the main file. sshd uses the first value of a keyword. So the line must repeat the files that sshd already uses. Check them with `sudo sshd -T | grep -i authorizedkeysfile` before you write the line.
+- The folder and the files must belong to root. If another user can write them, sshd refuses the key.
+- This is an external target. The owner installs the line, and the hub only signs. The hub never writes to `/etc/ssh`.
+- The drop-in works only when the main `sshd_config` has the line `Include /etc/ssh/sshd_config.d/*.conf`. The line is near the top of the file, after the comments. Debian 11, Ubuntu 20.04 and newer releases do this. Check it with `grep -n Include /etc/ssh/sshd_config`.
+- The name starts with `49-` because the drop-in must load first. It must load before the main file and before other drop-ins that set the same keyword. So it loads before `50-cloud-init.conf`.
+
+#### Way 3: a dedicated account
+
+Make an account for this tool. Give it its own home folder. Nobody else writes its `authorized_keys`, so no job removes the line. Use this account as the account of the target.
 
 ### Instance setup
 
@@ -175,7 +231,7 @@ Inside a session of an enabled instance, do these steps:
 2. Run `claude-rc ssh request <target> --minutes 30 --reason "read logs"`. Both options are optional. The command waits.
 3. On your phone, open the SSH access page. The request shows the node, the instance, the target, the account and the time. It also shows a warning about the power of the account.
 4. Tap Approve, set the minutes, and unlock the key.
-5. The command prints the path of the socket, the path of the SSH configuration file and the command to run.
+5. The command prints the line `approved`, the end time of the access, the path of the socket, the path of the SSH configuration file and the command to run.
 6. Run the printed command. It has the form `ssh -F <config> <target>`.
 
 The command `claude-rc ssh` finds the node through the variable `CLAUDE_RC_SSH_CONTROL`. The unit of an enabled instance sets it. A command that runs elsewhere prints `SSH access is not turned on for this instance`.
@@ -241,6 +297,27 @@ Access ends in these ways:
 
 Disable a target to stop new grants and keep the key. Tap Enable to use it again. The target goes back to `draft`, and you must run the test again. A session cannot request a `draft` target, so the target is not usable until the test passes.
 
+### Change the nodes of a target
+
+An admin can change the nodes of a target after it exists. The target keeps its key and its state.
+
+- In the web UI, press Edit nodes on the target, check the nodes, and press Save. Only nodes with access turned on are offered. A node that the target has now stays on the list, so that you can take it out.
+- On the command line, run `claude-rc ssh target update <id> --node <id>[,<id>...]`. The list replaces the old list.
+- A client can send `PATCH /api/ssh/targets/<id>` with the body `{"nodes": ["<host id>", ...]}`. The body can also carry `state`, and it needs at least one of the two fields.
+- The hub refuses a host id that is not valid, a duplicate and an unknown host. A list has at most 200 nodes. The answer is 400.
+- If the target has a key, one node of the new list needs access with a source address. If none has, the answer is 409.
+- The hub tells the old nodes and the new nodes about the new list.
+- When a node leaves the list, the pending and the active grants of this target on that node end. Grants on the other nodes stay.
+
+The `from=` part of the key line lists the source addresses of the nodes. A new list can change it.
+
+- For a managed target with a key, the hub installs the line before it stores the list. The install replaces the old line of the same key, so no second line stays. It keeps the file mode and works for `authorized_keys` and for a key file.
+- The hub asks the node every time, because the line on the machine can be out of date. The node writes nothing when the exact line is there.
+- When the install fails, the old list stays, no grant changes and the answer is 502. The text says that the key line was not updated.
+- A target without a key has no line yet. The hub only saves the list, and an empty list is accepted.
+- For an external target with a key, the answer holds the new line in `installLine`. The web UI shows it with a Copy button, and the command prints it. Replace the old line that ends with `claude-rc:<target id>` with the new line.
+- The route `GET /api/ssh/targets/<id>/provision` always gives the line for the current list.
+
 ### Retire a target
 
 A retire deletes the target and its key. The target does not stay in the list, and the hub keeps no record of it. The audit log still shows who retired the target.
@@ -249,7 +326,8 @@ The old key line on the machine is harmless, because the private key is gone. No
 
 - For a managed target, the hub also asks the node of the target to remove the key line. This works when the node is reachable.
 - The node removes only a line that ends with the key and the comment `claude-rc:<target id>`. It keeps every other line. The file keeps its mode. A run as root keeps the owner. When the account is not root, the file belongs to the account.
-- The node refuses to change an `authorized_keys` file or a `.ssh` folder that is a symbolic link. The notice then shows a failed removal.
+- The node removes the line from the key file that the target uses. That file is `authorized_keys` unless the target has a key file.
+- The node refuses to change a key file or a `.ssh` folder that is a symbolic link. The notice then shows a failed removal.
 - For an external target, the hub cannot reach the machine. The page shows the line that ends with `claude-rc:<target id>`. Remove that line from the `authorized_keys` file of the account.
 
 After a retire, the page shows one notice with the result. The result is one of these:

@@ -34,6 +34,7 @@ test("each function calls its route with the right method and path", async () =>
     ],
     [() => api.getTarget("nas"), "GET", "/api/ssh/targets/nas"],
     [() => api.patchTarget("nas", "disabled"), "PATCH", "/api/ssh/targets/nas", { state: "disabled" }],
+    [() => api.patchTargetNodes("nas", ["a", "b"]), "PATCH", "/api/ssh/targets/nas", { nodes: ["a", "b"] }],
     [() => api.deleteTarget("nas"), "DELETE", "/api/ssh/targets/nas"],
     [() => api.getSalt("nas"), "GET", "/api/ssh/targets/nas/salt"],
     [() => api.createKey("nas", unlock), "POST", "/api/ssh/targets/nas/key", { unlock }],

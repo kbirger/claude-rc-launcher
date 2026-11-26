@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HOST_ID_RE } from "../../server/src/hostid";
+import { keyFileProblem } from "../../server/src/sshtargets";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";
@@ -16,7 +17,9 @@ const POLL_LIMIT_MS = 10 * 60 * 1000;
 const BASE = "/cli/api/ssh";
 
 export const SSH_TARGET_USAGE =
-  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--fingerprint <f>] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it";
+  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it";
+
+export const SSH_TARGET_UPDATE_USAGE = "usage: claude-rc ssh target update <id> --node <id>[,<id>...]";
 
 interface Unlock {
   method: "prf" | "passphrase";
@@ -81,6 +84,12 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   if (!ACCOUNT_RE.test(account)) throw usage("--account is not valid");
   if (address !== undefined && !ADDRESS_RE.test(address)) throw usage("--address is not valid");
   if (flags.managed !== undefined && !HOST_ID_RE.test(flags.managed)) throw usage("--managed is not a host id");
+  const keyFileName = flags["key-file"];
+  if (keyFileName !== undefined) {
+    // The same rule as the hub: a managed linux or synology target, and a name that starts with authorized_keys.
+    const bad = keyFileProblem(keyFileName, type, isManaged);
+    if (bad) throw usage(`--key-file: ${bad}`);
+  }
   const nodes = flags.node.split(",");
   if (nodes.length === 0 || !nodes.every((node) => HOST_ID_RE.test(node))) throw usage("--node must list host ids");
   const port = flags.port === undefined ? DEFAULT_PORT : Number(flags.port);
@@ -126,6 +135,7 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
       ...(address !== undefined ? { address } : {}),
       ...(flags.port !== undefined || !isManaged ? { port } : {}),
       ...(flags.managed !== undefined ? { managedHost: flags.managed } : {}),
+      ...(keyFileName !== undefined ? { keyFile: keyFileName } : {}),
     }),
   );
   created = true;
@@ -269,4 +279,55 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   }
 
   out(`test passed: ${id} is ready`);
+}
+
+export interface SshTargetUpdateOptions {
+  id: string;
+  flags: Flags;
+  hub: HubClient;
+  out: (line: string) => void;
+}
+
+interface UpdatedTarget {
+  nodes?: string[];
+  managedHost?: string;
+  installLine?: string;
+  lineUpdated?: boolean;
+  pushed?: boolean;
+}
+
+const updateUsage = (reason: string) => new ExitError(`${SSH_TARGET_UPDATE_USAGE}\n${reason}`, 1);
+
+/**
+ * `claude-rc ssh target update <id> --node <ids>`: replaces the list of nodes of a target. It prints the new list. For
+ * an external target it prints the new key line, which the owner must install in place of the old line. For a managed
+ * target the hub has changed the line on the machine already, and the command says so.
+ */
+export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<void> {
+  const { id, flags, hub, out } = options;
+  if (!HOST_ID_RE.test(id)) throw updateUsage("the target id is not valid");
+  if (flags.node === undefined) throw new ExitError(SSH_TARGET_UPDATE_USAGE, 1);
+  const nodes = flags.node.split(",");
+  if (!nodes.every((node) => HOST_ID_RE.test(node))) throw updateUsage("--node must list host ids");
+  const repeated = nodes.find((node, index) => nodes.indexOf(node) !== index);
+  if (repeated !== undefined) throw updateUsage(`the node id "${repeated}" is named more than once in --node`);
+
+  let updated: UpdatedTarget;
+
+  try {
+    updated = await hub.request<UpdatedTarget>("PATCH", `${BASE}/targets/${encodeURIComponent(id)}`, { nodes });
+  } catch (error) {
+    throw new ExitError(`updating the target failed: ${messageOf(error)}`, 1);
+  }
+
+  out(`target ${id} nodes: ${(updated.nodes ?? nodes).join(", ")}`);
+  if (updated.pushed === false)
+    out("some nodes could not be told about the change. They get it when they connect again");
+
+  if (updated.installLine !== undefined) {
+    out("The key line of the target changed. On the target machine, replace the old line that ends with");
+    out(`claude-rc:${id} with this line:`);
+    out(updated.installLine);
+  } else if (updated.lineUpdated === true) out("the key line on the machine was updated");
+  else if (updated.managedHost !== undefined) out("the target has no key yet, so it has no key line on the machine");
 }

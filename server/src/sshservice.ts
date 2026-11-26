@@ -5,6 +5,7 @@ import { GrantError } from "./sshgrants";
 import type { Grant, GrantStore } from "./sshgrants";
 import { KeyError } from "./sshkeystore";
 import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
+import { NO_WAITING_REQUEST } from "./sshnodeapi";
 import { authorizedKeysLine, TargetError } from "./sshtargets";
 import type { Target, TargetStore } from "./sshtargets";
 
@@ -25,6 +26,7 @@ const SCAN_TIMEOUT_MS = 30_000;
 const SCRIPT_TIMEOUT_MS = 90_000;
 const DEAUTHORIZE_TIMEOUT_MS = 10_000;
 const MAX_DETAIL = 200;
+const STOPPED_WAITING = "The session stopped waiting. Ask the session to request again.";
 
 /** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
 export class NodeError extends Error {
@@ -160,7 +162,10 @@ export class SshService {
       if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
     } catch (error) {
       grants.endWhere((item) => item.id === grantId, "node-lost");
-      throw error instanceof GrantError ? error : new GrantError(409, message(error));
+      if (error instanceof GrantError) throw error;
+      // The owner reads this text on the approve sheet, so the node text becomes plain words.
+      const text = message(error);
+      throw new GrantError(409, text === NO_WAITING_REQUEST ? STOPPED_WAITING : text);
     }
 
     // The grant ended while the POST was in flight: its DELETE may have reached the node before the grant existed
@@ -215,21 +220,38 @@ export class SshService {
     return found;
   }
 
-  /** Puts the key line of the target into the `authorized_keys` of the account, through the node that is the target. */
-  async authorizeManaged(targetId: string): Promise<void> {
+  /**
+   * Puts the key line of the target into the `authorized_keys` of the account, through the node that is the target.
+   * With `nodes`, the line holds the sources of that proposed list instead of the stored list, so that a change of the
+   * list can be installed before it is stored.
+   */
+  async authorizeManaged(targetId: string, nodes?: string[]): Promise<void> {
     const target = this.needManaged(targetId);
     const { keys, targets } = this.deps;
-    const sources = targets.sourcesOf(target);
+    const sources = targets.sourcesOf(nodes === undefined ? target : { nodes });
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
     const line = authorizedKeysLine(keys.publicLine(targetId), sources);
-    await this.nodeReply(
+    const reply = await this.nodeReply(
       target.managedHost,
       "POST",
       "/authorize",
-      { account: target.account, systemType: target.systemType, line },
+      {
+        account: target.account,
+        systemType: target.systemType,
+        line,
+        ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+      },
       SCRIPT_TIMEOUT_MS,
     );
+
+    // An old node ignores the key file and writes `authorized_keys`. It answers without the name, so the install
+    // would look fine. The node must name the file back.
+    if (target.keyFile !== undefined) {
+      const answered = isObject(reply.body) ? reply.body.keyFile : undefined;
+      if (answered !== target.keyFile)
+        throw new NodeError("the node does not know key files: update the node first, then install again");
+    }
   }
 
   /**
@@ -256,7 +278,13 @@ export class SshService {
         target.managedHost,
         "POST",
         "/deauthorize",
-        { account: target.account, systemType: target.systemType, key: blob, id: targetId },
+        {
+          account: target.account,
+          systemType: target.systemType,
+          key: blob,
+          id: targetId,
+          ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+        },
         DEAUTHORIZE_TIMEOUT_MS,
       );
       const result = isObject(reply.body) ? reply.body.result : undefined;

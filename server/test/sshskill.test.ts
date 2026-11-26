@@ -303,3 +303,13 @@ describe("Windows", () => {
     expect(logged).toEqual([]);
   });
 });
+
+describe("skill trigger text", () => {
+  test("the description names the failure and stays short, and the Messages table has approved", () => {
+    const description = /^description: (.*)$/m.exec(SSH_SKILL)?.[1] ?? "";
+    expect(description).toContain("Permission denied (publickey)");
+    expect(description.length).toBeLessThan(400);
+    const table = SSH_SKILL.slice(SSH_SKILL.indexOf("## Messages"));
+    expect(table).toContain("`approved`");
+  });
+});

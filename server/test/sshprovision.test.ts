@@ -388,3 +388,222 @@ describe("deprovisionScript", () => {
     expect({ code: await proc.exited, out: out + err }).toEqual({ code: 0, out: "" });
   });
 });
+
+describe("key file", () => {
+  const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIAAA";
+  const mine = `from="10.0.0.1",restrict ssh-ed25519 ${BLOB} claude-rc:nas`;
+  const file = (dir: string, name: string) => join(dir, ".ssh", name);
+
+  test("the install script writes the chosen file and leaves authorized_keys alone", async () => {
+    const dir = await home();
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await writeFile(keys(dir), "ssh-rsa JOB x\n");
+    for (const type of ["linux", "synology"] as const) {
+      const { script } = provisionScript(type, LINE, { keyFile: "authorized_keys2" });
+      expect(script).toContain("'authorized_keys2'");
+      expect(await run(script, dir)).toEqual({ code: 0, out: "" });
+    }
+    expect(await readFile(file(dir, "authorized_keys2"), "utf8")).toBe(`${LINE}\n`);
+    expect(await mode(file(dir, "authorized_keys2"))).toBe(0o600);
+    expect(await readFile(keys(dir), "utf8")).toBe("ssh-rsa JOB x\n");
+  });
+
+  test("the removal script removes from the chosen file and leaves authorized_keys alone", async () => {
+    const dir = await home();
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await writeFile(file(dir, "authorized_keys.claude-rc"), `ssh-rsa KEEP x\n${mine}\n`, { mode: 0o600 });
+    await writeFile(keys(dir), `${mine}\n`, { mode: 0o600 });
+    const { script } = deprovisionScript("linux", BLOB, "nas", { keyFile: "authorized_keys.claude-rc" });
+    expect(await run(script, dir)).toEqual({ code: 0, out: "removed\n" });
+    expect(await readFile(file(dir, "authorized_keys.claude-rc"), "utf8")).toBe("ssh-rsa KEEP x\n");
+    expect(await readFile(keys(dir), "utf8")).toBe(`${mine}\n`);
+    expect(await run(script, dir)).toEqual({ code: 0, out: "not-found\n" });
+  });
+
+  test("without a key file both scripts use authorized_keys", async () => {
+    const dir = await home();
+    expect(provisionScript("linux", LINE).script).toContain(`file="$dir"/'authorized_keys'`);
+    expect(deprovisionScript("linux", BLOB, "nas").script).toContain(`file="$dir"/'authorized_keys'`);
+    await run(provisionScript("linux", LINE).script, dir);
+    expect(await readFile(keys(dir), "utf8")).toBe(`${LINE}\n`);
+    expect(await run(deprovisionScript("linux", "AAAAC3Nza", "nas").script, dir)).toEqual({
+      code: 0,
+      out: "removed\n",
+    });
+  });
+
+  test("a name that is not a key file name throws and never reaches a script", () => {
+    for (const keyFile of ["../x", "authorized_keys/../x", "known_hosts", "authorized_keys'; touch x; '"]) {
+      expect(() => provisionScript("linux", LINE, { keyFile })).toThrow();
+      expect(() => deprovisionScript("linux", BLOB, "nas", { keyFile })).toThrow();
+    }
+  });
+});
+
+describe("provisionScript replaces an older line of the same key", () => {
+  const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIAAA";
+  const OTHER = "AAAAC3NzaC1lZDI1NTE5AAAAIBBB";
+  const oldLine = `from="10.0.0.1,10.0.0.2",restrict ssh-ed25519 ${BLOB} claude-rc:nas`;
+  const newLine = `from="10.0.0.2,10.0.0.9",restrict ssh-ed25519 ${BLOB} claude-rc:nas`;
+  const otherTarget = `from="10.0.0.1",restrict ssh-ed25519 ${OTHER} claude-rc:db`;
+  const sameBlobOtherId = `ssh-ed25519 ${BLOB} claude-rc:other`;
+  const install = provisionScript("linux", newLine).script;
+
+  async function setFile(dir: string, text: string, fileMode = 0o600, name = "authorized_keys"): Promise<void> {
+    await mkdir(join(dir, ".ssh"), { mode: 0o700, recursive: true });
+    await writeFile(join(dir, ".ssh", name), text, { mode: fileMode });
+    await chmod(join(dir, ".ssh", name), fileMode);
+  }
+
+  test("the old line goes, the new line comes, and other lines and their order stay", async () => {
+    const dir = await home();
+    await setFile(dir, ["ssh-rsa OLD one", oldLine, otherTarget, sameBlobOtherId, "ssh-rsa OLD two", ""].join("\n"));
+    expect(await run(install, dir)).toEqual({ code: 0, out: "" });
+    expect(await readFile(keys(dir), "utf8")).toBe(
+      ["ssh-rsa OLD one", otherTarget, sameBlobOtherId, "ssh-rsa OLD two", newLine, ""].join("\n"),
+    );
+  });
+
+  test("it keeps the file mode and leaves no temporary file", async () => {
+    const dir = await home();
+    await setFile(dir, `${oldLine}\n`, 0o600);
+    await run(install, dir);
+    expect(await mode(keys(dir))).toBe(0o600);
+    expect((await readdir(join(dir, ".ssh"))).filter((name) => name !== ".claude-rc.lock")).toEqual([
+      "authorized_keys",
+    ]);
+  });
+
+  test("it works on a file without a newline at the end", async () => {
+    const dir = await home();
+    await setFile(dir, `ssh-rsa A one\n${oldLine}`);
+    expect(await run(install, dir)).toEqual({ code: 0, out: "" });
+    expect(await readFile(keys(dir), "utf8")).toBe(`ssh-rsa A one\n${newLine}\n`);
+  });
+
+  test("it is safe to run twice, and a duplicate of the line is cleaned up", async () => {
+    const dir = await home();
+    await setFile(dir, `${oldLine}\n${oldLine}\n`);
+    await run(install, dir);
+    await run(install, dir);
+    expect(await readFile(keys(dir), "utf8")).toBe(`${newLine}\n`);
+    const dup = await home();
+    await setFile(dup, `${newLine}\n${newLine}\n`);
+    await run(install, dup);
+    expect(await readFile(keys(dup), "utf8")).toBe(`${newLine}\n`);
+  });
+
+  test("a file that holds the exact line already is not rewritten", async () => {
+    const dir = await home();
+    await setFile(dir, `ssh-rsa A one\n${newLine}\n`);
+    const before = await stat(keys(dir));
+    await run(install, dir);
+    expect((await stat(keys(dir))).ino).toBe(before.ino);
+  });
+
+  test("it works on a key file name and leaves authorized_keys alone", async () => {
+    const dir = await home();
+    await setFile(dir, `${oldLine}\n`, 0o600, "authorized_keys2");
+    await setFile(dir, `${oldLine}\n`, 0o600);
+    const { script } = provisionScript("linux", newLine, { keyFile: "authorized_keys2" });
+    await run(script, dir);
+    expect(await readFile(join(dir, ".ssh", "authorized_keys2"), "utf8")).toBe(`${newLine}\n`);
+    expect(await readFile(keys(dir), "utf8")).toBe(`${oldLine}\n`);
+  });
+
+  test("it refuses to replace a symbolic link and changes nothing", async () => {
+    const dir = await home();
+    const elsewhere = await home();
+    await writeFile(join(elsewhere, "real"), `${oldLine}\n`);
+    await mkdir(join(dir, ".ssh"), { mode: 0o700 });
+    await symlink(join(elsewhere, "real"), keys(dir));
+    const result = await run(install, dir);
+    expect(result.code).not.toBe(0);
+    expect((await lstat(keys(dir))).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(elsewhere, "real"), "utf8")).toBe(`${oldLine}\n`);
+  });
+
+  test("it refuses a symbolic link as the folder and changes nothing", async () => {
+    const dir = await home();
+    const elsewhere = await home();
+    await mkdir(join(elsewhere, "real"), { mode: 0o700 });
+    await writeFile(join(elsewhere, "real", "authorized_keys"), `${oldLine}\n`, { mode: 0o600 });
+    await symlink(join(elsewhere, "real"), join(dir, ".ssh"));
+    const result = await run(install, dir);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("symbolic link");
+    expect(await readFile(join(elsewhere, "real", "authorized_keys"), "utf8")).toBe(`${oldLine}\n`);
+    expect((await readdir(join(elsewhere, "real"))).filter((name) => name !== ".claude-rc.lock")).toEqual([
+      "authorized_keys",
+    ]);
+  });
+
+  test("the rewrite removes its temporary file on exit and on a signal", () => {
+    const { script } = provisionScript("linux", newLine);
+    expect(script).toContain("trap 'rm -f \"$tmp\"' EXIT");
+    expect(script).toContain("trap 'exit 1' HUP INT TERM");
+  });
+
+  test("a failed temporary file leaves the old file as it was", async () => {
+    const dir = await home();
+    const text = `${oldLine}\nssh-rsa KEEP x\n`;
+    await setFile(dir, text);
+    const fake = await home();
+    await writeFile(join(fake, "cp"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const proc = Bun.spawn(["sh", "-s"], {
+      stdin: new Blob([install]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { PATH: `${fake}:${process.env.PATH ?? ""}`, HOME: dir },
+    });
+    expect(await proc.exited).not.toBe(0);
+    expect(await readFile(keys(dir), "utf8")).toBe(text);
+  });
+
+  test("two installs at the same time end with one line", async () => {
+    const dir = await home();
+    await setFile(dir, `ssh-rsa A one\n${oldLine}\n`);
+    const other = provisionScript("linux", `from="10.0.0.7",restrict ssh-ed25519 ${BLOB} claude-rc:nas`).script;
+    await Promise.all([run(install, dir), run(other, dir), run(install, dir), run(other, dir)]);
+    const lines = (await readFile(keys(dir), "utf8")).split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe("ssh-rsa A one");
+    expect(lines[1]).toMatch(/claude-rc:nas$/);
+  });
+
+  test("a line that is not a launcher key line keeps the plain append", () => {
+    const { script } = provisionScript("linux", "ssh-ed25519 AAAA laptop");
+    expect(script).not.toContain("RC_BLOB");
+  });
+
+  test("the windows script replaces the lines of the same key with one replace", () => {
+    const { script } = provisionScript("windows", newLine, { account: "dev" });
+    expect(script).toContain(`$blob = '${BLOB}'`);
+    expect(script).toContain("$comment = 'claude-rc:nas'");
+    expect(script).toContain("[IO.File]::Replace($tmp, $file, $null)");
+    expect(script).toContain("$matched -eq 1 -and $lines -ccontains $line");
+    // the exact-line check is case sensitive, like the match of the key fields
+    expect(script).not.toMatch(/\$lines -(not)?contains/);
+    expect(script.indexOf("$matched -eq 0")).toBeGreaterThan(script.indexOf("foreach"));
+    // icacls runs after the write in each case
+    expect(script.indexOf("icacls.exe")).toBeGreaterThan(script.indexOf("[IO.File]::Replace"));
+    expect(provisionScript("windows", "ssh-ed25519 AAAA laptop").script).not.toContain("$matched");
+  });
+
+  test.skipIf(Bun.which("pwsh") === null)("the windows replace script parses as PowerShell", async () => {
+    for (const options of [{}, { account: "dev.user-1" }]) {
+      const { script } = provisionScript("windows", newLine, options);
+      const proc = Bun.spawn(
+        [
+          "pwsh",
+          "-NoProfile",
+          "-Command",
+          "$e = $null; [void][System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(), [ref]$null, [ref]$e); $e | ForEach-Object { $_.Message }; exit ($e.Count)",
+        ],
+        { stdin: new Blob([script]), stdout: "pipe", stderr: "pipe" },
+      );
+      const out = await new Response(proc.stdout).text();
+      expect({ code: await proc.exited, out }).toEqual({ code: 0, out: "" });
+    }
+  });
+});
