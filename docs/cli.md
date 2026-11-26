@@ -129,7 +129,8 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 |---|---|
 | `ssh targets` | Run in a session: list the targets that the instance can ask for. |
 | `ssh request <target> [--minutes <n>] [--reason <text>]` | Run in a session: ask the owner for SSH access, wait for the approval, and print the `ssh` command. |
-| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
+| `ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> \| --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--no-test]` | Add a target. Needs the `admin` role. |
+| `ssh target update <id> --node <id>[,<id>...]` | Replace the nodes of a target. Needs the `admin` role. |
 
 ### Updates
 
@@ -175,7 +176,7 @@ claude-rc ssh targets
 claude-rc ssh request slon --minutes 30 --reason "read logs"
 ```
 
-`ssh request` waits for the owner. A grant lasts 60 minutes by default and 480 minutes at most. The command prints the path of the socket, the path of the SSH configuration file and the command `ssh -F <config> <target>`. A request that nobody answers fails after 10 minutes.
+`ssh request` waits for the owner. A grant lasts 60 minutes by default and 480 minutes at most. The command prints `waiting for approval` first. After the owner approves, it prints the line `approved` and the line `access ends at <time>`. Then it prints the path of the socket, the path of the SSH configuration file and the command `ssh -F <config> <target>`. A request that nobody answers fails after 10 minutes.
 
 The command `ssh target add` runs on your own machine, with the saved login. It needs the `admin` role. It has two forms. An external target does not run the launcher, and the command needs `--address` and `--identity`:
 
@@ -197,10 +198,19 @@ These flags apply:
 - `--account` is the account on the target. It has no spaces, quotes, commas or backslashes. It does not start with a dash.
 - `--node` lists the host ids of the nodes that can reach the target, separated by commas and with no spaces.
 - `--port` is the SSH port. The default is 22.
+- `--key-file <name>` sets the file in `~/.ssh` for a managed target of the type `linux` or `synology`. The default is `authorized_keys`. The name starts with `authorized_keys`, for example `authorized_keys2`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
 - `--fingerprint SHA256:<value>` answers the host key question in advance for an external target.
 - `--no-test` skips the one-minute test grant.
 
 The command makes the key, pins the host key, installs the key and runs the test. For a passphrase, you type it in the terminal. For a passkey, the command prints a link to the web UI and waits until you unlock there. The key of `--identity` stays on your machine and never goes to the hub. If a step fails, the target stays in `draft` on the hub.
+
+To change the nodes of a target, run the command `ssh target update`. It needs the `admin` role:
+
+```sh
+claude-rc ssh target update slon --node local,pi
+```
+
+The list replaces the old list, and the command prints it. For a managed target, the hub updates the key line on the machine, and the command says so. If that fails, the old list stays and the command exits with an error. A target without a key has no line, and the command says so. For an external target, the command prints the new key line. Replace the old line that ends with `claude-rc:<id>` with it. Read [Change the nodes of a target](ssh-delegation.md#change-the-nodes-of-a-target).
 
 ## Instance settings
 

@@ -74,7 +74,7 @@ describe("claude-rc ssh", () => {
     expect(node.seen).toEqual([{ op: "targets" }]);
   });
 
-  test("ssh request prints the waiting line, then the paths", async () => {
+  test("ssh request prints the waiting line, approved, the end time, then the paths", async () => {
     const node = fakeNode(() => ({ ok: true, socket: "/run/s/agent.sock", config: "/run/s/g.conf", endsAt: 5 }));
     const outcome = await run(
       { CLAUDE_RC_SSH_CONTROL: node.control },
@@ -89,11 +89,27 @@ describe("claude-rc ssh", () => {
     expect(outcome.code).toBe(0);
     expect(outcome.out).toEqual([
       "waiting for approval",
+      "approved",
+      `access ends at ${new Date(5).toISOString()}`,
       "socket: /run/s/agent.sock",
       "config: /run/s/g.conf",
       "ssh -F /run/s/g.conf nas",
     ]);
     expect(node.seen).toEqual([{ op: "request", targetId: "nas", minutes: 30, reason: "fix the backup" }]);
+  });
+
+  test("ssh request omits the end time line when endsAt is missing, not a number or out of range", async () => {
+    for (const endsAt of [undefined, "soon", 8.64e15 + 1, 1e300]) {
+      const node = fakeNode(() => ({
+        ok: true,
+        socket: "/s",
+        config: "/c",
+        ...(endsAt === undefined ? {} : { endsAt }),
+      }));
+      const outcome = await run({ CLAUDE_RC_SSH_CONTROL: node.control }, "ssh", "request", "nas");
+      expect(outcome.code).toBe(0);
+      expect(outcome.out).toEqual(["waiting for approval", "approved", "socket: /s", "config: /c", "ssh -F /c nas"]);
+    }
   });
 
   test("ssh request without the environment variable exits 1 with the message above", async () => {

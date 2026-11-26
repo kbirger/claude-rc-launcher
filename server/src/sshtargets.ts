@@ -12,7 +12,7 @@ import { HOST_ID_RE } from "./hostid";
 // committed is never changed in place.
 
 const MAX_TARGETS = 200;
-const MAX_NODES = 200;
+export const MAX_NODES = 200;
 const MAX_BYTES = 1024 * 1024;
 const MAX_TEXT = 4096;
 const VERSION = 1;
@@ -37,6 +37,30 @@ export function isAccount(value: unknown): value is string {
   return typeof value === "string" && ACCOUNT_RE.test(value);
 }
 
+// A key file is a plain name in `~/.ssh` that starts with `authorized_keys`: never a path, never another ssh file.
+const KEY_FILE_RE = /^authorized_keys[A-Za-z0-9._-]{0,48}$/;
+// Only these system types read a key file in `~/.ssh` that sshd can be told to use. Dropbear reads `authorized_keys` only,
+// and Windows has its own files.
+const KEY_FILE_TYPES: readonly string[] = ["linux", "synology"];
+
+/** A key file name as the target store takes it. The node (managed routes) uses the same rule. */
+export function isKeyFile(value: unknown): value is string {
+  return typeof value === "string" && KEY_FILE_RE.test(value);
+}
+
+/**
+ * Why a key file is not allowed for a target, or undefined when it is. An absent key file is always fine. A key file
+ * needs a managed target of the system type `linux` or `synology`. The hub, the store and the node all use this rule.
+ */
+export function keyFileProblem(keyFile: unknown, systemType: unknown, managed: boolean): string | undefined {
+  if (keyFile === undefined) return undefined;
+  if (!managed) return "only a managed target takes a key file";
+  if (typeof systemType !== "string" || !KEY_FILE_TYPES.includes(systemType))
+    return "only a linux or synology target takes a key file";
+  if (!isKeyFile(keyFile)) return "the key file must be authorized_keys or a name that starts with authorized_keys";
+  return undefined;
+}
+
 export type SystemType = "linux" | "windows" | "synology" | "dropbear";
 export type TargetState = "draft" | "ready" | "disabled";
 
@@ -50,6 +74,8 @@ export interface Target {
   nodes: string[];
   /** The host id of the node that is the target, when the target runs the launcher. */
   managedHost?: string;
+  /** A managed target only: the file in `~/.ssh` that holds the key line. Absent means `authorized_keys`. */
+  keyFile?: string;
   /** The pinned host key, one line in the `known_hosts` format. */
   hostKey?: string;
   /** The fingerprint of the key that the hub holds for the target. */
@@ -110,7 +136,7 @@ function problem(target: Omit<Target, "state">): string | undefined {
     !(typeof target.managedHost === "string" && HOST_ID_RE.test(target.managedHost))
   )
     return "the managed host is not a host id";
-  return undefined;
+  return keyFileProblem(target.keyFile, target.systemType, target.managedHost !== undefined);
 }
 
 /** One line of text of a limited size, for the host key and the fingerprint. */
@@ -129,8 +155,9 @@ function parseTarget(id: string, value: unknown): Target | undefined {
     nodes: value.nodes as string[],
     state: value.state,
   };
-  if (problem(target) || value.id !== id) return undefined;
   if (value.managedHost !== undefined) target.managedHost = value.managedHost as string;
+  if (value.keyFile !== undefined) target.keyFile = value.keyFile as string;
+  if (problem(target) || value.id !== id) return undefined;
   if (singleLine(value.hostKey)) target.hostKey = value.hostKey;
   if (singleLine(value.keyFingerprint)) target.keyFingerprint = value.keyFingerprint;
   return copy(target);
@@ -200,6 +227,7 @@ export class TargetStore {
       state: "draft",
     };
     if (input.managedHost !== undefined) target.managedHost = input.managedHost;
+    if (input.keyFile !== undefined) target.keyFile = input.keyFile;
 
     await this.mutate((draft) => {
       if (draft.targets.has(target.id)) throw new TargetError(409, "a target with this id exists already");
@@ -223,6 +251,21 @@ export class TargetStore {
   async setState(id: string, state: TargetState): Promise<void> {
     if (!isState(state)) throw new TargetError(400, "the state is not valid");
     await this.update(id, (target) => ({ ...target, state }));
+  }
+
+  /**
+   * Replaces the list of nodes of a target. The list needs host ids, at most MAX_NODES, without a duplicate. It does
+   * not check that a host exists: the caller knows the hosts.
+   */
+  async setNodes(id: string, nodes: string[]): Promise<void> {
+    if (
+      !Array.isArray(nodes) ||
+      nodes.length > MAX_NODES ||
+      !nodes.every((node) => typeof node === "string" && HOST_ID_RE.test(node))
+    )
+      throw new TargetError(400, "the node list is not valid");
+    if (new Set(nodes).size !== nodes.length) throw new TargetError(400, "the node list has a duplicate");
+    await this.update(id, (target) => ({ ...target, nodes: [...nodes] }));
   }
 
   async remove(id: string): Promise<void> {

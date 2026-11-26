@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
-import { LOCAL_HOST } from "./hostid";
+import { HOST_ID_RE, LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { logToken } from "./roles";
@@ -11,7 +11,15 @@ import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
 import { provisionScript } from "./sshprovision";
 import { NodeError } from "./sshservice";
 import type { SshService } from "./sshservice";
-import { authorizedKeysLine, HOST_KEY_RE, installNotes, isSystemType, TargetError } from "./sshtargets";
+import {
+  authorizedKeysLine,
+  HOST_KEY_RE,
+  installNotes,
+  isSystemType,
+  keyFileProblem,
+  MAX_NODES,
+  TargetError,
+} from "./sshtargets";
 import type { Target, TargetState, TargetStore } from "./sshtargets";
 import { newRecovery } from "./sshwrap";
 import type { User } from "./userauth";
@@ -162,8 +170,28 @@ export function sshApi(options: SshApiOptions): Hono {
     return all;
   };
 
-  /** A disable or a retire ends the active grants and refuses the pending ones: the node tells the waiting session. */
-  const endGrantsOf = (targetId: string) => grants.endWhere((grant) => grant.targetId === targetId, "target-disabled");
+  /**
+   * A disable or a retire ends the active grants and refuses the pending ones: the node tells the waiting session.
+   * With `hostIds`, only the grants of those nodes end (a node that left the list of the target).
+   */
+  const endGrantsOf = (targetId: string, hostIds?: string[]) =>
+    grants.endWhere(
+      (grant) => grant.targetId === targetId && (hostIds === undefined || hostIds.includes(grant.nodeId)),
+      "target-disabled",
+    );
+
+  /** The list of nodes of a PATCH: the rules of a new target, and each host must exist. */
+  const parseNodes = (value: unknown): string[] => {
+    if (!Array.isArray(value) || !value.every((node) => typeof node === "string"))
+      throw new HttpError(400, "nodes must be a list of host ids");
+    if (value.length > MAX_NODES) throw new HttpError(400, `nodes can hold at most ${MAX_NODES} host ids`);
+    if (!value.every((node: string) => HOST_ID_RE.test(node))) throw new HttpError(400, "a node id is not valid");
+    if (new Set(value).size !== value.length) throw new HttpError(400, "nodes has a duplicate");
+    const known = options.hostIds();
+    const unknown = value.find((node: string) => !known.includes(node));
+    if (unknown !== undefined) throw new HttpError(400, `no such host: ${unknown}`);
+    return [...(value as string[])];
+  };
 
   hono.onError((error, context) => {
     let status = 500;
@@ -296,6 +324,10 @@ export function sshApi(options: SshApiOptions): Hono {
       throw new HttpError(400, "nodes must be a list of host ids");
     if (body.managedHost !== undefined && typeof body.managedHost !== "string")
       throw new HttpError(400, "managedHost must be a host id");
+    if (body.keyFile !== undefined && typeof body.keyFile !== "string")
+      throw new HttpError(400, "keyFile must be text");
+    const keyFileBad = keyFileProblem(body.keyFile, body.systemType, body.managedHost !== undefined);
+    if (keyFileBad) throw new HttpError(400, keyFileBad);
     if (body.address !== undefined && typeof body.address !== "string")
       throw new HttpError(400, "address must be text");
     if (body.port !== undefined && typeof body.port !== "number") throw new HttpError(400, "port must be a number");
@@ -318,6 +350,7 @@ export function sshApi(options: SshApiOptions): Hono {
       systemType: body.systemType,
       nodes: body.nodes,
       ...(body.managedHost !== undefined ? { managedHost: body.managedHost } : {}),
+      ...(body.keyFile !== undefined ? { keyFile: body.keyFile } : {}),
     });
     await push(target.nodes);
     return context.json(target, 201);
@@ -328,26 +361,107 @@ export function sshApi(options: SshApiOptions): Hono {
     return context.json({ ...target, notes: installNotes(target.systemType) });
   });
 
+  // A change of the nodes of one target runs one at a time. A retire of the same target waits out with 409.
+  const editing = new Set<string>();
+  const retiring = new Set<string>();
+
+  // The body holds `state`, `nodes` or both. A new list of nodes changes the `from=` part of the key line of the target:
+  // a managed target gets the new line before the list is stored, and a failed install leaves the list as it was (502),
+  // because a list that the machine does not match would let the hub approve a node that the machine refuses. An external target
+  // gets the new line in the answer (`installLine`), and `GET /targets/:id/provision` gives it later. The grants of a
+  // node that left the list end. The nodes of the old and the new list get the target list.
   hono.patch("/targets/:id", async (context) => {
-    const target = needTarget(context);
+    needTarget(context);
     const body = await readObject(context);
-    if (body.state !== "disabled" && body.state !== "draft")
+    const hasState = body.state !== undefined;
+    const hasNodes = body.nodes !== undefined;
+    if (!hasState && !hasNodes) throw new HttpError(400, "give state, nodes or both");
+    if (hasState && body.state !== "disabled" && body.state !== "draft")
       throw new HttpError(400, "state must be disabled or draft");
-    const state: TargetState = body.state;
-    if (state === "disabled") endGrantsOf(target.id);
-    await targets.setState(target.id, state);
-    await push(target.nodes);
-    return context.json(targets.get(target.id));
+    const nodes = hasNodes ? parseNodes(body.nodes) : undefined;
+    const state = hasState ? (body.state as TargetState) : undefined;
+    const id = context.req.param("id") ?? "";
+    if (retiring.has(id)) throw new TargetError(409, "this target is being retired");
+    if (editing.has(id)) throw new TargetError(409, "this target is being changed");
+    editing.add(id);
+
+    let newLine: string | undefined;
+    let lineUpdated = false;
+    let pushHosts: string[] = [];
+
+    try {
+      // Read again under the lock: the target can have changed while the body was read.
+      const target = needTarget(context);
+      pushHosts = target.nodes;
+
+      if (nodes !== undefined) {
+        const next = { ...target, nodes };
+        const withKey = hasKey(target.id);
+        // A target with a key keeps a valid line only while one node has access and a source address.
+        if (withKey && sourcesOf(next).length === 0)
+          throw new TargetError(409, "no node of the new list has access enabled with a source address");
+
+        if (withKey && target.managedHost !== undefined) {
+          // The line goes to the machine before the list is stored, so a failed install leaves the store as it was and
+          // no node of the new list is trusted meanwhile. The script writes nothing when the exact line is there.
+          try {
+            await service.authorizeManaged(target.id, nodes);
+            lineUpdated = true;
+          } catch (error) {
+            // The machine may have taken the new line before the failure: try to put the old line back.
+            await service.authorizeManaged(target.id).catch((again: unknown) => {
+              audit(`audit ssh target=${logToken(target.id)} line restore failed=${logToken(message(again))}`);
+            });
+            audit(`audit ssh target=${logToken(target.id)} nodes change failed=${logToken(message(error))}`);
+            throw new NodeError(
+              `the key line on the machine was not updated, so the node list is as it was: ${message(error)}`,
+            );
+          }
+
+          try {
+            await targets.setNodes(target.id, nodes);
+          } catch (error) {
+            // The machine has the new line, the store the old list: put the old line back and keep this error.
+            await service.authorizeManaged(target.id).catch((again: unknown) => {
+              audit(`audit ssh target=${logToken(target.id)} line restore failed=${logToken(message(again))}`);
+            });
+            throw error;
+          }
+        } else {
+          await targets.setNodes(target.id, nodes);
+          if (withKey) newLine = installLine(next);
+        }
+
+        const removed = target.nodes.filter((node) => !nodes.includes(node));
+        if (removed.length > 0) endGrantsOf(target.id, removed);
+        pushHosts = [...target.nodes, ...nodes];
+      }
+
+      if (state !== undefined) {
+        if (state === "disabled") endGrantsOf(target.id);
+        await targets.setState(target.id, state);
+      }
+    } finally {
+      editing.delete(id);
+    }
+
+    const pushed = await push(pushHosts);
+    return context.json({
+      ...targets.get(id),
+      ...(nodes !== undefined ? { pushed } : {}),
+      ...(newLine !== undefined ? { installLine: newLine } : {}),
+      ...(lineUpdated ? { lineUpdated } : {}),
+    });
   });
 
   // A retire deletes the target: the grants end, a managed node removes the key line, then the key and the record go.
   // The removal can take a few seconds. The target is disabled first, so that no request and no approval gets a key
   // meanwhile, and the grants end again after the delete. A second retire of the same id gets 409 while the first runs.
-  const retiring = new Set<string>();
 
   hono.delete("/targets/:id", async (context) => {
     const target = needTarget(context);
     if (retiring.has(target.id)) throw new TargetError(409, "this target is being retired");
+    if (editing.has(target.id)) throw new TargetError(409, "this target is being changed");
     retiring.add(target.id);
 
     try {

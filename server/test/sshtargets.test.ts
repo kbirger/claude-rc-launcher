@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TargetError, TargetStore, authorizedKeysLine, installNotes } from "../src/sshtargets";
+import {
+  TargetError,
+  TargetStore,
+  authorizedKeysLine,
+  installNotes,
+  isKeyFile,
+  keyFileProblem,
+} from "../src/sshtargets";
 
 let dir: string;
 let file: string;
@@ -214,6 +221,56 @@ describe("TargetStore", () => {
     expect(store.list()).toEqual([]);
   });
 
+  test("setNodes replaces the list, keeps the other fields and survives a reload", async () => {
+    const store = new TargetStore(file);
+    await store.add(input);
+    await store.setKeyFingerprint("nas", "SHA256:abc");
+    await store.setState("nas", "ready");
+    const before = store.get("nas");
+    await store.setNodes("nas", ["a", "b"]);
+    expect(store.get("nas")).toEqual({ ...before!, nodes: ["a", "b"] });
+    expect(before?.nodes).toEqual(["pve"]);
+    expect(new TargetStore(file).get("nas")?.nodes).toEqual(["a", "b"]);
+    await store.setNodes("nas", []);
+    expect(new TargetStore(file).get("nas")?.nodes).toEqual([]);
+  });
+
+  test("setNodes copies the list it gets and refuses a bad list", async () => {
+    const store = new TargetStore();
+    await store.add(input);
+    const list = ["a"];
+    await store.setNodes("nas", list);
+    list.push("b");
+    expect(store.get("nas")?.nodes).toEqual(["a"]);
+    const returned = store.get("nas")!;
+    returned.nodes.push("x");
+    expect(store.get("nas")?.nodes).toEqual(["a"]);
+    expect(await status(store.setNodes("nope", ["a"]))).toBe(404);
+    expect(await status(store.setNodes("nas", ["a", "a"]))).toBe(400);
+    expect(await status(store.setNodes("nas", ["../x"]))).toBe(400);
+    expect(await status(store.setNodes("nas", "a" as never))).toBe(400);
+    expect(await status(store.setNodes("nas", [5] as never))).toBe(400);
+    expect(
+      await status(
+        store.setNodes(
+          "nas",
+          Array.from({ length: 201 }, (_, index) => `n${index}`),
+        ),
+      ),
+    ).toBe(400);
+    expect(store.get("nas")?.nodes).toEqual(["a"]);
+  });
+
+  test("a failed write of setNodes leaves the nodes as they were", async () => {
+    const store = new TargetStore(join(dir, "ssh", "targets.json"));
+    await store.add(input);
+    // Replace the folder of the file with a regular file, so the next write fails.
+    await rm(join(dir, "ssh"), { recursive: true, force: true });
+    await Bun.write(join(dir, "ssh"), "x");
+    expect(await status(store.setNodes("nas", ["a", "b"]))).toBe(-1);
+    expect(store.get("nas")?.nodes).toEqual(["pve"]);
+  });
+
   test("entries with a bad id or type in the file are skipped", async () => {
     await Bun.write(
       file,
@@ -267,5 +324,76 @@ describe("installNotes", () => {
       expect(text).toContain("700");
       expect(text).toContain("600");
     }
+  });
+});
+
+describe("key file", () => {
+  test("isKeyFile takes authorized_keys and names that start with it, and nothing else", () => {
+    for (const good of [
+      "authorized_keys",
+      "authorized_keys2",
+      "authorized_keys.claude-rc",
+      `authorized_keys${"a".repeat(48)}`,
+    ])
+      expect(isKeyFile(good)).toBe(true);
+    const bad = [
+      "../x",
+      "authorized_keys/../x",
+      "authorized_keys/x",
+      "known_hosts",
+      "id_ed25519",
+      "xauthorized_keys",
+      "authorized_keys ",
+      "authorized_keys\n",
+      "authorized_keys$x",
+      `authorized_keys${"a".repeat(49)}`,
+      "",
+      5,
+      undefined,
+    ];
+    for (const value of bad) expect(isKeyFile(value)).toBe(false);
+  });
+
+  test("keyFileProblem allows a key file for a managed linux or synology target only", () => {
+    expect(keyFileProblem(undefined, "windows", false)).toBeUndefined();
+    expect(keyFileProblem("authorized_keys2", "linux", true)).toBeUndefined();
+    expect(keyFileProblem("authorized_keys2", "synology", true)).toBeUndefined();
+    expect(keyFileProblem("authorized_keys2", "dropbear", true)).toBeDefined();
+    expect(keyFileProblem("authorized_keys2", "windows", true)).toBeDefined();
+    expect(keyFileProblem("authorized_keys2", "linux", false)).toBeDefined();
+    expect(keyFileProblem("../x", "linux", true)).toBeDefined();
+  });
+
+  test("add refuses a bad key file, an external target with one, and dropbear and windows with one", async () => {
+    const store = new TargetStore();
+    const managed = { ...input, managedHost: "pve" };
+    for (const keyFile of ["../x", "authorized_keys/../x", "known_hosts", `authorized_keys${"a".repeat(49)}`])
+      expect(await status(store.add({ ...managed, keyFile }))).toBe(400);
+    expect(await status(store.add({ ...input, keyFile: "authorized_keys2" }))).toBe(400);
+    for (const systemType of ["dropbear", "windows"] as const)
+      expect(await status(store.add({ ...managed, systemType, keyFile: "authorized_keys2" }))).toBe(400);
+    expect(store.list()).toEqual([]);
+  });
+
+  test("a key file survives a reload, and a target without one has none", async () => {
+    const store = new TargetStore(file);
+    await store.add({ ...input, managedHost: "pve", keyFile: "authorized_keys2" });
+    await store.add({ ...input, id: "plain", managedHost: "pve", systemType: "synology" });
+    expect(store.get("nas")?.keyFile).toBe("authorized_keys2");
+    expect(store.get("plain")).not.toHaveProperty("keyFile");
+
+    const again = new TargetStore(file);
+    expect(again.get("nas")?.keyFile).toBe("authorized_keys2");
+    expect(again.get("plain")).not.toHaveProperty("keyFile");
+    expect(again.list()).toEqual(store.list());
+  });
+
+  test("a record with a bad key file in the file is skipped on load", async () => {
+    const store = new TargetStore(file);
+    await store.add({ ...input, managedHost: "pve", keyFile: "authorized_keys2" });
+    await store.add({ ...input, id: "other", managedHost: "pve" });
+    const text = (await readFile(file, "utf8")).replace('"authorized_keys2"', '"../x"');
+    await Bun.write(file, text);
+    expect(new TargetStore(file).list().map((target) => target.id)).toEqual(["other"]);
   });
 });
