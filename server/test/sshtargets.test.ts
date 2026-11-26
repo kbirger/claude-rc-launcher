@@ -236,6 +236,19 @@ describe("TargetStore", () => {
     expect(new TargetStore(file).get("nas")?.nodes).toEqual([]);
   });
 
+  test("setNodesIf sets the list only while the stored list is the expected one", async () => {
+    const store = new TargetStore(file);
+    await store.add(input);
+    await store.setNodes("nas", ["a"]);
+    // A later change of the list stands: the undo of an earlier change does not land.
+    await store.setNodes("nas", ["b"]);
+    expect(await store.setNodesIf("nas", ["a"], ["pve"])).toBe(false);
+    expect(store.get("nas")?.nodes).toEqual(["b"]);
+    expect(await store.setNodesIf("nas", ["b"], ["pve"])).toBe(true);
+    expect(new TargetStore(file).get("nas")?.nodes).toEqual(["pve"]);
+    expect(await store.setNodesIf("gone", [], ["a"])).toBe(false);
+  });
+
   test("setNodes copies the list it gets and refuses a bad list", async () => {
     const store = new TargetStore();
     await store.add(input);

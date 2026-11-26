@@ -133,6 +133,15 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The class of an error and its status or code, for an audit line: never its text, which can hold a path. */
+export function errorKind(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown";
+  const extra = error as { status?: unknown; code?: unknown };
+  const code =
+    typeof extra.status === "number" ? extra.status : typeof extra.code === "string" ? extra.code : undefined;
+  return logToken(code === undefined ? error.name : `${error.name}:${code}`);
+}
+
 export class SshService {
   constructor(private readonly deps: Deps) {}
 
@@ -252,7 +261,16 @@ export class SshService {
 
       return await this.runMaintenance(active, config, by, options.commit);
     } finally {
-      if (this.running.get(active.targetId) === active.id) this.running.delete(active.targetId);
+      const clear = () => {
+        if (this.running.get(active.targetId) === active.id) this.running.delete(active.targetId);
+      };
+
+      // A commit that passed its time limit can still write the store: the lock holds until it settles, so no new
+      // change of the target starts before the store is final.
+      const late = this.lateCommits.get(active.id);
+      this.lateCommits.delete(active.id);
+      if (late) void late.then(clear, clear);
+      else clear();
     }
   }
 
@@ -361,6 +379,9 @@ export class SshService {
 
   /** The target ids whose maintenance run is not over, with the grant id. The lock of `maintenanceFor`. */
   private readonly running = new Map<string, string>();
+
+  /** The commits that passed their time limit and have not settled yet, by grant id. */
+  private readonly lateCommits = new Map<string, Promise<void>>();
 
   /** The preconditions of a maintenance grant, and its lists. It throws the first refusal, with a plain text. */
   private planMaintenance(target: Target, action: MaintenanceAction, toNodes: string[] | undefined): Maintenance {
@@ -505,11 +526,11 @@ export class SshService {
 
       if (outcome.result === "done" && commit) {
         try {
-          await this.boundedCommit(commit, this.deps.grants.get(grant.id) ?? grant);
+          await this.boundedCommit(commit, this.deps.grants.get(grant.id) ?? grant, grant.id);
           this.maintenanceNote(grant, "event=committed");
         } catch (error) {
           commitError = { error };
-          this.maintenanceNote(grant, `event=commit-failed detail=${logToken(message(error))}`);
+          this.maintenanceNote(grant, `event=commit-failed error=${errorKind(error)}`);
           const restored = await this.restore(grant, config);
           outcome = this.failure(`the change was not stored: ${message(error)}`, !restored.ok, restored);
         }
@@ -526,7 +547,7 @@ export class SshService {
    * Runs `commit` with a time limit, so that a hung commit cannot hold the lock of the target and the approve call for
    * ever. At the limit the signal aborts and the call throws `COMMIT_TIMEOUT_TEXT`. A late end of `commit` is ignored.
    */
-  private async boundedCommit(commit: MaintenanceCommit, grant: Grant): Promise<void> {
+  private async boundedCommit(commit: MaintenanceCommit, grant: Grant, grantId: string): Promise<void> {
     const timers = this.deps.timers ?? realTimers;
     const controller = new AbortController();
     let handle: unknown;
@@ -534,6 +555,13 @@ export class SshService {
     const limit = new Promise<never>((_resolve, reject) => {
       handle = timers.setTimeout(() => {
         controller.abort();
+        this.lateCommits.set(
+          grantId,
+          work.then(
+            () => {},
+            () => {},
+          ),
+        );
         reject(new NodeError(COMMIT_TIMEOUT_TEXT));
       }, this.deps.commitTimeoutMs ?? COMMIT_TIMEOUT_MS);
     });
@@ -556,6 +584,8 @@ export class SshService {
       if (this.deps.grants.get(grant.id)?.state !== "active")
         return this.failure("the grant ended before the run was over", changed);
 
+      // From here the target can change: a revoke or an expiry is no longer the same as a deny.
+      this.markStarted(grant.id);
       const run = await this.runStep(grant, config, step.command);
 
       if (run.answer === undefined || !step.check(run.answer)) {
@@ -572,6 +602,14 @@ export class SshService {
     }
 
     return { result: "done", changed };
+  }
+
+  private markStarted(grantId: string): void {
+    try {
+      this.deps.grants.markStarted(grantId);
+    } catch (error) {
+      this.note(`maintenance grant=${logToken(grantId)} start not recorded failed=${errorKind(error)}`);
+    }
   }
 
   /** A failed outcome. The fixed sentences come first, because the detail is cut to 200 characters. */

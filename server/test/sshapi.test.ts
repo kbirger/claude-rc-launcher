@@ -2287,13 +2287,152 @@ describe("the provisioner routes: add, change of nodes and retire", () => {
     expect(approved.status).toBe(502);
     expect(approved.body.error).toBe("the change could not be stored in time");
     expect(runner.commands()).toEqual(["sources 192.168.1.20", "status", "sources 192.168.1.10,192.168.1.20"]);
-    expect(service.maintenanceFor("nas")).toBeUndefined();
+    // The stalled write still holds the lock: no new change starts before the store is final.
+    expect(service.maintenanceFor("nas")?.id).toBe(started.body.maintenance.id);
+    const second = await call("PATCH", "/targets/nas", "admin", { nodes: ["node1"] });
+    expect(second.status).toBe(409);
+    expect(second.body.error).toBe("a maintenance request waits for this target");
+    expect((await call("POST", "/targets/nas/reinstall")).status).toBe(409);
+    expect((await call("DELETE", "/targets/nas")).status).toBe(409);
     // The late write lands, and the route writes the old list back.
     release?.();
-    for (let round = 0; round < 100 && targets.get("nas")?.nodes.join() !== "node1,node2"; round++) await flush();
-    await flush();
+    for (let round = 0; round < 100 && service.maintenanceFor("nas"); round++) await flush();
+    expect(service.maintenanceFor("nas")).toBeUndefined();
     expect(targets.get("nas")?.nodes).toEqual(["node1", "node2"]);
     expect(logs.some((line) => line.includes("late commit undone"))).toBe(true);
+    // The store and the machine agree: the last list sent to the target is the one of the stored nodes.
+    const machine = runner
+      .commands()
+      .filter((command) => command.startsWith("sources "))
+      .at(-1);
+    expect(machine).toBe(`sources ${targets.sourcesOf(targets.get("nas") ?? { nodes: [] }).join(",")}`);
+    // Now a new change starts.
+    expect((await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"] })).status).toBe(202);
+  });
+
+  test("a late undo that fails logs the class of the error, not its text", async () => {
+    const { call, provisionerTarget, targets, timers, service } = await setup({ local: { commitTimeoutMs: 5_000 } });
+    await provisionerTarget();
+    const started = await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"] });
+    const real = targets.setNodes.bind(targets);
+    let release: (() => void) | undefined;
+    const spy = spyOn(targets, "setNodes").mockImplementation(async (id, list) => {
+      spy.mockRestore();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await real(id, list);
+    });
+    const undo = spyOn(targets, "setNodesIf").mockImplementation(() =>
+      Promise.reject(new Error("EACCES /var/lib/secret/targets.json")),
+    );
+    const approving = approveCall(call, str(started.body.maintenance.id));
+    for (let round = 0; round < 500 && !release; round++) await Bun.sleep(10);
+    await timers.advance(5_000);
+    expect((await approving).status).toBe(502);
+    release?.();
+    for (let round = 0; round < 100 && service.maintenanceFor("nas"); round++) await flush();
+    undo.mockRestore();
+    const line = logs.find((item) => item.includes("late commit undo failed="));
+    expect(line).toEndWith("late commit undo failed=Error");
+    expect(logs.join("\n")).not.toContain("/var/lib/secret");
+  });
+
+  test("an approve while the DELETE still sets up the request says to try again in a moment", async () => {
+    const { call, provisionerTarget, targets, grants } = await setup({ local: {} });
+    await provisionerTarget();
+    const real = targets.setState.bind(targets);
+    let release: (() => void) | undefined;
+    const spy = spyOn(targets, "setState").mockImplementation(async (id, state) => {
+      spy.mockRestore();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await real(id, state);
+    });
+    const deleting = call("DELETE", "/targets/nas");
+    for (let round = 0; round < 500 && !release; round++) await Bun.sleep(10);
+    const waiting = grants.list().find((grant) => grant.maintenance?.action === "uninstall");
+    expect(waiting?.state).toBe("pending");
+    const early = await approveCall(call, str(waiting?.id));
+    expect(early.status).toBe(409);
+    expect(early.body.error).toBe("the request is still being set up or another change runs: try again in a moment");
+    expect(grants.get(str(waiting?.id))?.state).toBe("pending");
+    release?.();
+    expect((await deleting).status).toBe(202);
+    const approved = await approveCall(call, str(waiting?.id));
+    expect(approved.body.retired).toMatchObject({ line: "removed" });
+  });
+
+  test("a revoke of an uninstall before any step ran is a deny: the target stays disabled", async () => {
+    const { call, provisionerTarget, targets, keys, grants, local, runner } = await setup({ local: {} });
+    await provisionerTarget();
+    const started = await call("DELETE", "/targets/nas");
+    const id = str(started.body.maintenance.id);
+    const realCall = local.client.call.bind(local.client);
+
+    local.client.call = (method, path, options) => {
+      // The owner revokes while the grant reaches local.
+      if (method === "POST" && path === "/api/ssh/grants") grants.revoke(id, "admin");
+      return realCall(method, path, options);
+    };
+
+    const approved = await approveCall(call, id);
+    expect(approved.status).toBe(409);
+    expect(approved.body.error).toContain("retire it without cleanup");
+    expect(runner.commands()).toEqual([]);
+    expect(targets.get("nas")?.state).toBe("disabled");
+    expect(keys.publicLine("nas", "provisioner")).toBeTruthy();
+    expect(grants.get(id)).toMatchObject({ state: "ended", endReason: "revoked" });
+    expect((await call("DELETE", "/targets/nas?cleanup=none")).body).toMatchObject({ line: "manual" });
+  });
+
+  test("a revoke of an uninstall after its step started still retires with line failed", async () => {
+    const box: { grants?: Awaited<ReturnType<typeof setup>>["grants"] } = {};
+    const runner = fakeRunner({
+      uninstall: () => {
+        const active = box.grants?.list().find((grant) => grant.maintenance && grant.state === "active");
+        if (active) box.grants?.revoke(active.id, "admin");
+        return { code: 255, stderr: "ssh: connection closed\n" };
+      },
+    });
+    const made = await setup({ local: { runner } });
+    box.grants = made.grants;
+    await made.provisionerTarget();
+    const started = await made.call("DELETE", "/targets/nas");
+    const approved = await approveCall(made.call, str(started.body.maintenance.id));
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({ endReason: "revoked", maintenance: { started: true } });
+    expect(approved.body.retired).toMatchObject({ line: "failed" });
+    expect(made.targets.get("nas")).toBeUndefined();
+  });
+
+  test("provisioner-installed refuses a dropbear target and a target without a main key", async () => {
+    const { call, keys } = await setup({ local: {} });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
+    const add = (id: string, systemType: string) =>
+      call("POST", "/targets", "admin", { id, address: "10.0.0.5", account: "u", nodes: ["node1"], systemType });
+    await add("rt", "dropbear");
+    await add("bare", "linux");
+    await call("POST", "/targets/rt/key", "admin", { unlock });
+    await call("POST", "/targets/rt/provisioner-key", "admin", { unlock });
+    const router = await call("POST", "/targets/rt/provisioner-installed", "admin", {
+      script: "/home/u/.claude-rc/provisioner-rt.sh",
+    });
+    expect(router.status).toBe(409);
+    expect(router.text).toContain("dropbear");
+    // A provisioner key without the main key: there is no main line for the script to switch.
+    await keys.create(
+      "bare",
+      { method: "passphrase", secret: new TextEncoder().encode("correct horse") },
+      "provisioner",
+    );
+    const bare = await call("POST", "/targets/bare/provisioner-installed", "admin", {
+      script: "/home/u/.claude-rc/provisioner-bare.sh",
+    });
+    expect(bare.status).toBe(409);
+    expect(bare.text).toContain("no key");
   });
 
   test("a second PATCH while one waits answers 409, and a deny clears the lock", async () => {

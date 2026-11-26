@@ -330,6 +330,21 @@ export class TargetStore {
     await this.update(id, (target) => ({ ...target, nodes: [...nodes] }));
   }
 
+  /**
+   * Sets the node list only if the stored list is still `expected`, in one change of the store: a later change of the
+   * list is never undone by an earlier one. True when the list was set.
+   */
+  async setNodesIf(id: string, expected: string[], nodes: string[]): Promise<boolean> {
+    return this.mutate((draft) => {
+      const current = draft.targets.get(id);
+      if (!current) return false;
+      if (current.nodes.length !== expected.length || current.nodes.some((node, index) => node !== expected[index]))
+        return false;
+      draft.targets.set(id, { ...current, nodes: [...nodes] });
+      return true;
+    });
+  }
+
   async remove(id: string): Promise<void> {
     await this.mutate((draft) => {
       if (!draft.targets.delete(id)) throw new TargetError(404, "no such target");
