@@ -10,14 +10,16 @@
   import { retireNotice } from "./retirenotice";
   import { hostLabel } from "./hostlabel";
   import { deleteTargetMutation, patchTargetMutation } from "./mutations";
-  import { targetsQuery } from "./queries";
+  import { statusQuery, targetsQuery } from "./queries";
+  import TargetNodesEdit from "./TargetNodesEdit.svelte";
 
   // The targets of SSH delegation with their state and the actions for it. A key is never rotated here: to rotate,
-  // the owner retires the target and adds it again. A retire deletes the target. A one-time notice tells what
-  // happened to the key line on the machine.
+  // the owner retires the target and adds it again. An admin can change the nodes of a target. A retire deletes the
+  // target. A one-time notice tells what happened to the key line on the machine.
   const client = useQueryClient();
   const targets = createQuery(() => targetsQuery());
   const hosts = createQuery(() => hostsQuery());
+  const status = createQuery(() => statusQuery());
   const patch = createMutation(() => patchTargetMutation(client));
   const retire = createMutation(() => deleteTargetMutation(client));
 
@@ -29,6 +31,8 @@
   let ask = $state<Ask | null>(null);
   let problem = $state("");
   let notice = $state("");
+  // The id of the target whose nodes the owner edits now.
+  let editing = $state<string | null>(null);
 
   async function run(action: () => Promise<unknown>) {
     problem = "";
@@ -104,10 +108,19 @@
             {:else if target.state === "disabled"}
               <Button variant="outline" size="touch" onclick={() => setState(target, "draft")}>Enable</Button>
             {/if}
+            <Button variant="outline" size="touch" onclick={() => (editing = target.id)}>Edit nodes</Button>
             <Button variant="outline" size="touch" class="text-destructive" onclick={() => askRetire(target)}>
               Retire
             </Button>
           </div>
+          {#if editing === target.id}
+            <TargetNodesEdit
+              {target}
+              nodes={status.data?.nodes ?? []}
+              hosts={hosts.data}
+              ondone={() => (editing = null)}
+            />
+          {/if}
         </li>
       {/each}
     </ul>

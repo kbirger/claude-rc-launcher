@@ -8,6 +8,7 @@ import TargetListHarness from "./TargetListHarness.svelte";
 type Call = { method: string; url: string; body: unknown };
 let calls: Call[];
 let targets: Target[];
+let patchReply: unknown;
 const open: Array<() => void> = [];
 
 const target = (extra: Partial<Target> = {}): Target => ({
@@ -24,11 +25,23 @@ const target = (extra: Partial<Target> = {}): Target => ({
 beforeEach(() => {
   calls = [];
   targets = [];
+  patchReply = undefined;
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     const method = init?.method ?? "GET";
     calls.push({ method, url: path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     let body: unknown = { ok: true };
+    if (path === "/api/ssh/status")
+      body = {
+        setUp: true,
+        pendingRewrap: [],
+        nodes: [
+          { host: "node1", enabled: true, sourceAddress: "10.0.0.1" },
+          { host: "node2", enabled: true, sourceAddress: "10.0.0.2" },
+          { host: "node3", enabled: false, sourceAddress: "" },
+        ],
+      };
+    else if (method === "PATCH" && path === "/api/ssh/targets/nas" && patchReply !== undefined) body = patchReply;
     if (path === "/api/hosts") body = [{ id: "node1", name: "Garage", status: "ok" }];
     else if (path === "/api/ssh/targets" && method === "GET") body = targets;
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -176,4 +189,111 @@ test("TargetList links a draft target to the wizard with ?target=<id>", async ()
     (item) => item.textContent?.trim() === "Continue setup",
   );
   expect(link?.getAttribute("href")).toBe("/ssh?target=box");
+});
+
+const boxes = (within: ParentNode) => [...within.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+
+async function openEditor(list: Target[]) {
+  const shown = await show(list);
+  button("Edit nodes", shown)!.click();
+  await vi.waitFor(() => expect(boxes(shown).length).toBeGreaterThan(0));
+  return shown;
+}
+
+test("Edit nodes offers the nodes with access on, checks the current ones and saves the new list", async () => {
+  patchReply = target({ nodes: ["node1", "node2"] });
+  const shown = await openEditor([target()]);
+  expect(boxes(shown).map((box) => [box.value, box.checked])).toEqual([
+    ["node1", true],
+    ["node2", false],
+  ]);
+  const save = button("Save", shown)!;
+  expect(save.disabled).toBe(true);
+  boxes(shown)[1]!.click();
+  flushSync();
+  expect(save.disabled).toBe(false);
+  save.click();
+  await vi.waitFor(() => expect(changes()).toHaveLength(1));
+  expect(changes()[0]).toMatchObject({
+    method: "PATCH",
+    url: "/api/ssh/targets/nas",
+    body: { nodes: ["node1", "node2"] },
+  });
+  await vi.waitFor(() => expect(shown.textContent).toContain("The nodes of nas are saved."));
+  expect(shown.textContent).not.toContain("replace the old line");
+});
+
+test("a node with access off stays on the list so that it can be taken out", async () => {
+  const shown = await openEditor([target({ nodes: ["node1", "node3"] })]);
+  expect(boxes(shown).map((box) => [box.value, box.checked])).toEqual([
+    ["node1", true],
+    ["node2", false],
+    ["node3", true],
+  ]);
+  expect(shown.textContent).toContain("(access is off)");
+});
+
+test("Save is off when no node is checked", async () => {
+  const shown = await openEditor([target()]);
+  boxes(shown)[0]!.click();
+  flushSync();
+  expect(button("Save", shown)!.disabled).toBe(true);
+});
+
+test("an external target shows the new key line after the save, with a Copy button", async () => {
+  const line = 'from="10.0.0.1,10.0.0.2",restrict ssh-ed25519 AAAA claude-rc:nas';
+  patchReply = { ...target({ nodes: ["node1", "node2"] }), installLine: line };
+  const writeText = vi.fn(() => Promise.resolve());
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  const shown = await openEditor([target()]);
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain(line));
+  expect(shown.textContent).toContain("replace the old line");
+  button("Copy", shown)!.click();
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(line));
+  button("Done", shown)!.click();
+  await vi.waitFor(() => expect(button("Done", shown)).toBeUndefined());
+});
+
+test("a managed target says that the line on the machine was updated", async () => {
+  patchReply = { ...target({ nodes: ["node1", "node2"], managedHost: "node2" }), lineUpdated: true };
+  const shown = await openEditor([target({ managedHost: "node2" })]);
+  expect(shown.textContent).toContain("The hub updates the key line on the machine");
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain("The key line on the machine was updated."));
+});
+
+test("a refusal of the hub shows its text and keeps the form", async () => {
+  vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(url);
+    if (init?.method === "PATCH")
+      return new Response(JSON.stringify({ error: "the key line on the machine was not updated" }), {
+        status: 502,
+        headers: { "content-type": "application/json" },
+      });
+    const body =
+      path === "/api/ssh/targets"
+        ? [target()]
+        : path === "/api/ssh/status"
+          ? {
+              setUp: true,
+              pendingRewrap: [],
+              nodes: [
+                { host: "node1", enabled: true, sourceAddress: "a" },
+                { host: "node2", enabled: true, sourceAddress: "b" },
+              ],
+            }
+          : [];
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const shown = await openEditor([target()]);
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain("the key line on the machine was not updated"));
+  expect(button("Save", shown)).toBeDefined();
 });

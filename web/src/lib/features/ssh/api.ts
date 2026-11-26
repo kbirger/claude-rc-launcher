@@ -99,6 +99,15 @@ export const createTarget = (body: NewTarget) => request<Target>("POST", `${BASE
 export const getTarget = (id: string) => request<TargetDetail>("GET", targetUrl(id));
 export const patchTarget = (id: string, state: "disabled" | "draft") =>
   request<Target>("PATCH", targetUrl(id), { state });
+/**
+ * The answer to a change of the nodes. `installLine`: an external target with a key gets its new key line, which the
+ * owner installs in place of the old one. `lineUpdated`: a managed target has its line changed on the machine.
+ * `pushed` is false when a node could not be told.
+ */
+export type TargetNodesResult = Target & { installLine?: string; lineUpdated?: boolean; pushed?: boolean };
+/** Replaces the nodes of a target. A managed target gets the new key line before the answer. */
+export const patchTargetNodes = (id: string, nodes: string[]) =>
+  request<TargetNodesResult>("PATCH", targetUrl(id), { nodes });
 /** What a retire did to the key line on the target: removed, not on the target, not removable (failed) or external (manual). */
 export type RetireLine = "removed" | "not-found" | "failed" | "manual";
 export type RetireResult = {
