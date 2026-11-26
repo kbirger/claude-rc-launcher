@@ -16,13 +16,13 @@ The line for the provisioner key has these options:
 - `restrict`, so the key has no terminal and no forwarding.
 - `from="<hub source address>"`, so only the hub machine can use it.
 
-The script reads `SSH_ORIGINAL_COMMAND`. It accepts only `on`, `off` and `status`. It holds the one public line of the main key. The owner pinned it at install. `on` puts that line into a key file. `off` takes it out. The script never accepts a line from the caller. So the provisioner key cannot add any other key. It can only switch the main key on and off.
+The script reads `SSH_ORIGINAL_COMMAND`. It accepts only `on`, `off`, `status`, `sources <list>` and `uninstall`. It holds the one public line of the main key. The owner pinned it at install. `on` puts that line into a key file. `off` takes it out. `sources` changes the `from=` option of that one line, and the script checks the list with the same pattern as the hub. The script never accepts a key line from the caller. So the provisioner key cannot add any other key. It can only switch the main key on and off.
 
 ## What this gives the owner
 
 - **Short-lived lines on an external target.** At the start of a grant, the hub switches the line on. At the end, it switches the line off. A leftover line is then rare, even on a router.
 - **Retire without manual work.** The retire runs `off`, then removes the provisioner line with a last `uninstall`.
-- **A change of nodes without pasting.** The hub changes the `from=` list through the script.
+- **A change of nodes without pasting.** The hub sends the new source list with `sources`.
 - **A check of the install.** `status` tells the hub whether the line is present.
 
 ## What is needed
