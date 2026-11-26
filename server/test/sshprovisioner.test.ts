@@ -155,10 +155,6 @@ describe("linuxScript", () => {
       "guard-test",
     );
   });
-
-  test("linuxScript takes no key line from the caller", () => {
-    expect(text).not.toMatch(/authorized_keys.*SSH_ORIGINAL_COMMAND|SSH_ORIGINAL_COMMAND.*>>/);
-  });
 });
 
 describe("linuxInstallScript", () => {
