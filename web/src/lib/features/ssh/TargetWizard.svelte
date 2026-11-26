@@ -390,7 +390,7 @@
           <Alert.Root role="status">
             <Alert.Description>The test passed. {target?.id} is ready.</Alert.Description>
           </Alert.Root>
-          {#if external && target && (target.systemType === "linux" || target.systemType === "synology") && !target.provisionerFingerprint}
+          {#if external && target && target.systemType !== "windows" && !target.provisionerFingerprint}
             <p class="text-sm text-muted-foreground {wrap}" data-provisioner-hint>
               To change the nodes of this target later with one approval, add the provisioner. On your own machine, run:
               <code class="mt-1 block rounded border bg-muted p-2 font-mono text-xs select-all">

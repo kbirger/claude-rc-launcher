@@ -27,13 +27,13 @@ const POLL_LIMIT_MS = 10 * 60 * 1000;
 const BASE = "/cli/api/ssh";
 
 export const SSH_TARGET_USAGE =
-  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--provisioner] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it\n--provisioner (an external linux or synology target) also installs the provisioner key, so that the hub changes the node list later with one approval. The router version (dropbear) is not available yet";
+  "usage: claude-rc ssh target add <id> --type <type> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>) [--port <n>] [--key-file <name>] [--fingerprint <f>] [--provisioner] [--no-test]\n--managed local needs --address: the LAN address of this machine as the other nodes see it\n--provisioner (an external linux, synology or dropbear target) also installs the provisioner key, so that the hub changes the node list later with one approval. On a dropbear target (Asuswrt-Merlin) the key list is in nvram and the script in /jffs/scripts";
 
 export const SSH_TARGET_UPDATE_USAGE =
   "usage: claude-rc ssh target update <id> --node <id>[,<id>...] [--yes]\n--yes confirms a new list that allows none of the addresses that work now";
 
 export const SSH_TARGET_PROVISIONER_USAGE =
-  "usage: claude-rc ssh target provisioner <id> --identity <file> [--fingerprint <f>] [--no-test]\nInstalls the provisioner key on an external linux or synology target, or installs it again (also after the source address of the node local changed). If the hub holds a provisioner key already and the unlock method is a passkey, the command uses that key (the repair path). With a passphrase it replaces the key";
+  "usage: claude-rc ssh target provisioner <id> --identity <file> [--fingerprint <f>] [--no-test]\nInstalls the provisioner key on an external linux, synology or dropbear target, or installs it again (also after the source address of the node local changed). If the hub holds a provisioner key already and the unlock method is a passkey, the command uses that key (the repair path). With a passphrase it replaces the key";
 
 interface Unlock {
   method: "prf" | "passphrase";
@@ -109,8 +109,6 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   if (flags.provisioner) {
     if (isManaged) throw usage("--provisioner does not work with --managed: a managed node keeps its own key file");
     if (type === "windows") throw usage("--provisioner does not work with a windows target: the script needs sh");
-    if (type === "dropbear")
-      throw usage("--provisioner does not work with a dropbear target yet: the router version is not available yet");
   }
 
   const nodes = flags.node.split(",");
@@ -454,12 +452,19 @@ async function setUpProvisioner(
     if (result.code !== 0) throw new Error(sshFailure(result, ctx.keyFile));
     const answer = parseAnswer(result.stdout ?? "");
     if (answer?.kind !== "installed") throw new Error("the install script gave no valid answer");
-    return answer.path;
+    // The router version adds lines with what it found (counts and the Dropbear version, no key), for the manual check.
+    const info = (result.stdout ?? "")
+      .split("\n")
+      .slice(1)
+      .filter((line) => line.startsWith("info "))
+      .map((line) => line.slice("info ".length));
+    return { path: answer.path, info };
   });
   await guarded("storing the provisioner", () =>
-    hub.request("POST", `${target}/provisioner-installed`, { script: installed }),
+    hub.request("POST", `${target}/provisioner-installed`, { script: installed.path }),
   );
-  out(`provisioner installed: ${installed}`);
+  for (const line of installed.info) out(line);
+  out(`provisioner installed: ${installed.path}`);
 }
 
 /** Proves the chain: the hub runs the maintenance install through the provisioner key, with one approval. */
@@ -513,8 +518,6 @@ export async function sshTargetProvisioner(options: SshTargetAddOptions): Promis
   );
 
   if (view.managedHost !== undefined) throw new ExitError("a managed target has no provisioner key", 1);
-  if (view.systemType === "dropbear")
-    throw new ExitError("a dropbear target has no provisioner yet: the router version is not available yet", 1);
   if (view.systemType === "windows")
     throw new ExitError("a windows target has no provisioner key: the script needs sh", 1);
   if (!view.keyFingerprint)

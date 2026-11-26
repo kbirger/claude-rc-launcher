@@ -324,31 +324,43 @@ describe("part-way failures and repair texts", () => {
 });
 
 describe("dropbear, unrelated flags and a target with no key", () => {
-  test("add --provisioner with dropbear is refused before any call", async () => {
-    const rg = rig();
-    const error = await rejection(rg.add({ ...external, type: "dropbear" }));
-    expect(exitCode(error)).toBe(1);
-    expect(error.message).toContain("router version is not available yet");
-    expect(rg.calls).toEqual([]);
-    expect(SSH_TARGET_USAGE).not.toContain("synology or dropbear");
+  test("add --provisioner with dropbear runs the router install and prints its info lines", async () => {
+    const ROUTER = "/jffs/scripts/claude-rc-provisioner-nas.sh";
+    const rg = rig(
+      {},
+      {
+        installStdout: `ok installed ${ROUTER}\ninfo nvram sshd_authkeys had 2 lines, separator >, 300 of 3499 bytes\nnoise\ninfo dropbear Dropbear v2026.94\n`,
+      },
+    );
+    await rg.add({ ...external, type: "dropbear", account: "admin" });
+    const installed = rg.calls.find((c) => c.path.endsWith("/provisioner-installed"));
+    expect(installed?.body).toEqual({ script: ROUTER });
+    expect(rg.out).toContain("nvram sshd_authkeys had 2 lines, separator >, 300 of 3499 bytes");
+    expect(rg.out).toContain("dropbear Dropbear v2026.94");
+    expect(rg.out).not.toContain("noise");
+    expect(rg.out.indexOf("dropbear Dropbear v2026.94")).toBeLessThan(
+      rg.out.indexOf(`provisioner installed: ${ROUTER}`),
+    );
+    expect(SSH_TARGET_USAGE).toContain("linux, synology or dropbear");
+    expect(SSH_TARGET_USAGE).not.toContain("not available yet");
   });
 
-  test("provisioner for a dropbear target is refused after reading the view", async () => {
+  test("provisioner for a dropbear target goes on after reading the view", async () => {
     const rg = rig({
       [`GET ${B}/targets/nas`]: () => ({
         id: "nas",
         hostKey: HOST_KEY,
         keyFingerprint: FP,
-        address: "nas.lan",
-        account: "backup",
+        address: "router.lan",
+        account: "admin",
         port: 22,
         systemType: "dropbear",
       }),
     });
-    const error = await rejection(rg.prov({ identity: IDENTITY }));
-    expect(error.message).toContain("router version");
-    expect(rg.paths().some((p) => p.includes("provisioner-key"))).toBe(false);
-    expect(rg.ssh).toEqual([]);
+    await rg.prov({ identity: IDENTITY });
+    expect(rg.paths()).toContain("GET /targets/nas/provisioner-install");
+    expect(rg.ssh).toHaveLength(1);
+    expect(SSH_TARGET_PROVISIONER_USAGE).toContain("dropbear");
   });
 
   test("provisioner refuses flags that it does not use", async () => {

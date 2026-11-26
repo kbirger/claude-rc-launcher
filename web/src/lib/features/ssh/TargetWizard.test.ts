@@ -639,6 +639,11 @@ test("the wizard of an external target names the provisioner command", async () 
   expect(hint.textContent!.replace(/\s+/g, " ")).toContain("claude-rc ssh target provisioner nas --identity <file>");
 });
 
+test("the wizard of an external dropbear target names the provisioner command too", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready", systemType: "dropbear" });
+  expect(document.querySelector("[data-provisioner-hint]")).not.toBeNull();
+});
+
 test.each([
   ["a managed target", { managedHost: "node1" }],
   ["a windows target", { systemType: "windows" as const }],

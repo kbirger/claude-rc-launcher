@@ -165,7 +165,6 @@ test("a wrong passphrase gives 403 and the card shows the text", async () => {
 
 test.each([
   ["a windows target", { systemType: "windows" }, "A Windows target has no provisioner key"],
-  ["a dropbear target", { systemType: "dropbear" }, "The provisioner for a dropbear target is not available yet."],
   ["a managed target", { managedHost: "node2" }, "A managed target has no provisioner key."],
   ["a target without a key", { keyFingerprint: undefined }, "This target has no key yet."],
 ])("%s gets a fitting refusal and no button", async (_name, extra, text) => {
@@ -173,6 +172,13 @@ test.each([
   show();
   await waitText(text);
   expect(document.body.textContent).not.toContain("Make the key");
+});
+
+test("a dropbear target gets the button like a linux target", async () => {
+  answers["GET /api/ssh/targets/nas"] = { status: 200, body: { ...TARGET, systemType: "dropbear" } };
+  show(PASSPHRASE);
+  await waitText("Make the key");
+  expect(document.body.textContent).not.toContain("not available yet");
 });
 
 test.each([
