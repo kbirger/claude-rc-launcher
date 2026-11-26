@@ -77,6 +77,24 @@ interface Step {
   wrong: string;
 }
 
+/** The outcome of a maintenance run. */
+interface Outcome {
+  result: "done" | "failed";
+  detail?: string;
+  /** A step that changes the target finished, and no restore undid it. */
+  changed: boolean;
+}
+
+/** What the restore of the old list did. */
+interface Restore {
+  attempted: boolean;
+  ok: boolean;
+  error?: string;
+}
+
+const CHANGED_TEXT = "the target already holds part of the change";
+const RESTORE_FAILED_TEXT = "the old list could not be put back";
+
 const sameList = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
@@ -143,15 +161,24 @@ export class SshService {
    * A maintenance grant opens the provisioner key, never the main key, and a plain grant never opens the provisioner key.
    * For a maintenance grant, the call then runs the action on the target, records the result and ends the grant: the
    * answer holds `maintenance.result`. A maintenance grant whose change is out of date ends at once (409).
+   * `options.commit` (maintenance only) runs after a good run and before the grant ends. When it throws, the old list
+   * goes back on the target in the same grant, the result is `failed`, and the call throws the error of `commit`.
    */
-  async approve(grantId: string, by: string, unlock: UnlockSecret, minutes?: number): Promise<Grant> {
+  async approve(
+    grantId: string,
+    by: string,
+    unlock: UnlockSecret,
+    minutes?: number,
+    options: { commit?: (grant: Grant) => Promise<void> } = {},
+  ): Promise<Grant> {
     const { grants, keys } = this.deps;
     const grant = grants.get(grantId);
     if (!grant) throw new GrantError(404, "no such grant");
     if (grant.state !== "pending") throw new GrantError(409, `grant is ${grant.state}`);
+    // First for a maintenance grant: a grant that can never run ends here, and the lock of the target clears.
+    this.checkStillCurrent(grant);
     const target = this.usableTarget(grant);
     if (!target.hostKey) throw new TargetError(409, "the host key of the target is not pinned");
-    this.checkStillCurrent(grant);
     const slot: KeySlot = grant.maintenance ? "provisioner" : "main";
 
     let key;
@@ -195,11 +222,11 @@ export class SshService {
       try {
         config = (await this.activate(active, target, publicKey)).config;
       } catch (error) {
-        this.endMaintenance(active.id, by, "failed", message(error));
+        this.endMaintenance(active.id, by, { result: "failed", detail: message(error) });
         throw error;
       }
 
-      return await this.runMaintenance(active, config, by);
+      return await this.runMaintenance(active, config, by, options.commit);
     } finally {
       if (this.running.get(active.targetId) === active.id) this.running.delete(active.targetId);
     }
@@ -426,56 +453,80 @@ export class SshService {
   }
 
   /**
-   * Runs the steps of an active maintenance grant, one `ssh` child process each, and ends the grant. Before each step the
-   * grant must still be active: a grant that ended (an expiry, a revoke) records `failed`, skips the other steps and is
-   * not finished again. A failed `sources` puts the old list back in the same grant, as a best effort. The `finally`
-   * ends the grant on every path, a crash too.
+   * Runs the steps of an active maintenance grant, one `ssh` child process each, then `commit`, and ends the grant.
+   * Before each step the grant must still be active: a grant that ended (an expiry, a revoke) records `failed`, skips
+   * the other steps and is not finished again. A failed `sources`, or a `commit` that throws, puts the old list back in
+   * the same grant, as a best effort. `changed` tells that the target can hold a change that the hub did not store.
+   * The `finally` ends the grant on every path, a crash too.
    */
-  private async runMaintenance(grant: Grant, config: string, by: string): Promise<Grant> {
-    let outcome: { result: "done" | "failed"; detail?: string } = { result: "failed", detail: "the run stopped" };
+  private async runMaintenance(
+    grant: Grant,
+    config: string,
+    by: string,
+    commit: ((grant: Grant) => Promise<void>) | undefined,
+  ): Promise<Grant> {
+    let outcome: Outcome = { result: "failed", detail: "the run stopped", changed: false };
+    let commitError: { error: unknown } | undefined;
 
     try {
       if (grant.maintenance) outcome = await this.runSteps(grant, grant.maintenance, config);
+
+      if (outcome.result === "done" && commit) {
+        try {
+          await commit(this.deps.grants.get(grant.id) ?? grant);
+        } catch (error) {
+          commitError = { error };
+          const restored = await this.restore(grant, config);
+          outcome = this.failure(`the change was not stored: ${message(error)}`, !restored.ok, restored);
+        }
+      }
     } finally {
-      this.endMaintenance(grant.id, by, outcome.result, outcome.detail);
+      this.endMaintenance(grant.id, by, outcome);
     }
 
+    if (commitError) throw commitError.error;
     return this.deps.grants.get(grant.id) ?? grant;
   }
 
-  private async runSteps(
-    grant: Grant,
-    work: Maintenance,
-    config: string,
-  ): Promise<{ result: "done" | "failed"; detail?: string }> {
+  private async runSteps(grant: Grant, work: Maintenance, config: string): Promise<Outcome> {
+    // A step that changes the target finished: a failure after it leaves the target changed, unless the restore works.
+    let changed = false;
+
     for (const step of this.stepsOf(work)) {
       if (this.deps.grants.get(grant.id)?.state !== "active")
-        return { result: "failed", detail: "the grant ended before the run was over" };
+        return this.failure("the grant ended before the run was over", changed);
 
-      let answer: ProvisionerAnswer;
+      const run = await this.runStep(grant, config, step.command);
 
-      try {
-        answer = await this.runStep(grant, config, step.command);
-      } catch (error) {
-        await this.restore(grant, config);
-        return { result: "failed", detail: message(error) };
+      if (run.answer === undefined || !step.check(run.answer)) {
+        const why = run.answer === undefined ? (run.error ?? "the run failed") : step.wrong;
+        const restored = await this.restore(grant, config);
+        return this.failure(why, restored.attempted ? !restored.ok && changed : changed, restored);
       }
 
-      if (!step.check(answer)) {
-        await this.restore(grant, config);
-        return { result: "failed", detail: step.wrong };
-      }
+      if (step.command.kind !== "status") changed = true;
     }
 
-    return { result: "done" };
+    return { result: "done", changed };
+  }
+
+  /** A failed outcome. The fixed sentences come first, because the detail is cut to 200 characters. */
+  private failure(why: string, changed: boolean, restored?: Restore): Outcome {
+    const parts = [
+      ...(changed ? [CHANGED_TEXT] : []),
+      ...(restored?.attempted && !restored.ok ? [RESTORE_FAILED_TEXT] : []),
+      why,
+      ...(restored?.error ? [`the restore: ${restored.error}`] : []),
+    ];
+    return { result: "failed", detail: parts.join(". "), changed };
   }
 
   /** Records the result and ends the grant if it is still active. It never throws. */
-  private endMaintenance(grantId: string, by: string, result: "done" | "failed", detail?: string): void {
+  private endMaintenance(grantId: string, by: string, outcome: Outcome | { result: "failed"; detail: string }): void {
     const { grants } = this.deps;
 
     try {
-      grants.setResult(grantId, result, detail);
+      grants.setResult(grantId, outcome.result, outcome.detail, "changed" in outcome ? outcome.changed : false);
     } catch (error) {
       this.note(`maintenance grant=${logToken(grantId)} result not recorded failed=${logToken(message(error))}`);
     }
@@ -483,43 +534,52 @@ export class SshService {
     try {
       if (grants.get(grantId)?.state === "active") grants.finish(grantId, by);
     } catch {
-      grants.endWhere((item) => item.id === grantId, "revoked");
+      // The run is over in every case: `done` is the end reason, and the result says how it went.
+      grants.endWhere((item) => item.id === grantId, "done");
     }
   }
 
   /** A failed change of the list: the old list goes back on the target, in the same grant. Best effort. */
-  private async restore(grant: Grant, config: string): Promise<void> {
+  private async restore(grant: Grant, config: string): Promise<Restore> {
     const work = grant.maintenance;
-    if (work?.action !== "sources" || !validSources(work.fromSources)) return;
-    if (this.deps.grants.get(grant.id)?.state !== "active") return;
-
-    try {
-      const answer = await this.runStep(grant, config, { kind: "sources", list: work.fromSources });
-      const ok = answer.kind === "sources" && sameList(answer.list, work.fromSources);
-      this.maintenanceNote(grant, ok ? "event=restored" : "event=restore-failed detail=wrong-answer");
-    } catch (error) {
-      this.maintenanceNote(grant, `event=restore-failed detail=${logToken(message(error))}`);
-    }
+    if (work?.action !== "sources" || !validSources(work.fromSources)) return { attempted: false, ok: false };
+    if (this.deps.grants.get(grant.id)?.state !== "active") return { attempted: false, ok: false };
+    const run = await this.runStep(grant, config, { kind: "sources", list: work.fromSources });
+    const ok = run.answer?.kind === "sources" && sameList(run.answer.list, work.fromSources);
+    // The audit line holds a fixed word and the exit code only: the text of ssh can hold an address.
+    this.maintenanceNote(grant, ok ? "event=restored" : `event=restore-failed code=${run.code ?? "none"}`);
+    if (ok) return { attempted: true, ok };
+    return { attempted: true, ok, error: run.error ?? "the script gave another answer" };
   }
 
-  /** One `ssh` child process. The audit line names the command word, the exit code and the answer word only. */
-  private async runStep(grant: Grant, config: string, command: ProvisionerCommand): Promise<ProvisionerAnswer> {
+  /**
+   * One `ssh` child process. It never throws: a failure is the `error` text. The audit line names the command word,
+   * the exit code and the answer word only.
+   */
+  private async runStep(
+    grant: Grant,
+    config: string,
+    command: ProvisionerCommand,
+  ): Promise<{ answer?: ProvisionerAnswer; code?: number; error?: string }> {
     const run = this.deps.runSsh ?? defaultRunner;
-    let code: number | undefined;
+    const seen: { code?: number } = {};
 
     const runner: SshRunner = async (...args) => {
       const reply = await run(...args);
-      code = reply.code;
+      seen.code = reply.code;
       return reply;
     };
 
     try {
       const answer = await runProvisioner(runner, config, grant.targetId, formatCommand(command));
-      this.maintenanceNote(grant, `event=run command=${command.kind} code=${code ?? "none"} answer=${answer.kind}`);
-      return answer;
+      this.maintenanceNote(
+        grant,
+        `event=run command=${command.kind} code=${seen.code ?? "none"} answer=${answer.kind}`,
+      );
+      return { answer, ...seen };
     } catch (error) {
-      this.maintenanceNote(grant, `event=run command=${command.kind} code=${code ?? "none"} answer=none`);
-      throw error;
+      this.maintenanceNote(grant, `event=run command=${command.kind} code=${seen.code ?? "none"} answer=none`);
+      return { ...seen, error: message(error) };
     }
   }
 

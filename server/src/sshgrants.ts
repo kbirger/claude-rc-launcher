@@ -40,7 +40,16 @@ export interface Maintenance {
   result?: "done" | "failed";
   /** One short line of text. */
   detail?: string;
+  /** Set with a result: a step that changes the target finished, and the hub did not store or undo it. */
+  changed?: boolean;
 }
+
+/**
+ * The most signatures that a maintenance grant gives: one for each `ssh` run that its action plans (install: sources,
+ * on, status; sources: sources, status and the restore; uninstall: one). A process that reaches the agent socket
+ * cannot run more commands than the hub planned.
+ */
+export const MAINTENANCE_SIGNS: Record<MaintenanceAction, number> = { install: 3, sources: 3, uninstall: 1 };
 
 export interface Grant {
   id: string;
@@ -121,6 +130,8 @@ export class GrantStore {
   private readonly grants = new Map<string, Grant>();
   private readonly keys = new Map<string, UnlockedKey>();
   private readonly handles = new Map<string, unknown>();
+  /** The signatures that each active maintenance grant gave. */
+  private readonly signs = new Map<string, number>();
 
   constructor(options: Options) {
     this.now = options.now ?? Date.now;
@@ -220,10 +231,12 @@ export class GrantStore {
   }
 
   /** Records the result of the run of a maintenance grant, in any state. The detail is cut to one short line. */
-  setResult(id: string, result: "done" | "failed", detail?: string): void {
+  setResult(id: string, result: "done" | "failed", detail?: string, changed?: boolean): void {
     const grant = this.need(id);
     if (!grant.maintenance) throw new GrantError(409, "the grant is not a maintenance grant");
     grant.maintenance.result = result;
+    if (changed === undefined) delete grant.maintenance.changed;
+    else grant.maintenance.changed = changed;
     if (detail === undefined) delete grant.maintenance.detail;
     else grant.maintenance.detail = oneLine(detail);
   }
@@ -260,6 +273,17 @@ export class GrantStore {
     if (grant.state !== "active" || !key) throw new GrantError(403, `grant is ${grant.state}`);
     if (!Buffer.from(key.publicBlob).equals(Buffer.from(keyBlob)))
       throw new GrantError(403, "key is not the key of the grant");
+
+    if (grant.maintenance) {
+      const used = this.signs.get(id) ?? 0;
+
+      if (used >= MAINTENANCE_SIGNS[grant.maintenance.action]) {
+        this.line(grant, "sign-refused", grant.nodeId, "reason=run-cap");
+        throw new GrantError(403, "the grant has no run left");
+      }
+
+      this.signs.set(id, used + 1);
+    }
 
     const signature = key.sign(data);
     this.line(grant, "signed", grant.nodeId, `key=${logToken(key.fingerprint)}`);
@@ -298,6 +322,7 @@ export class GrantStore {
     const wasPending = grant.state === "pending";
     const key = this.keys.get(grant.id);
     this.keys.delete(grant.id);
+    this.signs.delete(grant.id);
 
     try {
       key?.destroy();
