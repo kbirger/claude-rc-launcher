@@ -182,6 +182,26 @@ describe("sshTargetUpdate with a provisioner", () => {
     expect(rg.out).toContain("target nas nodes: pi");
   });
 
+  test("with a passkey, a dropbear change says that the key line stays the same", async () => {
+    let polls = 0;
+    const rg = rig(
+      { maintenance: GRANT },
+      {
+        [STATUS]: () => ({ method: "prf" }),
+        "GET /cli/api/ssh/grants": () => {
+          polls += 1;
+          return [polls < 2 ? { ...GRANT, state: "active" } : { ...DONE, target: undefined }];
+        },
+        "GET /cli/api/ssh/targets/nas": () => ({ id: "nas", nodes: ["pi"], systemType: "dropbear" }),
+      },
+    );
+    await rg.run({ node: "pi" });
+    expect(rg.out.join("\n")).toContain("https://hub.example/ssh?target=nas and approve");
+    expect(rg.out.at(-1)).toBe(
+      "the key line on the router stays the same, because Dropbear does not limit a key by address",
+    );
+  });
+
   test("the 409 that asks for confirmation exits 1 and names --yes", async () => {
     const text = "the new list allows none of the addresses that work now: send it again with confirm";
     const rg = rig(new HubError(text, 409, undefined));
@@ -276,7 +296,7 @@ describe("sshTargetUpdate failures after the 202", () => {
     expect(rg.calls.some((call) => call.method === "PATCH")).toBe(false);
   });
 
-  test("an empty passphrase and a network error say that the request still waits", async () => {
+  test("an empty passphrase says that the request still waits, and a network error says to check the target", async () => {
     const empty = rig({ maintenance: GRANT }, {});
     const error = await rejection(
       sshTargetUpdate({
@@ -299,7 +319,8 @@ describe("sshTargetUpdate failures after the 202", () => {
       },
     );
     const second = await rejection(down.run({ node: "pi" }));
-    expect(second.message).toContain(STILL);
+    expect(second.message).not.toContain(STILL);
+    expect(second.message).toContain("Check the target on the web page");
   });
 
   test("a failed run does not say that the request waits", async () => {

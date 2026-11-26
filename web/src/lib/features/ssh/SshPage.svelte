@@ -6,7 +6,7 @@
   import type { Grant } from "./api";
   import ApproveSheet from "./ApproveSheet.svelte";
   import GrantList from "./GrantList.svelte";
-  import { statusQuery } from "./queries";
+  import { grantsQuery, statusQuery } from "./queries";
   import NodeAccess from "./NodeAccess.svelte";
   import ProvisionerKey from "./ProvisionerKey.svelte";
   import NotifySwitch from "../push/NotifySwitch.svelte";
@@ -15,8 +15,9 @@
   import TargetList from "./TargetList.svelte";
   import TargetWizard from "./TargetWizard.svelte";
 
-  // `target` is the id of the `?target=` link of a draft target: the wizard opens on it. With `provisioner` (the link
-  // `?target=<id>&provisioner=1` of the command line), the card that makes the provisioner key opens instead. `onclose`
+  // `target` is the id of the `?target=` link of a draft target: the wizard opens on it. If the target has a pending
+  // maintenance request, the link of the command line asks for its approval, so the approval sheet opens instead. With
+  // `provisioner` (the link `?target=<id>&provisioner=1`), the card that makes the provisioner key opens. `onclose`
   // lets the route drop the parameters, so that the same link opens it again.
   let {
     target = null,
@@ -34,14 +35,32 @@
   // gets is the last one that loaded.
   let wizard = $state<{ id?: string } | null>(null);
   let keying = $state<string | null>(null);
+  const grants = createQuery(() => grantsQuery());
+  // The target of a link that waits for the list of grants, to choose between the wizard and the approval sheet.
+  let linked = $state<string | null>(null);
   $effect(() => {
     if (target && provisioner) {
       keying = target;
       wizard = null;
+      linked = null;
     } else if (target) {
-      wizard = { id: target };
-      keying = null;
+      linked = target;
     }
+  });
+  $effect(() => {
+    if (!linked || grants.isPending) return;
+    const id = linked;
+    const waiting = grants.data?.find((item) => item.targetId === id && item.maintenance && item.state === "pending");
+
+    if (waiting) {
+      approving = waiting;
+      wizard = null;
+    } else {
+      wizard = { id };
+    }
+
+    keying = null;
+    linked = null;
   });
   const closeWizard = () => {
     wizard = null;
@@ -49,6 +68,10 @@
   };
   const closeKeying = () => {
     keying = null;
+    onclose?.();
+  };
+  const closeApproving = () => {
+    approving = null;
     onclose?.();
   };
   // The approval sheet is outside the branches too, for the same reason. It holds the grant as it was when the owner
@@ -134,6 +157,6 @@
 {/if}
 {#if approving && query.data?.setUp && !holding}
   {#key approving.id}
-    <ApproveSheet grant={approving} status={query.data} onclose={() => (approving = null)} />
+    <ApproveSheet grant={approving} status={query.data} onclose={closeApproving} />
   {/key}
 {/if}

@@ -639,7 +639,14 @@ export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<
         ...(options.sleep ? { sleep: options.sleep } : {}),
       });
       out(`target ${id} nodes: ${(done.target?.nodes ?? done.maintenance?.toNodes ?? nodes).join(", ")}`);
-      out(done.target?.systemType === "dropbear" ? ROUTER_SAME_LINE : "the key line on the machine was updated");
+      // A polled grant (passkey) carries no target: read the system type from the hub.
+      const systemType =
+        done.target?.systemType ??
+        (await hub
+          .request<{ systemType?: string }>("GET", `${BASE}/targets/${encodeURIComponent(id)}`)
+          .then((view) => view.systemType)
+          .catch(() => undefined));
+      out(systemType === "dropbear" ? ROUTER_SAME_LINE : "the key line on the machine was updated");
       if (done.pushed === false)
         out("some nodes could not be told about the change. They get it when they connect again");
     } catch (error) {

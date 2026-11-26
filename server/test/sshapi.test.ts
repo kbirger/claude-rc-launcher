@@ -2468,6 +2468,47 @@ describe("the provisioner routes: add, change of nodes and retire", () => {
     expect(made.targets.get("nas")).toBeUndefined();
   });
 
+  test("a retire while the body of a key route arrives leaves no orphan key", async () => {
+    const { app, call, keys } = await setup({ local: {} });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
+
+    for (const [id, route] of [
+      ["k1", "key"],
+      ["k2", "provisioner-key"],
+    ] as const) {
+      await call("POST", "/targets", "admin", {
+        id,
+        address: "10.0.0.5",
+        account: "u",
+        systemType: "linux",
+        nodes: ["node1"],
+      });
+      if (route === "provisioner-key") await call("POST", `/targets/${id}/key`, "admin", { unlock });
+      let finish: () => void = () => {};
+      const gate = new Promise<void>((resolve) => (finish = resolve));
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await gate;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ unlock })));
+          controller.close();
+        },
+      });
+      const pending = app.request(`/api/ssh/targets/${id}/${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-role": "admin" },
+        body,
+        duplex: "half",
+      } as RequestInit);
+      await Bun.sleep(20);
+      expect((await call("DELETE", `/targets/${id}`)).status).toBe(200);
+      finish();
+      const answer = await pending;
+      expect(answer.status, route).toBe(404);
+      expect(() => keys.publicLine(id, route === "key" ? "main" : "provisioner")).toThrow();
+    }
+  });
+
   test("provisioner-install gives the router version for a dropbear target", async () => {
     const { call } = await setup({ local: {} });
     await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });

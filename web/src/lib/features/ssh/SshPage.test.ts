@@ -76,7 +76,10 @@ const READY = {
   nodes: [{ host: "node1", enabled: true, sourceAddress: "10.0.0.2" }],
 };
 
-function showReady(props: { target?: string | null; provisioner?: boolean; onclose?: () => void } = {}) {
+function showReady(
+  props: { target?: string | null; provisioner?: boolean; onclose?: () => void } = {},
+  grants: unknown[] = [],
+) {
   statusAnswer = { status: 200, body: READY };
   vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
     const path = String(url);
@@ -94,9 +97,11 @@ function showReady(props: { target?: string | null; provisioner?: boolean; onclo
               state: "draft",
               notes: [],
             }
-          : path === "/api/ssh/targets" || path === "/api/ssh/grants" || path === "/api/hosts"
-            ? []
-            : {};
+          : path === "/api/ssh/grants"
+            ? grants
+            : path === "/api/ssh/targets" || path === "/api/hosts"
+              ? []
+              : {};
     const code = path === "/api/ssh/status" ? statusAnswer.status : 200;
     return new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json" } });
   });
@@ -124,6 +129,47 @@ test("a target parameter opens the wizard on that target and Cancel calls onclos
   button("Cancel").click();
   expect(onclose).toHaveBeenCalledTimes(1);
   await vi.waitFor(() => expect(document.body.textContent).not.toContain("Step 2 of 6"));
+});
+
+test("a target link with a pending maintenance request opens the approval, not the wizard", async () => {
+  const onclose = vi.fn();
+  const maintenance = {
+    id: "m1",
+    nodeId: "local",
+    instanceId: "maintenance",
+    targetId: "box",
+    minutes: 1,
+    test: false,
+    state: "pending",
+    requestedAt: 1,
+    maintenance: {
+      action: "sources",
+      fromNodes: ["node1"],
+      toNodes: ["node2"],
+      fromSources: ["10.0.0.2"],
+      toSources: [],
+    },
+  };
+  showReady({ target: "box", onclose }, [maintenance]);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Approve SSH maintenance"));
+  expect(document.body.textContent).not.toContain("Step 2 of 6");
+  expect(document.body.textContent).not.toContain("The test passed");
+});
+
+test("a target link with only a session request still opens the wizard", async () => {
+  const session = {
+    id: "g1",
+    nodeId: "node1",
+    instanceId: "i1",
+    targetId: "box",
+    minutes: 30,
+    test: false,
+    state: "pending",
+    requestedAt: 1,
+  };
+  showReady({ target: "box" }, [session]);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Step 2 of 6: Key"));
+  expect(document.body.textContent).not.toContain("Approve SSH maintenance");
 });
 
 test("a failed status refetch leaves the wizard open", async () => {

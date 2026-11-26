@@ -401,6 +401,8 @@ If the removal failed, a retire notice names both lines that end with `claude-rc
 
 A link with `provisioner=1` opens the card that makes the provisioner key. If you use a passkey, the command prints this link.
 
+If a target has a pending maintenance request, the link `/ssh?target=<id>` opens its approve sheet. The command prints this link for a passkey approval. Without such a request, the link opens the wizard.
+
 When a recovery needs a re-lock, a provisioner key is a second row for the target. The hub refuses a maintenance request for the target until you re-lock both keys.
 
 Only an `admin` can use this page.

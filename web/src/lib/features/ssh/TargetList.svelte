@@ -241,7 +241,7 @@
                     claude-rc ssh target provisioner {target.id} --identity &lt;file&gt;
                   </code>
                 {/if}
-                {#if !stuckRetire(target) && !refused[target.id]}
+                {#if !stuckRetire(target) && !refused[target.id] && !pendingOf(target)}
                   <span>If you want to give up on this target, you can retire it without cleanup.</span>
                   {@render retireWays(target, false)}
                 {/if}

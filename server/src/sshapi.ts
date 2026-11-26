@@ -555,7 +555,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const state = hasState ? (body.state as TargetState) : undefined;
     if (body.confirm !== undefined && typeof body.confirm !== "boolean")
       throw new HttpError(400, "confirm must be true or false");
-    const id = context.req.param("id") ?? "";
+    const id = context.req.param("id");
     needIdle(id);
     editing.add(id);
 
@@ -739,8 +739,10 @@ export function sshApi(options: SshApiOptions): Hono {
     const target = needTarget(context);
     const body = await readObject(context);
     const unlock = parseUnlock(context, body.unlock);
-    // The lock keeps a retire from deleting the target between the checks and the write of the key.
+    // The lock keeps a retire from deleting the target between the checks and the write of the key. The target is read
+    // again under the lock: a retire can run while the body arrives.
     return locked(target.id, async () => {
+      const target = needTarget(context);
       if (hasKey(target.id)) throw new TargetError(409, "the target has a key already");
       const sources = sourcesOf(target);
       if (sources.length === 0)
@@ -771,6 +773,8 @@ export function sshApi(options: SshApiOptions): Hono {
     needProvisionerTarget(target);
 
     return locked(target.id, async () => {
+      // A retire can run while the body arrives: read the target again under the lock.
+      needProvisionerTarget(needTarget(context));
       // The unlock is checked first: a 409 must never hide a wrong passphrase, because the CLI replaces a key that
       // exists, and a replace with a typo would remove the working key.
       await checkUnlock(unlock);
@@ -844,6 +848,8 @@ export function sshApi(options: SshApiOptions): Hono {
     if (!pathOk) throw new HttpError(400, "script must be the absolute path of the provisioner script of this target");
 
     return locked(target.id, async () => {
+      // A retire can run while the body arrives: read the target again under the lock.
+      const target = needTarget(context);
       needInstallable(target);
       const source = needLocalSource();
       const blob = keys.publicLine(target.id, "provisioner").split(" ")[1] ?? "";

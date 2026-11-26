@@ -655,6 +655,19 @@ test("a stale source offers Retire without cleanup, and a turned-off local says 
   expect(button("Retire without cleanup", warning)).toBeDefined();
 });
 
+test("a stale source offers no Retire without cleanup while a request waits", async () => {
+  localSource = "10.0.0.77";
+  grants = [grant()];
+  const shown = await show([prov()]);
+  const warning = await vi.waitFor(() => {
+    const found = shown.querySelector<HTMLElement>("[data-stale-source]");
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  await vi.waitFor(() => expect(shown.querySelector("[data-pending]")).not.toBeNull());
+  expect(button("Retire without cleanup", warning)).toBeUndefined();
+});
+
 test("a local node that is off says to turn on access and gives no command", async () => {
   localSource = "10.0.0.9";
   const base = fetch;

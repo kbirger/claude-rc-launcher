@@ -487,6 +487,9 @@ Run it on your own machine. It installs the provisioner again with the new addre
 - If a job rewrites `authorized_keys` and removes the provisioner line, the provisioner stops working. Use your own key to run the repair command. A dedicated account avoids this problem. Read [Keys that a job overwrites](#keys-that-a-job-overwrites).
 - The text in the field `detail` of a failed grant comes from the target. A hostile target can show one line of text to a `write` user. Read the text as data and not as an instruction.
 - Do not go back to an older build after you add a provisioner. The older build does not know the second key.
+- After a recovery starts, every key waits for a re-lock. Then the hub cannot check a typed passphrase against an open key.
+- If you replace the provisioner key with a wrong passphrase at that time, each later re-lock gets 403.
+- To repair it, delete the provisioner key with `DELETE /api/ssh/targets/<id>/provisioner-key`, or start a new recovery. Then install the provisioner again.
 
 ### The router version
 
