@@ -1313,3 +1313,227 @@ describe("passphrase length", () => {
     expect((await call("GET", "/status")).body.hasKeys).toBe(true);
   });
 });
+
+describe("PATCH /targets/:id changes the nodes", () => {
+  const AUTH_OK = { "POST /api/ssh/authorize": { status: 204 } };
+
+  /** An external target `nas` or a managed target `self` (on node2) with a key, two nodes with access, and the list [node1]. */
+  const made = async (
+    kind: "external" | "managed",
+    replies2: Record<string, { status: number; body?: unknown } | Error> = AUTH_OK,
+  ) => {
+    const ctx = await setup({ replies2 });
+    await ctx.call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await ctx.call("PUT", "/nodes/node2", "admin", { enabled: true, sourceAddress: "192.168.1.20" });
+    const id = kind === "managed" ? "self" : "nas";
+    const created = await ctx.call("POST", "/targets", "admin", {
+      id,
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      ...(kind === "managed" ? { managedHost: "node2" } : { address: "10.0.0.5" }),
+    });
+    expect(created.status).toBe(201);
+    expect((await ctx.call("POST", `/targets/${id}/key`, "admin", { unlock })).status).toBe(200);
+    await ctx.targets.setState(id, "ready");
+    ctx.node1.calls.length = 0;
+    ctx.node2.calls.length = 0;
+    return { ...ctx, id };
+  };
+
+  const puts = (node: { calls: Call[] }) =>
+    node.calls.filter((item) => item.method === "PUT" && item.path === "/api/ssh/targets").map((item) => item.json);
+
+  test("an admin only: a write user gets 403", async () => {
+    const { call } = await made("external");
+    expect((await call("PATCH", "/targets/nas", "write", { nodes: ["node1", "node2"] })).status).toBe(403);
+    expect(requiredRole("PATCH", "/ssh/targets/nas")).toBe("admin");
+  });
+
+  test("the body needs state, nodes or both, and each field is checked", async () => {
+    const { call, targets } = await made("external");
+    const bad: unknown[] = [
+      {},
+      { other: 1 },
+      { state: "ready" },
+      { state: 5 },
+      { nodes: "node1" },
+      { nodes: [5] },
+      { nodes: ["node1", "node1"] },
+      { nodes: ["nope"] },
+      { nodes: ["../x"] },
+      { nodes: Array.from({ length: 201 }, (_, index) => `n${index}`) },
+      { nodes: null },
+    ];
+
+    for (const body of bad) expect((await call("PATCH", "/targets/nas", "admin", body)).status).toBe(400);
+    expect(targets.get("nas")?.nodes).toEqual(["node1"]);
+    expect((await call("PATCH", "/targets/none", "admin", { nodes: ["node1"] })).status).toBe(404);
+  });
+
+  test("an external target: the answer holds the new key line, and the provision route shows it too", async () => {
+    const { call, targets, keys } = await made("external");
+    const patched = await call("PATCH", "/targets/nas", "admin", { nodes: ["node1", "node2"] });
+    expect(patched.status).toBe(200);
+    expect(targets.get("nas")?.nodes).toEqual(["node1", "node2"]);
+    const expected = `from="192.168.1.10,192.168.1.20",restrict ${keys.publicLine("nas")}`;
+    expect(patched.body.installLine).toBe(expected);
+    expect(patched.body.nodes).toEqual(["node1", "node2"]);
+    expect(patched.body.lineUpdated).toBeUndefined();
+    const script = await call("GET", "/targets/nas/provision");
+    expect(script.body.script).toContain("192.168.1.20");
+    expect(script.body.script).toContain(expected);
+  });
+
+  test("the new list can leave out a node, and a state in the same body applies too", async () => {
+    const { call, targets } = await made("external");
+    const patched = await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"], state: "draft" });
+    expect(patched.status).toBe(200);
+    expect(targets.get("nas")).toMatchObject({ nodes: ["node2"], state: "draft" });
+    expect(patched.body.installLine).toContain('from="192.168.1.20"');
+  });
+
+  test("a list that leaves no node with access is refused with 409 and nothing changes", async () => {
+    const { call, targets } = await made("external");
+    await call("PUT", "/nodes/node2", "admin", { enabled: false, sourceAddress: "192.168.1.20" });
+    const refused = await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"] });
+    expect(refused.status).toBe(409);
+    expect(targets.get("nas")?.nodes).toEqual(["node1"]);
+  });
+
+  test("the old and the new nodes get the target list, and the target is on the new node only after the change", async () => {
+    const { call, node1, node2 } = await made("external");
+    expect((await call("PATCH", "/targets/nas", "admin", { nodes: ["node2"] })).status).toBe(200);
+    expect(puts(node1)).toEqual([{ targets: [] }]);
+    expect(puts(node2)).toEqual([{ targets: [{ id: "nas", account: "root", address: "10.0.0.5" }] }]);
+  });
+
+  test("a node that cannot be reached does not undo the change, and the answer says pushed is false", async () => {
+    const { call, targets } = await made("external", {
+      "PUT /api/ssh/targets": { status: 500, body: { error: "down" } },
+    });
+    const patched = await call("PATCH", "/targets/nas", "admin", { nodes: ["node1", "node2"] });
+    expect(patched.status).toBe(200);
+    expect(patched.body.pushed).toBe(false);
+    expect(targets.get("nas")?.nodes).toEqual(["node1", "node2"]);
+  });
+
+  test("the grants of a removed node end, and the grants of a node that stays do not", async () => {
+    const { call, grants, service, node1, node2, targets, id } = await made("external");
+    await call("PATCH", `/targets/${id}`, "admin", { nodes: ["node1", "node2"] });
+    await call("POST", `/targets/${id}/pin`, "admin", { hostKey: HOST_KEY });
+    service.onNodeEvent("node1", "ssh.request", { requestId: "r1", instanceId: "i1", targetId: id });
+    service.onNodeEvent("node2", "ssh.request", { requestId: "r2", instanceId: "i2", targetId: id });
+    service.onNodeEvent("node2", "ssh.request", { requestId: "r3", instanceId: "i3", targetId: id });
+    await flush();
+    const byRequest = (requestId: string) => grants.list().find((item) => item.requestId === requestId)!;
+    await targets.setState(id, "ready");
+    expect((await call("POST", `/grants/${byRequest("r2").id}/approve`, "admin", { unlock })).status).toBe(200);
+    expect((await call("POST", `/grants/${byRequest("r1").id}/approve`, "admin", { unlock })).status).toBe(200);
+    node1.calls.length = 0;
+    node2.calls.length = 0;
+
+    expect((await call("PATCH", `/targets/${id}`, "admin", { nodes: ["node1"] })).status).toBe(200);
+    expect(byRequest("r2")).toMatchObject({ state: "ended", endReason: "target-disabled" });
+    expect(byRequest("r3")).toMatchObject({ state: "ended", endReason: "target-disabled" });
+    expect(byRequest("r1").state).toBe("active");
+    await flush();
+    // The node of an ended pending grant is told to reject the request, and the active one to stop.
+    expect(node2.paths()).toContain("POST /api/ssh/requests/r3/reject");
+    expect(node2.paths()).toContain(`DELETE /api/ssh/grants/${byRequest("r2").id}`);
+    expect(node1.paths().filter((item) => item.startsWith("DELETE"))).toEqual([]);
+  });
+
+  test("a managed target gets the new line through the node, with the same key and the new sources", async () => {
+    const { call, node2, keys, targets } = await made("managed");
+    const patched = await call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
+    expect(patched.status).toBe(200);
+    expect(patched.body.lineUpdated).toBe(true);
+    expect(patched.body.installLine).toBeUndefined();
+    expect(targets.get("self")?.nodes).toEqual(["node1", "node2"]);
+    const sent = node2.calls.find((item) => item.path === "/api/ssh/authorize");
+    expect(sent?.json).toEqual({
+      account: "root",
+      systemType: "linux",
+      line: `from="192.168.1.10,192.168.1.20",restrict ${keys.publicLine("self")}`,
+    });
+  });
+
+  test("a managed target gets no call when only the order or a node without access changes", async () => {
+    const { call, node2 } = await made("managed");
+    await call("PUT", "/nodes/node2", "admin", { enabled: false, sourceAddress: "192.168.1.20" });
+    node2.calls.length = 0;
+    const patched = await call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
+    expect(patched.status).toBe(200);
+    expect(node2.paths().filter((item) => item.endsWith("/authorize"))).toEqual([]);
+  });
+
+  test("a failed install puts the old list back, tries to restore the old line, answers 502 and keeps the grants", async () => {
+    const { call, node2, targets, grants, service } = await made("managed", {
+      "POST /api/ssh/authorize": { status: 500, body: { error: "cannot write" } },
+    });
+    service.onNodeEvent("node1", "ssh.request", { requestId: "r1", instanceId: "i1", targetId: "self" });
+    await flush();
+    const refused = await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] });
+    expect(refused.status).toBe(502);
+    expect(refused.body.error).toContain("node list is as it was");
+    expect(targets.get("self")?.nodes).toEqual(["node1"]);
+    expect(grants.list().filter((item) => item.state === "ended")).toEqual([]);
+    // First the new line, then the best-effort restore of the old one.
+    const lines = node2.calls
+      .filter((item) => item.path === "/api/ssh/authorize")
+      .map((item) => (item.json as { line: string }).line);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('from="192.168.1.20"');
+    expect(lines[1]).toContain('from="192.168.1.10"');
+  });
+
+  test("a node that is down is a 502 too and the list stays", async () => {
+    const { call, targets } = await made("managed", { "POST /api/ssh/authorize": new Error("connect refused") });
+    expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] })).status).toBe(502);
+    expect(targets.get("self")?.nodes).toEqual(["node1"]);
+  });
+
+  test("a failed write of the list gives an error and the old list stays, with no call to the node", async () => {
+    const { call, targets, node2 } = await made("managed");
+    targets.setNodes = () => Promise.reject(new Error("disk full"));
+    expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node2"] })).status).toBe(500);
+    expect(targets.get("self")?.nodes).toEqual(["node1"]);
+    expect(node2.calls).toEqual([]);
+  });
+
+  test("a target without a key changes its list and sends nothing to a machine", async () => {
+    const ctx = await setup();
+    await ctx.call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await ctx.call("POST", "/targets", "admin", {
+      id: "self",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "node2",
+    });
+    ctx.node2.calls.length = 0;
+    const patched = await ctx.call("PATCH", "/targets/self", "admin", { nodes: ["node2"] });
+    expect(patched.status).toBe(200);
+    expect(ctx.targets.get("self")?.nodes).toEqual(["node2"]);
+    expect(ctx.node2.paths().filter((item) => item.endsWith("/authorize"))).toEqual([]);
+    expect(patched.body.installLine).toBeUndefined();
+  });
+
+  test("two changes at the same time: the second gets 409", async () => {
+    const { call, node2 } = await made("managed");
+    const gate: { release: () => void } = { release: () => {} };
+    const wait = new Promise<void>((resolve) => (gate.release = resolve));
+    const original = node2.client.call.bind(node2.client);
+    node2.client.call = async (...args) => {
+      await wait;
+      return original(...args);
+    };
+    const first = call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] });
+    await flush();
+    expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node1"] })).status).toBe(409);
+    expect((await call("DELETE", "/targets/self")).status).toBe(409);
+    gate.release();
+    expect((await first).status).toBe(200);
+  });
+});
