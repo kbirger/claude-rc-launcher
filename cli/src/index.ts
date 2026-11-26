@@ -331,12 +331,12 @@ export async function main(
 
     if (name === "ssh") {
       // `ssh target add` and `ssh target update` go through the hub, as the owner, with the saved login.
-      if (args[1] === "update" && args[2] && args.length === 3) {
+      if (args[0] === "target" && args[1] === "update" && args[2] && args.length === 3) {
         await sshTargetUpdate({ id: args[2], flags, hub, out: io.out });
         return 0;
       }
 
-      if (args[1] === "update") throw new ExitError(SSH_TARGET_UPDATE_USAGE, 1);
+      if (args[0] === "target" && args[1] === "update") throw new ExitError(SSH_TARGET_UPDATE_USAGE, 1);
       if (args[0] !== "target" || args[1] !== "add" || !args[2] || args.length > 3)
         throw new ExitError(`${SSH_TARGET_USAGE}\n${SSH_TARGET_UPDATE_USAGE}`, 1);
       await sshTargetAdd({

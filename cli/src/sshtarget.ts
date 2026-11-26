@@ -329,5 +329,5 @@ export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<
     out(`claude-rc:${id} with this line:`);
     out(updated.installLine);
   } else if (updated.lineUpdated === true) out("the key line on the machine was updated");
-  else if (updated.managedHost !== undefined) out("the key line on the machine did not need a change");
+  else if (updated.managedHost !== undefined) out("the target has no key yet, so it has no key line on the machine");
 }

@@ -46,11 +46,12 @@ describe("sshTargetUpdate", () => {
     expect(out.join("\n")).toContain("replace the old line");
   });
 
-  test("it says so when a node could not be told, and when a managed line needed no change", async () => {
+  test("it says so when a node could not be told, and when a managed target has no key yet", async () => {
     const { out, run } = rig({ id: "nas", nodes: ["pi"], managedHost: "nas", pushed: false });
     await run({ node: "pi" });
     expect(out.join("\n")).toContain("some nodes could not be told");
-    expect(out.at(-1)).toBe("the key line on the machine did not need a change");
+    expect(out.at(-1)).toBe("the target has no key yet, so it has no key line on the machine");
+    expect(out.join("\n")).not.toContain("did not need");
   });
 
   test("a bad call exits 1 with the usage and calls no route", async () => {
@@ -139,6 +140,18 @@ describe("claude-rc ssh target update through main", () => {
       const { seen, err, run } = harness();
       expect(await run(...argv)).toBe(1);
       expect(err.join("\n").startsWith(SSH_TARGET_UPDATE_USAGE)).toBe(true);
+      expect(seen).toEqual([]);
+    }
+  });
+
+  test("another word before update does not run the update and calls no route", async () => {
+    for (const argv of [
+      ["ssh", "anything", "update", "nas", "--node", "pi"],
+      ["ssh", "update", "nas", "--node", "pi"],
+    ]) {
+      const { seen, err, run } = harness();
+      expect(await run(...argv)).toBe(1);
+      expect(err.join("\n")).toContain("usage:");
       expect(seen).toEqual([]);
     }
   });
