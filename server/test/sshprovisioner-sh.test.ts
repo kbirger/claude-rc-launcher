@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { provisionScript } from "../src/sshprovision";
-import { linuxInstallScript, linuxScript } from "../src/sshprovisioner";
+import { linuxInstallScript, linuxScript, provisionerLine } from "../src/sshprovisioner";
 import vectors from "../src/sshprovisioner.vectors.json";
 import { authorizedKeysLine } from "../src/sshtargets";
 
@@ -15,9 +15,12 @@ const LOCAL = "192.168.1.103";
 const OWNER = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB owner@laptop";
 const CRLF_LINE = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIother crlf@box";
 
-const SHELLS: { name: string; argv: string[] }[] = [{ name: "sh", argv: ["sh"] }];
-if (Bun.which("dash")) SHELLS.push({ name: "dash", argv: ["dash"] });
-if (Bun.which("busybox")) SHELLS.push({ name: "busybox sh", argv: ["busybox", "sh"] });
+// Absolute paths, so that a test can run the script with a short PATH.
+const SHELLS: { name: string; argv: string[] }[] = [{ name: "sh", argv: [Bun.which("sh") ?? "/bin/sh"] }];
+const dashPath = Bun.which("dash");
+if (dashPath) SHELLS.push({ name: "dash", argv: [dashPath] });
+const busyboxPath = Bun.which("busybox");
+if (busyboxPath) SHELLS.push({ name: "busybox sh", argv: [busyboxPath, "sh"] });
 
 const made: string[] = [];
 afterEach(async () => {
@@ -29,8 +32,14 @@ interface Box {
   keys: string;
   state: string;
   script: string;
-  run: (command: string | undefined) => Promise<{ code: number; out: string; err: string }>;
+  run: (command: string | undefined, path?: string) => Promise<{ code: number; out: string; err: string }>;
   read: () => Promise<string>;
+}
+
+function provLineOf(text: string): string {
+  const found = text.split("\n").find((line) => line.endsWith("claude-rc-provisioner:nas"));
+  if (found === undefined) throw new Error("no provisioner line");
+  return found;
 }
 
 const gone = (path: string) =>
@@ -40,8 +49,15 @@ const gone = (path: string) =>
   );
 const mode = async (path: string) => (await stat(path)).mode & 0o777;
 
-async function spawnShell(argv: string[], args: string[], home: string, stdin?: string, command?: string | null) {
-  const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: home };
+async function spawnShell(
+  argv: string[],
+  args: string[],
+  home: string,
+  stdin?: string,
+  command?: string | null,
+  path?: string,
+) {
+  const env: Record<string, string> = { PATH: path ?? process.env.PATH ?? "", HOME: home };
   if (command !== undefined && command !== null) env.SSH_ORIGINAL_COMMAND = command;
   const proc = Bun.spawn([...argv, ...args], {
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
@@ -92,7 +108,7 @@ async function box(
     keys,
     state: join(home, ".claude-rc", "provisioner-nas.from"),
     script,
-    run: (command) => spawnShell(shell, [script], home, undefined, command),
+    run: (command, path) => spawnShell(shell, [script], home, undefined, command, path),
     read: () => readFile(keys, "utf8"),
   };
 }
@@ -317,8 +333,7 @@ for (const shell of SHELLS) {
       const before = await readFile(bx.keys);
       const stateBefore = await readFile(bx.state);
 
-      for (const command of ["off", "sources 10.0.0.7", "uninstall-skip"]) {
-        if (command === "uninstall-skip") continue;
+      for (const command of ["off", "sources 10.0.0.7"]) {
         const result = await bx.run(command);
         expect(result.code, command).toBe(4);
         expect(result.err).toMatch(/^error guard /);
@@ -456,6 +471,219 @@ for (const shell of SHELLS) {
       const result = await spawnShell(shell.argv, ["-s"], spaced, install.script);
       expect(result.code).toBe(1);
       expect(await gone(join(spaced, ".claude-rc", "provisioner-nas.sh"))).toBe(true);
+    });
+
+    for (const [name, build] of [
+      ["the owner key is the last line", (prov: string) => `${prov}\n${OWNER}`],
+      ["the provisioner line is the last line", (prov: string) => `${OWNER}\n${prov}`],
+    ] as const) {
+      test(`on keeps a last line without a newline when ${name}`, async () => {
+        const bx = await box(shell.argv, { main: false });
+        const prov = provLineOf(await bx.read());
+        const mainLine = `from="10.0.0.1",restrict ${MAIN}`;
+        const start = build(prov);
+        await writeFile(bx.keys, start);
+        expect(await bx.run("on")).toEqual({ code: 0, out: "ok on 10.0.0.1\n", err: "" });
+        const first = await bx.read();
+        expect(first).toBe(`${start}\n${mainLine}\n`);
+        expect(first).toContain(`${OWNER}\n`);
+        expect(mainCount(first)).toBe(1);
+        expect(provCount(first)).toBe(1);
+        expect((await bx.run("on")).code).toBe(0);
+        expect(await bx.read()).toBe(first);
+        expect((await bx.run("status")).out).toBe("ok status present 10.0.0.1\n");
+      });
+
+      test(`sources keeps a last line without a newline when ${name}`, async () => {
+        const bx = await box(shell.argv, { main: false });
+        const prov = provLineOf(await bx.read());
+        const oldMain = `from="10.0.0.1",restrict ${MAIN}`;
+        const newMain = `from="10.0.0.2",restrict ${MAIN}`;
+        const plain = build(prov);
+        const start = plain.startsWith(prov) ? `${oldMain}\n${plain}` : `${OWNER}\n${oldMain}\n${prov}`;
+        await writeFile(bx.keys, start);
+        expect(await bx.run("sources 10.0.0.2")).toEqual({ code: 0, out: "ok sources 10.0.0.2\n", err: "" });
+        const first = await bx.read();
+        const rest = start.replace(`${oldMain}\n`, "");
+        expect(first).toBe(`${rest}\n${newMain}\n`);
+        expect(mainCount(first)).toBe(1);
+        expect(first).toContain(`${OWNER}\n`);
+        expect((await bx.run("sources 10.0.0.2")).code).toBe(0);
+        expect(await bx.read()).toBe(first);
+        expect((await bx.run("status")).out).toBe("ok status present 10.0.0.2\n");
+      });
+    }
+
+    test("the guard stops a bad edit of uninstall and of a line of the owner", async () => {
+      for (const kind of ["main", "other"] as const) {
+        const bx = await box(shell.argv);
+        await writeFile(
+          bx.script,
+          linuxScript({ targetId: "nas", mainPublicLine: MAIN, provisionerBlob: PBLOB, guardTest: kind }),
+        );
+        await chmod(bx.script, 0o700);
+        const before = await readFile(bx.keys);
+        const result = await bx.run("uninstall");
+        expect(result.code, kind).toBe(4);
+        expect(result.err).toMatch(/^error guard /);
+        expect(Buffer.compare(await readFile(bx.keys), before), kind).toBe(0);
+        expect(await gone(bx.script)).toBe(false);
+        expect(await gone(bx.state)).toBe(false);
+
+        for (const command of ["on", "off", "sources 10.0.0.9"]) {
+          const other = await bx.run(command);
+          if (other.code === 0) continue;
+          expect(other.code, `${kind} ${command}`).toBe(4);
+          expect(Buffer.compare(await readFile(bx.keys), before)).toBe(0);
+          break;
+        }
+      }
+    });
+
+    test("a failing tool ends with exit 6 and not with exit 2", async () => {
+      // busybox sh runs its own awk without a PATH search, so no tool can be taken away from it
+      if (shell.name === "busybox sh") return;
+      const bx = await box(shell.argv);
+      const tools = join(bx.home, "tools");
+      await mkdir(tools);
+
+      for (const tool of [
+        "cp",
+        "mv",
+        "tail",
+        "grep",
+        "rm",
+        "chmod",
+        "mkdir",
+        "cat",
+        "head",
+        "rmdir",
+        "touch",
+        "sed",
+        "cmp",
+        "flock",
+      ]) {
+        const found = Bun.which(tool);
+        if (found) await symlink(found, join(tools, tool));
+      }
+
+      const before = await readFile(bx.keys);
+
+      for (const command of ["on", "off", "status", "sources 10.0.0.3", "uninstall"]) {
+        // no awk in the path: the script cannot count or edit lines
+        const result = await spawnShell(shell.argv, [bx.script], bx.home, undefined, command, tools);
+        expect(result.code, command).toBe(6);
+        expect(result.err).toMatch(/^error write-failed /m);
+      }
+
+      expect(Buffer.compare(await readFile(bx.keys), before)).toBe(0);
+    });
+
+    test("an edit sets mode 600 on a key file that had mode 644", async () => {
+      const bx = await box(shell.argv);
+      await chmod(bx.keys, 0o644);
+      await bx.run("off");
+      expect(await mode(bx.keys)).toBe(0o600);
+      await chmod(bx.keys, 0o644);
+      await bx.run("on");
+      expect(await mode(bx.keys)).toBe(0o600);
+    });
+
+    test("an error text does not hold the home path", async () => {
+      const bx = await box(shell.argv);
+      const tools = join(bx.home, "tools");
+      await mkdir(tools);
+
+      for (const tool of [
+        "mv",
+        "tail",
+        "grep",
+        "rm",
+        "chmod",
+        "mkdir",
+        "cat",
+        "head",
+        "rmdir",
+        "touch",
+        "sed",
+        "cmp",
+        "flock",
+        "awk",
+      ]) {
+        const found = Bun.which(tool);
+        if (found) await symlink(found, join(tools, tool));
+      }
+
+      const falsePath = Bun.which("false");
+      if (falsePath) await symlink(falsePath, join(tools, "cp"));
+      const result = await spawnShell(shell.argv, [bx.script], bx.home, undefined, "off", tools);
+      expect(result.err).not.toContain(bx.home);
+      if (shell.name !== "busybox sh") expect(result.code).toBe(6);
+    });
+
+    test("the line of the install equals provisionerLine", async () => {
+      const bx = await box(shell.argv);
+      const written = (await bx.read()).split("\n").find((line) => line.endsWith("claude-rc-provisioner:nas"));
+      expect(written).toBe(provisionerLine({ publicLine: PROV, source: LOCAL, scriptPath: bx.script }));
+    });
+
+    test("a command with a key line is refused and changes nothing", async () => {
+      const bx = await box(shell.argv);
+      const before = await readFile(bx.keys);
+      const keyLine = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIevil evil@box";
+      const commands = [
+        `on ${keyLine}`,
+        `off ${keyLine}`,
+        `status ${keyLine}`,
+        `uninstall ${keyLine}`,
+        `sources 10.0.0.1 ${keyLine}`,
+        `sources 10.0.0.1\n${keyLine}`,
+        `sources ${keyLine}`,
+        `on\n${keyLine}`,
+        keyLine,
+        `sources 10.0.0.1,${keyLine.replaceAll(" ", ",")}`,
+      ];
+
+      for (const command of commands) {
+        const result = await bx.run(command);
+        expect(result.code, JSON.stringify(command)).toBe(2);
+      }
+
+      expect(Buffer.compare(await readFile(bx.keys), before)).toBe(0);
+      expect(await bx.read()).not.toContain("evil");
+    });
+
+    test("the install refuses a home path over the length of the line rule", async () => {
+      const install = linuxInstallScript({
+        targetId: "nas",
+        mainPublicLine: MAIN,
+        provisionerPublicLine: PROV,
+        localSource: LOCAL,
+        sources: ["10.0.0.1"],
+      });
+      const root = await mkdtemp(join(tmpdir(), "provlong-"));
+      made.push(root);
+      let deep = root;
+      while (deep.length < 700) deep = join(deep, "d".repeat(200));
+      await mkdir(deep, { recursive: true });
+      const accepted = deep.length + "/.claude-rc/provisioner-nas.sh".length;
+      expect(accepted).toBeLessThanOrEqual(1100);
+
+      // pad the home path so that the script path is 1024 characters (accepted) and then 1025 (refused)
+      const padFor = async (total: number) => {
+        const home = deep + "/" + "p".repeat(total - "/.claude-rc/provisioner-nas.sh".length - deep.length - 1);
+        await mkdir(join(home, ".ssh"), { recursive: true });
+        await writeFile(join(home, ".ssh", "authorized_keys"), "");
+        return home;
+      };
+
+      const okHome = await padFor(1024);
+      const okRun = await spawnShell(shell.argv, ["-s"], okHome, install.script);
+      expect(okRun.code, okRun.err).toBe(0);
+      const badHome = await padFor(1025);
+      const badRun = await spawnShell(shell.argv, ["-s"], badHome, install.script);
+      expect(badRun.code).toBe(1);
+      expect(badRun.err).toContain("too long");
     });
   });
 }

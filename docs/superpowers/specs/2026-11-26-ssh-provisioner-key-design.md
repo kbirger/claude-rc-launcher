@@ -117,11 +117,11 @@ The script writes one line to stdout and exits with code 0 on success:
 | --- | --- |
 | `on` | `ok on <list>` |
 | `off` | `ok off` |
-| `status` | `ok status present <list>` or `ok status absent <list>` |
+| `status` | `ok status present <list>` or `ok status absent <list>`, or `ok status absent` when no state file exists |
 | `sources <list>` | `ok sources <list>` |
 | `uninstall` | `ok uninstall` |
 
-`present` means that the exact main line is in the key file once. `<list>` is the list in the state file.
+`present` means that the exact main line is in the key file once. `<list>` is the list in the state file. When there is no state file, the answer is `ok status absent` and it carries no list.
 
 The script and `sshprovision.ts` must write the main line in the same form: `from="<list>",restrict ssh-ed25519 <blob> claude-rc:<id>`. Both build it from `authorizedKeysLine` of `sshtargets.ts`. A test checks that `status` reports `present` for a line that the provision script of today wrote.
 

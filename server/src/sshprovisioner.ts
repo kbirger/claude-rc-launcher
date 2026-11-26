@@ -12,6 +12,9 @@ import { ADDRESS_RE } from "./sshtargets";
 // element is `ADDRESS_RE` of `sshtargets.ts`. The shared vectors in `sshprovisioner.vectors.json` keep the hub and
 // the script equal.
 
+/** Tests only: the kind of forced bad edit that `linuxScript` can build in. */
+export type GuardTest = true | "main" | "other";
+
 export type ProvisionerCommand = { kind: "on" | "off" | "status" | "uninstall" } | { kind: "sources"; list: string[] };
 
 export type ProvisionerAnswer =
@@ -119,17 +122,20 @@ function checkTargetId(targetId: string): void {
 // copy, and then one `mv`. The guard counts the lines of both keys, so an edit that would drop the provisioner line (the
 // way back in) or that does not do what the command says stops with exit 4 before anything is written.
 
-const GUARD_TEST_LINES = [
-  // Tests only (`guardTest`): drop the provisioner line from the copy, to show that the guard stops the write.
-  '  strip "$pblob" "$pcomment" "$1" "$1.h" && mv -f "$1.h" "$1" # guard-test',
-];
+// Tests only (`guardTest`): a forced bad edit of the copy, to show that the guard stops the write. `true` drops the
+// provisioner line, "main" adds a main line, and "other" drops the first line (a line of the owner).
+function guardTestLines(kind: GuardTest): string[] {
+  if (kind === "main") return ['  printf \'%s\\n\' "$mainkey" >> "$2" # guard-test'];
+  if (kind === "other") return ['  sed 1d "$2" > "$2.h" && mv -f "$2.h" "$2" # guard-test'];
+  return ['  strip "$pblob" "$pcomment" "$2" "$2.h" && mv -f "$2.h" "$2" # guard-test'];
+}
 
 function scriptLines(
   targetId: string,
   main: KeyParts,
   mainLine: string,
   provisionerBlob: string,
-  guardTest: boolean,
+  guardTest: GuardTest | undefined,
 ): string[] {
   return [
     "#!/bin/sh",
@@ -151,6 +157,10 @@ function scriptLines(
     'state="$cdir/provisioner-$id.from"',
     'tmp="$file.tmp.$$"',
     'tmp2="$file.tmp2.$$"',
+    'chk1="$file.chk1.$$"',
+    'chk2="$file.chk2.$$"',
+    'chk3="$file.chk3.$$"',
+    'chk4="$file.chk4.$$"',
     'stmp="$state.tmp.$$"',
     "",
     'fail() { printf \'error %s %s\\n\' "$2" "$3" >&2; exit "$1"; }',
@@ -193,7 +203,7 @@ function scriptLines(
     "}",
     "safe",
     // The temporary files go away on any exit and on a signal.
-    'trap \'rm -f "$tmp" "$tmp2" "$tmp.h" "$tmp2.h" "$stmp"\' EXIT',
+    'trap \'rm -f "$tmp" "$tmp2" "$tmp.h" "$tmp2.h" "$stmp" "$chk1" "$chk2" "$chk3" "$chk4"\' EXIT',
     "trap 'exit 1' HUP INT TERM",
     ...LOCK_LINES,
     "safe",
@@ -203,25 +213,47 @@ function scriptLines(
     'if [ -f "$state" ]; then read -r cur < "$state" || :; fi',
     'if ! valid_list "$cur"; then cur=; fi',
     "",
-    'cnt() { RC_BLOB=$1 RC_COMMENT=$2 RC_MODE=count awk "$prog" "$3"; }',
-    "# strip <blob> <comment> <in> <out>: the lines of the key go, every other line keeps its bytes",
+    'cnt() { RC_BLOB=$1 RC_COMMENT=$2 RC_MODE=count awk "$prog" "$3" || return 1; }',
+    "# strip <blob> <comment> <in> <out> [<newline at the end: 0 or 1>]: the lines of the key go, other lines keep their bytes",
     "strip() {",
-    "  nl=0",
-    '  if [ -n "$(tail -c 1 "$3")" ]; then nl=1; fi',
-    '  RC_BLOB=$1 RC_COMMENT=$2 RC_NONL=$nl RC_MODE=keep awk "$prog" "$3" > "$4"',
+    "  nl=${5-}",
+    '  if [ -z "$nl" ]; then',
+    "    nl=0",
+    '    if [ -n "$(tail -c 1 "$3")" ]; then nl=1; fi',
+    "  fi",
+    '  RC_BLOB=$1 RC_COMMENT=$2 RC_NONL=$nl RC_MODE=keep awk "$prog" "$3" > "$4" || fail 6 write-failed "the key file could not be edited"',
     "}",
-    "# guard <file> <lines of the provisioner key> <lines of the main key>",
+    "# endnl <file>: a file that does not end with a newline gets one, so that an appended line stands alone",
+    "endnl() {",
+    '  if [ -n "$(tail -c 1 "$1")" ]; then printf \'\\n\' >> "$1" || fail 6 write-failed "the key file could not be edited"; fi',
+    "}",
+    "# append <file> <line>",
+    "append() {",
+    '  endnl "$1"',
+    '  printf \'%s\\n\' "$2" >> "$1" || fail 6 write-failed "the key file could not be edited"',
+    "}",
+    "# others <in> <out>: every line that is neither the main nor the provisioner line, with a newline at the end",
+    "others() {",
+    '  strip "$mblob" "$mcomment" "$1" "$chk3" 0',
+    '  strip "$pblob" "$pcomment" "$chk3" "$2" 0',
+    "}",
+    "# guard <old file> <new file> <lines of the provisioner key> <lines of the main key>",
+    "# The new file must hold the wanted count of both keys, and every other line must be the same as in the old file.",
     "guard() {",
-    ...(guardTest ? GUARD_TEST_LINES : []),
-    '  p=$(cnt "$pblob" "$pcomment" "$1")',
-    '  m=$(cnt "$mblob" "$mcomment" "$1")',
-    '  if [ "$p" != "$2" ] || [ "$m" != "$3" ]; then fail 4 guard "the new key file failed the check, nothing was written"; fi',
+    ...(guardTest ? guardTestLines(guardTest) : []),
+    '  gp=$(cnt "$pblob" "$pcomment" "$2") || fail 6 write-failed "the key file could not be checked"',
+    '  gm=$(cnt "$mblob" "$mcomment" "$2") || fail 6 write-failed "the key file could not be checked"',
+    '  if [ "$gp" != "$3" ] || [ "$gm" != "$4" ]; then fail 4 guard "the new key file failed the check, nothing was written"; fi',
+    '  others "$1" "$chk1"',
+    '  others "$2" "$chk2"',
+    '  if ! cmp -s "$chk1" "$chk2"; then fail 4 guard "the new key file failed the check, nothing was written"; fi',
     "}",
     "commit() {",
+    '  chmod 600 "$1" || fail 6 write-failed "the key file could not be replaced"',
     '  mv -f "$1" "$file" || fail 6 write-failed "the key file could not be replaced"',
     "}",
     "prepare() {",
-    '  cp -p "$file" "$1" 2>/dev/null || fail 6 write-failed "cannot make a temporary file in $dir"',
+    '  cp -p "$file" "$1" 2>/dev/null || fail 6 write-failed "cannot make a temporary file in the key folder"',
     "}",
     "# put_state <list>: write the state file next to itself and rename it",
     "put_state() {",
@@ -229,7 +261,7 @@ function scriptLines(
     '  mv -f "$stmp" "$state" || fail 6 write-failed "the state file could not be replaced"',
     "}",
     "",
-    'm=$(cnt "$mblob" "$mcomment" "$file")',
+    'm=$(cnt "$mblob" "$mcomment" "$file") || fail 6 write-failed "the key file could not be checked"',
     'case "$op" in',
     "  on)",
     '    [ -n "$cur" ] || fail 5 no-sources "no list of addresses is stored"',
@@ -237,8 +269,8 @@ function scriptLines(
     '    if [ "$m" = 1 ] && grep -qxF -- "$line" "$file"; then :; else',
     '      prepare "$tmp"',
     '      strip "$mblob" "$mcomment" "$file" "$tmp"',
-    '      printf \'%s\\n\' "$line" >> "$tmp"',
-    '      guard "$tmp" 1 1',
+    '      append "$tmp" "$line"',
+    '      guard "$file" "$tmp" 1 1',
     '      commit "$tmp"',
     "    fi",
     "    printf 'ok on %s\\n' \"$cur\"",
@@ -247,7 +279,7 @@ function scriptLines(
     '    if [ "$m" != 0 ]; then',
     '      prepare "$tmp"',
     '      strip "$mblob" "$mcomment" "$file" "$tmp"',
-    '      guard "$tmp" 1 0',
+    '      guard "$file" "$tmp" 1 0',
     '      commit "$tmp"',
     "    fi",
     "    echo 'ok off'",
@@ -261,8 +293,8 @@ function scriptLines(
     '    if [ "$m" != 0 ]; then',
     '      prepare "$tmp"',
     '      strip "$mblob" "$mcomment" "$file" "$tmp"',
-    '      printf \'%s\\n\' "from=\\"$list\\",restrict $mainkey" >> "$tmp"',
-    '      guard "$tmp" 1 1',
+    '      append "$tmp" "from=\\"$list\\",restrict $mainkey"',
+    '      guard "$file" "$tmp" 1 1',
     '      commit "$tmp"',
     "    fi",
     '    put_state "$list"',
@@ -273,7 +305,7 @@ function scriptLines(
     '    strip "$mblob" "$mcomment" "$file" "$tmp"',
     '    prepare "$tmp2"',
     '    strip "$pblob" "$pcomment" "$tmp" "$tmp2"',
-    '    guard "$tmp2" 0 0',
+    '    guard "$file" "$tmp2" 0 0',
     '    commit "$tmp2"',
     '    rm -f "$state" "$self"',
     '    rmdir "$cdir" 2>/dev/null || :',
@@ -286,21 +318,21 @@ function scriptLines(
 
 /**
  * The text of the Linux script that sshd runs for the provisioner key. It is a `/bin/sh` script (POSIX, no bashisms).
- * `guardTest` is for tests only: it adds a line that makes each edit drop the provisioner line, so that a test can show
- * that the guard stops it. The normal text holds no such line.
+ * The key file is always `~/.ssh/authorized_keys`: a key file name (`keyFile`) exists only for managed targets, and the
+ * provisioner exists only for external targets.
+ * `guardTest` is for tests only: it adds a line that forces a bad edit of the copy, so that a test can show that the
+ * guard stops it. The normal text holds no such line.
  */
 export function linuxScript(input: {
   targetId: string;
   mainPublicLine: string;
   provisionerBlob: string;
-  guardTest?: boolean;
+  guardTest?: GuardTest;
 }): string {
   checkTargetId(input.targetId);
   const main = keyParts(input.mainPublicLine, MAIN_LINE_RE, input.targetId, "main key");
   if (!BLOB_RE.test(input.provisionerBlob)) throw new Error("the provisioner key blob is not valid");
-  return scriptLines(input.targetId, main, input.mainPublicLine, input.provisionerBlob, input.guardTest === true).join(
-    "\n",
-  );
+  return scriptLines(input.targetId, main, input.mainPublicLine, input.provisionerBlob, input.guardTest).join("\n");
 }
 
 /**
@@ -348,6 +380,7 @@ export function linuxInstallScript(input: {
     `  /*) ;;`,
     '  *) echo "the home folder path is not absolute" >&2; exit 1 ;;',
     "esac",
+    'if [ "${#self}" -gt 1024 ]; then echo "the home folder path is too long for the key line" >&2; exit 1; fi',
     'for p in "$dir" "$cdir" "$self" "$state" "$file"; do',
     '  if [ -L "$p" ]; then echo "a key file, a state file or a folder is a symbolic link" >&2; exit 1; fi',
     "done",
