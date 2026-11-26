@@ -9,7 +9,8 @@
   import { untrack } from "svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { hostsQuery } from "../hosts";
-  import { getSalt, type Grant, type SshStatus, type Unlock } from "./api";
+  import { ApiError } from "../../shared/http";
+  import { getSalt, type Grant, type Maintenance, type SshStatus, type Unlock } from "./api";
   import { hostLabel } from "./hostlabel";
   import { approveGrantMutation } from "./mutations";
   import { toBase64Url, unlockWithPasskey } from "./prf";
@@ -38,6 +39,18 @@
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
   const WARNING = "This gives the full power of the account on the target. The target cannot limit it to read-only.";
 
+  const MAINTENANCE_WARNING =
+    "This changes the key line on the target. It uses the provisioner key, not the key of a session. The change runs as soon as you approve.";
+  const ACTIONS: Record<Maintenance["action"], string> = {
+    sources: "Change the nodes",
+    uninstall: "Retire: remove the key lines",
+    install: "Put the key line back",
+  };
+  const work = untrack(() => grant.maintenance);
+
+  const nodeList = (nodes: string[], addresses: string[]) =>
+    `${nodes.length ? nodes.map((id) => hostLabel(id, hosts.data)).join(", ") : "none"} (addresses: ${addresses.length ? addresses.join(", ") : "none"})`;
+
   const target = $derived(targets.data?.find((item) => item.id === grant.targetId));
   // A number input binds a number, or null while the field is empty.
   let minutes = $state<number | null>(untrack(() => grant.minutes));
@@ -49,7 +62,7 @@
     try {
       if (status.method === "prf") {
         if (!status.credentialId) throw new Error("The hub has no passkey on record.");
-        const { salt } = await getSalt(grant.targetId);
+        const { salt } = await getSalt(grant.targetId, work ? "provisioner" : "main");
         return await use({ method: "prf", secret: await unlockWithPasskey(status.credentialId, salt) });
       }
 
@@ -64,7 +77,7 @@
     const count = minutes;
     problem = "";
 
-    if (count === null || !Number.isInteger(count) || count < 1 || count > 480) {
+    if (!work && (count === null || !Number.isInteger(count) || count < 1 || count > 480)) {
       problem = "The minutes must be a whole number from 1 to 480.";
       return;
     }
@@ -72,10 +85,24 @@
     busy = true;
 
     try {
-      await withUnlock((unlock) => approve.mutateAsync({ id: grant.id, unlock, minutes: count }));
+      const done = await withUnlock((unlock) =>
+        approve.mutateAsync({ id: grant.id, unlock, ...(work || count === null ? {} : { minutes: count }) }),
+      );
+
+      // A maintenance run that failed ends the grant, and the hub still answers 200. The owner must read why.
+      if (done.maintenance?.result === "failed") {
+        problem = `The change failed. ${done.maintenance.detail ?? ""}`.trim();
+        return;
+      }
+
       onclose();
     } catch (error) {
-      problem = error instanceof Error ? error.message : "The approval failed.";
+      const detail = error instanceof ApiError && typeof error.body.detail === "string" ? error.body.detail : "";
+      problem = !(error instanceof Error)
+        ? "The approval failed."
+        : detail
+          ? `${error.message}. ${detail}`
+          : error.message;
     } finally {
       approve.reset();
       busy = false;
@@ -94,19 +121,26 @@
     class="mx-auto max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border-x pb-[calc(1rem+env(safe-area-inset-bottom))]"
   >
     <Sheet.Header>
-      <Sheet.Title>Approve SSH access</Sheet.Title>
+      <Sheet.Title>{work ? "Approve SSH maintenance" : "Approve SSH access"}</Sheet.Title>
       <Sheet.Description class="sr-only">Check the request, unlock, and approve it.</Sheet.Description>
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
       <dl class="grid min-w-0 gap-1.5 text-sm">
-        <div class="flex min-w-0 justify-between gap-3">
-          <dt class="text-muted-foreground">Node</dt>
-          <dd class={wrap}>{hostLabel(grant.nodeId, hosts.data)}</dd>
-        </div>
-        <div class="flex min-w-0 justify-between gap-3">
-          <dt class="text-muted-foreground">Instance</dt>
-          <dd class={wrap}>{grant.instanceId} (claimed by the session)</dd>
-        </div>
+        {#if work}
+          <div class="flex min-w-0 justify-between gap-3">
+            <dt class="text-muted-foreground">Action</dt>
+            <dd class="{wrap} font-semibold">{ACTIONS[work.action]}</dd>
+          </div>
+        {:else}
+          <div class="flex min-w-0 justify-between gap-3">
+            <dt class="text-muted-foreground">Node</dt>
+            <dd class={wrap}>{hostLabel(grant.nodeId, hosts.data)}</dd>
+          </div>
+          <div class="flex min-w-0 justify-between gap-3">
+            <dt class="text-muted-foreground">Instance</dt>
+            <dd class={wrap}>{grant.instanceId} (claimed by the session)</dd>
+          </div>
+        {/if}
         <div class="flex min-w-0 justify-between gap-3">
           <dt class="text-muted-foreground">Target</dt>
           <dd class={wrap}>
@@ -115,10 +149,12 @@
             {/if}
           </dd>
         </div>
-        <div class="flex min-w-0 justify-between gap-3">
-          <dt class="text-muted-foreground">Requested</dt>
-          <dd>{grant.minutes} minutes</dd>
-        </div>
+        {#if !work}
+          <div class="flex min-w-0 justify-between gap-3">
+            <dt class="text-muted-foreground">Requested</dt>
+            <dd>{grant.minutes} minutes</dd>
+          </div>
+        {/if}
         {#if grant.reason}
           <div class="flex min-w-0 justify-between gap-3">
             <dt class="text-muted-foreground">Reason</dt>
@@ -126,23 +162,40 @@
           </div>
         {/if}
       </dl>
-      <Alert.Root role="note" variant="destructive">
-        <Alert.Description class={wrap}>{WARNING}</Alert.Description>
-      </Alert.Root>
-      <div class="grid gap-1">
-        <Label for="{uid}-minutes">Minutes (1 to 480)</Label>
-        <Input
-          id="{uid}-minutes"
-          type="number"
-          inputmode="numeric"
-          min="1"
-          max="480"
-          step="1"
-          class="h-11"
-          disabled={busy}
-          bind:value={minutes}
-        />
-      </div>
+      {#if work}
+        <Alert.Root role="note" variant="destructive">
+          <Alert.Description class="{wrap} grid gap-1">
+            <span class="font-semibold">This changes the key line on {grant.targetId}.</span>
+            {#if work.action === "sources"}
+              <span>from: {nodeList(work.fromNodes, work.fromSources)}</span>
+              <span>to: {nodeList(work.toNodes ?? [], work.toSources ?? [])}</span>
+            {:else}
+              <span>nodes: {nodeList(work.fromNodes, work.fromSources)}</span>
+            {/if}
+            <span>{MAINTENANCE_WARNING}</span>
+          </Alert.Description>
+        </Alert.Root>
+      {:else}
+        <Alert.Root role="note" variant="destructive">
+          <Alert.Description class={wrap}>{WARNING}</Alert.Description>
+        </Alert.Root>
+      {/if}
+      {#if !work}
+        <div class="grid gap-1">
+          <Label for="{uid}-minutes">Minutes (1 to 480)</Label>
+          <Input
+            id="{uid}-minutes"
+            type="number"
+            inputmode="numeric"
+            min="1"
+            max="480"
+            step="1"
+            class="h-11"
+            disabled={busy}
+            bind:value={minutes}
+          />
+        </div>
+      {/if}
       {#if status.method === "prf"}
         <p class="text-sm text-muted-foreground">The passkey asks you to confirm.</p>
       {:else}

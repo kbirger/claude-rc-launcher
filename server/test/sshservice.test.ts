@@ -1048,6 +1048,8 @@ async function maintenanceSetup(
     local?: ReturnType<typeof fakeNode>;
     managed?: boolean;
     provisioner?: boolean;
+    notifyMaintenance?: (grant: Grant, target: Target) => void;
+    notifyClose?: (grant: Grant) => void;
   } = {},
 ) {
   const timers = fakeTimers(1_000_000);
@@ -1110,6 +1112,8 @@ async function maintenanceSetup(
     runSsh: runner.runner,
     hasSsh: () => options.hasSsh ?? true,
     localReady: () => options.localReady ?? true,
+    ...(options.notifyMaintenance ? { notifyMaintenance: options.notifyMaintenance } : {}),
+    ...(options.notifyClose ? { notifyClose: options.notifyClose } : {}),
   });
   hook.service = service;
   return { service, keys, targets, grants, local, nodes, audit, timers, runner, opened, recovery };
@@ -1127,6 +1131,34 @@ async function refusal(fn: () => unknown): Promise<{ status: number | undefined;
 }
 
 describe("SshService maintenance", () => {
+  test("requestMaintenance calls notifyMaintenance once", async () => {
+    const sent: Array<[Grant, Target]> = [];
+    const { service } = await maintenanceSetup({ notifyMaintenance: (grant, target) => sent.push([grant, target]) });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "install", by: "admin" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.[0].id).toBe(grant.id);
+    expect(sent[0]?.[1].id).toBe("nas");
+  });
+
+  test("a throwing notifyMaintenance does not fail the request", async () => {
+    const { service, grants, audit } = await maintenanceSetup({
+      notifyMaintenance: () => {
+        throw new Error("boom");
+      },
+    });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "install", by: "admin" });
+    expect(grants.get(grant.id)?.state).toBe("pending");
+    expect(audit.some((line) => line.includes("notify failed"))).toBe(true);
+  });
+
+  test("the close message goes out when a maintenance grant leaves pending", async () => {
+    const closed: Grant[] = [];
+    const { service, grants } = await maintenanceSetup({ notifyClose: (grant) => closed.push(grant) });
+    const grant = service.requestMaintenance({ targetId: "nas", action: "install", by: "admin" });
+    grants.deny(grant.id, "admin");
+    expect(closed.map((item) => item.id)).toEqual([grant.id]);
+  });
+
   test("a node event with a maintenance field makes a plain grant", async () => {
     const { service, grants } = await maintenanceSetup();
     service.onNodeEvent(

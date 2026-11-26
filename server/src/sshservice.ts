@@ -62,6 +62,8 @@ interface Deps {
   notify?: (grant: Grant, target: Target) => void;
   /** Called once when a real (not test) grant leaves `pending`, so that the request notification can close. */
   notifyClose?: (grant: Grant) => void;
+  /** Called once for each new maintenance request. A throw is audited and does not fail the request. */
+  notifyMaintenance?: (grant: Grant, target: Target) => void;
   /** Runs one `ssh` child process for a maintenance grant. Default: `defaultRunner` of `sshmaintenance.ts`. */
   runSsh?: SshRunner;
   /** Whether the hub machine has an `ssh` program. Default: `Bun.which("ssh")`. */
@@ -314,6 +316,13 @@ export class SshService {
       grant,
       `event=requested by=${logToken(input.by)} from=${maintenance.fromSources.length} to=${to.length}`,
     );
+
+    try {
+      this.deps.notifyMaintenance?.(grant, target);
+    } catch (error) {
+      this.note(`notify failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
+    }
+
     return grant;
   }
 

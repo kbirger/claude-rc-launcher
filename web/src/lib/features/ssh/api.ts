@@ -58,6 +58,18 @@ export type HostKeyLine = { line: string; fingerprint: string };
 export type ProvisionScript = { shell: "sh" | "powershell"; script: string };
 export type NodeAccess = NodeStatus & { pushed: boolean };
 export type TestResult = { ok: boolean; error?: string };
+export type MaintenanceAction = "install" | "sources" | "uninstall";
+/** The work of a maintenance grant. The lists are plain strings: host ids and source addresses. */
+export type Maintenance = {
+  action: MaintenanceAction;
+  fromNodes: string[];
+  toNodes?: string[];
+  fromSources: string[];
+  toSources?: string[];
+  result?: "done" | "failed";
+  detail?: string;
+  changed?: boolean;
+};
 export type Grant = {
   id: string;
   nodeId: string;
@@ -72,6 +84,8 @@ export type Grant = {
   endsAt?: number;
   approvedBy?: string;
   endReason?: EndReason;
+  /** Set for a maintenance grant: a change of the key line on the target, approved with the provisioner key. */
+  maintenance?: Maintenance;
 };
 
 const BASE = "/api/ssh";
@@ -122,7 +136,9 @@ export type RetireResult = {
 };
 export const deleteTarget = (id: string) => request<RetireResult>("DELETE", targetUrl(id));
 
-export const getSalt = (id: string) => request<TargetSalt>("GET", `${targetUrl(id)}/salt`);
+/** The salt of the unlock of one key slot of a target. `provisioner` is the slot that a maintenance grant uses. */
+export const getSalt = (id: string, key: "main" | "provisioner" = "main") =>
+  request<TargetSalt>("GET", `${targetUrl(id)}/salt${key === "provisioner" ? "?key=provisioner" : ""}`);
 /** Re-locks the key of one target under the new unlock. The code is the recovery code. */
 export const rewrapTarget = (id: string, body: { code: string; unlock: Unlock }) =>
   request<void>("POST", `${targetUrl(id)}/rewrap`, body);

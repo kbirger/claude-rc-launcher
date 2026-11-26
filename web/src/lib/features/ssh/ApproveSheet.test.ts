@@ -53,6 +53,7 @@ beforeEach(() => {
     let out: { status: number; body: unknown } = { status: 200, body: {} };
     if (path === "/api/ssh/targets") out = { status: 200, body: [TARGET] };
     else if (path === "/api/hosts") out = { status: 200, body: [] };
+    else if (path === "/api/ssh/targets/nas/salt?key=provisioner") out = { status: 200, body: { salt: "cHJvdg" } };
     else if (path === "/api/ssh/targets/nas/salt") out = { status: 200, body: { salt: "c2FsdA" } };
     else if (path === "/api/ssh/grants/g1/approve") out = approveAnswer;
     return new Response(JSON.stringify(out.body), {
@@ -163,4 +164,89 @@ test("the passphrase field is a current password with one visible-to-managers us
   expect(users[0]!.hidden).toBe(false);
   expect(users[0]!.type).toBe("text");
   expect(users[0]!.classList.contains("sr-only")).toBe(true);
+});
+
+const MAINT: Grant = {
+  ...GRANT,
+  nodeId: "local",
+  instanceId: "maintenance",
+  minutes: 1,
+  reason: undefined,
+  maintenance: {
+    action: "sources",
+    fromNodes: ["node1"],
+    toNodes: ["node2"],
+    fromSources: ["192.168.1.10"],
+    toSources: ["192.168.1.20"],
+  },
+};
+
+test("the sheet of a maintenance grant asks for the provisioner salt", async () => {
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() => expect(closed).toBe(1));
+  const urls = calls.map((call) => `${call.method} ${call.url}`);
+  expect(urls).toContain("GET /api/ssh/targets/nas/salt?key=provisioner");
+  expect(urls).not.toContain("GET /api/ssh/targets/nas/salt");
+  expect(prf.unlockWithPasskey).toHaveBeenCalledWith("cred1", "cHJvdg");
+});
+
+test("the sheet hides the minutes field for a maintenance grant", async () => {
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  expect(document.querySelector('input[type="number"]')).toBeNull();
+  button("Approve").click();
+  await vi.waitFor(() => expect(approves()).toHaveLength(1));
+  expect(approves()[0]!.body).toEqual({ unlock: { method: "prf", secret: "c2VjcmV0" } });
+});
+
+test("the sheet shows the old and the new nodes with their addresses for sources", async () => {
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  const text = document.body.textContent!;
+  expect(text).toContain("Change the nodes");
+  expect(text).toContain("This changes the key line on nas");
+  expect(text).toContain("from: node1 (addresses: 192.168.1.10)");
+  expect(text).toContain("to: node2 (addresses: 192.168.1.20)");
+});
+
+test("the sheet shows the maintenance warning in place of the account warning", async () => {
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  const text = document.body.textContent!;
+  expect(text).not.toContain(WARNING);
+  expect(text).not.toContain("claimed by the session");
+  expect(text).toContain("Approve SSH maintenance");
+  expect(text).toContain("provisioner key");
+});
+
+test("the sheet shows the result detail after a 502", async () => {
+  approveAnswer = { status: 502, body: { error: "the change was not stored", detail: "the script failed" } };
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() => expect(document.querySelector("[role=alert]")?.textContent).toContain("the script failed"));
+  expect(document.querySelector("[role=alert]")?.textContent).toContain("the change was not stored");
+  expect(closed).toBe(0);
+});
+
+test("the sheet shows a failed result that the hub answers with 200", async () => {
+  approveAnswer = {
+    status: 200,
+    body: { ...MAINT, state: "ended", maintenance: { ...MAINT.maintenance, result: "failed", detail: "no luck" } },
+  };
+  show(PRF, MAINT);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() => expect(document.querySelector("[role=alert]")?.textContent).toContain("no luck"));
+  expect(closed).toBe(0);
+});
+
+test("a session sheet still asks for the main salt", async () => {
+  show();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() => expect(closed).toBe(1));
+  expect(calls.map((call) => call.url)).toContain("/api/ssh/targets/nas/salt");
 });

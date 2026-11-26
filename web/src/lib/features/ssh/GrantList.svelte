@@ -25,6 +25,11 @@
   const deny = createMutation(() => denyGrantMutation(client));
   const revoke = createMutation(() => revokeGrantMutation(client));
 
+  const ACTIONS = {
+    sources: "Change the nodes",
+    uninstall: "Retire: remove the key lines",
+    install: "Put the key line back",
+  } as const;
   const ORDER: Record<GrantState, number> = { pending: 0, active: 1, ended: 2 };
   const VARIANT: Record<GrantState, BadgeVariant> = { pending: "default", active: "secondary", ended: "ghost" };
   const sorted = $derived(
@@ -81,13 +86,25 @@
             <span class="min-w-0 font-medium [overflow-wrap:anywhere]">{grant.targetId}</span>
             <span class="flex shrink-0 items-center gap-1">
               {#if grant.test}<Badge variant="outline">test</Badge>{/if}
+              {#if grant.maintenance}<Badge variant="destructive">maintenance</Badge>{/if}
               <Badge variant={VARIANT[grant.state]}>{grant.state}</Badge>
             </span>
           </div>
           <div class="grid min-w-0 gap-0.5 text-sm text-muted-foreground">
-            <span class="[overflow-wrap:anywhere]">
-              {hostLabel(grant.nodeId, hosts.data)} · {grant.instanceId} · {grant.minutes} minutes
-            </span>
+            {#if grant.maintenance}
+              <span class="font-medium text-foreground [overflow-wrap:anywhere]">
+                {ACTIONS[grant.maintenance.action]}
+              </span>
+              {#if grant.state === "ended" && grant.maintenance.result}
+                <span class="[overflow-wrap:anywhere]">
+                  Result: {grant.maintenance.result}{grant.maintenance.detail ? `. ${grant.maintenance.detail}` : ""}
+                </span>
+              {/if}
+            {:else}
+              <span class="[overflow-wrap:anywhere]">
+                {hostLabel(grant.nodeId, hosts.data)} · {grant.instanceId} · {grant.minutes} minutes
+              </span>
+            {/if}
             {#if grant.reason}<span class="[overflow-wrap:anywhere]">{grant.reason}</span>{/if}
             {#if grant.state === "active" && grant.endsAt !== undefined}
               <span>Ends {new Date(grant.endsAt).toLocaleTimeString()}</span>

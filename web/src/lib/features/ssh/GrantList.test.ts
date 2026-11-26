@@ -156,3 +156,25 @@ test("Revoke is disabled while its call runs", async () => {
   release();
   await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith("/revoke"))).toHaveLength(1));
 });
+
+test("the list shows the badge maintenance and the action in place of the instance", async () => {
+  grants = [
+    {
+      ...base,
+      id: "m1",
+      nodeId: "local",
+      instanceId: "maintenance",
+      state: "pending",
+      requestedAt: 9,
+      minutes: 1,
+      maintenance: { action: "uninstall", fromNodes: ["node1"], fromSources: ["192.168.1.10"] },
+    },
+  ];
+  show();
+  await vi.waitFor(() => expect(rows()).toHaveLength(1));
+  const text = rows()[0]!.textContent!;
+  expect(text).toContain("maintenance");
+  expect(text).toContain("Retire: remove the key lines");
+  expect(text).not.toContain("1 minutes");
+  expect(text).not.toContain("· maintenance ·");
+});

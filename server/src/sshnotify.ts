@@ -1,4 +1,4 @@
-import type { Grant } from "./sshgrants";
+import type { Grant, MaintenanceAction } from "./sshgrants";
 import type { Target } from "./sshtargets";
 import type { PushMessage } from "./webpush";
 
@@ -23,6 +23,27 @@ export function requestMessage(grant: Grant, target: Target, instanceName: strin
   return {
     title: "SSH access requested",
     body: `${plain(target.id, 80)} on ${plain(instanceName, 80)}, ${grant.minutes} min${reason}`,
+    url: "/ssh",
+    tag: `ssh-${grant.id}`,
+    grantId: grant.id,
+  };
+}
+
+const MAINTENANCE_BODY: Record<MaintenanceAction, string> = {
+  sources: "change of nodes",
+  uninstall: "remove the key lines (retire)",
+  install: "put the key line back",
+};
+
+/**
+ * The push message for a new maintenance request. The body holds the target id and a fixed sentence for the action.
+ * It holds no address, no node list, no reason and no secret.
+ */
+export function maintenanceMessage(grant: Grant, target: Target): PushMessage {
+  const action = grant.maintenance?.action;
+  return {
+    title: "SSH maintenance requested",
+    body: `${plain(target.id, 80)}: ${action ? MAINTENANCE_BODY[action] : "maintenance"}`,
     url: "/ssh",
     tag: `ssh-${grant.id}`,
     grantId: grant.id,
@@ -91,5 +112,16 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
           : options.send(requestMessage(grant, target, name)),
       )
       .catch((error) => options.onError?.(error instanceof Error ? error.message : String(error)));
+  };
+}
+
+/** Makes the notifier of a maintenance request. It sends nothing when the grant is no longer pending. */
+export function createMaintenanceNotifier(options: {
+  send: (message: PushMessage) => unknown;
+  isPending?: (grantId: string) => boolean;
+}): (grant: Grant, target: Target) => void {
+  return (grant, target) => {
+    if (options.isPending && !options.isPending(grant.id)) return;
+    void Promise.resolve(options.send(maintenanceMessage(grant, target))).catch(() => undefined);
   };
 }
