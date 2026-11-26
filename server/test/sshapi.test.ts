@@ -2006,7 +2006,7 @@ describe("the provisioner routes: add, change of nodes and retire", () => {
     expect(script).not.toContain("PRIVATE");
   });
 
-  test("provisioner-install refuses a managed, a windows and a dropbear target, and a target without its keys", async () => {
+  test("provisioner-install refuses a managed and a windows target, and a target without its keys", async () => {
     const { call, targets } = await setup({ local: {} });
     await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
     await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
@@ -2020,7 +2020,7 @@ describe("the provisioner routes: add, change of nodes and retire", () => {
     expect((await call("GET", "/targets/win/provisioner-install")).status).toBe(400);
     const router = await call("GET", "/targets/rt/provisioner-install");
     expect(router.status).toBe(409);
-    expect(router.text).toContain("dropbear");
+    expect(router.text).toContain("no key");
     const bare = await call("GET", "/targets/bare/provisioner-install");
     expect(bare.status).toBe(409);
     expect(bare.text).toContain("no key");
@@ -2411,21 +2411,61 @@ describe("the provisioner routes: add, change of nodes and retire", () => {
     expect(made.targets.get("nas")).toBeUndefined();
   });
 
-  test("provisioner-installed refuses a dropbear target and a target without a main key", async () => {
+  test("provisioner-install gives the router version for a dropbear target", async () => {
+    const { call } = await setup({ local: {} });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
+    await call("POST", "/targets", "admin", {
+      id: "rt",
+      address: "10.0.0.5",
+      account: "admin",
+      nodes: ["node1"],
+      systemType: "dropbear",
+    });
+    await call("POST", "/targets/rt/key", "admin", { unlock });
+    await call("POST", "/targets/rt/provisioner-key", "admin", { unlock });
+    const found = await call("GET", "/targets/rt/provisioner-install");
+    expect(found.status).toBe(200);
+    expect(found.body.shell).toBe("sh");
+    const script = str(found.body.script);
+    expect(script).toContain('nvram set "sshd_authkeys=$nvv"');
+    expect(script).toContain("/jffs/scripts");
+    expect(script).toContain("no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,command=");
+    expect(script).not.toContain("PRIVATE");
+  });
+
+  test("provisioner-installed takes only the fixed router path for a dropbear target", async () => {
+    const { call, targets } = await setup({ local: {} });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
+    await call("POST", "/targets", "admin", {
+      id: "rt",
+      address: "10.0.0.5",
+      account: "admin",
+      nodes: ["node1"],
+      systemType: "dropbear",
+    });
+    await call("POST", "/targets/rt/key", "admin", { unlock });
+    await call("POST", "/targets/rt/provisioner-key", "admin", { unlock });
+
+    for (const script of ["/home/u/.claude-rc/provisioner-rt.sh", "/tmp/jffs/scripts/claude-rc-provisioner-rt.sh"]) {
+      expect((await call("POST", "/targets/rt/provisioner-installed", "admin", { script })).status, script).toBe(400);
+    }
+
+    const done = await call("POST", "/targets/rt/provisioner-installed", "admin", {
+      script: "/jffs/scripts/claude-rc-provisioner-rt.sh",
+    });
+    expect(done.status).toBe(200);
+    expect(targets.get("rt")?.provisionerScript).toBe("/jffs/scripts/claude-rc-provisioner-rt.sh");
+  });
+
+  test("provisioner-installed refuses a target without a main key", async () => {
     const { call, keys } = await setup({ local: {} });
     await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
     await call("PUT", "/nodes/local", "admin", { enabled: true, sourceAddress: LOCAL_SOURCE });
     const add = (id: string, systemType: string) =>
       call("POST", "/targets", "admin", { id, address: "10.0.0.5", account: "u", nodes: ["node1"], systemType });
-    await add("rt", "dropbear");
     await add("bare", "linux");
-    await call("POST", "/targets/rt/key", "admin", { unlock });
-    await call("POST", "/targets/rt/provisioner-key", "admin", { unlock });
-    const router = await call("POST", "/targets/rt/provisioner-installed", "admin", {
-      script: "/home/u/.claude-rc/provisioner-rt.sh",
-    });
-    expect(router.status).toBe(409);
-    expect(router.text).toContain("dropbear");
     // A provisioner key without the main key: there is no main line for the script to switch.
     await keys.create(
       "bare",

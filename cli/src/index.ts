@@ -67,7 +67,7 @@ Commands:
                                      ask the owner for SSH access and wait (inside an instance)
   ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>)
                                      [--port n] [--key-file name] [--fingerprint f] [--provisioner] [--no-test]
-                                     (--provisioner: an external linux or synology target also gets a provisioner key)
+                                     (--provisioner: an external linux, synology or dropbear target also gets a provisioner key)
                                      (--key-file: managed linux or synology, a file in ~/.ssh that starts with authorized_keys)
                                      add a machine that sessions may ask to reach
   ssh target update <id> --node <id>[,<id>...] [--yes]

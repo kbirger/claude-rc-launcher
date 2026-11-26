@@ -56,8 +56,6 @@
       return "A managed target has no provisioner key. The node keeps its own key file. You do not need to do anything here.";
     if (found.systemType === "windows")
       return "A Windows target has no provisioner key, because the script needs sh. Close this card. You do not need to do anything here.";
-    if (found.systemType === "dropbear")
-      return "The provisioner for a dropbear target is not available yet. Close this card. The target works without it.";
     if (found.keyFingerprint === undefined)
       return "This target has no key yet. Finish the setup of the target first, then run the command again.";
     return "";

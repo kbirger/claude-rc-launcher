@@ -15,6 +15,8 @@ import {
   CONFIRM_NODES_TEXT,
   HAS_PROVISIONER_KEY_TEXT,
   linuxInstallScript,
+  routerInstallScript,
+  routerScriptPath,
   NO_PROVISIONER_KEY_TEXT,
 } from "./sshprovisioner";
 import { errorKind, MAINTENANCE_BUSY, NodeError } from "./sshservice";
@@ -795,8 +797,6 @@ export function sshApi(options: SshApiOptions): Hono {
   /** The checks of an install of a provisioner, for the script and for the record of its result. */
   const needInstallable = (target: Target): void => {
     needProvisionerTarget(target);
-    if (target.systemType === "dropbear")
-      throw new TargetError(409, "the provisioner script for a dropbear target is not available yet");
     if (!hasKey(target.id)) throw new TargetError(409, "the target has no key: make the main key first");
     if (!hasKey(target.id, "provisioner")) throw new TargetError(409, NO_PROVISIONER_KEY_TEXT);
   };
@@ -810,15 +810,15 @@ export function sshApi(options: SshApiOptions): Hono {
       throw new TargetError(409, "no node of this target has access enabled with a source address");
 
     try {
-      return context.json(
-        linuxInstallScript({
-          targetId: target.id,
-          mainPublicLine: keys.publicLine(target.id),
-          provisionerPublicLine: keys.publicLine(target.id, "provisioner"),
-          localSource,
-          sources,
-        }),
-      );
+      // The version by system type: a dropbear target is a router (Asuswrt-Merlin), with its key list in nvram.
+      const input = {
+        targetId: target.id,
+        mainPublicLine: keys.publicLine(target.id),
+        provisionerPublicLine: keys.publicLine(target.id, "provisioner"),
+        localSource,
+        sources,
+      };
+      return context.json(target.systemType === "dropbear" ? routerInstallScript(input) : linuxInstallScript(input));
     } catch (error) {
       // A source with a pattern, for example: the script takes exact addresses and host names only.
       throw new TargetError(409, `the install script cannot be made: ${message(error)}`);
@@ -831,8 +831,14 @@ export function sshApi(options: SshApiOptions): Hono {
     const body = await readObject(context);
     needProvisionerTarget(target);
     const script = body.script;
-    if (typeof script !== "string" || !SCRIPT_PATH_RE.test(script) || !script.endsWith(`/provisioner-${target.id}.sh`))
-      throw new HttpError(400, "script must be the absolute path of the provisioner script of this target");
+    // The router script has one fixed path. The Linux script is in the home folder of the account.
+    const pathOk =
+      typeof script === "string" &&
+      SCRIPT_PATH_RE.test(script) &&
+      (target.systemType === "dropbear"
+        ? script === routerScriptPath(target.id)
+        : script.endsWith(`/provisioner-${target.id}.sh`));
+    if (!pathOk) throw new HttpError(400, "script must be the absolute path of the provisioner script of this target");
 
     return locked(target.id, async () => {
       needInstallable(target);
