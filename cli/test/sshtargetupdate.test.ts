@@ -15,17 +15,37 @@ import { rejection } from "./support";
 
 const LINE = 'from="10.0.0.1,10.0.0.2",restrict ssh-ed25519 AAAAC3Nza claude-rc:nas';
 
-function rig(reply: unknown) {
+function rig(reply: unknown, extra: Record<string, () => unknown> = {}, secrets: string[] = []) {
   const calls: { method: string; path: string; body: unknown }[] = [];
   const out: string[] = [];
   const hub = {
     request: (method: string, requestPath: string, body?: unknown) => {
       calls.push({ method, path: requestPath, body });
+      const extraHandler = extra[`${method} ${requestPath}`];
+      if (extraHandler) {
+        try {
+          return Promise.resolve(extraHandler());
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      }
       return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
     },
   } as unknown as HubClient;
-  const run = (flags: Flags, id = "nas") => sshTargetUpdate({ id, flags, hub, out: (line) => out.push(line) });
-  return { calls, out, run };
+  const run = (flags: Flags, id = "nas") =>
+    sshTargetUpdate({
+      id,
+      flags,
+      hub,
+      hubUrl: "https://hub.example",
+      readSecret: () => {
+        secrets.push("asked");
+        return Promise.resolve("my passphrase");
+      },
+      out: (line) => out.push(line),
+      sleep: () => Promise.resolve(),
+    });
+  return { calls, out, run, secrets };
 }
 
 const exitCode = (error: Error) => (error instanceof ExitError ? error.code : undefined);
@@ -87,6 +107,122 @@ describe("sshTargetUpdate", () => {
   });
 });
 
+const GRANT = { id: "g1", targetId: "nas", state: "pending", maintenance: { action: "sources", toNodes: ["pi"] } };
+const DONE = {
+  ...GRANT,
+  state: "ended",
+  endReason: "done",
+  maintenance: { action: "sources", fromNodes: ["vm"], toNodes: ["pi"], result: "done" },
+  target: { id: "nas", nodes: ["pi"] },
+  pushed: true,
+};
+const APPROVE = "POST /cli/api/ssh/grants/g1/approve";
+const STATUS = "GET /cli/api/ssh/status";
+
+describe("sshTargetUpdate with a provisioner", () => {
+  test("a 202 asks for the passphrase, approves and prints the result", async () => {
+    const rg = rig({ maintenance: GRANT }, { [STATUS]: () => ({ method: "passphrase" }), [APPROVE]: () => DONE });
+    await rg.run({ node: "pi" });
+    const approve = rg.calls.find((call) => `${call.method} ${call.path}` === APPROVE);
+    expect(approve?.body).toEqual({
+      unlock: { method: "passphrase", secret: Buffer.from("my passphrase").toString("base64url") },
+    });
+    expect(rg.secrets).toHaveLength(1);
+    expect(rg.out.join("\n")).toContain("waits for the approval");
+    expect(rg.out).toContain("target nas nodes: pi");
+    expect(rg.out.at(-1)).toBe("the key line on the machine was updated");
+    expect(JSON.stringify(rg.calls)).not.toContain("my passphrase");
+  });
+
+  test("with a passkey it prints the link and waits for the end of the grant", async () => {
+    let polls = 0;
+    const rg = rig(
+      { maintenance: GRANT },
+      {
+        [STATUS]: () => ({ method: "prf" }),
+        "GET /cli/api/ssh/grants": () => {
+          polls += 1;
+          return [polls < 3 ? { ...GRANT, state: "active" } : DONE];
+        },
+      },
+    );
+    await rg.run({ node: "pi" });
+    expect(rg.secrets).toEqual([]);
+    expect(rg.out.join("\n")).toContain("https://hub.example/ssh?target=nas");
+    expect(polls).toBe(3);
+    expect(rg.out).toContain("target nas nodes: pi");
+  });
+
+  test("the 409 that asks for confirmation exits 1 and names --yes", async () => {
+    const text = "the new list allows none of the addresses that work now: send it again with confirm";
+    const rg = rig(new HubError(text, 409, undefined));
+    const error = await rejection(rg.run({ node: "pi" }));
+    expect(exitCode(error)).toBe(1);
+    expect(error.message).toContain("allows none of the addresses that work now");
+    expect(error.message).toContain("--yes");
+    expect(error.message).not.toContain("send it again with confirm");
+  });
+
+  test("--yes sends confirm true", async () => {
+    const rg = rig({ maintenance: GRANT }, { [STATUS]: () => ({ method: "passphrase" }), [APPROVE]: () => DONE });
+    await rg.run({ node: "pi", yes: true });
+    expect(rg.calls[0]?.body).toEqual({ nodes: ["pi"], confirm: true });
+  });
+
+  test("without --yes the body has no confirm", async () => {
+    const rg = rig({ id: "nas", nodes: ["pi"] });
+    await rg.run({ node: "pi" });
+    expect(rg.calls[0]?.body).toEqual({ nodes: ["pi"] });
+  });
+
+  test("a failed run exits 1 and prints the text of the hub", async () => {
+    const rg = rig(
+      { maintenance: GRANT },
+      {
+        [STATUS]: () => ({ method: "passphrase" }),
+        [APPROVE]: () => {
+          throw new HubError(
+            "the key line on the machine was not updated, so the node list is as it was: ssh exited with 255",
+            502,
+            undefined,
+          );
+        },
+      },
+    );
+    const error = await rejection(rg.run({ node: "pi" }));
+    expect(exitCode(error)).toBe(1);
+    expect(error.message).toContain("the node list is as it was");
+    expect(error.message).toContain("ssh exited with 255");
+  });
+
+  test("a failed run that a passkey approve ended exits 1 with its detail", async () => {
+    const failed = {
+      ...GRANT,
+      state: "ended",
+      maintenance: { action: "sources", result: "failed", detail: "the script refused" },
+    };
+    const rg = rig(
+      { maintenance: GRANT },
+      { [STATUS]: () => ({ method: "prf" }), "GET /cli/api/ssh/grants": () => [failed] },
+    );
+    const error = await rejection(rg.run({ node: "pi" }));
+    expect(exitCode(error)).toBe(1);
+    expect(error.message).toContain("the script refused");
+  });
+
+  test("a denied grant exits 1 and says that nothing changed", async () => {
+    const denied = { ...GRANT, state: "ended", endReason: "denied" };
+    const rg = rig(
+      { maintenance: GRANT },
+      { [STATUS]: () => ({ method: "prf" }), "GET /cli/api/ssh/grants": () => [denied] },
+    );
+    const error = await rejection(rg.run({ node: "pi" }));
+    expect(exitCode(error)).toBe(1);
+    expect(error.message).toContain("denied");
+    expect(error.message).toContain("Nothing was changed");
+  });
+});
+
 describe("claude-rc ssh target update through main", () => {
   const stops: (() => void)[] = [];
   afterAll(() => {
@@ -120,7 +256,8 @@ describe("claude-rc ssh target update through main", () => {
     const env: Env = { credsFile, open: async () => {}, readLine: () => Promise.resolve(""), sleep: async () => {} };
     const out: string[] = [];
     const err: string[] = [];
-    const run = (...argv: string[]) => main(argv, { out: (line) => out.push(line), err: (line) => err.push(line) }, env);
+    const run = (...argv: string[]) =>
+      main(argv, { out: (line) => out.push(line), err: (line) => err.push(line) }, env);
     return { seen, out, err, run };
   }
 

@@ -39,6 +39,7 @@ export interface Flags {
   managed?: string;
   "key-file"?: string;
   "no-test"?: boolean;
+  provisioner?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -87,6 +88,7 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         managed: { type: "string" },
         "key-file": { type: "string" },
         "no-test": { type: "boolean" },
+        provisioner: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },

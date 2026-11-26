@@ -15,7 +15,14 @@ import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
 import { login, logout, renew } from "./oidc";
 import { sshRequest, sshTargets, SSH_OFF_MESSAGE } from "./sshcmd";
-import { sshTargetAdd, sshTargetUpdate, SSH_TARGET_UPDATE_USAGE, SSH_TARGET_USAGE } from "./sshtarget";
+import {
+  sshTargetAdd,
+  sshTargetProvisioner,
+  sshTargetUpdate,
+  SSH_TARGET_PROVISIONER_USAGE,
+  SSH_TARGET_UPDATE_USAGE,
+  SSH_TARGET_USAGE,
+} from "./sshtarget";
 import { selfUpdate } from "./update";
 import { checkAllNodesFlags, parseNodeIds, updateAll, updateNodes } from "./updateall";
 
@@ -59,11 +66,16 @@ Commands:
   ssh request <target> [--minutes n] [--reason text]
                                      ask the owner for SSH access and wait (inside an instance)
   ssh target add <id> --type <t> --account <user> --node <ids> (--address <host> --identity <file> | --managed <host id>)
-                                     [--port n] [--key-file name] [--fingerprint f] [--no-test]
+                                     [--port n] [--key-file name] [--fingerprint f] [--provisioner] [--no-test]
+                                     (--provisioner: an external linux, synology or dropbear target also gets a provisioner key)
                                      (--key-file: managed linux or synology, a file in ~/.ssh that starts with authorized_keys)
                                      add a machine that sessions may ask to reach
-  ssh target update <id> --node <id>[,<id>...]
-                                     replace the nodes of a target (an external target prints the new key line)
+  ssh target update <id> --node <id>[,<id>...] [--yes]
+                                     replace the nodes of a target. With a provisioner it waits for one approval
+                                     (--yes: confirm a list that allows none of the addresses that work now).
+                                     Without a provisioner an external target prints the new key line
+  ssh target provisioner <id> --identity <file> [--fingerprint f] [--no-test]
+                                     install the provisioner key on an external target, or install it again
   node update [--binary file] [--release tag]
                                      update this node's server binary and restart it
   node config --listen <addr> [--names <a,b>] [--port n] [--name n] [--roots /a,/b] [--output file|-] [--force]
@@ -84,7 +96,7 @@ export interface Env {
   /** Asks for a secret and does not show what is typed. */
   readSecret?: (prompt: string) => Promise<string>;
   /** Runs a program on this machine with `stdin` as its input. Tests replace it. */
-  runLocal?: (argv: string[], stdin: string) => Promise<{ code: number; stderr: string }>;
+  runLocal?: (argv: string[], stdin: string) => Promise<{ code: number; stderr: string; stdout?: string }>;
   /** Waits between polls. Tests replace it so that they do not wait in real time. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -150,10 +162,15 @@ async function readHidden(prompt: string): Promise<string> {
 }
 
 /** Runs a program with `stdin` as its input. Its output is not kept: only the error text is. */
-async function runProgram(argv: string[], stdin: string): Promise<{ code: number; stderr: string }> {
-  const child = Bun.spawn(argv, { stdin: new TextEncoder().encode(stdin), stdout: "ignore", stderr: "pipe" });
-  const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
-  return { code, stderr };
+async function runProgram(argv: string[], stdin: string): Promise<{ code: number; stderr: string; stdout: string }> {
+  const child = Bun.spawn(argv, { stdin: new TextEncoder().encode(stdin), stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  // The first line of stdout is the answer of an install script. The rest is not needed.
+  return { code, stderr, stdout: stdout.slice(0, 4096) };
 }
 
 const INSTANCE_COMMANDS = new Set<string>([
@@ -333,17 +350,8 @@ export async function main(
     });
 
     if (name === "ssh") {
-      // `ssh target add` and `ssh target update` go through the hub, as the owner, with the saved login.
-      if (args[0] === "target" && args[1] === "update" && args[2] && args.length === 3) {
-        await sshTargetUpdate({ id: args[2], flags, hub, out: io.out });
-        return 0;
-      }
-
-      if (args[0] === "target" && args[1] === "update") throw new ExitError(SSH_TARGET_UPDATE_USAGE, 1);
-      if (args[0] !== "target" || args[1] !== "add" || !args[2] || args.length > 3)
-        throw new ExitError(`${SSH_TARGET_USAGE}\n${SSH_TARGET_UPDATE_USAGE}`, 1);
-      await sshTargetAdd({
-        id: args[2],
+      const addOptions = (id: string) => ({
+        id,
         flags,
         hub,
         hubUrl: creds.hub,
@@ -353,6 +361,32 @@ export async function main(
         out: io.out,
         ...(env.sleep ? { sleep: env.sleep } : {}),
       });
+
+      // `ssh target add` and `ssh target update` go through the hub, as the owner, with the saved login.
+      if (args[0] === "target" && args[1] === "update" && args[2] && args.length === 3) {
+        await sshTargetUpdate({
+          id: args[2],
+          flags,
+          hub,
+          hubUrl: creds.hub,
+          readSecret: env.readSecret ?? readHidden,
+          out: io.out,
+          ...(env.sleep ? { sleep: env.sleep } : {}),
+        });
+        return 0;
+      }
+
+      if (args[0] === "target" && args[1] === "update") throw new ExitError(SSH_TARGET_UPDATE_USAGE, 1);
+
+      if (args[0] === "target" && args[1] === "provisioner" && args[2] && args.length === 3) {
+        await sshTargetProvisioner(addOptions(args[2]));
+        return 0;
+      }
+
+      if (args[0] === "target" && args[1] === "provisioner") throw new ExitError(SSH_TARGET_PROVISIONER_USAGE, 1);
+      if (args[0] !== "target" || args[1] !== "add" || !args[2] || args.length > 3)
+        throw new ExitError(`${SSH_TARGET_USAGE}\n${SSH_TARGET_UPDATE_USAGE}\n${SSH_TARGET_PROVISIONER_USAGE}`, 1);
+      await sshTargetAdd(addOptions(args[2]));
       return 0;
     }
 
