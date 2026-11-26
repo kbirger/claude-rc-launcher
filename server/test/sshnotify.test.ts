@@ -202,4 +202,23 @@ describe("maintenanceMessage", () => {
     );
     expect(sent).toHaveLength(1);
   });
+
+  test("the maintenance body has no control characters, and a failed send goes to onError", async () => {
+    const odd = { ...target, id: "na\ns\u202e" } as Target;
+    expect(maintenanceMessage(work("install"), odd).body).toBe("na s : put the key line back");
+    const errors: string[] = [];
+    createMaintenanceNotifier({
+      send: () => Promise.reject(new Error("push down")),
+      onError: (text) => errors.push(text),
+    })(work("install"), target);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(errors).toEqual(["push down"]);
+    createMaintenanceNotifier({
+      send: () => {
+        throw new Error("sync boom");
+      },
+      onError: (text) => errors.push(text),
+    })(work("install"), target);
+    expect(errors).toEqual(["push down", "sync boom"]);
+  });
 });

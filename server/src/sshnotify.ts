@@ -115,13 +115,20 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
   };
 }
 
-/** Makes the notifier of a maintenance request. It sends nothing when the grant is no longer pending. */
+/** Makes the notifier of a maintenance request. It sends nothing when the grant is no longer pending. A failed send goes to `onError`. */
 export function createMaintenanceNotifier(options: {
   send: (message: PushMessage) => unknown;
   isPending?: (grantId: string) => boolean;
+  onError?: (text: string) => void;
 }): (grant: Grant, target: Target) => void {
+  const fail = (error: unknown) => options.onError?.(error instanceof Error ? error.message : String(error));
+
   return (grant, target) => {
-    if (options.isPending && !options.isPending(grant.id)) return;
-    void Promise.resolve(options.send(maintenanceMessage(grant, target))).catch(() => undefined);
+    try {
+      if (options.isPending && !options.isPending(grant.id)) return;
+      void Promise.resolve(options.send(maintenanceMessage(grant, target))).catch(fail);
+    } catch (error) {
+      fail(error);
+    }
   };
 }

@@ -320,6 +320,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     notifyMaintenance: createMaintenanceNotifier({
       send: (message) => push.send(message),
       isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
+      onError: (text) => {
+        sshAudit(`push notify: maintenance send failed: ${logToken(text)}`);
+      },
     }),
     notify: createRequestNotifier({
       send: (message) => push.send(message),
