@@ -299,3 +299,79 @@ describe("GrantStore", () => {
     });
   });
 });
+
+describe("GrantStore maintenance", () => {
+  const maintenance = {
+    action: "sources" as const,
+    fromNodes: ["a"],
+    toNodes: ["b"],
+    fromSources: ["10.0.0.1"],
+    toSources: ["10.0.0.2"],
+  };
+  const local = { nodeId: "local", instanceId: "maintenance", targetId: "nas" };
+
+  test("a maintenance grant is 1 minute and ignores minutes at approve", () => {
+    const { store } = setup();
+    const grant = store.request({ ...local, minutes: 30, maintenance });
+    expect(grant.minutes).toBe(1);
+    expect(grant.maintenance).toEqual(maintenance);
+    const active = store.approve(grant.id, "admin", fakeKey().key, 120);
+    expect(active.minutes).toBe(1);
+    expect(active.endsAt).toBe(1_000_000 + 60_000);
+  });
+
+  test("a grant is never both a test and a maintenance grant", () => {
+    const { store } = setup();
+    expect(status(() => store.request({ ...local, test: true, maintenance }))).toBe(400);
+    expect(store.list()).toHaveLength(0);
+  });
+
+  test("the projection is a copy: a change to it does not reach the store", () => {
+    const { store } = setup();
+    const grant = store.request({ ...local, maintenance });
+    const work = grant.maintenance;
+    if (!work?.toSources) throw new Error("no maintenance");
+    work.toSources.push("10.9.9.9");
+    work.action = "uninstall";
+    expect(store.get(grant.id)?.maintenance).toEqual(maintenance);
+  });
+
+  test("setResult records the result on the grant", () => {
+    const { store, audit } = setup();
+    const grant = store.request({ ...local, maintenance });
+    store.setResult(grant.id, "failed", "line one\nline two");
+    expect(store.get(grant.id)?.maintenance).toMatchObject({ result: "failed", detail: "line one line two" });
+    expect(audit.join("\n")).not.toContain("line one");
+    // A plain grant has no result.
+    const plain = store.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    expect(
+      status(() => {
+        store.setResult(plain.id, "done");
+      }),
+    ).toBe(409);
+    expect(
+      status(() => {
+        store.setResult("nope", "done");
+      }),
+    ).toBe(404);
+  });
+
+  test("finish ends it with done and destroys the key", () => {
+    const { store, ended } = setup();
+    const grant = store.request({ ...local, maintenance });
+    // A pending grant cannot finish: it never ran.
+    expect(status(() => store.finish(grant.id, "admin"))).toBe(409);
+    const { key, calls } = fakeKey();
+    store.approve(grant.id, "admin", key);
+    store.setResult(grant.id, "done");
+    const done = store.finish(grant.id, "admin");
+    expect(done).toMatchObject({ state: "ended", endReason: "done", maintenance: { result: "done" } });
+    expect(calls.destroy).toBe(1);
+    expect(ended.map((item) => item.endReason)).toEqual(["done"]);
+    expect(status(() => store.finish(grant.id, "admin"))).toBe(409);
+    // A plain active grant cannot finish.
+    const plain = store.request({ nodeId: "node1", instanceId: "inst1", targetId: "nas" });
+    store.approve(plain.id, "admin", fakeKey("b").key);
+    expect(status(() => store.finish(plain.id, "admin"))).toBe(409);
+  });
+});

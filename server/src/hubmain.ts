@@ -36,6 +36,7 @@ import { WatchFlag } from "./sessionwatch";
 import { stopServer } from "./sse";
 import { GrantStore } from "./sshgrants";
 import { SshKeyStore } from "./sshkeystore";
+import { defaultRunner } from "./sshmaintenance";
 import { createLocalSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
 import { closeMessage, createRequestNotifier } from "./sshnotify";
@@ -311,6 +312,10 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     grants: sshGrants,
     client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
     audit: sshAudit,
+    // A maintenance grant runs `ssh` on the hub machine through the grant files of the host `local`.
+    runSsh: defaultRunner,
+    hasSsh: () => Bun.which("ssh") !== null,
+    localReady: () => localSsh.client !== undefined,
     notifyClose: (grant) => void push.send(closeMessage(grant)),
     notify: createRequestNotifier({
       send: (message) => push.send(message),
@@ -324,7 +329,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
           return reply.body as { id: string; name: string }[];
         });
       },
-      onError: (text) => sshAudit(`push notify: name lookup failed: ${logToken(text)}`),
+      onError: (text) => {
+        sshAudit(`push notify: name lookup failed: ${logToken(text)}`);
+      },
     }),
   });
   sshHook.service = ssh;
