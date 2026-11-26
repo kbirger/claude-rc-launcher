@@ -6,11 +6,18 @@
   let {
     client,
     target = null,
+    provisioner = false,
     onclose,
     canAdmin,
-  }: { client: QueryClient; target?: string | null; onclose?: () => void; canAdmin?: boolean } = $props();
+  }: {
+    client: QueryClient;
+    target?: string | null;
+    provisioner?: boolean;
+    onclose?: () => void;
+    canAdmin?: boolean;
+  } = $props();
 </script>
 
 <QueryClientProvider {client}>
-  <SshPage {target} {onclose} {canAdmin} />
+  <SshPage {target} {provisioner} {onclose} {canAdmin} />
 </QueryClientProvider>

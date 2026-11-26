@@ -315,3 +315,59 @@ test("a session sheet still asks for the main salt", async () => {
   await vi.waitFor(() => expect(closed).toBe(1));
   expect(calls.map((call) => call.url)).toContain("/api/ssh/targets/nas/salt");
 });
+
+const UNINSTALL: Grant = {
+  ...MAINT,
+  maintenance: { action: "uninstall", fromNodes: ["node1"], fromSources: ["10.0.0.1"] },
+};
+const RETIRED = {
+  id: "nas",
+  account: "root",
+  address: "10.0.0.5",
+  port: 2222,
+  systemType: "linux",
+  managed: false,
+  line: "failed",
+  detail: "connect refused",
+  comments: ["claude-rc:nas", "claude-rc-provisioner:nas"],
+  script: "/home/root/p-nas.sh",
+};
+
+test("the sheet shows the retire notice for an uninstall answer and offers Close only", async () => {
+  approveAnswer = {
+    status: 200,
+    body: {
+      ...UNINSTALL,
+      state: "ended",
+      maintenance: { ...UNINSTALL.maintenance, result: "failed", detail: "connect refused" },
+      retired: RETIRED,
+    },
+  };
+  show(PRF, UNINSTALL);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  const status = await vi.waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[role="status"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  const text = status.textContent!.replace(/\s+/g, " ");
+  expect(text).toContain("Retired nas. The hub could not remove the key lines from root@10.0.0.5: connect refused.");
+  expect(text).toContain("claude-rc:nas and claude-rc-provisioner:nas");
+  expect(document.body.textContent).not.toContain("The change failed.");
+  expect(buttons("Approve")).toHaveLength(0);
+  expect(closed).toBe(0);
+  button("Close").click();
+  expect(closed).toBe(1);
+});
+
+test("an approved uninstall that removed the lines says so", async () => {
+  approveAnswer = {
+    status: 200,
+    body: { ...UNINSTALL, state: "ended", retired: { ...RETIRED, line: "removed", comments: undefined } },
+  };
+  show(PRF, UNINSTALL);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Retired nas. The key line was removed"));
+});

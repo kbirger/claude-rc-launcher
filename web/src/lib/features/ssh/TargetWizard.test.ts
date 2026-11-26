@@ -328,22 +328,27 @@ const keyFileInput = () => document.querySelector<HTMLInputElement>('input[id$="
 test("the key file field shows only for a managed linux or synology target", async () => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
   show(PRF);
+
   // External: hidden for every type.
   for (const type of ["linux", "synology", "windows", "dropbear"]) {
     choose('select[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
+
   label("Managed").querySelector("input")!.click();
   flushSync();
   await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
+
   for (const type of ["linux", "synology"]) {
     choose('select[id$="-type"]', type);
     expect(keyFileInput()).not.toBeNull();
   }
+
   for (const type of ["windows", "dropbear"]) {
     choose('select[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
+
   choose('select[id$="-type"]', "linux");
   expect(keyFileInput()!.value).toBe("");
   expect(keyFileInput()!.placeholder).toBe("authorized_keys");
@@ -626,4 +631,20 @@ test("a status without hasKeys asks for the current password and shows no rule",
   await resumeAt({}, PASSPHRASE);
   expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.autocomplete).toBe("current-password");
   expect(document.body.textContent).not.toContain("at least 12 characters");
+});
+
+test("the wizard of an external target names the provisioner command", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready" });
+  const hint = document.querySelector("[data-provisioner-hint]")!;
+  expect(hint.textContent!.replace(/\s+/g, " ")).toContain("claude-rc ssh target provisioner nas --identity <file>");
+});
+
+test.each([
+  ["a managed target", { managedHost: "node1" }],
+  ["a windows target", { systemType: "windows" as const }],
+  ["a target that has a provisioner", { provisionerFingerprint: "SHA256:prov" }],
+])("the done screen of %s names no provisioner command", async (_name, extra) => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready", ...extra });
+  expect(document.body.textContent).toContain("is ready");
+  expect(document.querySelector("[data-provisioner-hint]")).toBeNull();
 });
