@@ -4,10 +4,9 @@ import type { PushMessage } from "./webpush";
 
 const MAX_REASON_CHARS = 120;
 
-const CONTROL = new RegExp(
-  "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]",
-  "g",
-);
+// The control characters are the point of this pattern.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 /** Plain text for a notification: control, bidi and zero-width characters (newlines too) become spaces, and the text is cut to `max` characters, never inside a surrogate pair. */
 function plain(text: string, max: number): string {
@@ -91,7 +90,9 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
       const pending = options.listInstances(grant.nodeId);
       if (!pending) return grant.instanceId;
       const timeout = new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), timeoutMs);
+        timer = setTimeout(() => {
+          resolve(undefined);
+        }, timeoutMs);
       });
       const list = await Promise.race([pending, timeout]);
       const found = Array.isArray(list) ? list.find((item) => item.id === grant.instanceId) : undefined;
@@ -111,7 +112,9 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
           ? undefined
           : options.send(requestMessage(grant, target, name)),
       )
-      .catch((error) => options.onError?.(error instanceof Error ? error.message : String(error)));
+      .catch((error: unknown) => {
+        options.onError?.(error instanceof Error ? error.message : String(error));
+      });
   };
 }
 
