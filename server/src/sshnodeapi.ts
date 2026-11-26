@@ -693,12 +693,18 @@ async function readHostKey(file: string): Promise<string> {
   return `${type} ${key}`;
 }
 
-function authorizeLine(value: unknown): string {
+/**
+ * The line of `/authorize`. An OpenSSH line starts with `from="` or `ssh-ed25519 `. The line of a `dropbear` target
+ * starts with the Dropbear flags and then `ssh-ed25519 `. Only a `dropbear` target takes that form.
+ */
+function authorizeLine(value: unknown, systemType: SystemType): string {
+  const dropbear =
+    systemType === "dropbear" && typeof value === "string" && value.startsWith(`${DROPBEAR_OPTIONS} ssh-ed25519 `);
   if (
     typeof value !== "string" ||
     value.length > MAX_LINE ||
     /[\r\n\0]/.test(value) ||
-    !(value.startsWith('from="') || value.startsWith("ssh-ed25519 ") || value.startsWith(`${DROPBEAR_OPTIONS} `))
+    !(value.startsWith('from="') || value.startsWith("ssh-ed25519 ") || dropbear)
   )
     throw new HttpError(
       400,
@@ -762,7 +768,7 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     // The rule of the target store: the hub sends only accounts that it took, `user@domain` too.
     if (!isAccount(account)) throw new HttpError(400, "account is not valid");
     if (!isSystemType(systemType)) throw new HttpError(400, "systemType is not valid");
-    const line = authorizeLine(body.line);
+    const line = authorizeLine(body.line, systemType);
     const keyFile = keyFileOf(body.keyFile, systemType);
 
     const script = provisionScript(systemType, line, systemType === "windows" ? { account } : { keyFile });

@@ -27,7 +27,7 @@ export interface MaintenanceGrant {
   endReason?: string;
   maintenance?: MaintenanceWork;
   /** The approve of `sources`: the target with the stored list. */
-  target?: { nodes?: string[] };
+  target?: { nodes?: string[]; systemType?: string };
   pushed?: boolean;
   /** The approve of `uninstall`: the retire answer. A failed run still retires. */
   retired?: { line?: string; detail?: string };

@@ -367,7 +367,8 @@ Dropbear has no `from=` option. It refuses a whole key line with an option that 
 - The main line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <main key>`. The router does not limit this key by address. The approval of the hub is the control.
 - The provisioner line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,command="<script path>" <provisioner key>`.
 - The script checks the client address itself. The first field of `SSH_CONNECTION` must be the source of `local`. Else the script stops with exit 2 and `error bad-source`.
-- A change of the nodes does not change the main line. The action `sources` writes only the state file, and the hub asks for no confirm.
+- A change of the nodes does not change the main line. The action `sources` writes only the state file, and the hub asks for no confirm. If an older line with `from=` is there, `sources` replaces it.
+- The script checks the source before the grammar. So another address gets only `bad-source`.
 
 The router version of the script differs in these points:
 

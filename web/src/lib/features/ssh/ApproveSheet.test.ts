@@ -36,6 +36,7 @@ const TARGET = {
 };
 
 let calls: Call[];
+let targetBody: Record<string, unknown>;
 let approveAnswer: { status: number; body: unknown };
 let closed: number;
 let listed: Grant[];
@@ -43,6 +44,7 @@ const open: Array<() => void> = [];
 
 beforeEach(() => {
   calls = [];
+  targetBody = TARGET;
   closed = 0;
   listed = [];
   approveAnswer = { status: 200, body: { ...GRANT, state: "active" } };
@@ -53,7 +55,7 @@ beforeEach(() => {
     const method = init?.method ?? "GET";
     calls.push({ method, url: path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     let out: { status: number; body: unknown } = { status: 200, body: {} };
-    if (path === "/api/ssh/targets") out = { status: 200, body: [TARGET] };
+    if (path === "/api/ssh/targets") out = { status: 200, body: [targetBody] };
     else if (path === "/api/ssh/grants") out = { status: 200, body: listed };
     else if (path === "/api/hosts") out = { status: 200, body: [] };
     else if (path === "/api/ssh/targets/nas/salt?key=provisioner") out = { status: 200, body: { salt: "cHJvdg" } };
@@ -215,6 +217,24 @@ test("the sheet shows the old and the new nodes with their addresses for sources
   expect(text).toContain("SSH will be allowed only from: 192.168.1.20");
   expect(text).toContain("from: 192.168.1.10");
   expect(text).toContain("Nodes now: node1. Nodes after: node2.");
+});
+
+test.each([
+  ["sources", MAINT.maintenance!, "The key line on the router stays the same."],
+  ["install", { action: "install", fromNodes: ["node1"], fromSources: ["192.168.1.10"] }, "Nodes: node1"],
+  ["uninstall", { action: "uninstall", fromNodes: ["node1"], fromSources: ["192.168.1.10"] }, "Nodes: node1"],
+])("a dropbear target gets no address text for %s", async (name, maintenance, text) => {
+  targetBody = { ...TARGET, systemType: "dropbear" };
+  show(PRF, { ...MAINT, maintenance: maintenance as never });
+  await vi.waitFor(() => expect(document.body.textContent).toContain("does not limit this key by address"));
+  const all = document.body.textContent!;
+  expect(all).toContain(text);
+  expect(all).not.toContain("allowed only from");
+  expect(all).not.toContain("addresses now allowed");
+  if (name === "sources") {
+    expect(all).toContain("This changes the list of the router script on nas.");
+    expect(all).not.toContain("This changes the key line");
+  }
 });
 
 test("the sheet shows the maintenance warning in place of the account warning", async () => {

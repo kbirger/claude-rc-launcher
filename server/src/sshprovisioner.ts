@@ -670,7 +670,9 @@ function routerScriptLines(
     `prog=${shQuote(AWK_PROGRAM)}`,
     ...routerPathLines(root),
     "",
-    ...GRAMMAR_LINES,
+    // `fail` comes first. Then the source check runs before the grammar, so that another address gets only
+    // `bad-source` and learns nothing about the commands.
+    GRAMMAR_LINES[0],
     "",
     // Dropbear has no `from=`: only the source of `local` may use this key. `SSH_CONNECTION` starts with the client
     // address. A client on an IPv6 socket can show an IPv4 address as `::ffff:<address>`.
@@ -681,6 +683,8 @@ function routerScriptLines(
     '  "$localsrc" | "::ffff:$localsrc") ;;',
     '  *) fail 2 bad-source "the source address is not allowed" ;;',
     "esac",
+    "",
+    ...GRAMMAR_LINES.slice(1),
     "",
     ...editLines(guardTest),
     ...ROUTER_NVRAM_LINES,

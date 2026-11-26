@@ -408,6 +408,29 @@ test("saving nodes of a target with a provisioner opens the approve sheet", asyn
   expect(approved.map((item) => item.id)).toEqual(["m1"]);
 });
 
+test("the waiting text of a dropbear target says that the router does not limit the key", async () => {
+  localSource = "10.0.0.9";
+  reply("PATCH /api/ssh/targets/rt", 202, { maintenance: grant({ targetId: "rt" }) });
+  const shown = await openEditor([prov({ id: "rt", systemType: "dropbear" })]);
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.querySelector("[data-nodes-waiting]")).not.toBeNull());
+  const waiting = squash(shown.querySelector("[data-nodes-waiting]")!);
+  expect(waiting).toContain("The router does not limit the key by address.");
+  expect(waiting).not.toContain("changes the key line");
+});
+
+test("a dropbear target with no key does not say that its key line stays the same", async () => {
+  patchReply = target({ nodes: ["node1", "node2"], systemType: "dropbear", keyFingerprint: undefined });
+  const shown = await openEditor([target({ systemType: "dropbear", keyFingerprint: undefined })]);
+  boxes(shown)[1]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(shown.textContent).toContain("The nodes of nas are saved."));
+  expect(shown.textContent).not.toContain("stays the same");
+});
+
 test("a 409 that asks for confirm shows a yes-or-no question and sends confirm", async () => {
   reply("PATCH /api/ssh/targets/nas", 409, {
     error: "the new list allows none of the addresses that work now: send it again with confirm",
