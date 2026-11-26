@@ -571,6 +571,7 @@ interface UpdatedTarget {
   installLine?: string;
   lineUpdated?: boolean;
   pushed?: boolean;
+  systemType?: string;
 }
 
 const updateUsage = (reason: string) => new ExitError(`${SSH_TARGET_UPDATE_USAGE}\n${reason}`, 1);
@@ -654,5 +655,7 @@ export async function sshTargetUpdate(options: SshTargetUpdateOptions): Promise<
     out(`claude-rc:${id} with this line:`);
     out(updated.installLine);
   } else if (updated.lineUpdated === true) out("the key line on the machine was updated");
+  else if (updated.systemType === "dropbear")
+    out("the key line on the router stays the same, because Dropbear does not limit a key by address");
   else if (updated.managedHost !== undefined) out("the target has no key yet, so it has no key line on the machine");
 }

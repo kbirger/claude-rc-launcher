@@ -360,14 +360,23 @@ Every new route needs the role `admin`. The rows go into the route table of `ser
 
 ### The router version
 
-The router runs Dropbear on Asuswrt-Merlin with BusyBox `sh`. The router keeps its key list in the NVRAM variable `sshd_authkeys`. It writes `/tmp/home/root/.ssh/authorized_keys` from that variable at boot. A change in the file alone is lost at the next reboot.
+The router runs Dropbear on Asuswrt-Merlin with BusyBox `sh`. The router keeps its key list in the NVRAM variable `sshd_authkeys`, with `>` between the lines. At each start of sshd, it writes `/root/.ssh/authorized_keys` from the first 3499 bytes of that variable. A change in the file alone is lost at the next reboot.
+
+Dropbear has no `from=` option. It refuses a whole key line with an option that it does not know. Dropbear before 2022.82 also refuses `restrict`. So no line on the router has `from=` or `restrict`. A ruling of the owner sets these forms:
+
+- The main line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <main key>`. The router does not limit this key by address. The approval of the hub is the control.
+- The provisioner line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,command="<script path>" <provisioner key>`.
+- The script checks the client address itself. The first field of `SSH_CONNECTION` must be the source of `local`. Else the script stops with exit 2 and `error bad-source`.
+- A change of the nodes does not change the main line. The action `sources` writes only the state file, and the hub asks for no confirm.
 
 The router version of the script differs in these points:
 
 - It lives in `/jffs/scripts/claude-rc-provisioner-<id>.sh`, with its state file next to it. `/jffs` survives a reboot.
-- Each write builds the new key list, runs the guard, then runs `nvram set sshd_authkeys=<list>` and `nvram commit`. Then it writes the live file.
+- Each write builds the new key list and runs the guard. The guard also refuses a list over 3499 bytes. Then the script runs `nvram set`, reads the value back, and runs `nvram commit`. Then it writes the live file.
+- After a failed step, the script puts the old value back and stops. The live file stays as it was.
+- The script keeps the separator that it finds in the variable.
 - It uses only BusyBox commands. It has no `flock`, so it uses a lock folder made with `mkdir`.
-- The builder must check that this Dropbear honors `command=`, `from=` and `restrict`, and that it sets `SSH_ORIGINAL_COMMAND`. When `restrict` is unknown, the line uses `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty`.
+- The add writes the main line into the live file only. The install also puts that line into the variable, so a reboot keeps it.
 
 This version cannot be tested without the real router. The plan keeps it as a separate task with a manual test.
 
@@ -434,7 +443,7 @@ On a Linux target:
 On the router:
 
 1. Install the router version with `--provisioner`. Reboot the router. Check that both lines are still in `nvram get sshd_authkeys`.
-2. Change the nodes from the phone. Reboot. Check the new `from=` list.
+2. Change the nodes from the phone. Check that the main line did not change. Check the new list in the state file.
 3. Send `ls` with the provisioner key. Expect `error bad-command`.
 4. Retire. Reboot. Check that both lines are gone.
 
@@ -442,4 +451,5 @@ On the router:
 
 - The pattern rule allows wildcards. Read the threat model.
 - A job that rewrites `authorized_keys` removes the provisioner line too. The action `install` cannot help then. Way 3 of the docs, a dedicated account, avoids this.
-- The router version depends on Dropbear features that nobody tested.
+- The router version depends on Dropbear features that nobody tested on a router.
+- On the router, the main key is not limited by address. The approval of the hub is the only control.

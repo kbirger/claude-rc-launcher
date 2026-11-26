@@ -145,6 +145,8 @@
       <Alert.Description>
         The nodes of {target.id} are saved.
         {#if result.lineUpdated}The key line on the machine was updated.{/if}
+        {#if target.systemType === "dropbear"}
+          The key line on the router stays the same, because Dropbear does not limit a key by address.{/if}
         {#if result.pushed === false}
           Some nodes could not be told yet. They get the change when they connect again.{/if}
       </Alert.Description>
@@ -177,6 +179,11 @@
         <p class="text-xs text-muted-foreground">
           This target has no key yet. The list is saved and nothing else changes.
         </p>
+      {:else if viaApproval && target.systemType === "dropbear"}
+        <p class="text-xs text-muted-foreground" data-dropbear-nodes>
+          The change needs your approval. After the save, a request waits for you. The key line on the router stays the
+          same, because Dropbear does not limit a key by address.
+        </p>
       {:else if viaApproval}
         <p class="text-xs text-muted-foreground">
           The change needs your approval. After the save, a request waits for you. The list changes only after the hub
@@ -185,6 +192,10 @@
       {:else if target.managedHost !== undefined}
         <p class="text-xs text-muted-foreground">
           The hub updates the key line on the machine. If that fails, the nodes stay as they are.
+        </p>
+      {:else if target.systemType === "dropbear"}
+        <p class="text-xs text-muted-foreground" data-dropbear-nodes>
+          The key line on the router stays the same, because Dropbear does not limit a key by address.
         </p>
       {:else}
         <p class="text-xs text-muted-foreground">After the save, you get the new key line to install on the target.</p>

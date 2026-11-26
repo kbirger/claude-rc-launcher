@@ -266,7 +266,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const sources = sourcesOf(target);
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
-    return authorizedKeysLine(keys.publicLine(target.id), sources);
+    return authorizedKeysLine(keys.publicLine(target.id), sources, target.systemType);
   };
 
   /** Tells the nodes their targets. A node that cannot be reached is noted: the change itself stands. */
@@ -575,8 +575,10 @@ export function sshApi(options: SshApiOptions): Hono {
         const toSources = sourcesOf({ nodes });
         if (toSources.length === 0)
           throw new TargetError(409, "no node of the new list has access enabled with a source address");
-        // With no address that works now, there is nothing to lock out, so no confirm is needed.
+        // With no address that works now, there is nothing to lock out, so no confirm is needed. A Dropbear line has no
+        // address limit, so a new list cannot lock anyone out there either.
         if (
+          target.systemType !== "dropbear" &&
           fromSources.length > 0 &&
           !toSources.some((source) => fromSources.includes(source)) &&
           body.confirm !== true
@@ -626,7 +628,8 @@ export function sshApi(options: SshApiOptions): Hono {
           }
         } else {
           await targets.setNodes(target.id, nodes);
-          if (withKey) newLine = installLine(next);
+          // A Dropbear line has no address limit, so a change of the nodes does not change it: no new line to paste.
+          if (withKey && target.systemType !== "dropbear") newLine = installLine(next);
         }
 
         const removed = target.nodes.filter((node) => !nodes.includes(node));
@@ -749,7 +752,7 @@ export function sshApi(options: SshApiOptions): Hono {
       return context.json({
         publicLine: made.publicLine,
         fingerprint: made.fingerprint,
-        installLine: authorizedKeysLine(made.publicLine, sources),
+        installLine: authorizedKeysLine(made.publicLine, sources, target.systemType),
         notes: installNotes(target.systemType),
       });
     });
