@@ -352,7 +352,7 @@ test("the sheet shows the retire notice for an uninstall answer and offers Close
     return found!;
   });
   const text = status.textContent!.replace(/\s+/g, " ");
-  expect(text).toContain("Retired nas. The hub could not remove the key lines from root@10.0.0.5: connect refused.");
+  expect(text).toContain("Retired nas. The hub did not remove the key lines from root@10.0.0.5: connect refused.");
   expect(text).toContain("claude-rc:nas and claude-rc-provisioner:nas");
   expect(document.body.textContent).not.toContain("The change failed.");
   expect(buttons("Approve")).toHaveLength(0);
@@ -370,4 +370,22 @@ test("an approved uninstall that removed the lines says so", async () => {
   await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
   button("Approve").click();
   await vi.waitFor(() => expect(document.body.textContent).toContain("Retired nas. The key line was removed"));
+});
+
+test("a 409 that says the grant ended before the run finishes the sheet and removes Approve", async () => {
+  approveAnswer = {
+    status: 409,
+    body: {
+      error:
+        "the grant ended before the run started, so the target stays disabled: retire it again, or retire it without cleanup",
+    },
+  };
+  show(PRF, UNINSTALL);
+  await vi.waitFor(() => expect(document.body.textContent).toContain("10.0.0.5"));
+  button("Approve").click();
+  await vi.waitFor(() =>
+    expect(document.querySelector("[role=alert]")?.textContent).toContain("The grant ended before the run started"),
+  );
+  expect(buttons("Approve")).toHaveLength(0);
+  expect(button("Close")).toBeDefined();
 });

@@ -48,12 +48,30 @@
     retry: false as const,
     staleTime: 0,
   }));
-  const eligible = $derived(
-    loaded.data !== undefined &&
-      loaded.data.managedHost === undefined &&
-      loaded.data.systemType !== "windows" &&
-      loaded.data.keyFingerprint !== undefined,
-  );
+  // The reason that this target cannot have a provisioner key, in the words of the hub, with the way out.
+  const refusal = $derived.by(() => {
+    const found = loaded.data;
+    if (found === undefined) return "";
+    if (found.managedHost !== undefined)
+      return "A managed target has no provisioner key. The node keeps its own key file. You do not need to do anything here.";
+    if (found.systemType === "windows")
+      return "A Windows target has no provisioner key, because the script needs sh. Close this card. You do not need to do anything here.";
+    if (found.systemType === "dropbear")
+      return "The provisioner for a dropbear target is not available yet. Close this card. The target works without it.";
+    if (found.keyFingerprint === undefined)
+      return "This target has no key yet. Finish the setup of the target first, then run the command again.";
+    return "";
+  });
+  const eligible = $derived(loaded.data !== undefined && refusal === "");
+  // A text that fits the status of the failed load.
+  const loadProblem = $derived.by(() => {
+    const error = loaded.error;
+    if (error instanceof ApiError && error.status === 403)
+      return "Only an admin can make the provisioner key. Sign in as an admin, then open the link again.";
+    if (error instanceof ApiError && error.status === 404)
+      return `The hub has no target named ${targetId}. Check the link, or run the command again.`;
+    return "The hub did not load the target. Open the link again.";
+  });
   const finished = $derived(fingerprint !== "" || existing);
 
   async function withUnlock<T>(use: (unlock: Unlock) => Promise<T>): Promise<T> {
@@ -83,7 +101,7 @@
       // A second key is refused. The command that waits can use the key that exists, so this is not a dead end.
       if (error instanceof ApiError && error.status === 409 && error.message === HAS_PROVISIONER_KEY_TEXT)
         existing = true;
-      else problem = error instanceof Error ? error.message : "The key could not be made.";
+      else problem = error instanceof Error ? error.message : "The hub did not make the key.";
     } finally {
       make.reset();
       busy = false;
@@ -110,16 +128,11 @@
         <p class="text-sm text-muted-foreground">Loading the target...</p>
       {:else if loaded.error}
         <Alert.Root variant="destructive" role="alert">
-          <Alert.Description class={wrap}>
-            Could not load the target: {loaded.error.message}. Close this card and open the link again.
-          </Alert.Description>
+          <Alert.Description class={wrap}>{loadProblem}</Alert.Description>
         </Alert.Root>
       {:else if !eligible}
         <Alert.Root variant="destructive" role="alert">
-          <Alert.Description class={wrap}>
-            This target cannot have a provisioner key. Only an external linux or synology target with a key has one.
-            Close this card and run the command again.
-          </Alert.Description>
+          <Alert.Description class={wrap}>{refusal}</Alert.Description>
         </Alert.Root>
       {:else if finished}
         <Alert.Root role="status">

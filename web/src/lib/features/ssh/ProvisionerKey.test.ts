@@ -3,6 +3,7 @@ import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "#lib/shared/query";
 import type { SshStatus } from "./api";
+import { UnlockError } from "./prf";
 import ProvisionerKeyHarness from "./ProvisionerKeyHarness.svelte";
 
 const prf = vi.hoisted(() => ({ registerPasskey: vi.fn(), unlockWithPasskey: vi.fn() }));
@@ -133,8 +134,53 @@ test("with a passphrase the card asks for it and clears the field", async () => 
 test("a managed target gets no key and a way out", async () => {
   answers["GET /api/ssh/targets/nas"] = { status: 200, body: { ...TARGET, managedHost: "node2" } };
   show();
-  await waitText("This target cannot have a provisioner key.");
+  await waitText("A managed target has no provisioner key.");
   expect(calls.filter((call) => call.method === "POST")).toEqual([]);
   button("Cancel").click();
   expect(closed).toBe(1);
+});
+
+test("a browser without PRF shows the text of the error and keeps the button", async () => {
+  prf.unlockWithPasskey.mockRejectedValue(new UnlockError("This passkey does not return a PRF secret"));
+  show();
+  await waitText("Make the key");
+  button("Make the key").click();
+  await waitText("This passkey does not return a PRF secret");
+  expect(button("Make the key").disabled).toBe(false);
+});
+
+test("a wrong passphrase gives 403 and the card shows the text", async () => {
+  answers["POST /api/ssh/targets/nas/provisioner-key"] = { status: 403, body: { error: "wrong unlock" } };
+  show(PASSPHRASE);
+  await waitText("Make the key");
+  const field = document.querySelector<HTMLInputElement>('input[type="password"]')!;
+  field.value = "wrong wrong wrong";
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  flushSync();
+  button("Make the key").click();
+  await waitText("wrong unlock");
+  expect(field.value).toBe("");
+  expect(document.body.textContent).not.toContain("The provisioner key is made.");
+});
+
+test.each([
+  ["a windows target", { systemType: "windows" }, "A Windows target has no provisioner key"],
+  ["a dropbear target", { systemType: "dropbear" }, "The provisioner for a dropbear target is not available yet."],
+  ["a managed target", { managedHost: "node2" }, "A managed target has no provisioner key."],
+  ["a target without a key", { keyFingerprint: undefined }, "This target has no key yet."],
+])("%s gets a fitting refusal and no button", async (_name, extra, text) => {
+  answers["GET /api/ssh/targets/nas"] = { status: 200, body: { ...TARGET, ...extra } };
+  show();
+  await waitText(text);
+  expect(document.body.textContent).not.toContain("Make the key");
+});
+
+test.each([
+  [403, "Only an admin can make the provisioner key."],
+  [404, "The hub has no target named nas."],
+  [500, "The hub did not load the target. Open the link again."],
+])("a load error %i gives a fitting text", async (code, text) => {
+  answers["GET /api/ssh/targets/nas"] = { status: code, body: { error: "x" } };
+  show();
+  await waitText(text);
 });

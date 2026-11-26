@@ -45,13 +45,15 @@
   type Row = { id: string; key: "main" | "provisioner" };
   let rows = $state<Row[]>([]);
   let done = $state<string[]>([]);
+  let provisionerKnown = $state(false);
+  let listProblem = $state("");
   let busy = $state(false);
   let working = $state("");
   let problem = $state("");
 
   const slotKey = (row: Row) => `${row.key}:${row.id}`;
   const left = $derived(rows.filter((row) => !done.includes(slotKey(row))));
-  const complete = $derived(step === "relock" && left.length === 0);
+  const complete = $derived(step === "relock" && left.length === 0 && provisionerKnown);
 
   function wipe() {
     code = "";
@@ -91,6 +93,25 @@
     } else problem = error instanceof Error ? error.message : "The recovery failed.";
   }
 
+  // The provisioner keys that wait are in the status. Without that list the flow cannot say that it is complete.
+  async function loadProvisioner() {
+    try {
+      const ids = (await getStatus()).pendingProvisionerRewrap ?? [];
+      const known = rows.filter((row) => row.key === "provisioner").map((row) => row.id);
+      rows = [...rows, ...ids.filter((id) => !known.includes(id)).map((id): Row => ({ id, key: "provisioner" }))];
+      provisionerKnown = true;
+      listProblem = "";
+    } catch {
+      listProblem = "The hub did not give the list of provisioner keys. Tap Try again to read it.";
+    }
+  }
+
+  async function retryList() {
+    busy = true;
+    await loadProvisioner();
+    busy = false;
+  }
+
   // The hub switches to the new method. For a passkey, `credentialId` already holds a passkey with a secret.
   async function submit() {
     const answer = await begin.mutateAsync({
@@ -100,19 +121,10 @@
     });
     method = choice;
     // The answer names the main keys. The provisioner keys that wait are in the status.
-    let provisioner: string[] = status.pendingProvisionerRewrap ?? [];
-
-    try {
-      provisioner = (await getStatus()).pendingProvisionerRewrap ?? [];
-    } catch {
-      /* keep the last status that loaded */
-    }
-
-    rows = [
-      ...answer.targets.map((id): Row => ({ id, key: "main" })),
-      ...provisioner.map((id): Row => ({ id, key: "provisioner" })),
-    ];
+    rows = answer.targets.map((id): Row => ({ id, key: "main" }));
     done = [];
+    provisionerKnown = false;
+    await loadProvisioner();
     step = "relock";
   }
 
@@ -379,6 +391,18 @@
             </li>
           {/each}
         </ul>
+      {/if}
+      {#if step === "relock" && listProblem}
+        <Alert.Root variant="destructive" role="alert">
+          <Alert.Description class="{wrap} grid gap-2">
+            <span>{listProblem}</span>
+            <span>
+              <Button type="button" size="touch" variant="outline" disabled={busy} onclick={retryList}>
+                Try again
+              </Button>
+            </span>
+          </Alert.Description>
+        </Alert.Root>
       {/if}
       {#if problem}
         <Alert.Root variant="destructive" role="alert">

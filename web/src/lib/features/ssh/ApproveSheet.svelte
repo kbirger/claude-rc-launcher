@@ -8,6 +8,7 @@
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { ApiError } from "../../shared/http";
   import { hostsQuery } from "../hosts";
   import { getSalt, listGrants, type Grant, type Maintenance, type SshStatus, type Unlock } from "./api";
   import { hostLabel } from "./hostlabel";
@@ -39,6 +40,7 @@
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
   const WARNING = "This gives the full power of the account on the target. The target cannot limit it to read-only.";
 
+  const ENDED_EARLY = "the grant ended before the run started";
   const MAINTENANCE_WARNING =
     "It uses the provisioner key, not the key of a session. The change runs as soon as you approve.";
   const ACTIONS: Record<Maintenance["action"], string> = {
@@ -112,6 +114,12 @@
       onclose();
     } catch (error) {
       problem = error instanceof Error ? error.message : "The approval failed.";
+
+      // The grant ended before the run started: nothing ran, and a second approve can only give 409.
+      if (error instanceof ApiError && error.status === 409 && error.message.startsWith(ENDED_EARLY)) {
+        problem = `${problem.charAt(0).toUpperCase()}${problem.slice(1)}`;
+        finished = true;
+      }
 
       // The hub answers an error with a text only. The record of the grant holds the result and the detail.
       if (work) {

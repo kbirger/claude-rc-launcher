@@ -411,3 +411,8 @@ test("a link with provisioner=1 shows the card that makes the provisioner key", 
   expect(onclose).toHaveBeenCalledTimes(1);
   await vi.waitFor(() => expect(document.body.textContent).not.toContain("Make the provisioner key"));
 });
+
+test("one target with two keys to recover counts as one target in the banner", async () => {
+  showWith({ ...PENDING, pendingRewrap: ["nas"], pendingProvisionerRewrap: ["nas"] });
+  await vi.waitFor(() => expect(squashed()).toContain("1 target needs its key recovered."));
+});
