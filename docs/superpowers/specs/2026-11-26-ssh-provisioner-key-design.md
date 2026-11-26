@@ -20,7 +20,7 @@ A provisioner key gives the hub one narrow way into the machine. The key can run
 
 ## Non-goals
 
-- No subnets or CIDR ranges by choice of the owner. The script reuses the source rule of the hub as it is. Read the threat model for what this rule allows.
+- No wildcards, subnets or CIDR ranges by choice of the owner. The script takes exact addresses and host names only. This rule is stricter than the source rule of the main line.
 - No write of the key line for a grant. A session grant never runs the script.
 - No ramdisk mode and no per-grant `on` and `off`.
 - No change for managed targets. A managed target keeps its node path.
@@ -97,17 +97,18 @@ The script reads `SSH_ORIGINAL_COMMAND`. The value must match one of these forms
 ```text
 command   = "on" / "off" / "status" / "uninstall" / sources
 sources   = "sources" SP list
-list      = pattern *( "," pattern )
-pattern   = 1*255( ALPHA / DIGIT / "." / "_" / ":" / "*" / "?" / "/" / "-" )
+list      = address *( "," address )
+address   = 1*255( ALPHA / DIGIT / "." / "_" / ":" / "-" ), not starting with "-"
 SP        = one space character (0x20)
 ```
 
 These limits also hold:
 
-- A list has at most 200 patterns. This is the node limit of the hub.
+- A list has at most 200 addresses. This is the node limit of the hub.
 - The whole value has at most 4096 bytes.
-- An unset or empty value is an error. A tab, a newline, a second space, a leading or trailing space and an empty pattern are errors.
-- The pattern rule is `SOURCE_RE` of `server/src/sshtargets.ts`. A shared table of test vectors keeps the hub and the script equal.
+- An unset or empty value is an error. A tab, a newline, a second space, a leading or trailing space and an empty address are errors.
+- The address rule is `ADDRESS_RE` of `server/src/sshtargets.ts`. A shared table of test vectors keeps the hub and the script equal.
+- So a target with a provisioner needs exact node source addresses. Else the install script route and each maintenance request answer 409.
 
 #### Answers
 
@@ -259,7 +260,7 @@ The flag needs the system type `linux`, `synology` or `dropbear`. The CLI refuse
 
 #### A provisioner for an existing target
 
-`claude-rc ssh target provisioner <id> --identity <file>` runs steps 2, 3, 4 and 6 for a target that exists. It needs a pinned host key. A target that has a provisioner already gets a new key. The install replaces the old provisioner line and the old script. The same command repairs a provisioner after the source address of `local` changed.
+`claude-rc ssh target provisioner <id> --identity <file>` runs steps 2, 3, 4 and 6 for a target that exists. It needs a pinned host key. A target that has a provisioner already gets a new key. The install removes every provisioner line of the target by its comment, also the line of an older key. It writes the script again. The same command repairs a provisioner after the source address of `local` changed.
 
 #### Change of nodes
 
@@ -395,7 +396,7 @@ This version cannot be tested without the real router. The plan keeps it as a se
 A stolen provisioner key, used from the source address of `local`, can do these things:
 
 - Switch the main line on and off. Off is a denial of service. On puts back a line that the owner approved earlier.
-- Change the `from=` list of the main line within the pattern rule. The rule allows `*` and `?`. So `sources *` lets the main key in from any address. The thief still needs the main private key to log in.
+- Change the `from=` list of the main line to up to 200 exact addresses or host names of its choice. So the thief can let the main key in from an address that it controls. The thief still needs the main private key to log in.
 - Run `uninstall`. This removes both lines, which is a denial of service.
 
 It cannot add a key, read a file, open a terminal or forward a port. `restrict` and `command=` stop that. The `from=` part stops a use from any other address.
@@ -450,7 +451,7 @@ On the router:
 
 ## Open risks
 
-- The pattern rule allows wildcards. Read the threat model.
+- A thief with the provisioner key can set exact addresses of its choice. Read the threat model.
 - A job that rewrites `authorized_keys` removes the provisioner line too. The action `install` cannot help then. Way 3 of the docs, a dedicated account, avoids this.
 - The router version depends on Dropbear features that nobody tested on a router.
 - On the router, the main key is not limited by address. The approval of the hub is the only control.

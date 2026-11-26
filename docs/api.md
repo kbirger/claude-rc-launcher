@@ -102,3 +102,51 @@ The hub sends keepalive comments. Each open stream counts as one viewer of the b
 A node serves `GET /api/sessions` with the answer `{ scannedAt, sessions }`, with `instance` on each session. It answers from a copy in memory. The hub does not use this route now. It stays for debugging with `curl`.
 
 A node also serves `POST /api/sessions/watch`. The hub calls it with the body `{}` as a heartbeat. The answer is 204. Each call keeps the node in the active mode for 60 000 ms. The node sends its sessions to the hub in `GET /api/events`: the `snapshot` event has a field `sessions`, and the `sessions` event has `{ scannedAt, available, sessions }`. If the list is over 900 000 bytes of JSON, the node sends only the newest rows that fit and adds `truncated: true`. The node writes no audit line for this heartbeat.
+
+## SSH provisioner routes
+
+This section lists only the routes and fields of the provisioner key. They are under `/api/ssh` and `/cli/api/ssh`. Read [The provisioner key](ssh-delegation.md#the-provisioner-key) for what they mean. A `write` user can read `GET /status`, `GET /targets` and `GET /grants`. Every other route here needs the `admin` role.
+
+### Routes
+
+- `POST /targets/:id/provisioner-key` with `{unlock}` makes the key. The answer is 200 `{publicLine, fingerprint}`.
+- For a wrong unlock, the answer is 403. That check comes before the 409 for a key that exists already.
+- A managed target or a `windows` target gets 400.
+- `DELETE /targets/:id/provisioner-key` removes the key. The answer is 204, or 404 for no key.
+- `GET /targets/:id/provisioner-install` gives the install script, as 200 `{shell: "sh", script}`. A `dropbear` target gets the router version.
+- The install route answers 409 for a missing main key or provisioner key. If `local` is off or has no source address, the answer is 409 too.
+- If a source address is a pattern, the answer is 409 with "the install script cannot be made". A router also needs an IP address for `local`.
+- `POST /targets/:id/provisioner-installed` with `{script}` stores the script path. The answer is 200 with the target.
+- For a router, the path must be `/jffs/scripts/claude-rc-provisioner-<id>.sh`. Else the path must end with `/provisioner-<id>.sh`. A wrong path gets 400.
+- `POST /targets/:id/reinstall` answers 202 `{maintenance}` with the action `install`.
+
+### Changed routes
+
+- `PATCH /targets/:id` with `nodes`, for a target with a key and a provisioner, answers 202 `{maintenance}` with the action `sources`.
+- The new body field `confirm` is a boolean. Else the answer is 400.
+- If the new list shares no address with the old list, the answer is 409 without `confirm: true`. This does not hold for `dropbear`.
+- For a target with a provisioner, a body with both `state` and `nodes` gets 400.
+- `DELETE /targets/:id` for a target with a provisioner answers 202 `{maintenance}` with the action `uninstall`. The target goes to `disabled`.
+- With `?cleanup=none`, the answer is 200 with the retire answer and `line: "manual"`. Another value of `cleanup` gets 400.
+- `POST /grants/:id/approve` for a maintenance grant ignores `minutes`. For `sources`, the answer is 200 `{...grant, target, pushed, lineUpdated: true}`.
+- For `uninstall`, the answer is 200 `{...grant, retired}`. A failed run still retires, with `line: "failed"` and a detail.
+- For `install`, the answer is 200 with the grant. A failed `sources` or `install` run gets 502 with the reason.
+- If another change runs, the approve answers 409.
+- The answer of `PUT /nodes/local` has `staleProvisioners`, a list of target ids. These targets need the repair command.
+- `GET /targets/:id/salt` and `POST /targets/:id/rewrap` take `key`, which is `main` or `provisioner`. Another value gets 400.
+
+### Fields
+
+- A target can have `provisionerFingerprint`, `provisionerSource` and `provisionerScript`.
+- `GET /status` has `pendingProvisionerRewrap`, a list of target ids.
+- In `GET /grants`, a maintenance grant has `maintenance`. It holds `action`, `fromNodes`, `toNodes`, `fromSources`, `toSources`, `result`, `detail` and `started`.
+
+### Refusals of a maintenance request
+
+The three routes that answer 202 refuse a request in these cases:
+
+- If the hub has no client for the node `local`, the answer is 501.
+- A second request for the same target gets 409 "a maintenance request waits for this target".
+- No provisioner, no `ssh` program, or `local` off gets 409.
+- A changed source address of `local`, a key that waits for a re-lock, or no pinned host key gets 409.
+- A node source address that is not exact gets 409.
