@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { HttpError } from "../src/instances/InstanceService";
-import { grantConfig, sshConfigPath } from "../src/sshnodeapi";
+import { grantConfig, sshConfigPath } from "../src/ssh/api/node";
 import { newPipeName, currentUserSid } from "../src/win/pipe";
 import {
   countEntries,

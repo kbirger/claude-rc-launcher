@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { WinSshControl } from "../src/win/sshcontrol";
 import { newPipeName, pipeTransport } from "../src/win/pipe";
-import type { AgentTransport, ConnectionHandler, RawConnection } from "../src/sshnodeagent";
+import type { AgentTransport, ConnectionHandler, RawConnection } from "../src/ssh/node/GrantAgent";
 import { connect } from "node:net";
 import { sshRequest, sshTargets } from "../../cli/src/sshcmd";
 

@@ -2,14 +2,14 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HOST_ID_RE } from "../../server/src/hosts/id";
-import { keyFingerprint } from "../../server/src/sshagentproto";
+import { keyFingerprint } from "../../server/src/ssh/agentproto";
 import {
   CONFIRM_NODES_SUFFIX,
   HAS_PROVISIONER_KEY_TEXT,
   NO_PROVISIONER_KEY_TEXT,
   parseAnswer,
-} from "../../server/src/sshprovisioner";
-import { keyFileProblem } from "../../server/src/sshtargets";
+} from "../../server/src/ssh/provisioner/key";
+import { keyFileProblem } from "../../server/src/ssh/TargetStore";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import { HubError } from "./hub";

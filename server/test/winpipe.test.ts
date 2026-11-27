@@ -8,9 +8,9 @@ import {
   publicKeyBlob,
   publicKeyLine,
   signAnswer,
-} from "../src/sshagentproto";
-import { GrantAgent } from "../src/sshnodeagent";
-import type { AgentTransport, ConnectionHandler, RawConnection } from "../src/sshnodeagent";
+} from "../src/ssh/agentproto";
+import { GrantAgent } from "../src/ssh/node/GrantAgent";
+import type { AgentTransport, ConnectionHandler, RawConnection } from "../src/ssh/node/GrantAgent";
 import { assertPipeName, currentUserSid, newPipeName, pipeSddl, pipeTransport, restrictPipe } from "../src/win/pipe";
 
 const onWindows = process.platform === "win32";
