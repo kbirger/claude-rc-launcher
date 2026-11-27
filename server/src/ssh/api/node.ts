@@ -6,19 +6,20 @@ import { asUser } from "../../shared/asuser";
 import type { IdentityFor } from "../../shared/asuser";
 import { isObject, readObject } from "../../shared/requests";
 import { keyFingerprint } from "../agentproto";
-import { LinuxGrantPlatform, WindowsGrantPlatform } from "../node/LinuxGrantPlatform";
-import type { WindowsGrantOptions } from "../node/LinuxGrantPlatform";
+import { LinuxGrantPlatform } from "../node/LinuxGrantPlatform";
 import { ManagedKeyError, ManagedKeyInstaller } from "../node/ManagedKeyInstaller";
 import type { RunAs } from "../node/ManagedKeyInstaller";
 import { NodeGrantError, NodeGrantManager } from "../node/NodeGrantManager";
 import type { GrantRequest, SignOutcome } from "../node/NodeGrantManager";
 import { PendingSigns } from "../node/PendingSigns";
+import { WindowsGrantPlatform } from "../node/WindowsGrantPlatform";
+import type { WindowsGrantOptions } from "../node/WindowsGrantPlatform";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "../TargetStore";
 import type { SystemType } from "../TargetStore";
 
 export { grantConfig, knownHostsLine, sshConfigPath } from "../node/grantconfig";
-export { ensureInstanceFolder } from "../node/LinuxGrantPlatform";
-export type { WindowsGrantOptions } from "../node/LinuxGrantPlatform";
+export { ensureInstanceFolder } from "../node/files";
+export type { WindowsGrantOptions } from "../node/WindowsGrantPlatform";
 export { NO_WAITING_REQUEST } from "../node/NodeGrantManager";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket

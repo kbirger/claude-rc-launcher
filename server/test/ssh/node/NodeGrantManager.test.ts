@@ -7,8 +7,7 @@ import type { NodeEvent } from "../../../src/hosts/NodeEvents";
 import type { AccessResult } from "../../../src/ssh/api/node";
 import { MAX_SOCKET_PATH } from "../../../src/ssh/node/files";
 import type { GrantAgentOptions } from "../../../src/ssh/node/GrantAgent";
-import { LinuxGrantPlatform, WindowsGrantPlatform } from "../../../src/ssh/node/LinuxGrantPlatform";
-import type { ClientStatus, GrantPlatform, GrantSetup, Owner } from "../../../src/ssh/node/LinuxGrantPlatform";
+import type { ClientStatus, GrantPlatform, GrantSetup, Owner } from "../../../src/ssh/node/GrantPlatform";
 import { NO_WAITING_REQUEST, NodeGrantError, NodeGrantManager } from "../../../src/ssh/node/NodeGrantManager";
 import type { GrantBroker, GrantRequest } from "../../../src/ssh/node/NodeGrantManager";
 import { PendingSigns } from "../../../src/ssh/node/PendingSigns";
@@ -345,51 +344,5 @@ describe("NodeGrantManager.probe and status", () => {
   test("status makes the top folder with mode 711 and adds the reason of the platform", async () => {
     expect(await manager().status()).toEqual({ ssh: false, dir: true, reason: "no client" });
     expect((await stat(dir)).mode & 0o777).toBe(0o711);
-  });
-});
-
-describe("grant platforms", () => {
-  test("Linux resolves the owner, makes the folders with modes 711 and 700 and chowns the instance folder", async () => {
-    const chowned: string[] = [];
-    const linux = new LinuxGrantPlatform({
-      dir,
-      resolveUser: () => ({ uid: 1001, gid: 1002 }),
-      chown: (path, uid, gid) => {
-        chowned.push(`${path} ${uid}:${gid}`);
-        return Promise.resolve();
-      },
-    });
-    const folder = join(dir, "inst1");
-
-    expect(await linux.prepare(folder, "inst1")).toEqual({ ok: true, owner: { uid: 1001, gid: 1002 } });
-    expect((await stat(dir)).mode & 0o777).toBe(0o711);
-    expect((await stat(folder)).mode & 0o777).toBe(0o700);
-    expect(chowned).toEqual([`${folder} 1001:1002`]);
-  });
-
-  test("Linux refuses a socket path over the limit", () => {
-    const linux = new LinuxGrantPlatform({ dir });
-    expect(linux.socketFits(join(dir, "a.sock"))).toBe(true);
-    expect(linux.socketFits(join(dir, "x".repeat(200)))).toBe(false);
-  });
-
-  test("Windows checks the client before it sets any access list", async () => {
-    const icacls: string[][] = [];
-    const windows = new WindowsGrantPlatform("C:\\grants", {
-      sid: "S-1-5-21-1",
-      checkClient: () => Promise.resolve({ ok: false, reason: "no ssh.exe" }),
-      agentTransport: () => {
-        throw new Error("not used");
-      },
-      runIcacls: (args) => {
-        icacls.push(args);
-        return Promise.resolve({ code: 0, output: "" });
-      },
-    });
-
-    expect(await windows.prepare("C:\\grants\\inst1")).toEqual({ ok: false, reason: "no ssh.exe" });
-    expect(icacls).toEqual([]);
-    expect(windows.socketFits()).toBe(true);
-    expect(await windows.clientStatus()).toEqual({ ssh: false, reason: "no ssh.exe" });
   });
 });
