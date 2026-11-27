@@ -3,7 +3,9 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
+  import * as RadioGroup from "#lib/components/ui/radio-group/index.js";
   import { useQueryClient } from "@tanstack/svelte-query";
+  import type { UnlockMethod } from "./api";
   import { createSetupModel } from "./setup.svelte";
 
   // The first-time setup of SSH access. The setup model holds the steps and the recovery code. `holding` is true from
@@ -29,38 +31,34 @@
     </p>
     <fieldset class="grid gap-2" disabled={model.busy}>
       <legend class="sr-only">Unlock method</legend>
-      <Label class="flex min-h-11 items-start gap-3 rounded-lg border p-3">
-        <input
-          type="radio"
-          name="{uid}-method"
-          value="prf"
-          bind:group={model.choice}
-          onchange={model.forgetPasskey}
-          class="mt-1"
-        />
-        <span class="grid gap-0.5">
-          <span class="font-medium">Passkey</span>
-          <span class="text-xs font-normal text-muted-foreground">
-            A passkey of this device or a security key. It must support the PRF extension.
+      <RadioGroup.Root
+        value={model.choice}
+        disabled={model.busy}
+        aria-label="Unlock method"
+        onValueChange={(value) => {
+          model.choice = value as UnlockMethod;
+          model.forgetPasskey();
+        }}
+      >
+        <Label class="flex min-h-11 items-start gap-3 rounded-lg border p-3">
+          <RadioGroup.Item value="prf" class="mt-1" />
+          <span class="grid gap-0.5">
+            <span class="font-medium">Passkey</span>
+            <span class="text-xs font-normal text-muted-foreground">
+              A passkey of this device or a security key. It must support the PRF extension.
+            </span>
           </span>
-        </span>
-      </Label>
-      <Label class="flex min-h-11 items-start gap-3 rounded-lg border p-3">
-        <input
-          type="radio"
-          name="{uid}-method"
-          value="passphrase"
-          bind:group={model.choice}
-          onchange={model.forgetPasskey}
-          class="mt-1"
-        />
-        <span class="grid gap-0.5">
-          <span class="font-medium">Passphrase</span>
-          <span class="text-xs font-normal text-muted-foreground">
-            You type the same passphrase for each unlock. Nothing to register now.
+        </Label>
+        <Label class="flex min-h-11 items-start gap-3 rounded-lg border p-3">
+          <RadioGroup.Item value="passphrase" class="mt-1" />
+          <span class="grid gap-0.5">
+            <span class="font-medium">Passphrase</span>
+            <span class="text-xs font-normal text-muted-foreground">
+              You type the same passphrase for each unlock. Nothing to register now.
+            </span>
           </span>
-        </span>
-      </Label>
+        </Label>
+      </RadioGroup.Root>
     </fieldset>
     {#if model.problem}
       <Alert.Root variant="destructive" role="alert">
