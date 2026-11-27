@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { VERSION } from "../../server/src/version";
+import { VERSION } from "../../server/src/shared/version";
 import { ExitError } from "../src/creds";
 import { main } from "../src/index";
 import type { Env } from "../src/index";

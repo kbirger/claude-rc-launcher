@@ -1,23 +1,23 @@
 import { join } from "node:path";
 import { createNodeApp } from "./app";
 import type { Updater } from "./app";
-import { serviceCloner } from "./cloner";
-import type { Config } from "./config";
-import { bunRunner, InstanceService } from "./instances";
-import type { Instances } from "./instances";
-import { nodeAuth } from "./nodeauth";
-import { resolveDirOwner } from "./owner";
-import { realUpdateEnv } from "./realupdate";
+import { nodeAuth } from "./auth/node";
+import type { Config } from "./config/parse";
+import { NodeEvents } from "./hosts/NodeEvents";
+import { ensureNodeCert } from "./hosts/tls";
+import { serviceCloner } from "./instances/cloner";
+import { bunRunner, InstanceService } from "./instances/InstanceService";
+import type { Instances } from "./instances/InstanceService";
+import { resolveDirOwner } from "./instances/owner";
 import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";
-import { createClientVersions, createServiceUpdater } from "./serviceupdate";
-import { stopServer } from "./sse";
-import { createNodeSsh } from "./sshnodewiring";
-import type { NodeSshOptions } from "./sshnodewiring";
-import { ensureNodeCert } from "./tls";
-import { NodeEvents } from "./updateevents";
+import { stopServer } from "./shared/sse";
+import { createNodeSsh } from "./ssh/node/wiring";
+import type { NodeSshOptions } from "./ssh/node/wiring";
+import { realUpdateEnv } from "./updates/realupdate";
+import { createClientVersions, createServiceUpdater } from "./updates/serviceupdate";
 import type { DefinitionStatus } from "./win/definition";
-import type { WinSshBridge } from "./win/sshbridge";
+import type { WinSshBridge } from "./win/WinSshBridge";
 
 export interface NodeDeps {
   instances?: Instances;

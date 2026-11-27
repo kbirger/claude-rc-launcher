@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { VERSION } from "../../server/src/version";
+import { VERSION } from "../../server/src/shared/version";
 import { main, USAGE } from "../src/index";
 import type { Env } from "../src/index";
 

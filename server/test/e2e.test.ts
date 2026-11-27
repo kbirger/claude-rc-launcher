@@ -1,18 +1,18 @@
-import { DEFAULT_ROLES } from "../src/roles";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mintSessionCookie, type OidcClient } from "../src/auth";
-import type { Config } from "../src/config";
+import { certFingerprint } from "../src/auth/hubproof";
+import { generateSecret, hashSecret } from "../src/auth/node";
+import { mintSessionCookie, type OidcClient } from "../src/auth/oidc";
+import type { Config } from "../src/config/parse";
+import { NodeEvents } from "../src/hosts/NodeEvents";
 import { startHub } from "../src/hubmain";
-import { certFingerprint } from "../src/hubproof";
-import { generateSecret, hashSecret } from "../src/nodeauth";
 import { startNode } from "../src/nodemain";
-import type { UpdateReport } from "../src/serviceupdate";
-import { NodeEvents } from "../src/updateevents";
-import { readSse } from "../src/ssereader";
-import { VERSION } from "../src/version";
+import { DEFAULT_ROLES } from "../src/roles";
+import { readSse } from "../src/shared/ssereader";
+import { VERSION } from "../src/shared/version";
+import type { UpdateReport } from "../src/updates/serviceupdate";
 import { fakeTimers } from "./faketimers";
 import { noSkill } from "./support";
 

@@ -1,5 +1,5 @@
-import { readSse } from "../../server/src/ssereader";
-import type { SseEvent } from "../../server/src/ssereader";
+import { readSse } from "../../server/src/shared/ssereader";
+import type { SseEvent } from "../../server/src/shared/ssereader";
 import { ExitError, LOGIN_MESSAGE } from "./creds";
 import type { Credentials } from "./creds";
 import { isObject } from "./json";

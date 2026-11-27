@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { VERSION } from "../../server/src/version";
+import { VERSION } from "../../server/src/shared/version";
 import { ExitError, LOGIN_MESSAGE } from "../src/creds";
 import { sanitizeLine } from "../src/format";
 import { HubError } from "../src/hub";

@@ -1,22 +1,24 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { windowsDataDir } from "./config";
-import type { Config } from "./config";
-import { loadConfigFile, resolveConfigPath } from "./configfile";
-import { bunRunner } from "./instances";
-import { generateSecret } from "./nodeauth";
+import { generateSecret } from "./auth/node";
+import { loadConfigFile, resolveConfigPath } from "./config/file";
+import { windowsDataDir } from "./config/parse";
+import type { Config } from "./config/parse";
+import { NodeEvents } from "./hosts/NodeEvents";
+import { bunRunner } from "./instances/InstanceService";
 import { startNode } from "./nodemain";
-import { NodeEvents } from "./updateevents";
-import { VERSION } from "./version";
+import { VERSION } from "./shared/version";
 import { checkServiceAccount } from "./win/account";
 import { definitionStatus } from "./win/definition";
-import { taskkillTree, WinInstances } from "./win/instances";
-import { WinSshBridge } from "./win/sshbridge";
 import { planSessions, serviceAdminState } from "./win/token";
 import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
+import { taskkillTree, WinInstances } from "./win/WinInstances";
+import { WinSshBridge } from "./win/WinSshBridge";
 
-// The Windows node. Only this file imports ./win, so the Linux binaries never contain this code.
+// The Windows node. Only this file imports the Windows instance, token, update and account code of ./win, so the
+// Linux binaries never contain that code. The SSH code of a node (ssh/node/wiring.ts and WindowsGrantPlatform.ts)
+// imports win/pipe, sshclient, sshfiles and WinSshControl, so the Linux binaries do contain those four files.
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);

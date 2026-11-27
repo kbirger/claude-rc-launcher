@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { publicKeyBlob, publicKeyLine } from "../sshagentproto";
-import { GrantAgent } from "../sshnodeagent";
+import { publicKeyBlob, publicKeyLine, GrantAgent } from "../ssh";
 import { newPipeName, pipeTransport } from "./pipe";
 
 // Finds a Windows OpenSSH client that can talk to a named pipe, and proves it. The Git for Windows `ssh` and `ssh-add`

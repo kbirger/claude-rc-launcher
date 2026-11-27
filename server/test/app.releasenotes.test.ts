@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
-import { mintSessionCookie, oidcUserAuth } from "../src/auth";
-import type { OidcClient, User } from "../src/auth";
-import type { Config } from "../src/config";
-import type { createReleaseList, ReleaseNotes } from "../src/releaselist";
+import { oidcUserAuth } from "../src/auth/api/oidc";
+import { mintSessionCookie } from "../src/auth/oidc";
+import type { OidcClient, User } from "../src/auth/oidc";
+import type { Config } from "../src/config/parse";
+import type { createReleaseList, ReleaseNotes } from "../src/updates/releaselist";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const oidc: OidcClient = {

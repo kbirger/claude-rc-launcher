@@ -10,9 +10,9 @@ The hub and the agents (nodes) are not equal partners today. The agent owns the 
 
 This section comes from reading the code. Nobody measured the cost.
 
-- Each agent serves `GET /api/events`. The hub keeps one stream to each agent (`createNodeWatchers` in `server/src/nodewatcher.ts`). The hub opens these at boot, with or without browsers. The stream carries presence, update steps and update log lines only.
+- Each agent serves `GET /api/events`. The hub keeps one stream to each agent (`createNodeWatchers` in `server/src/hosts/nodewatcher.ts`). The hub opens these at boot, with or without browsers. The stream carries presence, update steps and update log lines only.
 - Each browser opens one hub stream in `Shell.svelte` (`connectEvents` in `web/src/lib/realtime/events.ts`). It stays open as long as the tab. A view does not subscribe to anything.
-- Everything else is polled through the hub with plain HTTP forwards (`server/src/hosts.ts`). Instances are polled every 5 seconds (`INSTANCES_POLL_MS`). Sessions are polled every 15 seconds (`SESSIONS_POLL_MS`), and only while a session view is open. The touched, changed and files queries refetch on window focus only.
+- Everything else is polled through the hub with plain HTTP forwards (`server/src/hosts/api/forward.ts`). Instances are polled every 5 seconds (`INSTANCES_POLL_MS`). Sessions are polled every 15 seconds (`SESSIONS_POLL_MS`), and only while a session view is open. The touched, changed and files queries refetch on window focus only.
 - The 5 second instance poll reads the unit directory. For each instance it reads the unit file and runs `systemctl show`. It does not scan sessions.
 - The 15 second session poll scans the whole project folder every time. It stats each transcript and reads the head of each one. It also reads the live-session files and rebuilds the `/clear` chains. Only the name lookup is cached, by file modification time and size.
 - Neither the hub nor the agent caches these results, merges duplicate requests or limits their rate. Each visible tab adds its own polls. Ten visible tabs on one instance cause ten identical scans every 15 seconds. Hidden tabs do not poll, because TanStack Query pauses interval polling there by default. The web code has no override.

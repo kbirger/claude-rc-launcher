@@ -4,9 +4,15 @@ import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, w
 import os from "node:os";
 import path from "node:path";
 import UNIT_TEXT from "../../deploy/claude-rc-launcher.service" with { type: "text" };
-import { HOST_ID_RE } from "../../server/src/hostid";
-import { downloadAsset, installWithBackup, restorePrevious, ReleaseError, sha256 } from "../../server/src/release";
-import type { ReleaseIo } from "../../server/src/release";
+import { HOST_ID_RE } from "../../server/src/shared/hostid";
+import {
+  downloadAsset,
+  installWithBackup,
+  restorePrevious,
+  ReleaseError,
+  sha256,
+} from "../../server/src/updates/release";
+import type { ReleaseIo } from "../../server/src/updates/release";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import type { HubClient } from "./hub";

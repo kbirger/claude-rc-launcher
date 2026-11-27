@@ -1,69 +1,68 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { join } from "node:path";
-import { allSessionsApi } from "./allsessions";
-import type { ChangeSource, Timers } from "./changesource";
-import { cliConfigRoute } from "./cliauth";
-import type { Cloner } from "./cloner";
-import type { Config } from "./config";
-import { enrollmentApi } from "./enrollment";
-import { listDirs, makeDir, resolveChecked } from "./fsapi";
-import type { DirOwner } from "./fsapi";
-import { hostAdminApi, renameHandler } from "./hostadmin";
-import type { HostClient, HostConfig } from "./hostclient";
-import { LOCAL_HOST } from "./hostid";
-import { HostRegistry } from "./hostregistry";
-import { hostsApi } from "./hosts";
-import { HttpError } from "./instances";
-import type { Instances } from "./instances";
-import { settingsFromArgs, settingsHelpFor } from "./instancesettings";
-import { LatestError } from "./latest";
-import type { createLatestRelease } from "./latest";
-import type { Presence } from "./nodewatcher";
-import type { AdoptDir } from "./ownedir";
-import { PathError, within } from "./paths";
-import { permissionsApi } from "./permissionsapi";
-import { pushApi } from "./pushapi";
-import type { createReleaseList } from "./releaselist";
+import { cliConfigRoute } from "./auth/api/cli";
+import type { User, UserAuthStrategy } from "./auth/user";
+import type { Config, HostConfig } from "./config/parse";
+import { hostAdminApi, renameHandler } from "./hosts/api/admin";
+import { enrollmentApi } from "./hosts/api/enrollment";
+import { hostsApi } from "./hosts/api/forward";
+import type { HostClient } from "./hosts/client";
+import { HostRegistry } from "./hosts/HostRegistry";
+import type { NodeEvents } from "./hosts/NodeEvents";
+import type { Cloner } from "./instances/cloner";
+import { listDirs, makeDir, resolveChecked } from "./instances/folders";
+import type { DirOwner } from "./instances/folders";
+import type { Instances } from "./instances/InstanceService";
+import type { AdoptDir } from "./instances/ownedir";
 import {
-  isObject,
   parseCloneRequest,
   parseLoginRequest,
   parseMkdirRequest,
   parseSettingsPatch,
   parseStartRequest,
-  parseUpdateRequest,
-  readJson,
-} from "./requests";
+} from "./instances/requests";
+import { settingsFromArgs, settingsHelpFor } from "./instances/settings";
+import { pushApi } from "./push/api/subscriptions";
+import type { PushService } from "./push/PushService";
 import { enforceRoles, logToken } from "./roles";
-import { UpdateRefused } from "./serviceupdate";
-import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./serviceupdate";
-import { sessionApi } from "./sessionapi";
-import { createBeatLoop } from "./sessionbeat";
-import type { BeatLoop } from "./sessionbeat";
-import { SessionCatalog } from "./sessioncatalog";
-import { SessionIndex } from "./sessionindex";
-import type { SessionIndexOptions, SessionsEvent } from "./sessionindex";
-import { SessionsStore } from "./sessionsstore";
-import { sessionsStream } from "./sessionsstream";
-import { WatchFlag } from "./sessionwatch";
-import { sseResponse, trackStreams } from "./sse";
-import { sshApi } from "./sshapi";
-import type { GrantStore } from "./sshgrants";
-import type { SshKeyStore } from "./sshkeystore";
-import { sshManagedApi, sshNodeApi, unsupportedSshApi } from "./sshnodeapi";
-import type { SshManagedOptions, SshNodeOptions } from "./sshnodeapi";
-import type { SshService } from "./sshservice";
-import type { TargetStore } from "./sshtargets";
-import { isPwaFile } from "./static";
-import type { NodeEvents } from "./updateevents";
-import type { UpdateHistory } from "./updatehistory";
-import type { UpdateLog } from "./updatelog";
-import type { UpdateRecord } from "./updaterecord";
-import { createUpdateTracker } from "./updatetracker";
-import type { User, UserAuthStrategy } from "./userauth";
-import { VERSION } from "./version";
-import type { PushService } from "./webpush";
+import { allSessionsApi } from "./sessions/api/all";
+import { permissionsApi } from "./sessions/api/permissions";
+import { sessionApi } from "./sessions/api/session";
+import { sessionsStream } from "./sessions/api/stream";
+import { createBeatLoop } from "./sessions/beat";
+import type { BeatLoop } from "./sessions/beat";
+import { SessionCatalog } from "./sessions/SessionCatalog";
+import { SessionIndex } from "./sessions/SessionIndex";
+import type { SessionIndexOptions, SessionsEvent } from "./sessions/SessionIndex";
+import { SessionsStore } from "./sessions/SessionsStore";
+import { WatchFlag } from "./sessions/WatchFlag";
+import { LOCAL_HOST } from "./shared/hostid";
+import { HttpError } from "./shared/HttpError";
+import { PathError, within } from "./shared/paths";
+import type { ChangeSource, Timers } from "./shared/PollSource";
+import type { Presence } from "./shared/presence";
+import { isObject, readJson } from "./shared/requests";
+import { sseResponse, trackStreams } from "./shared/sse";
+import { VERSION } from "./shared/version";
+import { sshApi } from "./ssh/api/hub";
+import { sshManagedApi, sshNodeApi, unsupportedSshApi } from "./ssh/api/node";
+import type { GrantStore } from "./ssh/hub/GrantStore";
+import type { SshKeyStore } from "./ssh/hub/SshKeyStore";
+import type { SshService } from "./ssh/hub/SshService";
+import type { SshManagedOptions, SshNodeOptions } from "./ssh/node/types";
+import type { TargetStore } from "./ssh/TargetStore";
+import { LatestError } from "./updates/latest";
+import type { createLatestRelease } from "./updates/latest";
+import type { createReleaseList } from "./updates/releaselist";
+import { parseUpdateRequest } from "./updates/requests";
+import { UpdateRefused } from "./updates/serviceupdate";
+import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./updates/serviceupdate";
+import { createUpdateTracker } from "./updates/tracker";
+import type { UpdateHistory } from "./updates/UpdateHistory";
+import type { UpdateLog } from "./updates/UpdateLog";
+import type { UpdateRecord } from "./updates/UpdateRecord";
+import { isPwaFile } from "./web/static";
 import type { DefinitionStatus } from "./win/definition";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */
