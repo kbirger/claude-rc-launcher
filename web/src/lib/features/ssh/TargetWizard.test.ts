@@ -105,6 +105,27 @@ const choose = (selector: string, value: string) => {
   flushSync();
 };
 
+// bits-ui opens a select on ArrowDown, and picks an option on pointer up, so the tests send those events.
+const openSelect = async (trigger: HTMLElement) => {
+  trigger.focus();
+  trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull());
+};
+
+const pick = async (selector: string, value: string) => {
+  await openSelect(document.querySelector<HTMLElement>(selector)!);
+  const option = await vi.waitFor(() => {
+    const found = document.querySelector<HTMLElement>(`[role="option"][data-value="${value}"]`);
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  for (const type of ["pointermove", "pointerdown", "pointerup"])
+    option.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: "mouse", button: 0 }));
+  option.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="option"]')).toBeNull());
+  flushSync();
+};
+
 const waitText = (text: string) => vi.waitFor(() => expect(document.body.textContent).toContain(text));
 const posts = () => calls.filter((call) => call.method === "POST");
 const label = (text: string) =>
@@ -284,11 +305,13 @@ test("a managed target pins the host key from the node without a question", asyn
   expect(posts().find((call) => call.url.endsWith("/pin-managed"))).toBeDefined();
 });
 
-test("the type list holds linux, windows, synology and dropbear and nothing else", () => {
+test("the type list holds linux, windows, synology and dropbear and nothing else", async () => {
   show(PRF);
-  const options = [...document.querySelectorAll<HTMLOptionElement>('select[id$="-type"] option')].map(
-    (item) => item.value,
-  );
+  const trigger = document.querySelector<HTMLElement>('[id$="-type"]')!;
+  expect(trigger.labels[0]?.textContent).toBe("System type");
+  expect(trigger.textContent?.trim()).toBe("linux");
+  await openSelect(trigger);
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.dataset.value);
   expect(options).toEqual(["linux", "windows", "synology", "dropbear"]);
 });
 
@@ -312,12 +335,11 @@ test("a managed target is sent with its managed host and an optional address", a
   answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
   answers["POST /api/ssh/targets"] = () => ({ body: detail({ managedHost: "node2" }) });
   show(PRF);
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
   typeInto('input[id$="-id"]', "box");
-  choose('select[id$="-host"]', "node2");
-  choose('select[id$="-type"]', "windows");
+  await pick('[id$="-host"]', "node2");
+  await pick('[id$="-type"]', "windows");
   typeInto('input[id$="-account"]', "admin");
   label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
@@ -340,25 +362,24 @@ test("the key file field shows only for a managed linux or synology target", asy
 
   // External: hidden for every type.
   for (const type of ["linux", "synology", "windows", "dropbear"]) {
-    choose('select[id$="-type"]', type);
+    await pick('[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
 
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
 
   for (const type of ["linux", "synology"]) {
-    choose('select[id$="-type"]', type);
+    await pick('[id$="-type"]', type);
     expect(keyFileInput()).not.toBeNull();
   }
 
   for (const type of ["windows", "dropbear"]) {
-    choose('select[id$="-type"]', type);
+    await pick('[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
 
-  choose('select[id$="-type"]', "linux");
+  await pick('[id$="-type"]', "linux");
   expect(keyFileInput()!.value).toBe("");
   expect(keyFileInput()!.placeholder).toBe("authorized_keys");
   expect(document.body.textContent).toContain(
@@ -371,12 +392,11 @@ const fillManaged = async (type: string) => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
   answers["POST /api/ssh/targets"] = () => ({ body: detail({ managedHost: "node2" }) });
   show(PRF);
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
   typeInto('input[id$="-id"]', "box");
-  choose('select[id$="-host"]', "node2");
-  choose('select[id$="-type"]', type);
+  await pick('[id$="-host"]', "node2");
+  await pick('[id$="-type"]', type);
   typeInto('input[id$="-account"]', "admin");
   label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
@@ -407,7 +427,7 @@ test("an empty key file is not posted", async () => {
 test("a key file typed for linux is not posted after the type changes to windows", async () => {
   await fillManaged("linux");
   typeInto('input[id$="-keyfile"]', "authorized_keys2");
-  choose('select[id$="-type"]', "windows");
+  await pick('[id$="-type"]', "windows");
   press("Create target");
   await waitText("Step 2 of 6");
   expect(posts()[0]!.body).not.toHaveProperty("keyFile");
@@ -416,11 +436,10 @@ test("a key file typed for linux is not posted after the type changes to windows
 const pickLocal = async (status: SshStatus) => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "local", name: "Hub", status: "ok" }] });
   show(status);
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="local"]')).not.toBeNull());
   typeInto('input[id$="-id"]', "hubhost");
-  choose('select[id$="-host"]', "local");
+  await pick('[id$="-host"]', "local");
   typeInto('input[id$="-account"]', "root");
   label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
@@ -434,6 +453,18 @@ test("a managed target of local prefills the address from the source address of 
   press("Create target");
   await waitText("Step 2 of 6");
   expect(posts()[0]!.body).toMatchObject({ managedHost: "local", address: "192.168.1.5" });
+});
+
+test("Choose a host takes the host back and the fill of the address of local with it", async () => {
+  await pickLocal({ ...PRF, nodes: [...PRF.nodes, { host: "local", enabled: true, sourceAddress: "192.168.1.5" }] });
+  const address = () => document.querySelector<HTMLInputElement>('input[id$="-address"]')!.value;
+  expect(address()).toBe("192.168.1.5");
+  const trigger = document.querySelector<HTMLElement>('[id$="-host"]')!;
+  expect(trigger.labels[0]?.textContent).toBe("Managed host");
+  await pick('[id$="-host"]', "");
+  expect(trigger.textContent?.trim()).toBe("Choose a host");
+  expect(address()).toBe("");
+  expect(button("Create target")!.disabled).toBe(true);
 });
 
 test("a managed target of local needs an address when the node local has no source address", async () => {

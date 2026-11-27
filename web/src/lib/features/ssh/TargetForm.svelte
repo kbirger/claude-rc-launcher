@@ -3,6 +3,8 @@
   import { Button } from "#lib/components/ui/button/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
+  import * as RadioGroup from "#lib/components/ui/radio-group/index.js";
+  import * as Select from "#lib/components/ui/select/index.js";
   import type { HostInfo } from "../hosts";
   import type { NewTarget, NodeStatus, SystemType } from "./api";
   import { hostLabel } from "./hostlabel";
@@ -30,7 +32,7 @@
   const uid = $props.id();
   const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
   const TYPES: SystemType[] = ["linux", "windows", "synology", "dropbear"];
-  const field = "border-input bg-card h-11 w-full min-w-0 rounded-lg border px-2.5 text-base md:text-sm";
+  const trigger = "w-full min-w-0 data-[size=default]:h-11";
 
   let id = $state("");
   let kind = $state<"external" | "managed">("external");
@@ -98,37 +100,54 @@
 
   <fieldset class="grid gap-2">
     <legend class="sr-only">Kind</legend>
-    <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
-      <input type="radio" name="{uid}-kind" value="external" bind:group={kind} />
-      <span class="font-medium">External</span>
-      <span class="text-xs font-normal text-muted-foreground">A machine you reach by address.</span>
-    </Label>
-    <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
-      <input type="radio" name="{uid}-kind" value="managed" bind:group={kind} />
-      <span class="font-medium">Managed</span>
-      <span class="text-xs font-normal text-muted-foreground">A node of this hub.</span>
-    </Label>
+    <RadioGroup.Root bind:value={() => kind, (value) => (kind = value as typeof kind)} aria-label="Kind">
+      <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
+        <RadioGroup.Item value="external" />
+        <span class="font-medium">External</span>
+        <span class="text-xs font-normal text-muted-foreground">A machine you reach by address.</span>
+      </Label>
+      <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
+        <RadioGroup.Item value="managed" />
+        <span class="font-medium">Managed</span>
+        <span class="text-xs font-normal text-muted-foreground">A node of this hub.</span>
+      </Label>
+    </RadioGroup.Root>
   </fieldset>
 
   {#if !external}
     <div class="grid gap-1">
       <Label for="{uid}-host">Managed host</Label>
-      <select id="{uid}-host" class={field} bind:value={managedHost} onchange={pickHost}>
-        <option value="">Choose a host</option>
-        {#each hosts ?? [] as host (host.id)}
-          <option value={host.id}>{hostLabel(host.id, hosts)}</option>
-        {/each}
-      </select>
+      <Select.Root
+        type="single"
+        value={managedHost}
+        onValueChange={(value) => {
+          managedHost = value;
+          pickHost();
+        }}
+      >
+        <Select.Trigger id="{uid}-host" class={trigger}>
+          {managedHost ? hostLabel(managedHost, hosts) : "Choose a host"}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="" label="Choose a host">Choose a host</Select.Item>
+          {#each hosts ?? [] as host (host.id)}
+            <Select.Item value={host.id} label={hostLabel(host.id, hosts)}>{hostLabel(host.id, hosts)}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
     </div>
   {/if}
 
   <div class="grid gap-1">
     <Label for="{uid}-type">System type</Label>
-    <select id="{uid}-type" class={field} bind:value={systemType}>
-      {#each TYPES as type (type)}
-        <option value={type}>{type}</option>
-      {/each}
-    </select>
+    <Select.Root type="single" bind:value={() => systemType, (value) => (systemType = value as SystemType)}>
+      <Select.Trigger id="{uid}-type" class={trigger}>{systemType}</Select.Trigger>
+      <Select.Content>
+        {#each TYPES as type (type)}
+          <Select.Item value={type} label={type}>{type}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
   </div>
 
   <div class="grid grid-cols-[1fr_6rem] gap-2">
