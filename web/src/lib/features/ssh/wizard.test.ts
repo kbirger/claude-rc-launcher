@@ -249,4 +249,23 @@ describe("target wizard model", () => {
     expect(wizard.model.step).toBe("done");
     wizard.dispose();
   });
+
+  test.each([
+    [{ ok: true, sshdCheck: "skipped" }, true],
+    [{ ok: true, sshdCheck: "passed" }, false],
+    [{ ok: true }, false],
+  ])("the install on the node keeps whether the node skipped the sshd check: %j", async (answer, skipped) => {
+    answers["GET /api/ssh/targets/nas"] = () => ({
+      body: detail({ keyFingerprint: "k", hostKey: "h", managedHost: "node1" }),
+    });
+    answers["POST /api/ssh/targets/nas/authorize"] = () => ({ body: answer });
+    const wizard = mount("nas");
+    await vi.waitFor(() => expect(wizard.model.step).toBe("install"));
+    expect(wizard.model.sshdSkipped).toBe(false);
+    void wizard.model.installOnNode();
+    await settled(wizard.model);
+    expect(wizard.model.step).toBe("test");
+    expect(wizard.model.sshdSkipped).toBe(skipped);
+    wizard.dispose();
+  });
 });
