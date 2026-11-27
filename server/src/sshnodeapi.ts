@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { chmod, chown as chownDefault, lstat, mkdir, readFile, stat } from "node:fs/promises";
+import { chmod, chown as chownDefault, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { asUser } from "./asuser";
 import type { IdentityFor } from "./asuser";
@@ -8,6 +8,8 @@ import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
 import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./sshfiles";
+import { grantConfig, knownHostsLine } from "./sshgrantconfig";
+import { ensureInstanceFolder } from "./sshgrantplatform";
 import { GrantAgent } from "./sshnodeagent";
 import type { AgentTransport } from "./sshnodeagent";
 import { deprovisionScript, provisionScript } from "./sshprovision";
@@ -17,6 +19,9 @@ import type { SystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
 import { ensurePrivateFolder, writeGrantFile } from "./win/sshfiles";
 import type { RunIcacls } from "./win/sshfiles";
+
+export { grantConfig, knownHostsLine, sshConfigPath } from "./sshgrantconfig";
+export { ensureInstanceFolder } from "./sshgrantplatform";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
 // (sshnodeagent.ts), writes an `ssh` config file and a known_hosts file, and asks the hub to sign when the SSH client
@@ -276,63 +281,6 @@ function parseGrant(body: Record<string, unknown>): GrantRequest {
   };
 }
 
-/**
- * A path as the config file of `ssh.exe` needs it. On Linux the path stays as it is. On Windows every backslash becomes a
- * forward slash, and a path with a space gets double quotes. The reason: `ssh.exe` ignores `IdentityAgent \\.\pipe\x`
- * without a message, and then fails with a misleading `invalid format`. The forward-slash form `//./pipe/x` works.
- */
-export function sshConfigPath(path: string, windows: boolean): string {
-  if (!windows) return path;
-  // `"` would end the quoting, a line break would end the line, and `$` starts an environment variable in some options.
-  if (/["\r\n$]/.test(path)) throw new Error("a config path holds a quote, a dollar sign or a line break");
-  // `%` starts a token such as %u, so it is doubled. A space, `'` or `#` needs double quotes: `#` starts a comment.
-  const slashed = path.replaceAll("\\", "/").replaceAll("%", "%%");
-  return /[\s'#]/.test(slashed) ? `"${slashed}"` : slashed;
-}
-
-/**
- * The lines of the config file for one target. Every value was checked: none holds a newline. `identity` is the public
- * key file of the grant: with `IdentitiesOnly yes`, ssh offers only that key of the agent, and never a default key of
- * the account that runs it (`~/.ssh/id_*`), nor a password.
- */
-export function grantConfig(input: {
-  targetId: string;
-  address: string;
-  port: number;
-  account: string;
-  socket: string;
-  identity: string;
-  knownHosts: string;
-  /** The node is Windows: write the paths for `ssh.exe` (see `sshConfigPath`). */
-  windows?: boolean;
-}): string {
-  const path = (value: string) => sshConfigPath(value, input.windows === true);
-
-  return (
-    [
-      `Host ${input.targetId}`,
-      `HostName ${input.address}`,
-      `Port ${input.port}`,
-      `User ${input.account}`,
-      `IdentityAgent ${path(input.socket)}`,
-      `IdentityFile ${path(input.identity)}`,
-      "IdentitiesOnly yes",
-      "PasswordAuthentication no",
-      "KbdInteractiveAuthentication no",
-      `UserKnownHostsFile ${path(input.knownHosts)}`,
-      "GlobalKnownHostsFile /dev/null",
-      "StrictHostKeyChecking yes",
-      "ControlMaster no",
-      "ControlPath none",
-    ].join("\n") + "\n"
-  );
-}
-
-/** A known_hosts line. A port other than 22 uses the `[host]:port` form. */
-export function knownHostsLine(address: string, port: number, hostKey: string): string {
-  return `${port === 22 ? address : `[${address}]:${port}`} ${hostKey}\n`;
-}
-
 /** The routes of a node that has no SSH grants (a Windows node): every route answers 501. */
 export function unsupportedSshApi(): Hono {
   const app = new Hono();
@@ -340,22 +288,6 @@ export function unsupportedSshApi(): Hono {
     throw new HttpError(501, "SSH grants are not available on this node");
   });
   return app;
-}
-
-/**
- * Makes the folder of one instance with mode 700 and gives it to the instance user when the owner is known. The top
- * folder is never passed here: it belongs to the node.
- */
-export async function ensureInstanceFolder(
-  folder: string,
-  owner: { uid: number; gid: number } | undefined,
-  chown: (path: string, uid: number, gid: number) => Promise<void> = chownDefault,
-): Promise<void> {
-  await mkdir(folder, { recursive: true });
-  // The top folder belongs to the node, so no user can put a link here. The check makes sure of it anyway.
-  if (!(await lstat(folder)).isDirectory()) throw new Error(`${folder} is not a folder`);
-  await chmod(folder, 0o700);
-  if (owner) await chown(folder, owner.uid, owner.gid);
 }
 
 export function sshNodeApi(options: SshNodeOptions): Hono {
