@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { User } from "./auth/user";
+import type { User } from "./auth";
 import { hasOwn } from "./shared/requests";
 
 /**
