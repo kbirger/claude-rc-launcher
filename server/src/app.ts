@@ -17,6 +17,13 @@ import { listDirs, makeDir, resolveChecked } from "./instances/folders";
 import type { DirOwner } from "./instances/folders";
 import type { Instances } from "./instances/InstanceService";
 import type { AdoptDir } from "./instances/ownedir";
+import {
+  parseCloneRequest,
+  parseLoginRequest,
+  parseMkdirRequest,
+  parseSettingsPatch,
+  parseStartRequest,
+} from "./instances/requests";
 import { settingsFromArgs, settingsHelpFor } from "./instances/settings";
 import { pushApi } from "./push/api/subscriptions";
 import type { PushService } from "./push/PushService";
@@ -35,16 +42,7 @@ import { WatchFlag } from "./sessions/WatchFlag";
 import { HttpError } from "./shared/HttpError";
 import { PathError, within } from "./shared/paths";
 import type { ChangeSource, Timers } from "./shared/PollSource";
-import {
-  isObject,
-  parseCloneRequest,
-  parseLoginRequest,
-  parseMkdirRequest,
-  parseSettingsPatch,
-  parseStartRequest,
-  parseUpdateRequest,
-  readJson,
-} from "./shared/requests";
+import { isObject, readJson } from "./shared/requests";
 import { sseResponse, trackStreams } from "./shared/sse";
 import { VERSION } from "./shared/version";
 import { sshApi } from "./ssh/api/hub";
@@ -57,6 +55,7 @@ import type { TargetStore } from "./ssh/TargetStore";
 import { LatestError } from "./updates/latest";
 import type { createLatestRelease } from "./updates/latest";
 import type { createReleaseList } from "./updates/releaselist";
+import { parseUpdateRequest } from "./updates/requests";
 import { UpdateRefused } from "./updates/serviceupdate";
 import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./updates/serviceupdate";
 import { createUpdateTracker } from "./updates/tracker";

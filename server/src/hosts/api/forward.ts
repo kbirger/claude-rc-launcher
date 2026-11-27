@@ -2,22 +2,21 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { User } from "../../auth/user";
 import type { Config } from "../../config/parse";
-import { parseRuleEdit } from "../../sessions/api/permissions";
-import { downloadHeaders, lastSegment } from "../../shared/disposition";
-import { HttpError } from "../../shared/HttpError";
 import {
-  isObject,
   parseCloneRequest,
   parseLoginRequest,
   parseMkdirRequest,
   parseSettingsPatch,
   parseStartRequest,
-  parseUpdateRequest,
-  readJson,
-} from "../../shared/requests";
+} from "../../instances/requests";
+import { parseRuleEdit } from "../../sessions/api/permissions";
+import { downloadHeaders, lastSegment } from "../../shared/disposition";
+import { HttpError } from "../../shared/HttpError";
+import { isObject, readJson } from "../../shared/requests";
 import { VERSION } from "../../shared/version";
 import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "../../shared/versions";
 import type { LatestRelease } from "../../updates/latest";
+import { parseUpdateRequest } from "../../updates/requests";
 import type { UpdateReport } from "../../updates/serviceupdate";
 import type { UpdateTracker } from "../../updates/tracker";
 import type { UpdateRecord } from "../../updates/UpdateRecord";
