@@ -1,36 +1,22 @@
 <script lang="ts">
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { Checkbox } from "#lib/components/ui/checkbox/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
+  import * as Select from "#lib/components/ui/select/index.js";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
-  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { hostsQuery } from "../hosts";
-  import { getProvision, getSalt, getTarget, type HostKeyLine, type SshStatus, type Target, type Unlock } from "./api";
+  import { useQueryClient } from "@tanstack/svelte-query";
+  import type { SshStatus } from "./api";
   import { hostLabel } from "./hostlabel";
-  import {
-    authorizeManagedMutation,
-    createKeyMutation,
-    createTargetMutation,
-    pinHostKeyMutation,
-    pinManagedMutation,
-    scanHostKeyMutation,
-    testTargetMutation,
-  } from "./mutations";
-  import { toBase64Url, unlockWithPasskey } from "./prf";
-  import { SSH_KEY } from "./queries";
-  import { longEnough, MIN_PASSPHRASE, PASSPHRASE_NAME, TOO_SHORT } from "./passphrase";
+  import { MIN_PASSPHRASE, PASSPHRASE_NAME } from "./passphrase";
   import TargetForm from "./TargetForm.svelte";
   import UsernameHint from "./UsernameHint.svelte";
+  import { createTargetWizardModel, WIZARD_STEPS, WIZARD_TITLES } from "./wizard.svelte";
 
-  // Adds a target and walks it through the key, the host key, the install and the test. Mount it fresh for each use: it
-  // reads `targetId` once. With a `targetId` it loads that target and starts at the first step that is not done.
-  //
-  // From then on the step is local state that moves forward on each successful call. A refetch of the target, the
-  // status or the list never moves it and never unmounts a step: the scanned fingerprints, the install line and the
-  // typed text stay. A secret (a passphrase, a PRF output) lives in a local variable of one call. Each call that
-  // needs an unlock makes a new one, and the passphrase field is cleared when the call ends.
+  // Adds a target and walks it through the key, the host key, the install and the test. The wizard model holds the
+  // steps. Mount it fresh for each use: it reads `targetId` once.
   let {
     targetId,
     status,
@@ -42,176 +28,16 @@
     onclose: () => void;
   } = $props();
 
-  type Step = "form" | "key" | "hostkey" | "install" | "test" | "done";
-  const ORDER: Step[] = ["form", "key", "hostkey", "install", "test", "done"];
-  const TITLES: Record<Step, string> = {
-    form: "Target",
-    key: "Key",
-    hostkey: "Host key",
-    install: "Install",
-    test: "Test",
-    done: "Ready",
-  };
-
-  const client = useQueryClient();
-  const hosts = createQuery(() => hostsQuery());
-  const create = createMutation(() => createTargetMutation(client));
-  const keyCall = createMutation(() => createKeyMutation(client));
-  const testCall = createMutation(() => testTargetMutation(client));
-  const scan = createMutation(() => scanHostKeyMutation());
-  const pin = createMutation(() => pinHostKeyMutation(client));
-  const pinFromNode = createMutation(() => pinManagedMutation(client));
-  const authorize = createMutation(() => authorizeManagedMutation());
+  const model = createTargetWizardModel({
+    client: useQueryClient(),
+    targetId: untrack(() => targetId),
+    status: () => status,
+  });
   const uid = $props.id();
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
-  const field = "border-input bg-card h-11 w-full min-w-0 rounded-lg border px-2.5 text-base md:text-sm";
-
-  // `null` while the target of `targetId` loads. It is set once and never goes back.
-  let step = $state<Step | null>(untrack(() => (targetId ? null : "form")));
-  let target = $state<Target | undefined>();
-  let notes = $state<string[]>([]);
-  let installLine = $state("");
-  let found = $state<HostKeyLine[]>([]);
-  let matched = $state(false);
-  let busy = $state(false);
-  let problem = $state("");
-  let copied = $state("");
-  let passphrase = $state("");
-  let nodeChoice = $state("");
-  let testFailure = $state("");
-
-  const loaded = createQuery(() => ({
-    queryKey: [...SSH_KEY, "target", targetId ?? ""] as readonly string[],
-    queryFn: () => getTarget(targetId!),
-    enabled: targetId !== undefined,
-    retry: false as const,
-    staleTime: 0,
-  }));
-
-  $effect(() => {
-    const detail = loaded.data;
-    if (step !== null || !detail) return;
-    target = detail;
-    notes = detail.notes;
-    // The hub refuses a second key, so a target with a key never gets the key step.
-    step = detail.state === "ready" ? "done" : !detail.keyFingerprint ? "key" : !detail.hostKey ? "hostkey" : "install";
-  });
-
-  const external = $derived(target?.managedHost === undefined);
-  const allowed = $derived(target?.nodes ?? []);
-  const node = $derived(allowed.includes(nodeChoice) ? nodeChoice : (allowed[0] ?? ""));
-  const needsScript = $derived(step === "install" && external && installLine === "");
-  const script = createQuery(() => ({
-    queryKey: [...SSH_KEY, "provision", target?.id ?? ""] as readonly string[],
-    queryFn: () => getProvision(target!.id),
-    enabled: needsScript,
-    retry: false as const,
-  }));
-  const position = $derived(step ? ORDER.indexOf(step) + 1 : 0);
-
-  async function act(call: () => Promise<void>) {
-    busy = true;
-    problem = "";
-
-    try {
-      await call();
-    } catch (error) {
-      problem = error instanceof Error ? error.message : "The call failed.";
-    } finally {
-      busy = false;
-    }
-  }
-
-  // A new unlock for one call. The secret is in this call and its caller only. The passphrase field is cleared when
-  // the call ends, whatever the answer.
-  async function withUnlock<T>(use: (unlock: Unlock) => Promise<T>, isNew = false): Promise<T> {
-    if (status.method !== "prf" && isNew && !longEnough(passphrase)) throw new Error(TOO_SHORT);
-
-    try {
-      if (status.method === "prf") {
-        if (!status.credentialId) throw new Error("The hub has no passkey on record.");
-        const { salt } = await getSalt(target!.id);
-        return await use({ method: "prf", secret: await unlockWithPasskey(status.credentialId, salt) });
-      }
-
-      if (passphrase === "") throw new Error("Type the passphrase.");
-      return await use({ method: "passphrase", secret: toBase64Url(new TextEncoder().encode(passphrase)) });
-    } finally {
-      passphrase = "";
-    }
-  }
-
-  const submitForm = (body: Parameters<typeof create.mutateAsync>[0]) =>
-    act(async () => {
-      target = await create.mutateAsync(body);
-      step = "key";
-    });
-
-  const makeKey = () =>
-    act(async () => {
-      try {
-        const made = await withUnlock(
-          (unlock) => keyCall.mutateAsync({ id: target!.id, unlock }),
-          status.hasKeys === false,
-        );
-        installLine = made.installLine;
-        notes = made.notes;
-        step = "hostkey";
-      } finally {
-        keyCall.reset();
-      }
-    });
-
-  const scanKey = () =>
-    act(async () => {
-      matched = false;
-      found = (await scan.mutateAsync({ id: target!.id, node })).keys;
-      if (found.length === 0) throw new Error("The scan found no host key.");
-    });
-
-  const pinScanned = () =>
-    act(async () => {
-      const chosen = found.find((item) => item.line.startsWith("ssh-ed25519 ")) ?? found[0];
-      if (!matched || !chosen) return;
-      target = await pin.mutateAsync({ id: target!.id, hostKey: chosen.line });
-      step = "install";
-    });
-
-  const pinManagedKey = () =>
-    act(async () => {
-      found = (await pinFromNode.mutateAsync(target!.id)).keys;
-      step = "install";
-    });
-
-  const installOnNode = () =>
-    act(async () => {
-      await authorize.mutateAsync(target!.id);
-      step = "test";
-    });
-
-  const runTest = () =>
-    act(async () => {
-      testFailure = "";
-
-      try {
-        const result = await withUnlock((unlock) => testCall.mutateAsync({ id: target!.id, node, unlock }));
-
-        if (result.ok) step = "done";
-        else testFailure = result.error ?? "The test failed.";
-      } finally {
-        testCall.reset();
-      }
-    });
-
-  async function copy(text: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = label;
-    } catch {
-      copied = "";
-      problem = "The browser did not allow the copy. Select the text and copy it.";
-    }
-  }
+  const step = $derived(model.step);
+  const target = $derived(model.target);
+  const script = model.script;
 </script>
 
 {#snippet unlockField(isNew: boolean)}
@@ -229,7 +55,7 @@
         autocomplete={isNew ? "new-password" : "current-password"}
         autocapitalize="off"
         spellcheck={false}
-        bind:value={passphrase}
+        bind:value={model.passphrase}
       />
       {#if isNew}
         <p class="text-xs text-muted-foreground">
@@ -238,6 +64,30 @@
       {/if}
     </div>
   {/if}
+{/snippet}
+
+{#snippet noNode()}
+  <Alert.Root variant="destructive" role="alert">
+    <Alert.Description>
+      No node of this target has SSH access on. Turn it on, with a source address, on the Nodes card.
+    </Alert.Description>
+  </Alert.Root>
+{/snippet}
+
+{#snippet nodeSelect(name: string, label: string)}
+  <div class="grid gap-1">
+    <Label for="{uid}-{name}">{label}</Label>
+    <Select.Root type="single" bind:value={model.node}>
+      <Select.Trigger id="{uid}-{name}" class="w-full min-w-0 data-[size=default]:h-11">
+        {hostLabel(model.node, model.hosts)}
+      </Select.Trigger>
+      <Select.Content>
+        {#each model.allowed as item (item)}
+          <Select.Item value={item} label={hostLabel(item, model.hosts)}>{hostLabel(item, model.hosts)}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
 {/snippet}
 
 <Sheet.Root
@@ -253,14 +103,14 @@
     <Sheet.Header>
       <Sheet.Title>{target ? `Set up ${target.id}` : "Add a target"}</Sheet.Title>
       <Sheet.Description class="text-xs">
-        {step ? `Step ${position} of ${ORDER.length}: ${TITLES[step]}` : "Loading the target"}
+        {step ? `Step ${model.position} of ${WIZARD_STEPS.length}: ${WIZARD_TITLES[step]}` : "Loading the target"}
       </Sheet.Description>
     </Sheet.Header>
     <div class="grid min-w-0 gap-3 px-4">
       {#if step === null}
-        {#if loaded.error}
+        {#if model.loaded.error}
           <Alert.Root variant="destructive" role="alert">
-            <Alert.Description>Could not load the target: {loaded.error.message}</Alert.Description>
+            <Alert.Description>Could not load the target: {model.loaded.error.message}</Alert.Description>
           </Alert.Root>
         {:else}
           <p class="text-sm text-muted-foreground">Loading the target...</p>
@@ -268,11 +118,11 @@
       {:else if step === "form"}
         <TargetForm
           nodes={status.nodes.filter((item) => item.enabled)}
-          hosts={hosts.data}
-          {busy}
-          {problem}
+          hosts={model.hosts}
+          busy={model.busy}
+          problem={model.problem}
           localAddress={status.nodes.find((item) => item.host === "local")?.sourceAddress ?? ""}
-          onsubmit={submitForm}
+          onsubmit={model.submitForm}
         />
       {:else}
         {#if step === "key"}
@@ -283,29 +133,24 @@
           </p>
           {@render unlockField(status.hasKeys === false)}
         {:else if step === "hostkey"}
-          {#if external}
+          {#if model.external}
             <p class="text-sm">
               The hub reads the host key of the target through a node. Compare each fingerprint with the one the target
               shows, then confirm.
             </p>
-            {#if allowed.length > 1}
-              <div class="grid gap-1">
-                <Label for="{uid}-scan-node">Node</Label>
-                <select id="{uid}-scan-node" class={field} bind:value={() => node, (value) => (nodeChoice = value)}>
-                  {#each allowed as item (item)}
-                    <option value={item}>{hostLabel(item, hosts.data)}</option>
-                  {/each}
-                </select>
-              </div>
+            {#if model.allowed.length === 0}
+              {@render noNode()}
+            {:else if model.allowed.length > 1}
+              {@render nodeSelect("scan-node", "Read the host key from this node")}
             {/if}
-            {#if found.length > 0}
+            {#if model.found.length > 0}
               <ul class="grid min-w-0 gap-1">
-                {#each found as item (item.line)}
+                {#each model.found as item (item.line)}
                   <li class="font-mono text-xs {wrap}" data-fingerprint>{item.fingerprint}</li>
                 {/each}
               </ul>
               <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
-                <input type="checkbox" bind:checked={matched} />
+                <Checkbox bind:checked={model.matched} />
                 <span>They match</span>
               </Label>
             {/if}
@@ -315,7 +160,7 @@
             </p>
           {/if}
         {:else if step === "install"}
-          {#if external}
+          {#if model.external}
             {#if target?.systemType === "dropbear"}
               <p class="text-sm" data-dropbear-line>
                 Add this line to the Authorized Keys of the router. Dropbear does not support from=, so the router does
@@ -327,15 +172,20 @@
                 source addresses of the nodes.
               </p>
             {/if}
-            {#if installLine}
+            {#if model.installLine}
               <code class="block rounded-lg border bg-muted p-3 font-mono text-xs break-all select-all">
-                {installLine}
+                {model.installLine}
               </code>
               <div>
-                <Button type="button" variant="outline" size="touch" onclick={() => copy(installLine, "line")}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="touch"
+                  onclick={() => model.copy(model.installLine, "line")}
+                >
                   Copy
                 </Button>
-                {#if copied === "line"}<span class="ml-2 text-sm text-muted-foreground">Copied</span>{/if}
+                {#if model.copied === "line"}<span class="ml-2 text-sm text-muted-foreground">Copied</span>{/if}
               </div>
             {:else if script.data}
               <p class="text-sm text-muted-foreground">
@@ -351,11 +201,11 @@
                   type="button"
                   variant="outline"
                   size="touch"
-                  onclick={() => copy(script.data!.script, "script")}
+                  onclick={() => model.copy(script.data!.script, "script")}
                 >
                   Copy
                 </Button>
-                {#if copied === "script"}<span class="ml-2 text-sm text-muted-foreground">Copied</span>{/if}
+                {#if model.copied === "script"}<span class="ml-2 text-sm text-muted-foreground">Copied</span>{/if}
               </div>
             {:else if script.error}
               <Alert.Root variant="destructive" role="alert">
@@ -364,7 +214,7 @@
             {:else}
               <p class="text-sm text-muted-foreground">Loading the install script...</p>
             {/if}
-            {#each notes as note (note)}
+            {#each model.notes as note (note)}
               <p class="text-sm text-muted-foreground {wrap}" data-note>{note}</p>
             {/each}
             <p class="text-xs text-muted-foreground">
@@ -375,29 +225,26 @@
           {/if}
         {:else if step === "test"}
           <p class="text-sm">
-            A test opens a connection for one minute and needs a new unlock. A failed test leaves the target in draft.
+            A test connects to the target from the node you choose. The address of that node must be allowed for this
+            target. The test opens a connection for one minute and needs a new unlock. A failed test leaves the target
+            in draft.
           </p>
-          {#if allowed.length > 1}
-            <div class="grid gap-1">
-              <Label for="{uid}-test-node">Node</Label>
-              <select id="{uid}-test-node" class={field} bind:value={() => node, (value) => (nodeChoice = value)}>
-                {#each allowed as item (item)}
-                  <option value={item}>{hostLabel(item, hosts.data)}</option>
-                {/each}
-              </select>
-            </div>
+          {#if model.allowed.length === 0}
+            {@render noNode()}
+          {:else if model.allowed.length > 1}
+            {@render nodeSelect("test-node", "Run the test from this node")}
           {/if}
           {@render unlockField(false)}
-          {#if testFailure}
+          {#if model.testFailure}
             <Alert.Root variant="destructive" role="alert">
-              <Alert.Description class="font-mono text-xs {wrap}">{testFailure}</Alert.Description>
+              <Alert.Description class="font-mono text-xs {wrap}">{model.testFailure}</Alert.Description>
             </Alert.Root>
           {/if}
         {:else}
           <Alert.Root role="status">
             <Alert.Description>The test passed. {target?.id} is ready.</Alert.Description>
           </Alert.Root>
-          {#if external && target && target.systemType !== "windows" && !target.provisionerFingerprint}
+          {#if model.external && target && target.systemType !== "windows" && !target.provisionerFingerprint}
             <p class="text-sm text-muted-foreground {wrap}" data-provisioner-hint>
               To change the nodes of this target later with one approval, add the provisioner. On your own machine, run:
               <code class="mt-1 block rounded border bg-muted p-2 font-mono text-xs select-all">
@@ -407,42 +254,50 @@
           {/if}
         {/if}
 
-        {#if problem}
-          <Alert.Root variant="destructive" role="alert"><Alert.Description>{problem}</Alert.Description></Alert.Root>
+        {#if model.problem}
+          <Alert.Root variant="destructive" role="alert">
+            <Alert.Description>{model.problem}</Alert.Description>
+          </Alert.Root>
         {/if}
       {/if}
     </div>
     <Sheet.Footer class="px-4">
       {#if step === "key"}
-        <Button type="button" size="touch" disabled={busy} onclick={makeKey}>
-          {busy ? "Working..." : "Create key"}
+        <Button type="button" size="touch" disabled={model.busy} onclick={model.makeKey}>
+          {model.busy ? "Working..." : "Create key"}
         </Button>
       {:else if step === "hostkey"}
-        {#if !external}
-          <Button type="button" size="touch" disabled={busy} onclick={pinManagedKey}>Pin from the node</Button>
+        {#if !model.external}
+          <Button type="button" size="touch" disabled={model.busy} onclick={model.pinManagedKey}>
+            Pin from the node
+          </Button>
         {:else}
           <Button
             type="button"
             size="touch"
-            variant={found.length > 0 ? "outline" : "default"}
-            disabled={busy || node === ""}
-            onclick={scanKey}
+            variant={model.found.length > 0 ? "outline" : "default"}
+            disabled={model.busy || model.node === ""}
+            onclick={model.scanKey}
           >
-            {found.length > 0 ? "Scan again" : "Scan host key"}
+            {model.found.length > 0 ? "Scan again" : "Scan host key"}
           </Button>
-          {#if found.length > 0}
-            <Button type="button" size="touch" disabled={busy || !matched} onclick={pinScanned}>Pin host key</Button>
+          {#if model.found.length > 0}
+            <Button type="button" size="touch" disabled={model.busy || !model.matched} onclick={model.pinScanned}>
+              Pin host key
+            </Button>
           {/if}
         {/if}
       {:else if step === "install"}
-        {#if external}
-          <Button type="button" size="touch" onclick={() => (step = "test")}>I installed it</Button>
+        {#if model.external}
+          <Button type="button" size="touch" onclick={model.installed}>I installed it</Button>
         {:else}
-          <Button type="button" size="touch" disabled={busy} onclick={installOnNode}>Install on the node</Button>
+          <Button type="button" size="touch" disabled={model.busy} onclick={model.installOnNode}>
+            Install on the node
+          </Button>
         {/if}
       {:else if step === "test"}
-        <Button type="button" size="touch" disabled={busy || node === ""} onclick={runTest}>
-          {busy ? "Working..." : testFailure ? "Try again" : "Test connection"}
+        <Button type="button" size="touch" disabled={model.busy || model.node === ""} onclick={model.runTest}>
+          {model.busy ? "Working..." : model.testFailure ? "Try again" : "Test connection"}
         </Button>
       {/if}
       <Button type="button" variant="outline" size="touch" onclick={onclose}>

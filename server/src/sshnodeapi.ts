@@ -1,29 +1,33 @@
 import { Hono } from "hono";
-import { chmod, chown as chownDefault, lstat, mkdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { asUser } from "./asuser";
 import type { IdentityFor } from "./asuser";
 import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
-import { createPrivateFile, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./sshfiles";
-import { GrantAgent } from "./sshnodeagent";
-import type { AgentTransport } from "./sshnodeagent";
-import { deprovisionScript, provisionScript } from "./sshprovision";
-import type { Script } from "./sshprovision";
+import { LinuxGrantPlatform, WindowsGrantPlatform } from "./sshgrantplatform";
+import type { WindowsGrantOptions } from "./sshgrantplatform";
+import { ManagedKeyError, ManagedKeyInstaller } from "./sshmanagedkeys";
+import type { RunAs } from "./sshmanagedkeys";
+import { NodeGrantError, NodeGrantManager } from "./sshnodegrants";
+import type { GrantRequest, SignOutcome } from "./sshnodegrants";
+import { PendingSigns } from "./sshnodesigns";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
 import type { SystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
-import { ensurePrivateFolder, writeGrantFile } from "./win/sshfiles";
-import type { RunIcacls } from "./win/sshfiles";
+
+export { grantConfig, knownHostsLine, sshConfigPath } from "./sshgrantconfig";
+export { ensureInstanceFolder } from "./sshgrantplatform";
+export type { WindowsGrantOptions } from "./sshgrantplatform";
+export { NO_WAITING_REQUEST } from "./sshnodegrants";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
 // (sshnodeagent.ts), writes an `ssh` config file and a known_hosts file, and asks the hub to sign when the SSH client
-// asks for a signature. A session of an instance on this node reaches the target through that socket.
+// asks for a signature. A session of an instance on this node reaches the target through that socket. The grant rules
+// are in `NodeGrantManager` (sshnodegrants.ts): the routes parse a request, call it and map a `NodeGrantError`.
 // The broker is the other way round: the node CLI asks for access, the node tells the hub with an `ssh.request` event,
 // and the hub answers through `POST /grants` (with the request id) or `POST /requests/:id/reject`.
-// A Windows node has no grant routes: `createNodeApp` mounts `unsupportedSshApi` there.
+// A node that has no SSH wiring mounts `unsupportedSshApi` instead, and its grant routes answer 501.
 // The managed routes (`sshManagedApi`) are a separate router. A managed target is a machine that runs the launcher as a
 // node of this hub. The hub reads the sshd host key of the node and asks the node to add a key line to the
 // `authorized_keys` list of an account, so the owner needs no SSH key of their own. These routes also work on a
@@ -31,10 +35,6 @@ import type { RunIcacls } from "./win/sshfiles";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
-const SIGNATURE_LEN = 64;
-export const NO_WAITING_REQUEST = "no request waits for this answer";
-/** The files of one grant in the folder of its instance. */
-const GRANT_SUFFIXES = [".sock", ".config", ".known_hosts", ".pub"];
 const KEY_BLOB_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);
 const KEY_BLOB_LEN = 51;
 
@@ -55,18 +55,6 @@ export interface AccessResult {
   endsAt: number;
   /** The full path of the checked `ssh` program. Set on a Windows node only. */
   ssh?: string;
-}
-
-/** What a Windows node adds to the grant routes. The agent is a named pipe and the files get access lists. */
-export interface WindowsGrantOptions {
-  /** The SID of the service user. The folders and the pipes give access to it, to SYSTEM and to Administrators only. */
-  sid: string;
-  /** The checked client. A reason in plain English when there is none. Runs before each grant. */
-  checkClient: () => Promise<{ ok: true; sshPath: string } | { ok: false; reason: string }>;
-  /** The transport of the agent of one grant: a named pipe with its own name. */
-  agentTransport: (grantId: string) => AgentTransport;
-  /** Runs icacls. For tests. */
-  runIcacls?: RunIcacls;
 }
 
 interface Waiter<T> {
@@ -137,7 +125,7 @@ export class SshBroker {
 }
 
 export interface SshNodeOptions {
-  /** The folder for the sockets and the files of the grants. The routes create it with mode 700. */
+  /** The folder for the sockets and the files of the grants. The routes create it with mode 711. Each instance gets its own folder inside it with mode 700. */
   dir: string;
   events: NodeEvents;
   broker: SshBroker;
@@ -151,20 +139,6 @@ export interface SshNodeOptions {
   chown?: (path: string, uid: number, gid: number) => Promise<void>;
   /** Set on a Windows node. */
   windows?: WindowsGrantOptions;
-}
-
-interface Grant {
-  agent: GrantAgent;
-  /** The folder of the instance: it holds the three files of the grant. */
-  folder: string;
-  targetId: string;
-}
-
-interface PendingSign {
-  grantId: string;
-  resolve: (signature: Uint8Array) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 async function runCommand(cmd: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -240,19 +214,6 @@ function publicBlobOf(value: unknown): Uint8Array {
   return new Uint8Array(blob);
 }
 
-interface GrantRequest {
-  grantId: string;
-  requestId?: string;
-  instanceId: string;
-  targetId: string;
-  publicBlob: Uint8Array;
-  address: string;
-  port: number;
-  account: string;
-  hostKey: string;
-  endsAt: number;
-}
-
 function parseGrant(body: Record<string, unknown>): GrantRequest {
   const targetId = body.targetId;
   if (typeof targetId !== "string" || !HOST_ID_RE.test(targetId)) throw new HttpError(400, "targetId is not valid");
@@ -276,63 +237,6 @@ function parseGrant(body: Record<string, unknown>): GrantRequest {
   };
 }
 
-/**
- * A path as the config file of `ssh.exe` needs it. On Linux the path stays as it is. On Windows every backslash becomes a
- * forward slash, and a path with a space gets double quotes. The reason: `ssh.exe` ignores `IdentityAgent \\.\pipe\x`
- * without a message, and then fails with a misleading `invalid format`. The forward-slash form `//./pipe/x` works.
- */
-export function sshConfigPath(path: string, windows: boolean): string {
-  if (!windows) return path;
-  // `"` would end the quoting, a line break would end the line, and `$` starts an environment variable in some options.
-  if (/["\r\n$]/.test(path)) throw new Error("a config path holds a quote, a dollar sign or a line break");
-  // `%` starts a token such as %u, so it is doubled. A space, `'` or `#` needs double quotes: `#` starts a comment.
-  const slashed = path.replaceAll("\\", "/").replaceAll("%", "%%");
-  return /[\s'#]/.test(slashed) ? `"${slashed}"` : slashed;
-}
-
-/**
- * The lines of the config file for one target. Every value was checked: none holds a newline. `identity` is the public
- * key file of the grant: with `IdentitiesOnly yes`, ssh offers only that key of the agent, and never a default key of
- * the account that runs it (`~/.ssh/id_*`), nor a password.
- */
-export function grantConfig(input: {
-  targetId: string;
-  address: string;
-  port: number;
-  account: string;
-  socket: string;
-  identity: string;
-  knownHosts: string;
-  /** The node is Windows: write the paths for `ssh.exe` (see `sshConfigPath`). */
-  windows?: boolean;
-}): string {
-  const path = (value: string) => sshConfigPath(value, input.windows === true);
-
-  return (
-    [
-      `Host ${input.targetId}`,
-      `HostName ${input.address}`,
-      `Port ${input.port}`,
-      `User ${input.account}`,
-      `IdentityAgent ${path(input.socket)}`,
-      `IdentityFile ${path(input.identity)}`,
-      "IdentitiesOnly yes",
-      "PasswordAuthentication no",
-      "KbdInteractiveAuthentication no",
-      `UserKnownHostsFile ${path(input.knownHosts)}`,
-      "GlobalKnownHostsFile /dev/null",
-      "StrictHostKeyChecking yes",
-      "ControlMaster no",
-      "ControlPath none",
-    ].join("\n") + "\n"
-  );
-}
-
-/** A known_hosts line. A port other than 22 uses the `[host]:port` form. */
-export function knownHostsLine(address: string, port: number, hostKey: string): string {
-  return `${port === 22 ? address : `[${address}]:${port}`} ${hostKey}\n`;
-}
-
 /** The routes of a node that has no SSH grants (a Windows node): every route answers 501. */
 export function unsupportedSshApi(): Hono {
   const app = new Hono();
@@ -343,175 +247,46 @@ export function unsupportedSshApi(): Hono {
 }
 
 /**
- * Makes the folder of one instance with mode 700 and gives it to the instance user when the owner is known. The top
- * folder is never passed here: it belongs to the node.
+ * Runs `work` and answers a `NodeGrantError` or a `ManagedKeyError` with its status and text. Every other error is
+ * thrown on unchanged: it keeps its own answer (an `HttpError`) or becomes the 500 "internal error" of `onError`.
  */
-export async function ensureInstanceFolder(
-  folder: string,
-  owner: { uid: number; gid: number } | undefined,
-  chown: (path: string, uid: number, gid: number) => Promise<void> = chownDefault,
-): Promise<void> {
-  await mkdir(folder, { recursive: true });
-  // The top folder belongs to the node, so no user can put a link here. The check makes sure of it anyway.
-  if (!(await lstat(folder)).isDirectory()) throw new Error(`${folder} is not a folder`);
-  await chmod(folder, 0o700);
-  if (owner) await chown(folder, owner.uid, owner.gid);
+async function mapped<T>(work: () => T | Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof NodeGrantError || error instanceof ManagedKeyError)
+      throw new HttpError(error.status, error.message);
+    throw error;
+  }
 }
 
 export function sshNodeApi(options: SshNodeOptions): Hono {
   const { dir, events, broker } = options;
   const keyscan = options.keyscan ?? keyscanDefault;
-  const probe = options.probe ?? probeDefault;
   const signTimeoutMs = options.signTimeoutMs ?? DEFAULT_SIGN_TIMEOUT_MS;
-  const grants = new Map<string, Grant>();
-  const signs = new Map<string, PendingSign>();
+  const platform = options.windows
+    ? new WindowsGrantPlatform(dir, options.windows)
+    : new LinuxGrantPlatform({
+        dir,
+        ...(options.resolveUser ? { resolveUser: options.resolveUser } : {}),
+        ...(options.chown ? { chown: options.chown } : {}),
+      });
+  const grants = new NodeGrantManager({
+    dir,
+    broker,
+    signs: new PendingSigns(events, signTimeoutMs),
+    platform,
+    probe: options.probe ?? probeDefault,
+    signTimeoutMs,
+    ...(options.chown ? { chown: options.chown } : {}),
+  });
   const app = new Hono();
 
-  const chown = options.chown ?? chownDefault;
-  const windows = options.windows;
-  const pathOf = (folder: string, grantId: string, suffix: string) => join(folder, `${grantId}${suffix}`);
-
-  /**
-   * The top folder belongs to the node and is never chowned: it has mode 711, so an instance user can enter it but
-   * cannot list it. Each instance has its own folder with mode 700 that belongs to its user, because a user who owns
-   * the folder could replace the files of another user's grant in it.
-   */
-  async function ensureDir(): Promise<void> {
-    await mkdir(dir, { recursive: true });
-    await chmod(dir, 0o711);
-  }
-
-  const ensureInstanceDir = (folder: string, owner?: { uid: number; gid: number }) =>
-    ensureInstanceFolder(folder, owner, chown);
-
-  /** The files of a grant never follow a link that a session put in its folder (sshfiles.ts). */
-  const writePrivate = (path: string, text: string, owner?: { uid: number; gid: number }) =>
-    windows ? writeGrantFile(path, text) : createPrivateFile(path, text, owner, options.chown);
-
-  function failSigns(grantId: string | undefined, reason: string): void {
-    for (const [signId, pending] of signs) {
-      if (grantId !== undefined && pending.grantId !== grantId) continue;
-      signs.delete(signId);
-      clearTimeout(pending.timer);
-      pending.reject(new Error(reason));
-    }
-  }
-
-  async function removeGrant(grantId: string): Promise<void> {
-    const grant = grants.get(grantId);
-    if (!grant) return;
-    grants.delete(grantId);
-    failSigns(grantId, "the grant ended");
-    await grant.agent.stop();
-    // The folder of the instance stays.
-    await Promise.all(GRANT_SUFFIXES.map((suffix) => removeQuietly(pathOf(grant.folder, grantId, suffix))));
-  }
-
-  function forwardSign(grantId: string): (keyBlob: Uint8Array, data: Uint8Array, flags: number) => Promise<Uint8Array> {
-    return (keyBlob, data, flags) =>
-      new Promise<Uint8Array>((resolve, reject) => {
-        const signId = crypto.randomUUID();
-        const timer = setTimeout(() => {
-          signs.delete(signId);
-          reject(new Error("no signature from the hub"));
-        }, signTimeoutMs);
-        signs.set(signId, { grantId, resolve, reject, timer });
-        events.emit({
-          type: "ssh.sign",
-          signId,
-          grantId,
-          keyBlob: Buffer.from(keyBlob).toString("base64"),
-          data: Buffer.from(data).toString("base64"),
-          flags,
-        });
-      });
-  }
-
-  app.get("/status", async (context) => {
-    let dirOk = false;
-
-    try {
-      await ensureDir();
-      dirOk = (await stat(dir)).isDirectory();
-    } catch {
-      dirOk = false;
-    }
-
-    if (windows) {
-      const client = await windows.checkClient();
-      return context.json({ ssh: client.ok, dir: dirOk, ...(client.ok ? {} : { reason: client.reason }) });
-    }
-
-    return context.json({ ssh: Bun.which("ssh") !== null, dir: dirOk });
-  });
+  app.get("/status", async (context) => context.json(await grants.status()));
 
   app.post("/grants", async (context) => {
     const request = parseGrant(await readObject(context));
-    const folder = join(dir, request.instanceId);
-    const socketPath = pathOf(folder, request.grantId, ".sock");
-    // A named pipe has no such limit.
-    if (!windows && (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH || !stageFits(dir)))
-      throw new HttpError(400, `the socket path is longer than ${MAX_SOCKET_PATH} bytes`);
-    if (grants.has(request.grantId)) throw new HttpError(409, "a grant with that id exists");
-    // An answer to a request that ended (a timeout, a node restart) would start an agent that no session uses.
-    if (request.requestId !== undefined && !broker.isWaiting(request.requestId))
-      throw new HttpError(409, NO_WAITING_REQUEST);
-
-    const owner = windows ? undefined : options.resolveUser?.(request.instanceId);
-    let sshPath: string | undefined;
-
-    if (windows) {
-      // The client is checked before each grant: it can change after the start.
-      const client = await windows.checkClient();
-      if (!client.ok) throw new HttpError(409, client.reason);
-      sshPath = client.sshPath;
-      await ensurePrivateFolder(dir, windows.sid, windows.runIcacls);
-      await ensurePrivateFolder(folder, windows.sid, windows.runIcacls);
-    } else {
-      await ensureDir();
-      await ensureInstanceDir(folder, owner);
-    }
-
-    const agent = new GrantAgent({
-      dir: folder,
-      topDir: dir,
-      ...(windows ? { transport: windows.agentTransport(request.grantId) } : {}),
-      ...(options.chown ? { chown: options.chown } : {}),
-      grantId: request.grantId,
-      publicBlob: request.publicBlob,
-      comment: `claude-rc:${request.targetId}`,
-      forwardSign: forwardSign(request.grantId),
-      signTimeoutMs,
-      ...(owner ? { uid: owner.uid, gid: owner.gid } : {}),
-    });
-    grants.set(request.grantId, { agent, folder, targetId: request.targetId });
-
-    let result: AccessResult;
-
-    try {
-      const socket = await agent.start();
-      const config = pathOf(folder, request.grantId, ".config");
-      const knownHosts = pathOf(folder, request.grantId, ".known_hosts");
-      const identity = pathOf(folder, request.grantId, ".pub");
-      await writePrivate(knownHosts, knownHostsLine(request.address, request.port, request.hostKey), owner);
-      await writePrivate(identity, `ssh-ed25519 ${Buffer.from(request.publicBlob).toString("base64")}\n`, owner);
-      await writePrivate(
-        config,
-        grantConfig({ ...request, socket, identity, knownHosts, ...(windows ? { windows: true } : {}) }),
-        owner,
-      );
-      result = { socket, config, endsAt: request.endsAt, ...(sshPath ? { ssh: sshPath } : {}) };
-    } catch (error) {
-      await removeGrant(request.grantId);
-      throw error;
-    }
-
-    if (request.requestId !== undefined && !broker.activate(request.requestId, result)) {
-      // The request ended while the agent started.
-      await removeGrant(request.grantId);
-      throw new HttpError(409, NO_WAITING_REQUEST);
-    }
-
+    const result = await mapped(() => grants.open(request));
     return context.json({ socket: result.socket, config: result.config });
   });
 
@@ -538,41 +313,29 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
   app.post("/grants/:id/probe", async (context) => {
     const grantId = token(context.req.param("id"), "id");
-    const grant = grants.get(grantId);
-    if (!grant) throw new HttpError(404, "no such grant");
-    const config = pathOf(grant.folder, grantId, ".config");
-    return context.json(await probe(config, grant.targetId));
+    return context.json(await mapped(() => grants.probe(grantId)));
   });
 
   app.delete("/grants/:id", async (context) => {
-    await removeGrant(token(context.req.param("id"), "id"));
+    await grants.close(token(context.req.param("id"), "id"));
     return context.body(null, 204);
   });
 
   app.post("/sign-result", async (context) => {
     const body = await readObject(context);
     const signId = typeof body.signId === "string" ? body.signId : "";
-    const pending = signs.get(signId);
-    if (!pending) throw new HttpError(404, "no such sign request");
-
-    if (typeof body.error === "string") {
-      signs.delete(signId);
-      clearTimeout(pending.timer);
-      pending.reject(new Error(body.error));
-      return context.body(null, 204);
-    }
-
-    const signature = typeof body.signature === "string" ? Buffer.from(body.signature, "base64") : Buffer.alloc(0);
-    if (signature.length !== SIGNATURE_LEN) throw new HttpError(400, "signature must be 64 bytes in base64");
-    signs.delete(signId);
-    clearTimeout(pending.timer);
-    pending.resolve(new Uint8Array(signature));
+    const outcome: SignOutcome =
+      typeof body.error === "string"
+        ? { error: body.error }
+        : { signature: typeof body.signature === "string" ? Buffer.from(body.signature, "base64") : Buffer.alloc(0) };
+    await mapped(() => {
+      grants.settleSign(signId, outcome);
+    });
     return context.body(null, 204);
   });
 
   app.post("/reset", async (context) => {
-    failSigns(undefined, "the node was reset");
-    await Promise.all([...grants.keys()].map((grantId) => removeGrant(grantId)));
+    await grants.reset();
     return context.body(null, 204);
   });
 
@@ -593,19 +356,12 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
-// The hub waits 10 seconds for a removal. The script itself stops sooner. A removal that waits behind another script of
-// the same account can still show `failed` and remove the line later. That is harmless, because the key is deleted already.
-const DEAUTHORIZE_TIMEOUT_MS = 8_000;
 
 export interface SshManagedOptions {
   /** The sshd host key file. Default: the Ed25519 key of sshd on Linux and on Windows. */
   hostKeyFile?: string;
   /** Runs a provisioning script as the account. For tests. The default runs `sh -s` or PowerShell with the script on stdin. */
-  runAs?: (
-    account: string,
-    script: Script,
-    timeoutMs?: number,
-  ) => Promise<{ code: number; stderr: string; stdout?: string }>;
+  runAs?: RunAs;
   /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
   identityFor?: IdentityFor;
 }
@@ -678,21 +434,6 @@ function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions[
   };
 }
 
-/** The first line of the host key file as `<type> <base64>`, without the comment. */
-async function readHostKey(file: string): Promise<string> {
-  let text: string;
-
-  try {
-    text = await readFile(file, "utf8");
-  } catch {
-    throw new HttpError(404, "sshd has no ed25519 host key");
-  }
-
-  const [type, key] = (text.split("\n")[0] ?? "").trim().split(/\s+/);
-  if (type !== "ssh-ed25519" || !key) throw new HttpError(404, "sshd has no ed25519 host key");
-  return `${type} ${key}`;
-}
-
 /**
  * The line of `/authorize`. An OpenSSH line starts with `from="` or `ssh-ed25519 `. The line of a `dropbear` target
  * starts with the Dropbear flags and then `ssh-ed25519 `. Only a `dropbear` target takes that form.
@@ -737,27 +478,14 @@ function keyFileOf(value: unknown, systemType: SystemType): string | undefined {
 
 /** The managed target routes: `GET /hostkey`, `POST /authorize` and `POST /deauthorize`. They work on every node. */
 export function sshManagedApi(options: SshManagedOptions = {}): Hono {
-  const runUnserialized = options.runAs ?? defaultRunAs(options.identityFor);
-  // Two scripts for one account would read and rewrite the same authorized_keys file, and one could lose the change of
-  // the other. They run one after the other. A failure does not stop the next one.
-  const tails = new Map<string, Promise<unknown>>();
-
-  const runAs: typeof runUnserialized = (account, script, timeoutMs) => {
-    const run = (tails.get(account) ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => runUnserialized(account, script, timeoutMs));
-    const tail = run.catch(() => undefined);
-    tails.set(account, tail);
-    void tail.then(() => {
-      if (tails.get(account) === tail) tails.delete(account);
-    });
-    return run;
-  };
-
+  const installer = new ManagedKeyInstaller({
+    runAs: options.runAs ?? defaultRunAs(options.identityFor),
+    hostKeyFile: options.hostKeyFile ?? defaultHostKeyFile(),
+  });
   const app = new Hono();
 
   app.get("/hostkey", async (context) => {
-    const line = await readHostKey(options.hostKeyFile ?? defaultHostKeyFile());
+    const line = await mapped(() => installer.hostKey());
     const blob = Buffer.from(line.split(" ")[1] ?? "", "base64");
     return context.json({ keys: [{ line, fingerprint: keyFingerprint(new Uint8Array(blob)) }] });
   });
@@ -771,11 +499,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const line = authorizeLine(body.line, systemType);
     const keyFile = keyFileOf(body.keyFile, systemType);
 
-    const script = provisionScript(systemType, line, systemType === "windows" ? { account } : { keyFile });
-    const { code, stderr } = await runAs(account, script);
-    const failure = stderr.trim();
-    if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
-    if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
+    await mapped(() =>
+      installer.authorize({ account, systemType, line, ...(keyFile === undefined ? {} : { keyFile }) }),
+    );
     // A hub that sent a key file gets it back, so it can tell this node from an old node that ignores the field.
     if (keyFile !== undefined) return context.json({ keyFile });
     return context.body(null, 204);
@@ -791,13 +517,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const key = deauthorizeKey(body.key);
     const keyFile = keyFileOf(body.keyFile, systemType);
 
-    const script = deprovisionScript(systemType, key, id, systemType === "windows" ? { account } : { keyFile });
-    const { code, stderr, stdout } = await runAs(account, script, DEAUTHORIZE_TIMEOUT_MS);
-    const failure = stderr.trim();
-    if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
-    if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
-    const result = (stdout ?? "").trim();
-    if (result !== "removed" && result !== "not-found") throw new HttpError(500, "the script gave no result");
+    const result = await mapped(() =>
+      installer.deauthorize({ account, systemType, key, id, ...(keyFile === undefined ? {} : { keyFile }) }),
+    );
     return context.json({ result });
   });
 

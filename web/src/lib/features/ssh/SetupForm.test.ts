@@ -51,7 +51,7 @@ const press = (label: string) => {
 };
 
 const pick = (value: string) => {
-  const radio = document.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!;
+  const radio = document.querySelector<HTMLButtonElement>(`[role="radio"][data-value="${value}"]`)!;
   radio.click();
   flushSync();
 };
@@ -65,6 +65,20 @@ const typeInto = (selector: string, text: string) => {
 
 const waitText = (text: string) => vi.waitFor(() => expect(document.body.textContent).toContain(text));
 const posts = () => sent.filter((item) => item.method === "POST");
+
+test("the method is a named radio group, each choice named by its label, the passkey checked first", () => {
+  show();
+  const group = document.querySelector<HTMLElement>('[role="radiogroup"]')!;
+  expect(group.getAttribute("aria-label")).toBe("Unlock method");
+  const radios = [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+  expect(radios.map((radio) => radio.labels[0]?.textContent?.trim().split(/\s+/)[0])).toEqual([
+    "Passkey",
+    "Passphrase",
+  ]);
+  expect(radios.map((radio) => radio.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  pick("passphrase");
+  expect(radios.map((radio) => radio.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+});
 
 test("a passkey with no PRF shows the message and offers the passphrase", async () => {
   prf.registerPasskey.mockResolvedValue({ credentialId: "cred", prf: false, proved: false });

@@ -209,7 +209,9 @@ test("TargetList links a draft target to the wizard with ?target=<id>", async ()
   expect(link?.getAttribute("href")).toBe("/ssh?target=box");
 });
 
-const boxes = (within: ParentNode) => [...within.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+// The node checkboxes are bits-ui buttons: the host is in data-value and the state in aria-checked.
+const boxes = (within: ParentNode) => [...within.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')];
+const isChecked = (box: HTMLElement) => box.getAttribute("aria-checked") === "true";
 
 async function openEditor(list: Target[]) {
   const shown = await show(list);
@@ -221,7 +223,7 @@ async function openEditor(list: Target[]) {
 test("Edit nodes offers the nodes with access on, checks the current ones and saves the new list", async () => {
   patchReply = target({ nodes: ["node1", "node2"] });
   const shown = await openEditor([target()]);
-  expect(boxes(shown).map((box) => [box.value, box.checked])).toEqual([
+  expect(boxes(shown).map((box) => [box.dataset.value, isChecked(box)])).toEqual([
     ["node1", true],
     ["node2", false],
   ]);
@@ -243,12 +245,26 @@ test("Edit nodes offers the nodes with access on, checks the current ones and sa
 
 test("a node with access off stays on the list so that it can be taken out", async () => {
   const shown = await openEditor([target({ nodes: ["node1", "node3"] })]);
-  expect(boxes(shown).map((box) => [box.value, box.checked])).toEqual([
+  expect(boxes(shown).map((box) => [box.dataset.value, isChecked(box)])).toEqual([
     ["node1", true],
     ["node2", false],
     ["node3", true],
   ]);
   expect(shown.textContent).toContain("(access is off)");
+});
+
+test("the saved list keeps the order of the node list, not the order of the clicks", async () => {
+  patchReply = target({ nodes: ["node1", "node2"] });
+  const shown = await openEditor([target()]);
+  boxes(shown)[0]!.click();
+  flushSync();
+  boxes(shown)[1]!.click();
+  flushSync();
+  boxes(shown)[0]!.click();
+  flushSync();
+  button("Save", shown)!.click();
+  await vi.waitFor(() => expect(changes()).toHaveLength(1));
+  expect(changes()[0]!.body).toEqual({ nodes: ["node1", "node2"] });
 });
 
 test("Save is off when no node is checked", async () => {
@@ -448,7 +464,7 @@ test("a 409 that asks for confirm shows a yes-or-no question and sends confirm",
   // No goes back to the form with the picked list.
   button("No, go back", shown)!.click();
   await vi.waitFor(() => expect(button("Save", shown)).toBeDefined());
-  expect(boxes(shown).map((box) => box.checked)).toEqual([false, true]);
+  expect(boxes(shown).map((box) => isChecked(box))).toEqual([false, true]);
   button("Save", shown)!.click();
   await vi.waitFor(() => expect(shown.querySelector("[data-nodes-confirm]")).not.toBeNull());
 
