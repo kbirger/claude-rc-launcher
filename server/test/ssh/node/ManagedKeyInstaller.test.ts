@@ -2,13 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HttpError } from "../../../src/shared/HttpError";
 import { AccountQueue } from "../../../src/ssh/node/AccountQueue";
 import {
   DEAUTHORIZE_TIMEOUT_MS,
   ManagedKeyError,
   ManagedKeyInstaller,
 } from "../../../src/ssh/node/ManagedKeyInstaller";
-import type { RunAs } from "../../../src/ssh/node/ManagedKeyInstaller";
+import type { RunAs, SshdReads } from "../../../src/ssh/node/ManagedKeyInstaller";
+import { SshdDropinError } from "../../../src/ssh/node/SshdDropin";
 import type { Script } from "../../../src/ssh/provision";
 
 const LINE = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH claude-rc:web1";
@@ -98,17 +100,26 @@ describe("ManagedKeyInstaller", () => {
   let dir: string;
   let calls: { account: string; script: Script; timeoutMs: number | undefined }[];
   let answer: { code: number; stderr: string; stdout?: string };
+  let reads: [string, string][];
+  let readsAnswer: () => Promise<"passed" | "skipped" | "missing">;
 
   const runAs: RunAs = (account, script, timeoutMs) => {
     calls.push({ account, script, timeoutMs });
     return Promise.resolve(answer);
   };
 
-  const installer = (hostKeyFile = join(dir, "host.pub")) => new ManagedKeyInstaller({ runAs, hostKeyFile });
+  const sshdReads: SshdReads = (account, keyFile) => {
+    reads.push([account, keyFile]);
+    return readsAnswer();
+  };
+
+  const installer = (hostKeyFile = join(dir, "host.pub")) => new ManagedKeyInstaller({ runAs, hostKeyFile, sshdReads });
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "managedkeys-"));
     calls = [];
+    reads = [];
+    readsAnswer = () => Promise.resolve("passed");
     answer = { code: 0, stderr: "", stdout: "removed\n" };
   });
 
@@ -176,7 +187,7 @@ describe("ManagedKeyInstaller", () => {
       return { code: 0, stderr: "", stdout: "removed" };
     };
 
-    const queued = new ManagedKeyInstaller({ runAs: slow, hostKeyFile: join(dir, "host.pub") });
+    const queued = new ManagedKeyInstaller({ runAs: slow, hostKeyFile: join(dir, "host.pub"), sshdReads });
 
     const first = queued.authorize({ account: "alice", systemType: "linux", line: LINE });
     const second = queued.deauthorize({ account: "alice", systemType: "linux", key: KEY, id: "web1" });
@@ -186,6 +197,153 @@ describe("ManagedKeyInstaller", () => {
     held.open();
     await Promise.all([first, second]);
     expect(order).toEqual(["alice sh start", "alice end", "alice sh start", "alice end"]);
+  });
+
+  test("authorize checks that sshd reads a key file other than authorized_keys", async () => {
+    const result = await installer().authorize({
+      account: "alice",
+      systemType: "linux",
+      line: LINE,
+      keyFile: "authorized_keys.claude-rc",
+    });
+
+    expect(reads).toEqual([["alice", "authorized_keys.claude-rc"]]);
+    expect(result).toBe("passed");
+    expect(calls).toHaveLength(1);
+  });
+
+  test("authorize fails with a 400 that names sudo claude-rc node sshd install when sshd does not read the file", async () => {
+    readsAnswer = () => Promise.resolve("missing");
+    const error = await refusal(
+      installer().authorize({
+        account: "alice",
+        systemType: "linux",
+        line: LINE,
+        keyFile: "authorized_keys.claude-rc",
+      }),
+    );
+
+    expect(error).toBeInstanceOf(ManagedKeyError);
+    expect(error).toMatchObject({
+      status: 400,
+      message:
+        "sshd does not read ~/.ssh/authorized_keys.claude-rc for alice. Run on this machine: sudo claude-rc node sshd install",
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("authorize skips the check for authorized_keys and for no key file", async () => {
+    const first = await installer().authorize({
+      account: "alice",
+      systemType: "linux",
+      line: LINE,
+      keyFile: "authorized_keys",
+    });
+    const second = await installer().authorize({ account: "alice", systemType: "linux", line: LINE });
+
+    expect([first, second]).toEqual(["not-needed", "not-needed"]);
+    expect(reads).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("authorize skips the check for a synology target, which keeps its own rules", async () => {
+    const result = await installer().authorize({
+      account: "alice",
+      systemType: "synology",
+      line: LINE,
+      keyFile: "authorized_keys2",
+    });
+
+    expect(result).toBe("not-needed");
+    expect(reads).toEqual([]);
+  });
+
+  test("authorize answers skipped on a node that is not root", async () => {
+    readsAnswer = () => Promise.resolve("skipped");
+    const result = await installer().authorize({
+      account: "alice",
+      systemType: "linux",
+      line: LINE,
+      keyFile: "authorized_keys.claude-rc",
+    });
+
+    expect(result).toBe("skipped");
+    expect(calls).toHaveLength(1);
+  });
+
+  test("an sshd failure during the check is a 500 with its text", async () => {
+    readsAnswer = () => Promise.reject(new SshdDropinError("sshd-failed", "sshd -T failed: bad config line 3"));
+    const error = await refusal(
+      installer().authorize({
+        account: "alice",
+        systemType: "linux",
+        line: LINE,
+        keyFile: "authorized_keys.claude-rc",
+      }),
+    );
+
+    expect(error).toBeInstanceOf(ManagedKeyError);
+    expect(error).toMatchObject({ status: 500 });
+    expect(error.message).toContain("sshd -T failed: bad config line 3");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("an account that sshd -C cannot take is a 400 and runs nothing", async () => {
+    readsAnswer = () => Promise.reject(new SshdDropinError("bad-account", "the account cannot go into sshd -C"));
+    const error = await refusal(
+      installer().authorize({
+        account: "alice",
+        systemType: "linux",
+        line: LINE,
+        keyFile: "authorized_keys.claude-rc",
+      }),
+    );
+
+    expect(error).toMatchObject({ status: 400 });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("an HTTP error of the check, like an unknown account, keeps its status", async () => {
+    readsAnswer = () => Promise.reject(new HttpError(400, "unknown user"));
+    const error = await refusal(
+      installer().authorize({ account: "bob", systemType: "linux", line: LINE, keyFile: "authorized_keys.claude-rc" }),
+    );
+
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error).toMatchObject({ status: 400 });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("the check waits in the queue of the account", async () => {
+    const held = gate();
+    const order: string[] = [];
+
+    const slow: RunAs = async () => {
+      order.push("script start");
+      await held.promise;
+      order.push("script end");
+      return { code: 0, stderr: "", stdout: "removed" };
+    };
+
+    const checking: SshdReads = () => {
+      order.push("check");
+      return Promise.resolve("passed");
+    };
+
+    const queued = new ManagedKeyInstaller({ runAs: slow, hostKeyFile: join(dir, "host.pub"), sshdReads: checking });
+    const first = queued.deauthorize({ account: "alice", systemType: "linux", key: KEY, id: "web1" });
+    const second = queued.authorize({
+      account: "alice",
+      systemType: "linux",
+      line: LINE,
+      keyFile: "authorized_keys.claude-rc",
+    });
+    await settle();
+    expect(order).toEqual(["script start"]);
+
+    held.open();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["script start", "script end", "check", "script start", "script end"]);
   });
 
   test("hostKey gives the first line without its comment", async () => {

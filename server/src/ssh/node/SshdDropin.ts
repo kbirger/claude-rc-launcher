@@ -1,4 +1,5 @@
 import { MANAGED_KEY_FILE } from "../constants";
+import { isAccount } from "../TargetStore";
 
 // The sshd drop-in that makes sshd read the dedicated key file `~/.ssh/authorized_keys.claude-rc`. sshd uses the first
 // value of a keyword, so the drop-in repeats the list that sshd uses now and adds the file. The name starts with `49-`,
@@ -46,7 +47,8 @@ export type SshdDropinCode =
   | "unmanaged-file"
   | "keys-off"
   | "test-failed"
-  | "not-effective";
+  | "not-effective"
+  | "bad-account";
 
 /** The drop-in work stopped. `code` tells why. */
 export class SshdDropinError extends Error {
@@ -210,8 +212,14 @@ export class SshdDropin {
     };
   }
 
-  /** True when sshd reads `~/.ssh/<keyFile>` for the account. A Match block can give the account another list. */
+  /**
+   * True when sshd reads `~/.ssh/<keyFile>` for the account. A Match block can give the account another list. The
+   * account goes into `sshd -T -C user=<account>,...`, so it must be an account of the target store without a control
+   * character: a comma or a space would add match fields.
+   */
   async readsFor(account: string, home: string, keyFile: string): Promise<boolean> {
+    if (!isAccount(account) || /\p{Cc}/u.test(account))
+      throw new SshdDropinError("bad-account", "the account is not valid for the sshd check");
     const list = await this.effectiveList(account);
     return listHolds(list, keyFile, home);
   }

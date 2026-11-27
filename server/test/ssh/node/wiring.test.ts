@@ -10,8 +10,10 @@ import type { NodeEvent } from "../../../src/hosts/NodeEvents";
 import type { Instance, Instances } from "../../../src/instances/InstanceService";
 import { HttpError } from "../../../src/shared/HttpError";
 import type { SystemUser, UserDirectory } from "../../../src/shared/users";
+import { DROPIN_MARKER, DROPIN_PATH, SshdDropin } from "../../../src/ssh/node/SshdDropin";
 import { accountIdentity, createNodeSsh, removeGrantFiles } from "../../../src/ssh/node/wiring";
 import { defined, noSkill, rejection } from "../../support";
+import { FakeSshd } from "./fakesshd";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"], scope: "system", serviceUser: "svc" } as unknown as Config;
 const ID1 = "0123456789ab";
@@ -572,5 +574,90 @@ describe("the skill of the node", () => {
     expect(() =>
       createNodeSsh({ cfg, instances: fakeInstances([]).instances, events: new NodeEvents(), dir, platform: "linux" }),
     ).toThrow("needs a deploySkill under test");
+  });
+});
+
+describe("the sshd check at the start of a node", () => {
+  const MANAGED_LIST = "AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys.claude-rc";
+  const sshdCalls = (fake: FakeSshd) => fake.calls.filter((call) => call.startsWith("sshd"));
+
+  test("start logs one line on a root node when sshd does not read the key file", async () => {
+    const fake = new FakeSshd();
+    const { ssh } = build([], { sshd: new SshdDropin(fake) });
+    await ssh.start();
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("~/.ssh/authorized_keys.claude-rc");
+    expect(logged[0]).toContain("sudo claude-rc node sshd install");
+    await ssh.stop();
+  });
+
+  test("start logs nothing when sshd reads the file", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${MANAGED_LIST}\n`);
+    const { ssh } = build([], { sshd: new SshdDropin(fake) });
+    await ssh.start();
+    expect(logged).toEqual([]);
+    expect(sshdCalls(fake)).toEqual(["sshdEffective"]);
+    await ssh.stop();
+  });
+
+  test("start does not check on a node that is not root", async () => {
+    const fake = new FakeSshd();
+    const { ssh } = build([], { sshd: new SshdDropin(fake), isRoot: () => false });
+    await ssh.start();
+    expect(fake.calls).toEqual([]);
+    // A node that is not root cannot switch to svc, so only the skill logs.
+    expect(logged.filter((line) => line.includes("sshd"))).toEqual([]);
+    await ssh.stop();
+  });
+
+  test("start does not check on Windows", async () => {
+    const fake = new FakeSshd();
+    const { ssh } = build([], { sshd: new SshdDropin(fake), platform: "win32" });
+    await ssh.start();
+    expect(fake.calls).toEqual([]);
+    await ssh.stop();
+  });
+
+  test("start logs one line when sshd cannot be checked, and the start still ends", async () => {
+    const fake = new FakeSshd();
+    fake.effective = () => undefined;
+    const { ssh } = build([instance(ID1, true, "alice")], { sshd: new SshdDropin(fake) });
+    await ssh.start();
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("cannot check");
+    expect(logged[0]).toContain("sshd is not installed");
+    // The rest of the start ran.
+    expect(existsSync(socketOf(ID1))).toBe(true);
+    await ssh.stop();
+  });
+
+  test("a check that throws a plain error also logs one line", async () => {
+    const fake = new FakeSshd();
+
+    fake.effective = () => {
+      throw new Error("spawn failed");
+    };
+
+    const { ssh } = build([], { sshd: new SshdDropin(fake) });
+    await ssh.start();
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("spawn failed");
+    await ssh.stop();
+  });
+
+  test("under test without sshd the start checks nothing", async () => {
+    const { ssh } = build([]);
+    await ssh.start();
+    expect(logged).toEqual([]);
+    await ssh.stop();
+  });
+
+  test("the managed routes use the sshd of the wiring for the check", async () => {
+    const fake = new FakeSshd();
+    const { ssh } = build([], { sshd: new SshdDropin(fake) });
+    const reads = defined(ssh.sshManaged.sshdReads);
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("missing");
+    expect(fake.calls).toContain("sshdEffective alice");
   });
 });

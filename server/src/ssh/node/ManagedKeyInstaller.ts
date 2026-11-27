@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { HttpError } from "../../shared/HttpError";
 import { deprovisionScript, provisionScript } from "../provision";
 import type { Script } from "../provision";
 import type { SystemType } from "../TargetStore";
 import { AccountQueue } from "./AccountQueue";
+import { SshdDropinError } from "./SshdDropin";
 
 // The hub asks a managed node to add or remove the key line of a target in the `authorized_keys` list of an account.
 // The node runs a provisioning script as that account. The routes in `ssh/api/node.ts` check the body, call
@@ -19,6 +21,18 @@ export type RunAs = (
   timeoutMs?: number,
 ) => Promise<{ code: number; stderr: string; stdout?: string }>;
 
+/**
+ * Whether sshd reads `~/.ssh/<keyFile>` for the account. `skipped`: the node cannot ask sshd, because it is not root.
+ * It throws when sshd cannot answer.
+ */
+export type SshdReads = (account: string, keyFile: string) => Promise<"passed" | "skipped" | "missing">;
+
+/** The sshd check of an install. `not-needed`: the install uses `authorized_keys`, or is not for a Linux target. */
+export type SshdCheckResult = "passed" | "skipped" | "not-needed";
+
+/** The file that sshd reads without any config. An install into it needs no check. */
+const DEFAULT_KEY_FILE = "authorized_keys";
+
 /** A rule of the managed routes refused a request, or the script failed. The routes answer with `status`. */
 export class ManagedKeyError extends Error {
   constructor(
@@ -34,6 +48,8 @@ export interface ManagedKeyDeps {
   runAs: RunAs;
   /** The sshd host key file. */
   hostKeyFile: string;
+  /** Asks sshd whether it reads a key file. Only an install of a Linux target into another file than `authorized_keys` asks. */
+  sshdReads: SshdReads;
   /** Default: a new queue. */
   queue?: AccountQueue;
 }
@@ -79,11 +95,21 @@ export class ManagedKeyInstaller {
     return `${type} ${key}`;
   }
 
-  /** Adds the key line to the list of the account. */
-  async authorize(input: AuthorizeInput): Promise<void> {
+  /**
+   * Adds the key line to the list of the account. An install of a Linux target into a key file other than
+   * `authorized_keys` first checks that sshd reads that file. The check runs in the queue of the account, before the
+   * script, so a failed check writes nothing.
+   */
+  async authorize(input: AuthorizeInput): Promise<SshdCheckResult> {
     const { account, systemType, line, keyFile } = input;
     const script = provisionScript(systemType, line, systemType === "windows" ? { account } : { keyFile });
-    await this.run(account, script, undefined);
+    const needsCheck = systemType === "linux" && keyFile !== undefined && keyFile !== DEFAULT_KEY_FILE;
+    let check: SshdCheckResult = "not-needed";
+
+    await this.run(account, script, undefined, async () => {
+      if (needsCheck) check = await this.checkSshd(account, keyFile);
+    });
+    return check;
   }
 
   /** Removes the key line of a target. The match is by blob and comment, because `from=` can change after the install. */
@@ -96,13 +122,43 @@ export class ManagedKeyInstaller {
     return result;
   }
 
-  /** Runs the script in the queue of the account. A script that fails is a 400 for an unknown profile, else a 500. */
+  /** The check of `authorize`. sshd that does not read the file is a 400. A failed check is a 500, an `HttpError` keeps its status. */
+  private async checkSshd(account: string, keyFile: string): Promise<"passed" | "skipped"> {
+    let answer: "passed" | "skipped" | "missing";
+
+    try {
+      answer = await this.deps.sshdReads(account, keyFile);
+    } catch (error) {
+      if (error instanceof HttpError || error instanceof ManagedKeyError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      if (error instanceof SshdDropinError && error.code === "bad-account") throw new ManagedKeyError(400, detail);
+      throw new ManagedKeyError(500, `cannot check that sshd reads ~/.ssh/${keyFile}: ${detail}`);
+    }
+
+    if (answer === "missing") {
+      throw new ManagedKeyError(
+        400,
+        `sshd does not read ~/.ssh/${keyFile} for ${account}. Run on this machine: sudo claude-rc node sshd install`,
+      );
+    }
+
+    return answer;
+  }
+
+  /**
+   * Runs the script in the queue of the account, after `before` when it is given. A script that fails is a 400 for an
+   * unknown profile, else a 500.
+   */
   private async run(
     account: string,
     script: Script,
     timeoutMs: number | undefined,
+    before?: () => Promise<void>,
   ): Promise<{ code: number; stderr: string; stdout?: string }> {
-    const outcome = await this.queue.run(account, () => this.deps.runAs(account, script, timeoutMs));
+    const outcome = await this.queue.run(account, async () => {
+      await before?.();
+      return this.deps.runAs(account, script, timeoutMs);
+    });
     const { code } = outcome;
     const failure = outcome.stderr.trim();
     if (code !== 0 && failure.includes("no profile for account")) throw new ManagedKeyError(400, failure);

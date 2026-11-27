@@ -1,6 +1,6 @@
 import type { NodeEvents } from "../../hosts";
 import type { IdentityFor } from "../../shared/asuser";
-import type { RunAs } from "./ManagedKeyInstaller";
+import type { RunAs, SshdReads } from "./ManagedKeyInstaller";
 import type { SshBroker } from "./SshBroker";
 import type { WindowsGrantOptions } from "./WindowsGrantPlatform";
 
@@ -31,4 +31,6 @@ export interface SshManagedOptions {
   runAs?: RunAs;
   /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
   identityFor?: IdentityFor;
+  /** Asks sshd whether it reads a key file. For tests. The default: `defaultSshdReads` with the sshd of the machine. */
+  sshdReads?: SshdReads;
 }

@@ -432,4 +432,23 @@ describe("SshdDropin.check and readsFor", () => {
     fake.accountLists.set("alice", ["/etc/ssh/claude-rc/%u"]);
     expect(await new SshdDropin(fake).readsFor("alice", "/home/alice", MANAGED_KEY_FILE)).toBe(false);
   });
+
+  test("readsFor refuses an account that would add match fields to sshd -C, and runs no sshd", async () => {
+    const fake = new FakeSshd();
+
+    for (const account of ["alice,addr=10.0.0.1", "al ice", "al\u0001ice", "al\tice", "", "-x"]) {
+      const error = await new SshdDropin(fake)
+        .readsFor(account, "/home/alice", MANAGED_KEY_FILE)
+        .catch((caught: unknown) => caught);
+      expect([account, error instanceof SshdDropinError && error.code]).toEqual([account, "bad-account"]);
+    }
+
+    expect(fake.calls).toEqual([]);
+  });
+
+  test("readsFor takes an account of the form user@domain", async () => {
+    const fake = new FakeSshd();
+    expect(await new SshdDropin(fake).readsFor("kir@example.com", "/home/kir", MANAGED_KEY_FILE)).toBe(false);
+    expect(fake.calls).toContain("sshdEffective kir@example.com");
+  });
 });
