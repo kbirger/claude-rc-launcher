@@ -6,7 +6,8 @@ import { HttpError } from "../../src/instances/InstanceService";
 import * as pinnedroot from "../../src/sessions/PinnedRoot";
 import { PinnedRoot } from "../../src/sessions/PinnedRoot";
 import type { PinnedFile } from "../../src/sessions/PinnedRoot";
-import { Session, SessionCatalog } from "../../src/sessions/SessionCatalog";
+import { Session } from "../../src/sessions/Session";
+import { SessionCatalog } from "../../src/sessions/SessionCatalog";
 import type { SessionCatalogOptions } from "../../src/sessions/SessionCatalog";
 import type { TranscriptFs } from "../../src/sessions/transcriptfs";
 

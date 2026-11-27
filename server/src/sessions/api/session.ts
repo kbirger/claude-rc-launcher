@@ -47,8 +47,9 @@ import type { Runner } from "../../shared/runner";
 import type { openDownload as openDownloadDefault, previewIn as previewInDefault } from "../files";
 import type { LiveInfo } from "../live";
 import type { PinnedRoot } from "../PinnedRoot";
+import type { Session } from "../Session";
 import { SessionCatalog } from "../SessionCatalog";
-import type { Session, SessionCatalogOptions } from "../SessionCatalog";
+import type { SessionCatalogOptions } from "../SessionCatalog";
 import type { TranscriptFs } from "../transcriptfs";
 
 /** An instance id: exactly 12 lowercase hex characters, for example "0123456789ab". */

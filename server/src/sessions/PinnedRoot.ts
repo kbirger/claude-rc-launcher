@@ -11,12 +11,13 @@ import { realpath, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { HttpError } from "../instances/InstanceService";
 import { absRefused, PathError, within } from "../shared/paths";
+import { ClaudeSettings } from "./ClaudeSettings";
 import { listIn } from "./files";
 import type { Download, Listing, Preview } from "./files";
 import { changedIn } from "./gitchanges";
 import type { ChangedFile, GitDeps } from "./gitchanges";
-import type { Session, SessionCatalog } from "./SessionCatalog";
-import { ClaudeSettings } from "./SettingsFile";
+import type { Session } from "./Session";
+import type { SessionCatalog } from "./SessionCatalog";
 import type { PermissionLayers } from "./SettingsFile";
 
 /** The root handed over is the real path that PinnedRoot.pin checked. A change after the check is refused. */

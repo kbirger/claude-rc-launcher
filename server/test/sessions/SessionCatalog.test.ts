@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { SessionCatalog, Session } from "../../src/sessions/SessionCatalog";
+import { Session } from "../../src/sessions/Session";
+import { SessionCatalog } from "../../src/sessions/SessionCatalog";
 import type { TranscriptFs } from "../../src/sessions/transcriptfs";
 import { rejection, defined } from "../support";
 

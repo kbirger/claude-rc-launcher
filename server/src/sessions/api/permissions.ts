@@ -21,11 +21,12 @@ import type { Context } from "hono";
 import { HttpError } from "../../instances/InstanceService";
 import type { Instances } from "../../instances/InstanceService";
 import { isObject, readJson } from "../../shared/requests";
+import { ClaudeSettings } from "../ClaudeSettings";
 import { nudge as realNudge, nudgeMessage } from "../nudge";
 import type { NudgeResult } from "../nudge";
 import type { RuleList } from "../permrules";
 import type { SessionCatalog } from "../SessionCatalog";
-import { checkRule, ClaudeSettings, SettingsError } from "../SettingsFile";
+import { checkRule, SettingsError } from "../SettingsFile";
 import type { LayerScope } from "../SettingsFile";
 import { sessionLookup } from "./session";
 

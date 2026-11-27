@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ClaudeSettings, SettingsError, SettingsFile } from "../../src/sessions/SettingsFile";
+import { ClaudeSettings } from "../../src/sessions/ClaudeSettings";
+import { SettingsError, SettingsFile } from "../../src/sessions/SettingsFile";
 import { defined } from "../support";
 
 let home: string;

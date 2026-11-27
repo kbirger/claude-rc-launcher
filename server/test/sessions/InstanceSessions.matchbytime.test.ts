@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { matchByTime } from "../../src/sessions/InstanceSessions";
 import type { Found } from "../../src/sessions/scan";
-import { matchByTime } from "../../src/sessions/SessionCatalog";
 
 const time = Date.parse("2026-11-13T04:17:49.571Z");
 const helper = (id: string, mtimeMs: number, clearedAt?: number): Found => ({

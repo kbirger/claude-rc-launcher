@@ -9,8 +9,8 @@ import { HttpError } from "../instances/InstanceService";
 import type { Instance, Instances } from "../instances/InstanceService";
 import { PollSource, realTimers } from "../shared/PollSource";
 import type { ChangeSource, Timers, Trigger } from "../shared/PollSource";
+import { liveOf, mapLimit } from "./InstanceSessions";
 import type { LiveInfo } from "./live";
-import { liveOf, mapLimit } from "./SessionCatalog";
 import type { SessionCatalog, SessionSummary } from "./SessionCatalog";
 
 export type SessionRow = SessionSummary & { instance: { id: string; name: string; path: string; state: string } };
