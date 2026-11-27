@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRunner, runProvisioner } from "../../../src/ssh/hub/maintenance";
 import type { SshRunner } from "../../../src/ssh/hub/maintenance";
-import { NodeError } from "../../../src/ssh/hub/SshService";
+import { NodeError } from "../../../src/ssh/hub/NodeError";
 
 // The runner spawns a fake `ssh`: a shell script in a temporary folder that records its arguments, its environment and
 // its stdin, and prints a scripted answer. No real ssh runs.

@@ -16,8 +16,9 @@ import { authorizedKeysLine, hasProvisioner, installNotes, SCRIPT_PATH_RE, Targe
 import type { SystemType, Target, TargetState, TargetStore } from "../TargetStore";
 import { GrantError } from "./GrantStore";
 import type { Grant, GrantStore, Maintenance } from "./GrantStore";
+import { NodeError } from "./NodeError";
 import type { KeySlot, SshKeyStore, UnlockSecret } from "./SshKeyStore";
-import { errorKind, NodeError } from "./SshService";
+import { errorKind } from "./SshService";
 import type { MaintenanceCommit, SshService } from "./SshService";
 import type { TargetLocks } from "./TargetLocks";
 

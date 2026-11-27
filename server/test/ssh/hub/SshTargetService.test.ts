@@ -1,8 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { GrantStore } from "../../../src/ssh/hub/GrantStore";
+import { NodeError } from "../../../src/ssh/hub/NodeError";
 import { SshKeyStore } from "../../../src/ssh/hub/SshKeyStore";
 import type { UnlockSecret } from "../../../src/ssh/hub/SshKeyStore";
-import { NodeError } from "../../../src/ssh/hub/SshService";
 import type { SshService } from "../../../src/ssh/hub/SshService";
 import { MIN_PASSPHRASE, SshTargetService } from "../../../src/ssh/hub/SshTargetService";
 import { TargetLocks } from "../../../src/ssh/hub/TargetLocks";

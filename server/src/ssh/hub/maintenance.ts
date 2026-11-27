@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { HOST_ID_RE } from "../../shared/hostid";
 import { parseAnswer, parseCommand } from "../provisioner";
 import type { ProvisionerAnswer } from "../provisioner";
-import { NodeError } from "./SshService";
+import { NodeError } from "./NodeError";
 
 // The `ssh` child process of the hub for a maintenance grant. The hub runs one command of the provisioner script on the
 // target, through the agent socket and the config file that the node `local` wrote for the grant. No shell runs on the

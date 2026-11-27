@@ -14,6 +14,7 @@ import { GrantError } from "./GrantStore";
 import type { Grant, GrantStore, Maintenance, MaintenanceAction } from "./GrantStore";
 import { defaultRunner, runProvisioner } from "./maintenance";
 import type { SshRunner } from "./maintenance";
+import { NodeError } from "./NodeError";
 import { KeyError } from "./SshKeyStore";
 import type { KeySlot, SshKeyStore, UnlockSecret } from "./SshKeyStore";
 
@@ -48,14 +49,6 @@ export const COMMIT_TIMEOUT_TEXT = "the change could not be stored in time";
  * guard (4) and no-sources (5). A write-failed (6) can follow a write of the key line, so it is not in the list.
  */
 const NOTHING_WRITTEN_CODES = new Set([2, 3, 4, 5]);
-
-/** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
-export class NodeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NodeError";
-  }
-}
 
 export interface HostKeyLine {
   line: string;
