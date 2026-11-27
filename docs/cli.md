@@ -206,7 +206,7 @@ These flags apply:
 - `--provisioner` also gives an external target of the type `linux`, `synology` or `dropbear` a provisioner key. Read [The provisioner key](#the-provisioner-key).
 - `--no-test` skips the one-minute test grant. With `--provisioner`, it also skips the proof of the provisioner.
 
-For a managed target, the command prints `key file: ~/.ssh/<file>` after `target <id> created`. If the node skipped its sshd check, the command prints a `note:` line after `key installed`.
+When the target has a key file, the command prints `key file: ~/.ssh/<file>` after `target <id> created`. With `--key-file authorized_keys`, and for a `synology` target without `--key-file`, the target has no key file, and the command prints no such line. If the node skipped its sshd check, the command prints a `note:` line after `key installed`.
 
 The command makes the key, pins the host key, installs the key and runs the test. For a passphrase, you type it in the terminal. For a passkey, the command prints a link to the web UI and waits until you unlock there. The key of `--identity` stays on your machine and never goes to the hub. If a step fails, the target stays in `draft` on the hub.
 
@@ -388,7 +388,7 @@ The command does not change a firewall.
 
 ## The sshd drop-in
 
-A managed Linux target keeps its key line in the key file `~/.ssh/authorized_keys.claude-rc`. sshd reads that file only after the sshd drop-in `/etc/ssh/sshd_config.d/49-claude-rc.conf` adds it to the `AuthorizedKeysFile` list. An sshd drop-in is a file that sshd reads as a part of its configuration. Read [SSH delegation](ssh-delegation.md#way-1-the-dedicated-key-file).
+An sshd drop-in is a file that sshd reads as a part of its configuration. A key file is the file in `~/.ssh` that holds the key line of a target. A managed Linux target keeps its key line in the key file `~/.ssh/authorized_keys.claude-rc`. sshd reads that file only after the sshd drop-in `/etc/ssh/sshd_config.d/49-claude-rc.conf` adds it to the `AuthorizedKeysFile` list. Read [SSH delegation](ssh-delegation.md#way-1-the-dedicated-key-file).
 
 `node setup` installs the drop-in after it writes the binary. It runs `sudo timeout -k 5 20 /usr/local/bin/claude-rc-launcher sshd-dropin install`. The launcher prints the result, and `node setup` shows it.
 
@@ -413,7 +413,9 @@ The launcher binary has the same command as `claude-rc-launcher sshd-dropin inst
 sudo /usr/local/bin/claude-rc-launcher sshd-dropin install
 ```
 
-`check` prints one of these lines:
+The texts below show the `claude-rc node sshd` form. The launcher form names `claude-rc-launcher sshd-dropin` in its texts.
+
+`check` prints one of these lines to stdout:
 
 ```text
 sshd reads .ssh/authorized_keys.claude-rc (AuthorizedKeysFile <list>)
@@ -435,8 +437,10 @@ If the reload fails, the command prints `sshd was not reloaded` with the error o
 The exit codes are these:
 
 - 0: the work is done, or `check` found that sshd reads the file.
-- 1: an error, or `check` found that sshd does not read the file. The error text goes to stderr.
-- 2: a wrong word or an extra word. The command prints the usage.
+- 1: an error, or `check` found that sshd does not read the file. An error text goes to stderr.
+- 2: a wrong word. The command prints the usage.
+
+`claude-rc node sshd` also exits with 2 for an extra word. It exits with 1 for a flag other than `--json` or `--help`. The launcher form ignores an extra word.
 
 The command works on Linux only. On another system, it prints `the sshd drop-in works on Linux only` and exits with 1. Without root, it prints `the sshd drop-in needs root. Run: sudo claude-rc node sshd <word>`. `claude-rc update` and `node update` do not install the drop-in. On a node from before this release, run `sudo claude-rc node sshd install` once.
 

@@ -146,7 +146,7 @@ The page shows the notes for the type of the target. These are the same notes:
 
 Some machines run a job that rewrites `authorized_keys`. For example, a cron job copies the file from a gist every hour. The job removes the key line of the hub. Three ways solve this problem.
 
-These terms are used in this section:
+This section uses these terms:
 
 - A key file is the file in `~/.ssh` that holds the key line of a target.
 - An sshd drop-in is a file in `/etc/ssh/sshd_config.d`. sshd reads it as a part of its configuration.
@@ -156,7 +156,7 @@ These terms are used in this section:
 
 A new managed target of the type `linux` uses the key file `~/.ssh/authorized_keys.claude-rc` by default. No other tool writes this file. The file belongs to the account, like `authorized_keys`.
 
-If the `AuthorizedKeysFile` list of sshd does not name a key file, sshd ignores that file. The node installer adds the file to that list with the sshd drop-in `/etc/ssh/sshd_config.d/49-claude-rc.conf`. Read [Install](install.md#the-sshd-drop-in). The drop-in holds the marker comment and one line:
+If the `AuthorizedKeysFile` list of sshd does not name a key file, sshd ignores that file. The installers of the hub and the node add the file to that list with the sshd drop-in `/etc/ssh/sshd_config.d/49-claude-rc.conf`. Read [Install](install.md#the-sshd-drop-in). The drop-in holds the marker comment and one line:
 
 ```text
 # Managed by claude-rc-launcher. Remove it with: sudo claude-rc node sshd remove
@@ -173,7 +173,7 @@ sudo claude-rc node sshd install
 sudo claude-rc node sshd remove
 ```
 
-- `check` prints the list of sshd. If sshd reads the file, it exits with 0. If not, it exits with 1.
+- `check` tells whether sshd reads the file. If sshd reads it, the line shows the list, and the exit code is 0. If not, the exit code is 1.
 - `install` reads the list with `sshd -T`, writes the drop-in and tests it with `sshd -t`. Then it reloads sshd. If sshd reads the file already, it changes nothing.
 - `remove` deletes the drop-in, but only a drop-in with the marker comment. Then it tests the configuration with `sshd -t` and reloads sshd.
 
@@ -182,19 +182,27 @@ Read [Command-line client](cli.md#the-sshd-drop-in) for the output and the exit 
 The install stops and changes nothing in these cases:
 
 - The command does not run as root.
-- sshd is not installed.
+- sshd is not installed, or `sshd -T` fails.
+- The drop-in path or the folder `sshd_config.d` is a symbolic link.
 - The main `sshd_config` has no `Include` line for `sshd_config.d`.
 - A file without the marker comment has the name of the drop-in. Add `.ssh/authorized_keys.claude-rc` to its line by hand.
 - sshd has `AuthorizedKeysFile none`, so it reads no key file.
 
-In two more cases, the install writes the drop-in and then removes it again:
+In three more cases, the install writes the drop-in and then undoes the write. It puts back the old managed drop-in, or it removes the new one:
 
 - `sshd -t` refuses the new configuration.
-- `sshd -T` does not show the file after the write. Then another file sets `AuthorizedKeysFile` first.
+- `sshd -T` fails after the write.
+- `sshd -T` does not show the file after the write. This means that another file sets `AuthorizedKeysFile` first.
 
-sshd prints the list without quotes. So the install cannot repeat a path that has a space. It splits that path in two, and `sshd -t` can still pass. Before the first install, run `sudo sshd -T | grep -i authorizedkeysfile`. If a path in the list has a space, do not run the install. Write the drop-in by hand with quotes, as in Way 2, and add `--no-sshd` to the installer. When the hand-made line names the file, a later install changes nothing.
+sshd prints the list without quotes. So the install cannot repeat a path that has a space. It splits that path in two, and `sshd -t` can still pass. Before the first install, run `sudo sshd -T | grep -i authorizedkeysfile`. If a path in the list has a space, do not run the install. Add `--no-sshd` to the installer, and write the drop-in by hand. Put quotes around the path with the space:
 
-Before a managed install into a key file other than `authorized_keys`, a root node asks sshd for the list of the account. A `Match` block can give one account another list. When the list does not name the file, the install fails with this text:
+```text
+AuthorizedKeysFile ".ssh/my keys" .ssh/authorized_keys .ssh/authorized_keys.claude-rc
+```
+
+When the hand-made line names the file, a later install changes nothing.
+
+A root node is a node whose service runs as root. A managed install is an install of the key line by the node. Before a managed install into a key file other than `authorized_keys`, a root node asks sshd for the list of the account. A `Match` block can give one account another list. When the list does not name the file, the install fails with this text:
 
 ```text
 sshd does not read ~/.ssh/authorized_keys.claude-rc for <account>. Run on this machine: sudo claude-rc node sshd install
@@ -219,7 +227,7 @@ The web wizard has the field Key file for the same choice. Leave it empty for `a
 - The name starts with `authorized_keys`. Up to 48 more letters, digits, dots, dashes or underscores can follow. Examples are `authorized_keys2` and `authorized_keys.claude-rc`.
 - The name is a plain file name in `~/.ssh`. A path or another ssh file, such as `known_hosts`, is refused with a 400.
 - An external target and the types `dropbear` and `windows` do not take a key file. The hub refuses it with a 400.
-- A `synology` target has no default key file. It uses `authorized_keys` unless you name another file.
+- A `synology` target has no default key file. Without a key file, it uses `authorized_keys`.
 - For a key file other than `authorized_keys.claude-rc`, the install command adds nothing to the list of sshd. Add the file to `AuthorizedKeysFile` yourself.
 - A retire removes the key line from the same file that the install used.
 - No route changes the key file of an existing target. Read [Move an existing target to the key file](#move-an-existing-target-to-the-key-file).
@@ -244,7 +252,7 @@ A node that was installed before this release has no drop-in. On such a node, ru
 ssh: sshd does not read ~/.ssh/authorized_keys.claude-rc, so a new managed Linux target on this node fails. Run on this machine: sudo claude-rc node sshd install
 ```
 
-The hub logs the same line for its own host. If `claude-rc` is not on the path of sudo, run `sudo /usr/local/bin/claude-rc-launcher sshd-dropin install`. If the machine of the hub is a target of the host `local`, run `sudo claude-rc-launcher sshd-dropin install` on it once.
+The hub logs the same line for its own host. If `claude-rc` is not on the path of sudo, run `sudo /usr/local/bin/claude-rc-launcher sshd-dropin install`. If the machine of the hub is a target of the host `local`, run `sudo /usr/local/bin/claude-rc-launcher sshd-dropin install` on it once.
 
 #### Way 2: a root-owned folder
 
@@ -263,6 +271,7 @@ sudo sshd -t && (sudo systemctl reload ssh || sudo systemctl reload sshd)
 - The folder and the files must belong to root. If another user can write them, sshd refuses the key.
 - The owner installs the line in the folder, and the hub only signs. The hub never writes to `/etc/ssh`. For a managed target, the hub still writes its line into the key file of the target.
 - The line names `.ssh/authorized_keys.claude-rc`, so a node check passes on this machine.
+- If a path in the list has a space, put quotes around that path in the line.
 - This drop-in has no marker comment. `claude-rc node sshd install` and `remove` never change a file without the marker comment.
 - The drop-in works only when the main `sshd_config` has the line `Include /etc/ssh/sshd_config.d/*.conf`. The line is near the top of the file, after the comments. Debian 11, Ubuntu 20.04 and newer releases do this. Check it with `grep -n Include /etc/ssh/sshd_config`.
 - The name starts with `49-` because the drop-in must load first. It must load before the main file and before other drop-ins that set the same keyword. So it loads before `50-cloud-init.conf`.
@@ -281,18 +290,38 @@ To move a target to `authorized_keys.claude-rc`, retire the target and add it ag
 
 These steps are for a managed target on a Way 2 machine. Such a machine has a hand-made drop-in and the root-owned folder `/etc/ssh/claude-rc`.
 
-1. Update the node on the machine. Update the `claude-rc` command there too.
-2. Add `.ssh/authorized_keys.claude-rc` to the `AuthorizedKeysFile` line of `/etc/ssh/sshd_config.d/49-claude-rc.conf`. Keep every other entry.
-3. Run `sudo sshd -t`. If the test passes, run `sudo systemctl reload ssh || sudo systemctl reload sshd`.
-4. Run `sudo claude-rc node sshd check`. Expect a line that starts with `sshd reads .ssh/authorized_keys.claude-rc`.
-5. Retire the target. The notice can say that the key line was not on the machine. The job removed it from `authorized_keys`.
-6. Add the target again with the same id and no `--key-file`. The command prints `key file: ~/.ssh/authorized_keys.claude-rc`.
-7. Unlock the new key, and let the test grant pass.
-8. Remove the old line from `/etc/ssh/claude-rc/<account>` by hand. The line ends with `claude-rc:<target id>`.
+1. Update the hub first. The hub picks the default key file. An old hub puts the line into `authorized_keys` again, and the job removes it.
+2. Update the node on the machine. Update the `claude-rc` command there too.
+3. Open an SSH session to the machine. Keep it open until step 7 is done.
+4. Run `sudoedit /etc/ssh/sshd_config.d/49-claude-rc.conf`. Add `.ssh/authorized_keys.claude-rc` to its `AuthorizedKeysFile` line.
+5. Keep `.ssh/authorized_keys` and every other entry in that line. Your own login can depend on those files.
+6. Run `sudo sshd -t`. If the test passes, run `sudo systemctl reload ssh || sudo systemctl reload sshd`.
+7. Open a second SSH login to the machine. If it fails, undo the edit in the open session, and reload sshd again.
+8. Run `sudo claude-rc node sshd check`. Expect a line that starts with `sshd reads .ssh/authorized_keys.claude-rc`.
+9. If sudo does not find `claude-rc`, run `sudo /usr/local/bin/claude-rc-launcher sshd-dropin check`.
+10. If the line starts with `sshd does not read`, stop. Check the edit of step 4. Do not retire the target.
+11. Write down the id, the managed host id, the system type, the account, the port and the nodes of the target.
+12. Retire the target on the SSH access page of the web UI. The CLI has no retire command.
+13. Read the notice. It can say that the key line was not on the machine, because the job removed it.
+14. Add the target again with the same id and no key file. Use the values of step 11.
+15. Unlock the new key, and let the test grant pass.
+16. Remove the old line from `/etc/ssh/claude-rc/<account>` by hand. The line ends with `claude-rc:<target id>`.
 
-The old line in step 8 is harmless, because the retire deleted its private key. Remove it to keep the file clean.
+A retire deletes the record of the target, so step 11 keeps the values for step 14. The card of a target on the SSH access page shows its address, port, account, system type and nodes. The managed host id is the id of the machine in the output of `claude-rc hosts`.
 
-On a machine without a hand-made drop-in, steps 2 and 3 are one command: `sudo claude-rc node sshd install`. Step 8 does not apply.
+For step 14 on the command line, use this command. If the port is not 22, add `--port <n>`.
+
+```sh
+claude-rc ssh target add <id> --managed <host id> --type linux --account <account> --node <ids>
+```
+
+The command prints `key file: ~/.ssh/authorized_keys.claude-rc`. It asks you to unlock twice: once for the key and once for the test grant. In the web UI, leave the Key file field empty.
+
+From step 12 to step 15, sessions cannot use the target.
+
+The old line in step 16 is harmless, because the retire deleted its private key. Remove it to keep the file clean.
+
+On a machine without a hand-made drop-in, steps 3 to 7 are one command: `sudo claude-rc node sshd install`. Step 16 does not apply.
 
 ### Instance setup
 

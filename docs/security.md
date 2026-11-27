@@ -79,7 +79,7 @@ These rules limit what the write can change:
 - The command refuses a symbolic link at the drop-in path and at the folder `sshd_config.d`.
 - After the write, `sshd -t` must pass, and `sshd -T` must show the new file. If a check fails, the command puts back the old file or removes the new one.
 - The command changes or removes only a file that starts with the marker comment. A hand-made file with the same name stays as it is.
-- The node service and the hub never write to `/etc/ssh`. At start and before a managed install, a root node only reads the list with `sshd -T`.
+- The node service and the hub never write to `/etc/ssh`. At start and before it installs a key line, a node whose service runs as root only reads the list with `sshd -T`.
 
 These limits remain:
 

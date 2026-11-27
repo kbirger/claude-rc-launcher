@@ -92,7 +92,9 @@ timeout -k 5 20 /usr/local/bin/claude-rc-launcher sshd-dropin install
 - If the machine has no sshd, the step fails at each run. Add `--no-sshd` to stop the warning.
 - If the step does not end within 20 seconds, `timeout` stops it, and the script warns and goes on.
 - If the machine has no `timeout` command, the script skips the step and warns.
-- With `SKIP_SYSTEMCTL=1`, the script prints `Would install the sshd drop-in: <binary> sshd-dropin install` and runs nothing.
+- With `SKIP_SYSTEMCTL=1`, the script prints `Would install the sshd drop-in: <binary> sshd-dropin install`. It does not run the drop-in step. It still installs the binary and the files.
+
+sshd prints the `AuthorizedKeysFile` list without quotes. So the install cannot repeat a path that has a space. Before the first run, check the list with `sudo sshd -T | grep -i authorizedkeysfile`. If a path in the list has a space, add `--no-sshd`, and write the drop-in by hand. Read [SSH delegation](ssh-delegation.md#way-1-the-dedicated-key-file).
 
 The time limit is for an old launcher binary. A binary from before this release has no `sshd-dropin` command. It ignores the word, loads its configuration and starts the server in the foreground. The time limit stops it, so the install does not hang. The variable `SSHD_DROPIN_TIMEOUT` changes the limit in seconds. It is a switch for tests.
 

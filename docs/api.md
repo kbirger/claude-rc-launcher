@@ -132,7 +132,7 @@ The SSH routes are under `/api/ssh` and `/cli/api/ssh`. A target is a machine th
 - `GET /targets` has the role `write`. The answer is 200 with the list of targets.
 - A target has `id`, `address`, `port`, `account`, `systemType`, `nodes` and `state`. It can have `managedHost`, `keyFile`, `hostKey`, `keyFingerprint` and the provisioner fields.
 - `POST /targets` has the role `admin`. The body needs `id`, `account`, `systemType` and `nodes`. The `systemType` is `linux`, `windows`, `synology` or `dropbear`.
-- The body can have `managedHost`, `keyFile`, `address` and `port`. The default `port` is 22. A target needs an `address`, or a `managedHost` from which the hub takes it.
+- The body can have `managedHost`, `keyFile`, `address` and `port`. The default `port` is 22. A managed `linux` target without `keyFile` gets `authorized_keys.claude-rc`. The `keyFile` `authorized_keys` stores no key file. A target needs an `address`, or a `managedHost` from which the hub takes it.
 - For `managedHost` set to `local`, the hub cannot tell the address, so it uses the source address of `local`. Without one, the answer is 400.
 - The answer is 201 with the target. A bad body gets 400. An `id` that exists gets 409.
 - `GET /targets/:id` has the role `admin`. The answer is 200 with the target and `notes`, a list of install notes for its system type.
@@ -159,7 +159,7 @@ The SSH routes are under `/api/ssh` and `/cli/api/ssh`. A target is a machine th
 - `POST /targets/:id/pin` has the role `admin`. The body is `{hostKey}`, one line `<type> <base64>`. The answer is 200 with the target. A bad line gets 400.
 - `POST /targets/:id/pin-managed` has the role `admin`. It has no body. The managed node reads its own host key, and the hub pins it. The answer is 200 `{keys}`.
 - A target that is not managed gets 409. A node that returns no key gets 502.
-- `POST /targets/:id/authorize` has the role `admin`. It has no body. The managed node puts the key line into the key file of the account. The answer is 200 `{ok: true}`.
+- `POST /targets/:id/authorize` has the role `admin`. It has no body. The managed node puts the key line into the key file of the account. The answer is 200 `{ok: true}`. For a `linux` target with a key file other than `authorized_keys`, the answer also has `sshdCheck`, which is `passed` or `skipped`.
 - A target that is not managed gets 409. A target with no usable source address gets 409. A failed node gets 502.
 - `POST /targets/:id/test` has the role `admin`. The body is `{node, unlock}`. The hub makes a test grant and runs `ssh` from the node.
 - The answer is 200 `{ok, error?}`. A good test sets the state of the target to `ready`. A node that is not in the list of the target gets 409.
@@ -191,7 +191,7 @@ A node serves its SSH routes under `/api/ssh`, with bearer token authentication.
 - `POST /reset` ends every grant on the node. The answer is 204.
 - `POST /scan` takes `{address, port}`. The answer is 200 `{keys}`, a list of `{line, fingerprint}`. A bad field gets 400.
 - `GET /hostkey` answers 200 `{keys}` with the host key of the node.
-- `POST /authorize` takes `{account, systemType, line, keyFile?}`. It adds the key line to the key file of the account. The answer is 204. If the body has `keyFile`, the answer is 200 `{keyFile}`.
+- `POST /authorize` takes `{account, systemType, line, keyFile?}`. It adds the key line to the key file of the account. The answer is 204. If the body has `keyFile`, the answer is 200 `{keyFile}`. For a `linux` target with a key file other than `authorized_keys`, the answer is 200 `{keyFile, sshdCheck}`. A root node first asks sshd for the list of the account. If the list does not name the file, the answer is 400. A node that is not root answers `skipped`.
 - `POST /deauthorize` takes `{account, systemType, id, key, keyFile?}`. It removes the key line. The answer is 200 `{result}` with `removed` or `not-found`.
 - Both managed routes answer 400 for a bad field or an account with no profile. If the script fails, they answer 500.
 
