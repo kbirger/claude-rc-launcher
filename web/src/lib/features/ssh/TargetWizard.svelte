@@ -1,8 +1,10 @@
 <script lang="ts">
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
+  import { Checkbox } from "#lib/components/ui/checkbox/index.js";
   import { Input } from "#lib/components/ui/input/index.js";
   import { Label } from "#lib/components/ui/label/index.js";
+  import * as Select from "#lib/components/ui/select/index.js";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
   import { useQueryClient } from "@tanstack/svelte-query";
@@ -33,7 +35,6 @@
   });
   const uid = $props.id();
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
-  const field = "border-input bg-card h-11 w-full min-w-0 rounded-lg border px-2.5 text-base md:text-sm";
   const step = $derived(model.step);
   const target = $derived(model.target);
   const script = model.script;
@@ -63,6 +64,22 @@
       {/if}
     </div>
   {/if}
+{/snippet}
+
+{#snippet nodeSelect(name: string)}
+  <div class="grid gap-1">
+    <Label for="{uid}-{name}">Node</Label>
+    <Select.Root type="single" bind:value={model.node}>
+      <Select.Trigger id="{uid}-{name}" class="w-full min-w-0 data-[size=default]:h-11">
+        {hostLabel(model.node, model.hosts)}
+      </Select.Trigger>
+      <Select.Content>
+        {#each model.allowed as item (item)}
+          <Select.Item value={item} label={hostLabel(item, model.hosts)}>{hostLabel(item, model.hosts)}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
 {/snippet}
 
 <Sheet.Root
@@ -114,14 +131,7 @@
               shows, then confirm.
             </p>
             {#if model.allowed.length > 1}
-              <div class="grid gap-1">
-                <Label for="{uid}-scan-node">Node</Label>
-                <select id="{uid}-scan-node" class={field} bind:value={model.node}>
-                  {#each model.allowed as item (item)}
-                    <option value={item}>{hostLabel(item, model.hosts)}</option>
-                  {/each}
-                </select>
-              </div>
+              {@render nodeSelect("scan-node")}
             {/if}
             {#if model.found.length > 0}
               <ul class="grid min-w-0 gap-1">
@@ -130,7 +140,7 @@
                 {/each}
               </ul>
               <Label class="flex min-h-11 items-center gap-3 rounded-lg border p-3">
-                <input type="checkbox" bind:checked={model.matched} />
+                <Checkbox bind:checked={model.matched} />
                 <span>They match</span>
               </Label>
             {/if}
@@ -208,14 +218,7 @@
             A test opens a connection for one minute and needs a new unlock. A failed test leaves the target in draft.
           </p>
           {#if model.allowed.length > 1}
-            <div class="grid gap-1">
-              <Label for="{uid}-test-node">Node</Label>
-              <select id="{uid}-test-node" class={field} bind:value={model.node}>
-                {#each model.allowed as item (item)}
-                  <option value={item}>{hostLabel(item, model.hosts)}</option>
-                {/each}
-              </select>
-            </div>
+            {@render nodeSelect("test-node")}
           {/if}
           {@render unlockField(false)}
           {#if model.testFailure}

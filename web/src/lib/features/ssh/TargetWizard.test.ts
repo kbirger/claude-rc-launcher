@@ -98,13 +98,6 @@ const typeInto = (selector: string, text: string) => {
   flushSync();
 };
 
-const choose = (selector: string, value: string) => {
-  const select = document.querySelector<HTMLSelectElement>(selector)!;
-  select.value = value;
-  select.dispatchEvent(new Event("change", { bubbles: true }));
-  flushSync();
-};
-
 // bits-ui opens a select on ArrowDown, and picks an option on pointer up, so the tests send those events.
 const openSelect = async (trigger: HTMLElement) => {
   trigger.focus();
@@ -188,7 +181,7 @@ test("the wizard blocks the pin step until the admin selects They match", async 
   expect(posts().some((call) => call.url.endsWith("/pin"))).toBe(false);
   expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
 
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   expect(button("Pin host key")!.disabled).toBe(false);
   press("Pin host key");
@@ -202,7 +195,7 @@ test("the pin sends the first line when no key is ed25519", async () => {
   await resumeAt({ keyFingerprint: "SHA256:key" });
   press("Scan host key");
   await waitText("SHA256:rsa");
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Pin host key");
   await waitText("Step 4 of 6: Install");
@@ -227,7 +220,7 @@ test("the install step shows the line of the key answer with a Copy button", asy
   await waitText("Step 3 of 6");
   press("Scan host key");
   await waitText("SHA256:ed");
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Pin host key");
   await waitText("Step 4 of 6");
@@ -506,7 +499,7 @@ test("the test step asks for a new unlock every time", async () => {
   prf.unlockWithPasskey.mockResolvedValueOnce("Zmlyc3Q").mockResolvedValueOnce("c2Vjb25k");
   answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: false, error: "nope" } });
   await toTest({ nodes: ["node1", "node2"] });
-  choose('select[id$="-test-node"]', "node2");
+  await pick('[id$="-test-node"]', "node2");
   press("Test connection");
   await waitText("nope");
   press("Try again");
@@ -575,14 +568,14 @@ test("a failed refetch of the target does not move or unmount the step", async (
   const client = await resumeAt({ keyFingerprint: "SHA256:key" });
   press("Scan host key");
   await waitText("SHA256:ed");
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   answers["GET /api/ssh/targets/nas"] = () => ({ status: 500, body: { error: "boom" } });
   await client.refetchQueries({ queryKey: ["ssh", "target", "nas"] });
   flushSync();
   expect(client.getQueryState(["ssh", "target", "nas"])?.status).toBe("error");
   expect(document.body.textContent).toContain("SHA256:ed");
-  expect(label("They match").querySelector("input")!.checked).toBe(true);
+  expect(label("They match").querySelector('[role="checkbox"]')!.getAttribute("aria-checked")).toBe("true");
   expect(button("Pin host key")!.disabled).toBe(false);
 });
 
@@ -595,9 +588,9 @@ test("Cancel calls onclose", () => {
 test("the node select shows the node that the scan uses when the admin does not touch it", async () => {
   answers["POST /api/ssh/targets/nas/scan"] = () => ({ body: { keys: [{ line: ED, fingerprint: "SHA256:ed" }] } });
   await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node1", "node2"] });
-  const select = document.querySelector<HTMLSelectElement>('select[id$="-scan-node"]')!;
-  expect(select.selectedIndex).toBe(0);
-  expect(select.value).toBe("node1");
+  const select = document.querySelector<HTMLElement>('[id$="-scan-node"]')!;
+  expect(select.labels[0]?.textContent).toBe("Node");
+  expect(select.textContent?.trim()).toBe("node1");
   press("Scan host key");
   await waitText("SHA256:ed");
   expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
@@ -606,12 +599,11 @@ test("the node select shows the node that the scan uses when the admin does not 
 test("the node select of the test step shows the node that the test uses", async () => {
   answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: true } });
   await toTest({ nodes: ["node1", "node2"] });
-  const select = document.querySelector<HTMLSelectElement>('select[id$="-test-node"]')!;
-  expect(select.selectedIndex).toBe(0);
+  const select = document.querySelector<HTMLElement>('[id$="-test-node"]')!;
+  expect(select.textContent?.trim()).toBe("node1");
   press("Test connection");
   await waitText("nas is ready");
-  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: select.value });
-  expect(select.value).toBe("node1");
+  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: "node1" });
 });
 
 const checkUsername = () => {
