@@ -165,7 +165,7 @@ AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 .ssh/authorized_ke
 
 The drop-in loads before the main file, and sshd uses the first value of a keyword. So the line repeats the list that sshd used before, and it adds the new file at the end.
 
-The drop-in keeps the list of the install day. While the drop-in exists, a later change of `AuthorizedKeysFile` in another sshd file has no effect. After such a change, run `sudo claude-rc node sshd remove` and then `sudo claude-rc node sshd install`.
+The drop-in keeps the list of the install day. While the drop-in exists, a later change of `AuthorizedKeysFile` in the main `sshd_config` or in a later drop-in has no effect. A drop-in that loads before `49-` wins over the managed drop-in, and the managed targets then fail. After such a change, open a second SSH session and keep it open. Run `sudo claude-rc node sshd remove` and then `sudo claude-rc node sshd install`. If you added a hand-made entry to the managed drop-in, delete its marker comment first, because `remove` deletes the whole file.
 
 To manage the drop-in by hand, run one of these commands on the machine:
 
@@ -204,7 +204,7 @@ AuthorizedKeysFile ".ssh/my keys" .ssh/authorized_keys .ssh/authorized_keys.clau
 
 When the hand-made line names the file, a later install changes nothing.
 
-A root node is a node whose service runs as root. A managed install is an install of the key line by the node. Before a managed install into a key file other than `authorized_keys`, a root node asks sshd for the list of the account. A `Match` block can give one account another list. When the list does not name the file, the install fails with this text:
+A root node is a node whose service runs as root. A managed install is an install of the key line by the node. Before a managed install into a key file other than `authorized_keys`, a root node asks sshd for the list of the account. When the list does not name the file, the install fails with this text:
 
 ```text
 sshd does not read ~/.ssh/authorized_keys.claude-rc for <account>. Run on this machine: sudo claude-rc node sshd install
@@ -216,7 +216,7 @@ If the global list names the file but a `Match` block gives the account another 
 A Match block in the sshd configuration sets another AuthorizedKeysFile list for <account>. The owner must add .ssh/authorized_keys.claude-rc to the list of that Match block on this machine.
 ```
 
-In that case, `sudo claude-rc node sshd install` does not help, because it changes the global list only. Find the block with `sudo grep -rn -A5 Match /etc/ssh/sshd_config /etc/ssh/sshd_config.d`. Add `.ssh/authorized_keys.claude-rc` to the `AuthorizedKeysFile` line of that block. Then run `sudo sshd -t` and reload sshd.
+In that case, `sudo claude-rc node sshd install` does not help, because it changes the global list only. Find the block with `sudo grep -rniE -A10 '^[[:space:]]*match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d`. Add `.ssh/authorized_keys.claude-rc` to the `AuthorizedKeysFile` line of that block. Then run `sudo sshd -t` and reload sshd.
 
 A node that does not run as root cannot ask sshd. It skips the check, and the command prints this note:
 
@@ -271,14 +271,14 @@ In this way, the account owner cannot change the key line. The owner of the mach
 Before you run the block, do these steps:
 
 1. Open an SSH session to the machine. Keep it open until a second login works.
-2. Run `sudo sshd -T | grep -i authorizedkeysfile`. Keep every entry of that output in the new `AuthorizedKeysFile` line.
-3. If `/etc/ssh/sshd_config.d/49-claude-rc.conf` exists, do not run the third command of the block. Run `sudoedit` on that file, and add `/etc/ssh/claude-rc/%u` to its line.
+2. Run `sudo sshd -T | grep -i authorizedkeysfile`. Keep every entry of that output in the new `AuthorizedKeysFile` line. The line in the block is an example, so edit it to match that output.
+3. If `/etc/ssh/sshd_config.d/49-claude-rc.conf` exists, the third command of the block does nothing. Run `sudoedit` on that file, and add `/etc/ssh/claude-rc/%u` to its line. Then delete the marker comment line, so that `claude-rc node sshd install` and `remove` leave the file alone.
 4. After the block, open a second SSH login to the machine. If it fails, undo the change in the open session, and reload sshd again.
 
 ```sh
 sudo mkdir -p /etc/ssh/claude-rc
 echo '<hub key line>' | sudo tee /etc/ssh/claude-rc/<account> >/dev/null
-echo 'AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 .ssh/authorized_keys.claude-rc /etc/ssh/claude-rc/%u' | sudo tee /etc/ssh/sshd_config.d/49-claude-rc.conf >/dev/null
+[ -e /etc/ssh/sshd_config.d/49-claude-rc.conf ] || echo 'AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 .ssh/authorized_keys.claude-rc /etc/ssh/claude-rc/%u' | sudo tee /etc/ssh/sshd_config.d/49-claude-rc.conf >/dev/null
 sudo chmod 755 /etc/ssh/claude-rc && sudo chmod 644 /etc/ssh/claude-rc/<account> /etc/ssh/sshd_config.d/49-claude-rc.conf
 sudo chown root:root /etc/ssh/claude-rc /etc/ssh/claude-rc/<account> /etc/ssh/sshd_config.d/49-claude-rc.conf
 sudo sshd -t && (sudo systemctl reload ssh || sudo systemctl reload sshd)
