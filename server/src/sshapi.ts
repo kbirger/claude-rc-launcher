@@ -19,8 +19,9 @@ import {
   routerScriptPath,
   NO_PROVISIONER_KEY_TEXT,
 } from "./sshprovisioner";
-import { errorKind, MAINTENANCE_BUSY, NodeError } from "./sshservice";
+import { errorKind, NodeError } from "./sshservice";
 import type { MaintenanceCommit, SshService } from "./sshservice";
+import { TargetLocks } from "./sshtargetlocks";
 import {
   authorizedKeysLine,
   hasProvisioner,
@@ -180,32 +181,14 @@ export function sshApi(options: SshApiOptions): Hono {
     return target;
   };
 
-  // The per-target locks of the routes that change a target. `editing` is held by PATCH, by the key routes, by the
-  // provisioner key routes and by the approve of a `sources` or `install` grant, `retiring` by DELETE and by the approve
-  // of an `uninstall` grant. A route that takes the lock adds the id before its first await. These locks last for one
-  // request. While a maintenance grant of the target is pending, active or still running, `maintenanceFor` is the lock:
-  // it clears by itself on a deny, an expiry, the end of the run and a restart of the hub.
-  const editing = new Set<string>();
-  const retiring = new Set<string>();
+  // The per-target locks: see `TargetLocks`. A route that takes a lock takes it before its first await.
+  const locks = new TargetLocks(service);
 
-  /** 409 when a retire, another change or a maintenance grant of the target runs. */
   const needIdle = (id: string): void => {
-    if (retiring.has(id)) throw new TargetError(409, "this target is being retired");
-    if (editing.has(id)) throw new TargetError(409, "this target is being changed");
-    if (service.maintenanceFor(id)) throw new TargetError(409, MAINTENANCE_BUSY);
+    locks.needIdle(id);
   };
 
-  /** Runs `work` under the lock of a target: 409 when a retire or another change runs, and the lock is always freed. */
-  const locked = async <T>(id: string, work: () => Promise<T>): Promise<T> => {
-    needIdle(id);
-    editing.add(id);
-
-    try {
-      return await work();
-    } finally {
-      editing.delete(id);
-    }
-  };
+  const locked = <T>(id: string, work: () => Promise<T>): Promise<T> => locks.run("edit", id, work);
 
   /** Only an external target of a POSIX type has a provisioner key. */
   const needProvisionerTarget = (target: Target): void => {
@@ -556,14 +539,12 @@ export function sshApi(options: SshApiOptions): Hono {
     if (body.confirm !== undefined && typeof body.confirm !== "boolean")
       throw new HttpError(400, "confirm must be true or false");
     const id = context.req.param("id");
-    needIdle(id);
-    editing.add(id);
 
     let newLine: string | undefined;
-    let lineUpdated = false;
+    let lineUpdated = false as boolean;
     let pushHosts: string[] = [];
 
-    try {
+    const early = await locks.run<Grant | undefined>("edit", id, async () => {
       // Read again under the lock: the target can have changed while the body was read.
       const target = needTarget(context);
       pushHosts = target.nodes;
@@ -590,7 +571,7 @@ export function sshApi(options: SshApiOptions): Hono {
           toNodes: nodes,
           by: options.user(context),
         });
-        return context.json({ maintenance: projection(grant) }, 202);
+        return grant;
       }
 
       if (nodes !== undefined) {
@@ -641,9 +622,10 @@ export function sshApi(options: SshApiOptions): Hono {
         if (state === "disabled") endGrantsOf(target.id);
         await targets.setState(target.id, state);
       }
-    } finally {
-      editing.delete(id);
-    }
+
+      return undefined;
+    });
+    if (early) return context.json({ maintenance: projection(early) }, 202);
 
     const pushed = await push(pushHosts);
     return context.json({
@@ -667,10 +649,8 @@ export function sshApi(options: SshApiOptions): Hono {
     const cleanup = context.req.query("cleanup");
     if (cleanup !== undefined && cleanup !== "none") throw new HttpError(400, "cleanup must be none");
     const target = needTarget(context);
-    needIdle(target.id);
-    retiring.add(target.id);
 
-    try {
+    return locks.run("retire", target.id, async () => {
       if (cleanup === undefined && withProvisioner(target)) {
         const grant = service.requestMaintenance({
           targetId: target.id,
@@ -696,9 +676,7 @@ export function sshApi(options: SshApiOptions): Hono {
       const removal: Removal =
         target.managedHost === undefined ? { line: "manual" } : await service.deauthorizeManaged(target.id);
       return context.json(await retire(target, removal));
-    } finally {
-      retiring.delete(target.id);
-    }
+    });
   });
 
   hono.get("/targets/:id/salt", async (context) => {
@@ -706,7 +684,7 @@ export function sshApi(options: SshApiOptions): Hono {
     const slot = slotOf(context.req.query("key"));
     if (slot === "provisioner") needProvisionerTarget(target);
     // A salt that is made while a retire runs could stay behind after the retire.
-    if (retiring.has(target.id)) throw new TargetError(409, "this target is being retired");
+    if (locks.isRetiring(target.id)) throw new TargetError(409, "this target is being retired");
     const method = keys.method();
     const credentialId = keys.credentialId();
     return context.json({
@@ -910,14 +888,6 @@ export function sshApi(options: SshApiOptions): Hono {
 
   hono.get("/grants", (context) => context.json(grants.list().map(projection)));
 
-  /** Holds a lock of one request for the approve of a maintenance grant. Nobody else takes it while the grant waits. */
-  const hold = (set: Set<string>, id: string): void => {
-    // The DELETE that made an uninstall grant still holds its lock for a moment after the push to the phone.
-    if (retiring.has(id) || editing.has(id))
-      throw new TargetError(409, "the request is still being set up or another change runs: try again in a moment");
-    set.add(id);
-  };
-
   /** The approve of a `sources` grant: the run, then the new list in the store, while the grant is still active. */
   const approveSources = async (context: Context, grantId: string, work: Maintenance, unlock: UnlockSecret) => {
     const targetId = grants.get(grantId)?.targetId ?? "";
@@ -1014,19 +984,14 @@ export function sshApi(options: SshApiOptions): Hono {
       return context.json(projection(grant));
     }
 
-    const lock = work.action === "uninstall" ? retiring : editing;
-    hold(lock, waiting.targetId);
-
-    try {
+    return locks.hold(work.action === "uninstall" ? "retire" : "edit", waiting.targetId, async () => {
       if (work.action === "sources") return await approveSources(context, grantId, work, unlock);
       if (work.action === "uninstall") return await approveUninstall(context, grantId, unlock);
       const grant = await service.approve(grantId, options.user(context), unlock);
       if (grant.maintenance?.result !== "done")
         throw new NodeError(`the key line was not put back on the machine: ${detailOf(grant)}`);
       return context.json(projection(grant));
-    } finally {
-      lock.delete(waiting.targetId);
-    }
+    });
   });
 
   hono.post("/grants/:id/deny", (context) =>
