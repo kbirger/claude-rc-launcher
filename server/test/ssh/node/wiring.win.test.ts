@@ -13,8 +13,8 @@ import type { Instance, Instances } from "../../../src/instances/InstanceService
 import { sshNodeApi } from "../../../src/ssh/api/node";
 import type { SshNodeOptions } from "../../../src/ssh/node/types";
 import { createNodeSsh } from "../../../src/ssh/node/wiring";
-import { WinSshBridge } from "../../../src/win/sshbridge";
 import type { SshClientCheck } from "../../../src/win/sshclient";
+import { WinSshBridge } from "../../../src/win/WinSshBridge";
 import { defined } from "../../support";
 
 const cfg = { mode: "node", name: "win", roots: ["C:\\srv"], scope: "system", serviceUser: "svc" } as unknown as Config;

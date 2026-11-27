@@ -10,12 +10,12 @@ import { bunRunner } from "../../shared/runner";
 import { passwdDirectory } from "../../shared/users";
 import type { UserDirectory } from "../../shared/users";
 import { newPipeName, pipeTransport, currentUserSid } from "../../win/pipe";
-import type { WinSshBridge } from "../../win/sshbridge";
 import { checkSshClientHere } from "../../win/sshclient";
 import type { SshClientCheck } from "../../win/sshclient";
-import { WinSshControl } from "../../win/sshcontrol";
 import { ensurePrivateFolder, removeStaleGrantFiles } from "../../win/sshfiles";
 import type { RunIcacls } from "../../win/sshfiles";
+import type { WinSshBridge } from "../../win/WinSshBridge";
+import { WinSshControl } from "../../win/WinSshControl";
 import type { AgentTransport } from "./GrantAgent";
 import { SSH_SKILL, ensureSkill, skillVersion } from "./skill";
 import type { SkillResult, SkillUser } from "./skill";
@@ -356,7 +356,7 @@ const CLIENT_CACHE_MS = 30_000;
 
 /**
  * The SSH wiring of a Windows node. The agent of a grant is a named pipe, the files have access lists, and the control
- * channel is one named pipe with a token for each instance (win/sshcontrol.ts). Every grant checks the client again.
+ * channel is one named pipe with a token for each instance (win/WinSshControl.ts). Every grant checks the client again.
  */
 function createWindowsSsh(
   options: NodeSshOptions,

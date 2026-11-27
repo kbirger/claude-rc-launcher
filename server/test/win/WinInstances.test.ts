@@ -7,9 +7,9 @@ import type { TrustStore } from "../../src/instances/trust";
 import { instanceId } from "../../src/instances/unit";
 import { HttpError } from "../../src/shared/HttpError";
 import { PathError } from "../../src/shared/paths";
-import { WinInstances, taskkillTree } from "../../src/win/instances";
-import type { Spawned, WinDeps, WinInstanceOptions } from "../../src/win/instances";
 import { RestrictedTokenError } from "../../src/win/token";
+import { WinInstances, taskkillTree } from "../../src/win/WinInstances";
+import type { Spawned, WinDeps, WinInstanceOptions } from "../../src/win/WinInstances";
 import { rejection, defined } from "../support";
 
 const ROOT = "C:\\work";

@@ -11,10 +11,10 @@ import { startNode } from "./nodemain";
 import { VERSION } from "./shared/version";
 import { checkServiceAccount } from "./win/account";
 import { definitionStatus } from "./win/definition";
-import { taskkillTree, WinInstances } from "./win/instances";
-import { WinSshBridge } from "./win/sshbridge";
 import { planSessions, serviceAdminState } from "./win/token";
 import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EXIT_CODE } from "./win/update";
+import { taskkillTree, WinInstances } from "./win/WinInstances";
+import { WinSshBridge } from "./win/WinSshBridge";
 
 // The Windows node. Only this file imports ./win, so the Linux binaries never contain this code.
 

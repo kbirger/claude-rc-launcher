@@ -17,7 +17,7 @@ import type { NodeSshOptions } from "./ssh/node/wiring";
 import { realUpdateEnv } from "./updates/realupdate";
 import { createClientVersions, createServiceUpdater } from "./updates/serviceupdate";
 import type { DefinitionStatus } from "./win/definition";
-import type { WinSshBridge } from "./win/sshbridge";
+import type { WinSshBridge } from "./win/WinSshBridge";
 
 export interface NodeDeps {
   instances?: Instances;

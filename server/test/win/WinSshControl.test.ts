@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import { sshRequest, sshTargets } from "../../../cli/src/sshcmd";
 import type { AgentTransport, ConnectionHandler, RawConnection } from "../../src/ssh/node/GrantAgent";
 import { newPipeName, pipeTransport } from "../../src/win/pipe";
-import { WinSshControl } from "../../src/win/sshcontrol";
+import { WinSshControl } from "../../src/win/WinSshControl";
 
 /** A transport with no pipe: the test pushes bytes into each connection and reads what comes back. */
 function fakeTransport() {

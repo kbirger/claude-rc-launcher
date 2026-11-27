@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunSpawn } from "../../src/win/instances";
 import {
   RestrictedTokenError,
   planSessions,
@@ -10,6 +9,7 @@ import {
   serviceAdminState,
   serviceIsAdmin,
 } from "../../src/win/token";
+import { bunSpawn } from "../../src/win/WinInstances";
 import { defined } from "../support";
 
 test("token.ts imports on every platform", () => {
