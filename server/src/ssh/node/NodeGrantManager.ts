@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { AccessResult } from "../api/node";
+import { NO_WAITING_REQUEST } from "../constants";
 import { ensureTopFolder, MAX_SOCKET_PATH, removeQuietly } from "./files";
 import type { Chown } from "./files";
 import { GrantAgent } from "./GrantAgent";
@@ -8,8 +8,8 @@ import type { GrantAgentOptions } from "./GrantAgent";
 import { grantConfig, knownHostsLine } from "./grantconfig";
 import type { GrantPlatform } from "./GrantPlatform";
 import type { PendingSigns } from "./PendingSigns";
+import type { AccessResult } from "./SshBroker";
 
-export const NO_WAITING_REQUEST = "no request waits for this answer";
 const SIGNATURE_LEN = 64;
 /** The files of one grant in the folder of its instance. */
 const GRANT_SUFFIXES = [".sock", ".config", ".known_hosts", ".pub"];

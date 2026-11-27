@@ -5,7 +5,7 @@ import { HttpError } from "../../shared/HttpError";
 import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
 import { isObject } from "../../shared/requests";
-import { NO_WAITING_REQUEST } from "../api/node";
+import { NO_WAITING_REQUEST } from "../constants";
 import { formatCommand, validSources } from "../provisioner";
 import type { ProvisionerAnswer, ProvisionerCommand } from "../provisioner";
 import { authorizedKeysLine, hasProvisioner, MAX_NODES, TargetError } from "../TargetStore";

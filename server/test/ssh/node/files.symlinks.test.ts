@@ -7,8 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeEvents } from "../../../src/hosts/NodeEvents";
 import { publicKeyBlob } from "../../../src/ssh/agentproto";
-import { SshBroker, sshNodeApi } from "../../../src/ssh/api/node";
+import { sshNodeApi } from "../../../src/ssh/api/node";
 import { createPrivateFile, writeNewFile } from "../../../src/ssh/node/files";
+import { SshBroker } from "../../../src/ssh/node/SshBroker";
 import { SshControl } from "../../../src/ssh/node/SshControl";
 import { rejection } from "../../support";
 

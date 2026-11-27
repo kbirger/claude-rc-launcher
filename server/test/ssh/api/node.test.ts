@@ -1,5 +1,5 @@
-import type { MiddlewareHandler } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { MiddlewareHandler } from "hono";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +15,11 @@ import {
   publicKeyBlob,
   signAnswer,
 } from "../../../src/ssh/agentproto";
-import { SshBroker, grantConfig, knownHostsLine, sshNodeApi, unsupportedSshApi } from "../../../src/ssh/api/node";
+import { sshNodeApi, unsupportedSshApi } from "../../../src/ssh/api/node";
 import type { SshNodeOptions } from "../../../src/ssh/api/node";
 import { FrameReader } from "../../../src/ssh/FrameReader";
+import { grantConfig, knownHostsLine } from "../../../src/ssh/node/grantconfig";
+import { SshBroker } from "../../../src/ssh/node/SshBroker";
 import { HOST_KEY_RE } from "../../../src/ssh/TargetStore";
 
 function noop(): void {

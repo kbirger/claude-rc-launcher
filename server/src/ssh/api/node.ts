@@ -12,15 +12,11 @@ import type { RunAs } from "../node/ManagedKeyInstaller";
 import { NodeGrantError, NodeGrantManager } from "../node/NodeGrantManager";
 import type { GrantRequest, SignOutcome } from "../node/NodeGrantManager";
 import { PendingSigns } from "../node/PendingSigns";
+import type { SshBroker, TargetSummary } from "../node/SshBroker";
 import { WindowsGrantPlatform } from "../node/WindowsGrantPlatform";
 import type { WindowsGrantOptions } from "../node/WindowsGrantPlatform";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "../TargetStore";
 import type { SystemType } from "../TargetStore";
-
-export { grantConfig, knownHostsLine, sshConfigPath } from "../node/grantconfig";
-export { ensureInstanceFolder } from "../node/files";
-export type { WindowsGrantOptions } from "../node/WindowsGrantPlatform";
-export { NO_WAITING_REQUEST } from "../node/NodeGrantManager";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
 // (sshnodeagent.ts), writes an `ssh` config file and a known_hosts file, and asks the hub to sign when the SSH client
@@ -34,7 +30,6 @@ export { NO_WAITING_REQUEST } from "../node/NodeGrantManager";
 // `authorized_keys` list of an account, so the owner needs no SSH key of their own. These routes also work on a
 // Windows node.
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
 const KEY_BLOB_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);
 const KEY_BLOB_LEN = 51;
@@ -43,87 +38,6 @@ const KEY_BLOB_LEN = 51;
 const TOKEN_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** One word without white space, control characters or a leading dash. It ends up on one line of the config file. */
 const WORD_RE = /^[^\s\p{Cc}-][^\s\p{Cc}]{0,252}$/u;
-
-export interface TargetSummary {
-  id: string;
-  account: string;
-  address: string;
-}
-
-export interface AccessResult {
-  socket: string;
-  config: string;
-  endsAt: number;
-  /** The full path of the checked `ssh` program. Set on a Windows node only. */
-  ssh?: string;
-}
-
-interface Waiter<T> {
-  resolve: (value: T) => void;
-  reject: (error: Error) => void;
-  timer?: ReturnType<typeof setTimeout>;
-}
-
-/** The requests of the node CLI for access to a target. Each one waits for the answer of the hub. */
-export class SshBroker {
-  private readonly waiting = new Map<string, Waiter<AccessResult>>();
-  private list: TargetSummary[] = [];
-  private readonly events: NodeEvents;
-  private readonly requestTimeoutMs: number;
-
-  constructor(options: { events: NodeEvents; requestTimeoutMs?: number }) {
-    this.events = options.events;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  }
-
-  /** Asks the hub for access and waits. Fails with the reason of the hub, or after `requestTimeoutMs`. */
-  request(input: { instanceId: string; targetId: string; minutes?: number; reason?: string }): Promise<AccessResult> {
-    const requestId = crypto.randomUUID();
-
-    return new Promise<AccessResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.waiting.delete(requestId);
-        reject(new Error("no answer from the hub"));
-      }, this.requestTimeoutMs);
-      this.waiting.set(requestId, { resolve, reject, timer });
-      this.events.emit({ type: "ssh.request", requestId, ...input });
-    });
-  }
-
-  /** Whether a request with this id still waits for the answer of the hub. */
-  isWaiting(requestId: string): boolean {
-    return this.waiting.has(requestId);
-  }
-
-  /** The hub approved. Returns false for an unknown or finished request id: nobody gets the answer. */
-  activate(requestId: string, result: AccessResult): boolean {
-    const waiter = this.take(requestId);
-    waiter?.resolve(result);
-    return waiter !== undefined;
-  }
-
-  /** The hub refused. An unknown or finished request id is ignored. */
-  reject(requestId: string, reason: string): void {
-    const waiter = this.take(requestId);
-    waiter?.reject(new Error(reason));
-  }
-
-  setTargets(list: TargetSummary[]): void {
-    this.list = list.map((target) => ({ ...target }));
-  }
-
-  targets(): TargetSummary[] {
-    return this.list.map((target) => ({ ...target }));
-  }
-
-  private take(requestId: string): Waiter<AccessResult> | undefined {
-    const waiter = this.waiting.get(requestId);
-    if (!waiter) return undefined;
-    this.waiting.delete(requestId);
-    clearTimeout(waiter.timer);
-    return waiter;
-  }
-}
 
 export interface SshNodeOptions {
   /** The folder for the sockets and the files of the grants. The routes create it with mode 711. Each instance gets its own folder inside it with mode 700. */

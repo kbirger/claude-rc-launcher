@@ -21,11 +21,12 @@ import type { SshClientCheck } from "../../win/sshclient";
 import { WinSshControl } from "../../win/sshcontrol";
 import { ensurePrivateFolder, removeStaleGrantFiles } from "../../win/sshfiles";
 import type { RunIcacls } from "../../win/sshfiles";
-import { SshBroker, sshManagedApi, sshNodeApi } from "../api/node";
+import { sshManagedApi, sshNodeApi } from "../api/node";
 import type { SshManagedOptions, SshNodeOptions } from "../api/node";
 import type { AgentTransport } from "./GrantAgent";
 import { SSH_SKILL, ensureSkill, skillVersion } from "./skill";
 import type { SkillResult, SkillUser } from "./skill";
+import { SshBroker } from "./SshBroker";
 import { SshControl } from "./SshControl";
 
 // The SSH parts of a node, wired together: the broker, the grant routes, the managed target routes and one control

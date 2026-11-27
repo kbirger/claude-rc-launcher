@@ -4,13 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeEvents } from "../../../src/hosts/NodeEvents";
 import type { NodeEvent } from "../../../src/hosts/NodeEvents";
-import type { AccessResult } from "../../../src/ssh/api/node";
+import { NO_WAITING_REQUEST } from "../../../src/ssh/constants";
 import { MAX_SOCKET_PATH } from "../../../src/ssh/node/files";
 import type { GrantAgentOptions } from "../../../src/ssh/node/GrantAgent";
 import type { ClientStatus, GrantPlatform, GrantSetup, Owner } from "../../../src/ssh/node/GrantPlatform";
-import { NO_WAITING_REQUEST, NodeGrantError, NodeGrantManager } from "../../../src/ssh/node/NodeGrantManager";
+import { NodeGrantError, NodeGrantManager } from "../../../src/ssh/node/NodeGrantManager";
 import type { GrantBroker, GrantRequest } from "../../../src/ssh/node/NodeGrantManager";
 import { PendingSigns } from "../../../src/ssh/node/PendingSigns";
+import type { AccessResult } from "../../../src/ssh/node/SshBroker";
 
 const BLOB = new Uint8Array(51).fill(1);
 const HOST_KEY = "ssh-ed25519 AAAA";
