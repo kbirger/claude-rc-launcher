@@ -4,15 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { HOST_ID_RE } from "../../hosts/id";
 import { keyFingerprint, publicKeyBlob, publicKeyLine } from "../agentproto";
-import {
-  deriveWrapKey,
-  openWithRecovery,
-  recoveryPublicKeyOf,
-  seal,
-  sealToRecovery,
-  unseal,
-  WrapError,
-} from "./wrap";
+import { deriveWrapKey, openWithRecovery, recoveryPublicKeyOf, seal, sealToRecovery, unseal, WrapError } from "./wrap";
 import type { Sealed } from "./wrap";
 
 // Encrypted key store for SSH delegation. The hub holds one main Ed25519 key for each target, and an external target

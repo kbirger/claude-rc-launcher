@@ -1,8 +1,8 @@
 import { chown as chownDefault } from "node:fs/promises";
 import { join } from "node:path";
-import { listenStaged, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./files";
 import type { AccessResult, TargetSummary } from "../api/node";
 import { ensureInstanceFolder } from "../api/node";
+import { listenStaged, MAX_SOCKET_PATH, removeQuietly, stageFits } from "./files";
 
 // The control socket of one instance. A session on the node runs `claude-rc ssh targets` or `claude-rc ssh request`
 // and the command talks to this socket. The socket lives in the folder of the instance (mode 700, owned by the

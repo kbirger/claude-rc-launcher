@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Trigger } from "../../src/shared/PollSource";
 import { WATCH_WINDOW_MS, WatchFlag } from "../../src/sessions/WatchFlag";
+import type { Trigger } from "../../src/shared/PollSource";
 import { fakeTimers } from "../faketimers";
 
 function setup() {

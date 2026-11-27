@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment -- the answer bodies are loose JSON that the tests check */
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createApp } from "../../../src/app";
+import type { UserAuthStrategy } from "../../../src/auth/user";
 import type { Config } from "../../../src/config/parse";
 import type { HostClient, HostConfig } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
@@ -9,9 +10,8 @@ import { requiredRole } from "../../../src/roles";
 import { GrantStore } from "../../../src/ssh/hub/GrantStore";
 import { SshKeyStore } from "../../../src/ssh/hub/SshKeyStore";
 import { SshService } from "../../../src/ssh/hub/SshService";
-import { installNotes, TargetStore } from "../../../src/ssh/TargetStore";
 import { newRecovery } from "../../../src/ssh/hub/wrap";
-import type { UserAuthStrategy } from "../../../src/auth/user";
+import { installNotes, TargetStore } from "../../../src/ssh/TargetStore";
 import { fakeTimers } from "../../faketimers";
 import { fakeRunner } from "../hub/fakerunner";
 

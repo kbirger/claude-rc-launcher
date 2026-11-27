@@ -1,13 +1,13 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
+import { generateSecret } from "./auth/node";
+import { loadConfigFile, resolveConfigPath } from "./config/file";
 import { windowsDataDir } from "./config/parse";
 import type { Config } from "./config/parse";
-import { loadConfigFile, resolveConfigPath } from "./config/file";
-import { bunRunner } from "./instances/InstanceService";
-import { generateSecret } from "./auth/node";
-import { startNode } from "./nodemain";
 import { NodeEvents } from "./hosts/NodeEvents";
+import { bunRunner } from "./instances/InstanceService";
+import { startNode } from "./nodemain";
 import { VERSION } from "./shared/version";
 import { checkServiceAccount } from "./win/account";
 import { definitionStatus } from "./win/definition";

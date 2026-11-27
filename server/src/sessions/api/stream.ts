@@ -6,9 +6,9 @@
 import type { Context } from "hono";
 import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
+import { sseResponse } from "../../shared/sse";
 import type { BeatLoop } from "../beat";
 import type { SessionsStore } from "../SessionsStore";
-import { sseResponse } from "../../shared/sse";
 
 export function sessionsStream(options: {
   store: Pick<SessionsStore, "answer" | "subscribe">;

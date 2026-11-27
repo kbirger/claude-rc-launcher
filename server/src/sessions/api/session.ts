@@ -38,17 +38,17 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { posix, win32 as win32Path } from "node:path";
-import type { Identity } from "../../shared/asuser";
-import { downloadHeaders } from "../../shared/disposition";
 import { HttpError } from "../../instances/InstanceService";
 import type { Instances } from "../../instances/InstanceService";
-import type { LiveInfo } from "../live";
-import type { PinnedRoot } from "../PinnedRoot";
+import type { Identity } from "../../shared/asuser";
+import { downloadHeaders } from "../../shared/disposition";
 import { bunRunner } from "../../shared/runner";
 import type { Runner } from "../../shared/runner";
+import type { openDownload as openDownloadDefault, previewIn as previewInDefault } from "../files";
+import type { LiveInfo } from "../live";
+import type { PinnedRoot } from "../PinnedRoot";
 import { SessionCatalog } from "../SessionCatalog";
 import type { Session, SessionCatalogOptions } from "../SessionCatalog";
-import type { openDownload as openDownloadDefault, previewIn as previewInDefault } from "../files";
 import type { TranscriptFs } from "../transcriptfs";
 
 /** An instance id: exactly 12 lowercase hex characters, for example "0123456789ab". */

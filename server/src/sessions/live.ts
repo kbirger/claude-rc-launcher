@@ -1,7 +1,7 @@
 import { open, opendir, readdir, readFile, readlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { OPEN_READ_NO_FOLLOW } from "./openflags";
 import { within } from "../shared/paths";
+import { OPEN_READ_NO_FOLLOW } from "./openflags";
 
 // The running-session files. Each running Claude Code session keeps `<home>/.claude/sessions/<pid>.json` with its
 // session id, its status ("idle" or "busy"), the name the Claude app shows, and `bridgeSessionId` when it is attached

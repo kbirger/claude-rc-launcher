@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SETTINGS, SETTINGS_HELP, argsWith, settingsFromArgs, settingsHelpFor } from "../../src/instances/settings";
+import {
+  DEFAULT_SETTINGS,
+  SETTINGS_HELP,
+  argsWith,
+  settingsFromArgs,
+  settingsHelpFor,
+} from "../../src/instances/settings";
 import { defined } from "../support";
 
 describe("sshRequests", () => {

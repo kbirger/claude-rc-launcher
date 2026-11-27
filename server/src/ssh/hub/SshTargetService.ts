@@ -1,9 +1,6 @@
 import { LOCAL_HOST } from "../../hosts/id";
 import { logToken } from "../../roles";
 import { keyFingerprint } from "../agentproto";
-import { GrantError } from "./GrantStore";
-import type { Grant, GrantStore, Maintenance } from "./GrantStore";
-import type { KeySlot, SshKeyStore, UnlockSecret } from "./SshKeyStore";
 import { provisionScript } from "../provision";
 import type { Script } from "../provision";
 import {
@@ -15,11 +12,14 @@ import {
   routerScriptPath,
   NO_PROVISIONER_KEY_TEXT,
 } from "../provisioner/key";
+import { authorizedKeysLine, hasProvisioner, installNotes, SCRIPT_PATH_RE, TargetError } from "../TargetStore";
+import type { SystemType, Target, TargetState, TargetStore } from "../TargetStore";
+import { GrantError } from "./GrantStore";
+import type { Grant, GrantStore, Maintenance } from "./GrantStore";
+import type { KeySlot, SshKeyStore, UnlockSecret } from "./SshKeyStore";
 import { errorKind, NodeError } from "./SshService";
 import type { MaintenanceCommit, SshService } from "./SshService";
 import type { TargetLocks } from "./TargetLocks";
-import { authorizedKeysLine, hasProvisioner, installNotes, SCRIPT_PATH_RE, TargetError } from "../TargetStore";
-import type { SystemType, Target, TargetState, TargetStore } from "../TargetStore";
 
 const DEFAULT_PORT = 22;
 /** A passphrase that is set (not typed to unlock) needs at least this many characters (code points). */

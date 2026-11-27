@@ -1,13 +1,13 @@
-import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { describe, expect, test } from "bun:test";
 import { createNodeApp } from "../../src/app";
 import type { Config } from "../../src/config/parse";
 import { createHostClient, type HostConfig } from "../../src/hosts/client";
 import type { HostEntry, HostRegistry } from "../../src/hosts/HostRegistry";
+import { NodeEvents } from "../../src/hosts/NodeEvents";
 import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
 import type { SessionsPayload } from "../../src/sessions/SessionIndex";
 import { UpdateLog } from "../../src/updates/UpdateLog";
-import { NodeEvents } from "../../src/hosts/NodeEvents";
 
 // A node with a very large session list: the whole path from the index to the hub watcher, through the real SSE reader.
 

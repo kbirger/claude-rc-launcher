@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
-import { HttpError } from "../../instances/InstanceService";
-import { isObject, readObject } from "../../shared/requests";
-import { logToken } from "../../roles";
 import type { User } from "../../auth/user";
+import { HttpError } from "../../instances/InstanceService";
+import { logToken } from "../../roles";
+import { isObject, readObject } from "../../shared/requests";
 import { PushValidationError } from "../PushService";
 import type { PushService, PushSubscriptionJson } from "../PushService";
 

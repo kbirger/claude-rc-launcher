@@ -1,15 +1,15 @@
-import { describe, expect, test } from "bun:test";
 import { Hono, type MiddlewareHandler } from "hono";
+import { describe, expect, test } from "bun:test";
 import { createApp } from "../../../src/app";
-import type { ChangeSource } from "../../../src/shared/PollSource";
+import type { UserAuthStrategy } from "../../../src/auth/user";
 import type { Config } from "../../../src/config/parse";
 import type { Presence } from "../../../src/hosts/nodewatcher";
+import { sessionsStream } from "../../../src/sessions/api/stream";
 import { SessionCatalog } from "../../../src/sessions/SessionCatalog";
 import { SessionIndex } from "../../../src/sessions/SessionIndex";
 import type { HostPart, StoreChange } from "../../../src/sessions/SessionsStore";
-import { sessionsStream } from "../../../src/sessions/api/stream";
+import type { ChangeSource } from "../../../src/shared/PollSource";
 import { trackStreams } from "../../../src/shared/sse";
-import type { UserAuthStrategy } from "../../../src/auth/user";
 import { fakeTimers } from "../../faketimers";
 
 const tick = async (n = 3) => {

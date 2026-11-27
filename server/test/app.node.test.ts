@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config/parse";
-import { HttpError } from "../src/instances/InstanceService";
 import { NodeEvents } from "../src/hosts/NodeEvents";
+import { HttpError } from "../src/instances/InstanceService";
 import { VERSION } from "../src/shared/version";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;

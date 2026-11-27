@@ -4,13 +4,13 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createNodeApp, onError } from "../../../src/app";
+import { loadOrCreateHubKey } from "../../../src/auth/hubproof";
+import { nodeAuth } from "../../../src/auth/node";
 import type { Config } from "../../../src/config/parse";
 import { hostAdminApi } from "../../../src/hosts/api/admin";
 import { createHostClient, hubAuthorizer } from "../../../src/hosts/client";
 import type { HostConfig } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
-import { loadOrCreateHubKey } from "../../../src/auth/hubproof";
-import { nodeAuth } from "../../../src/auth/node";
 import { ensureNodeCert } from "../../../src/hosts/tls";
 import { defined } from "../../support";
 

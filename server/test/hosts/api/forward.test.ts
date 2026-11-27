@@ -1,20 +1,26 @@
+import type { MiddlewareHandler } from "hono";
+import { Hono } from "hono";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { MiddlewareHandler } from "hono";
 import { createApp, createNodeApp } from "../../../src/app";
-import type { Config } from "../../../src/config/parse";
-import { HttpError } from "../../../src/instances/InstanceService";
-import { HostError, createHostClient, secretAuthorizer, type HostClient, type HostConfig } from "../../../src/hosts/client";
 import { generateSecret, nodeAuth } from "../../../src/auth/node";
-import { ensureNodeCert } from "../../../src/hosts/tls";
-import { HostRegistry } from "../../../src/hosts/HostRegistry";
-import type { Cloner } from "../../../src/instances/cloner";
-import type { UpdateReport } from "../../../src/updates/serviceupdate";
-import { VERSION } from "../../../src/shared/version";
+import type { Config } from "../../../src/config/parse";
 import { hostsApi } from "../../../src/hosts/api/forward";
-import { Hono } from "hono";
+import {
+  HostError,
+  createHostClient,
+  secretAuthorizer,
+  type HostClient,
+  type HostConfig,
+} from "../../../src/hosts/client";
+import { HostRegistry } from "../../../src/hosts/HostRegistry";
+import { ensureNodeCert } from "../../../src/hosts/tls";
+import type { Cloner } from "../../../src/instances/cloner";
+import { HttpError } from "../../../src/instances/InstanceService";
+import { VERSION } from "../../../src/shared/version";
+import type { UpdateReport } from "../../../src/updates/serviceupdate";
 import { UpdateRecord } from "../../../src/updates/UpdateRecord";
 
 const ID = "0123456789ab";

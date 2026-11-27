@@ -2,13 +2,13 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { GrantStore } from "../../../src/ssh/hub/GrantStore";
 import { SshKeyStore } from "../../../src/ssh/hub/SshKeyStore";
 import type { UnlockSecret } from "../../../src/ssh/hub/SshKeyStore";
-import { CONFIRM_NODES_SUFFIX, CONFIRM_NODES_TEXT } from "../../../src/ssh/provisioner/key";
 import { NodeError } from "../../../src/ssh/hub/SshService";
 import type { SshService } from "../../../src/ssh/hub/SshService";
-import { TargetLocks } from "../../../src/ssh/hub/TargetLocks";
-import { TargetError, TargetStore } from "../../../src/ssh/TargetStore";
 import { MIN_PASSPHRASE, SshTargetService } from "../../../src/ssh/hub/SshTargetService";
+import { TargetLocks } from "../../../src/ssh/hub/TargetLocks";
 import { newRecovery } from "../../../src/ssh/hub/wrap";
+import { CONFIRM_NODES_SUFFIX, CONFIRM_NODES_TEXT } from "../../../src/ssh/provisioner/key";
+import { TargetError, TargetStore } from "../../../src/ssh/TargetStore";
 
 const passphrase = (text: string): UnlockSecret => ({ method: "passphrase", secret: new TextEncoder().encode(text) });
 const GOOD = "correct horse battery";

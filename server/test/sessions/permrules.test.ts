@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { detectIndent, formatRule, markShadowed, parseRule, rulesOf, withRule, withoutRule } from "../../src/sessions/permrules";
+import {
+  detectIndent,
+  formatRule,
+  markShadowed,
+  parseRule,
+  rulesOf,
+  withRule,
+  withoutRule,
+} from "../../src/sessions/permrules";
 import type { Rule } from "../../src/sessions/permrules";
 import { defined } from "../support";
 

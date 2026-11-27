@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { PushMessage } from "../../../src/push/PushService";
 import type { Grant } from "../../../src/ssh/hub/GrantStore";
 import {
   closeMessage,
@@ -7,7 +8,6 @@ import {
   maintenanceMessage,
   requestMessage,
 } from "../../../src/ssh/hub/notify";
-import type { PushMessage } from "../../../src/push/PushService";
 import type { Target } from "../../../src/ssh/TargetStore";
 
 const target = {

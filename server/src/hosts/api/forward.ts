@@ -1,14 +1,10 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import type { User } from "../../auth/user";
 import type { Config } from "../../config/parse";
-import { downloadHeaders, lastSegment } from "../../shared/disposition";
-import { HostError } from "../client";
-import type { HostClient, HostFailure } from "../client";
-import { HOST_ID_RE } from "../id";
-import type { HostRegistry } from "../HostRegistry";
 import { HttpError } from "../../instances/InstanceService";
-import type { LatestRelease } from "../../updates/latest";
 import { parseRuleEdit } from "../../sessions/api/permissions";
+import { downloadHeaders, lastSegment } from "../../shared/disposition";
 import {
   isObject,
   parseCloneRequest,
@@ -19,12 +15,16 @@ import {
   parseUpdateRequest,
   readJson,
 } from "../../shared/requests";
-import type { UpdateReport } from "../../updates/serviceupdate";
-import type { UpdateRecord } from "../../updates/UpdateRecord";
-import type { UpdateTracker } from "../../updates/tracker";
-import type { User } from "../../auth/user";
 import { VERSION } from "../../shared/version";
 import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "../../shared/versions";
+import type { LatestRelease } from "../../updates/latest";
+import type { UpdateReport } from "../../updates/serviceupdate";
+import type { UpdateTracker } from "../../updates/tracker";
+import type { UpdateRecord } from "../../updates/UpdateRecord";
+import { HostError } from "../client";
+import type { HostClient, HostFailure } from "../client";
+import type { HostRegistry } from "../HostRegistry";
+import { HOST_ID_RE } from "../id";
 
 /** Reads at most `max` bytes of a small body and cancels the rest. */
 async function readSmall(body: ReadableStream<Uint8Array> | null, max: number): Promise<string> {

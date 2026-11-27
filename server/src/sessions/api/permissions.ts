@@ -20,14 +20,14 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { HttpError } from "../../instances/InstanceService";
 import type { Instances } from "../../instances/InstanceService";
+import { isObject, readJson } from "../../shared/requests";
 import { nudge as realNudge, nudgeMessage } from "../nudge";
 import type { NudgeResult } from "../nudge";
 import type { RuleList } from "../permrules";
-import { isObject, readJson } from "../../shared/requests";
-import { sessionLookup } from "./session";
 import type { SessionCatalog } from "../SessionCatalog";
 import { checkRule, ClaudeSettings, SettingsError } from "../SettingsFile";
 import type { LayerScope } from "../SettingsFile";
+import { sessionLookup } from "./session";
 
 export interface PermissionsApiDeps {
   instances: Instances;

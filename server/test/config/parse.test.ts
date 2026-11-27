@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { applyLocal, loadConfigFile, resolveConfigPath } from "../../src/config/file";
 import { ConfigError, parseConfig } from "../../src/config/parse";
 import type { Config, ConfigIo, OidcUserAuth } from "../../src/config/parse";
-import { applyLocal, loadConfigFile, resolveConfigPath } from "../../src/config/file";
 import { defined } from "../support";
 
 const oa = (config: Config) => config.userAuth as OidcUserAuth;

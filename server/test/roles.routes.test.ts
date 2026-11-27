@@ -1,9 +1,9 @@
 import type { MiddlewareHandler } from "hono";
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
+import type { UserAuthStrategy } from "../src/auth/user";
 import type { Config } from "../src/config/parse";
 import { requiredRole } from "../src/roles";
-import type { UserAuthStrategy } from "../src/auth/user";
 
 const cfg = {
   mode: "hub",

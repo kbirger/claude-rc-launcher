@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
+import { resolveConfigPath } from "../../src/config/file";
 import { ConfigError, parseConfig, windowsDataDir } from "../../src/config/parse";
 import type { ConfigIo } from "../../src/config/parse";
-import { resolveConfigPath } from "../../src/config/file";
 import { accountName, checkServiceAccount } from "../../src/win/account";
 import { defined } from "../support";
 

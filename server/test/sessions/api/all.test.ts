@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { describe, expect, test } from "bun:test";
 import { createApp } from "../../../src/app";
 import type { Config } from "../../../src/config/parse";
 import type { HostClient, HostConfig } from "../../../src/hosts/client";

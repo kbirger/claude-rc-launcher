@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
 import { onError } from "../../../src/app";
+import { hostsApi } from "../../../src/hosts/api/forward";
 import { HostError } from "../../../src/hosts/client";
 import type { HostClient, HostConfig } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
-import { hostsApi } from "../../../src/hosts/api/forward";
 import { defined } from "../../support";
 
 const ID = "0123456789ab";

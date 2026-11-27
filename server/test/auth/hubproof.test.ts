@@ -1,12 +1,12 @@
-import { describe, expect, test } from "bun:test";
 import { SignJWT } from "jose";
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { certFingerprint, createProofVerifier, loadOrCreateHubKey, ProofError, signProof, type ProofRequest } from "../../src/auth/hubproof";
-import { actStore } from "../../src/roles";
 import { ensureNodeCert } from "../../src/hosts/tls";
+import { actStore } from "../../src/roles";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-hubproof-"));
 const AUD = "sha256:" + "ab".repeat(32);

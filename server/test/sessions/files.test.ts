@@ -2,8 +2,8 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { link, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PathError } from "../../src/shared/paths";
 import { listIn, openDownload, previewIn, PREVIEW_LIMIT, resolveIn } from "../../src/sessions/files";
+import { PathError } from "../../src/shared/paths";
 import { defined } from "../support";
 
 const win = process.platform === "win32";

@@ -1,9 +1,9 @@
 import { X509Certificate } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { validPeer } from "../auth/proxy";
 import type { HostConfig } from "../hosts/client";
 import { HOST_ID_RE } from "../hosts/id";
-import { validPeer } from "../auth/proxy";
 import { DEFAULT_ROLES, isRole, isRoleValue } from "../roles";
 import type { RoleSettings, RoleValue } from "../roles";
 

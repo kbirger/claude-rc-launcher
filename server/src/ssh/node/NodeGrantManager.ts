@@ -1,13 +1,13 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
+import type { AccessResult } from "../api/node";
 import { MAX_SOCKET_PATH, removeQuietly } from "./files";
 import type { Chown } from "./files";
+import { GrantAgent } from "./GrantAgent";
+import type { GrantAgentOptions } from "./GrantAgent";
 import { grantConfig, knownHostsLine } from "./grantconfig";
 import { ensureTopFolder } from "./LinuxGrantPlatform";
 import type { GrantPlatform } from "./LinuxGrantPlatform";
-import { GrantAgent } from "./GrantAgent";
-import type { GrantAgentOptions } from "./GrantAgent";
-import type { AccessResult } from "../api/node";
 import type { PendingSigns } from "./PendingSigns";
 
 export const NO_WAITING_REQUEST = "no request waits for this answer";

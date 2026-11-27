@@ -1,5 +1,5 @@
-import { MAINTENANCE_BUSY } from "./SshService";
 import { TargetError } from "../TargetStore";
+import { MAINTENANCE_BUSY } from "./SshService";
 
 /** Which lock of a target: `edit` for a change, `retire` for a delete. */
 export type TargetLockKind = "edit" | "retire";

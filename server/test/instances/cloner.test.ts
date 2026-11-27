@@ -14,8 +14,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCloner } from "../../src/instances/cloner";
 import type { Config } from "../../src/config/parse";
+import { createCloner } from "../../src/instances/cloner";
 import { HttpError } from "../../src/instances/InstanceService";
 import { adoptNewDir, DirChanged } from "../../src/instances/ownedir";
 import type { AdoptDir } from "../../src/instances/ownedir";

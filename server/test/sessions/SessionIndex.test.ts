@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { capSessions, MAX_SESSIONS_BYTES, SessionIndex, type SessionRow, type SessionsEvent } from "../../src/sessions/SessionIndex";
 import type { SessionSummary } from "../../src/sessions/SessionCatalog";
+import { capSessions, MAX_SESSIONS_BYTES, SessionIndex, type SessionRow, type SessionsEvent } from "../../src/sessions/SessionIndex";
 import type { ChangeSource, Trigger } from "../../src/shared/PollSource";
 import { fakeTimers } from "../faketimers";
 

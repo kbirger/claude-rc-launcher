@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { HttpError } from "../instances/InstanceService";
-import { hasOwn } from "../shared/requests";
 import type { TrustOwner, TrustStore } from "../instances/trust";
+import { hasOwn } from "../shared/requests";
 
 /**
  * Trust on Windows. `claude` keeps it in `<home>\.claude.json` as `projects[<path>].hasTrustDialogAccepted`.

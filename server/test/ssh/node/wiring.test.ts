@@ -1,16 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp, onError } from "../../../src/app";
 import type { Config } from "../../../src/config/parse";
-import { HttpError } from "../../../src/instances/InstanceService";
-import type { Instance, Instances } from "../../../src/instances/InstanceService";
-import { accountIdentity, createNodeSsh, removeGrantFiles } from "../../../src/ssh/node/wiring";
 import { NodeEvents } from "../../../src/hosts/NodeEvents";
 import type { NodeEvent } from "../../../src/hosts/NodeEvents";
+import { HttpError } from "../../../src/instances/InstanceService";
+import type { Instance, Instances } from "../../../src/instances/InstanceService";
 import type { SystemUser, UserDirectory } from "../../../src/shared/users";
+import { accountIdentity, createNodeSsh, removeGrantFiles } from "../../../src/ssh/node/wiring";
 import { defined, noSkill, rejection } from "../../support";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"], scope: "system", serviceUser: "svc" } as unknown as Config;

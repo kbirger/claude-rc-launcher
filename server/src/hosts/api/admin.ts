@@ -1,15 +1,15 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { isIP } from "node:net";
-import { PeekError, peekCertificate } from "../certpeek";
+import type { User } from "../../auth/user";
 import { hostUrlProblem } from "../../config/parse";
-import { HostError } from "../client";
-import type { HostClient, HostConfig } from "../client";
-import { HOST_ID_RE } from "../id";
-import type { HostRegistry } from "../HostRegistry";
 import { HttpError } from "../../instances/InstanceService";
 import { readObject } from "../../shared/requests";
-import type { User } from "../../auth/user";
+import { PeekError, peekCertificate } from "../certpeek";
+import { HostError } from "../client";
+import type { HostClient, HostConfig } from "../client";
+import type { HostRegistry } from "../HostRegistry";
+import { HOST_ID_RE } from "../id";
 
 const DNS_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const TEST_CALL_TIMEOUT_MS = 5_000;

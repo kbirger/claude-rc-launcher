@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { logToken } from "../../roles";
 import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
-import { logToken } from "../../roles";
 import type { UnlockedKey } from "./SshKeyStore";
 
 // Grant state machine for SSH delegation. A grant is a request from a node to use the key of one target for a while.

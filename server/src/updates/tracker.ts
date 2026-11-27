@@ -1,7 +1,7 @@
 import type { Presence } from "../hosts/nodewatcher";
+import { normalizeVersion } from "../shared/versions";
 import type { UpdateReport } from "./serviceupdate";
 import type { UpdateEntry, UpdateRecord } from "./UpdateRecord";
-import { normalizeVersion } from "../shared/versions";
 
 export interface UpdateTracker {
   /** Writes a `running` entry unless a recent one of that host still runs; true when it wrote. */

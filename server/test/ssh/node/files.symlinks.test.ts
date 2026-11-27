@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { publicKeyBlob } from "../../../src/ssh/agentproto";
-import { createPrivateFile, writeNewFile } from "../../../src/ssh/node/files";
-import { SshBroker, sshNodeApi } from "../../../src/ssh/api/node";
-import { SshControl } from "../../../src/ssh/node/SshControl";
 import { NodeEvents } from "../../../src/hosts/NodeEvents";
+import { publicKeyBlob } from "../../../src/ssh/agentproto";
+import { SshBroker, sshNodeApi } from "../../../src/ssh/api/node";
+import { createPrivateFile, writeNewFile } from "../../../src/ssh/node/files";
+import { SshControl } from "../../../src/ssh/node/SshControl";
 import { rejection } from "../../support";
 
 const BLOB = publicKeyBlob(new Uint8Array(32).fill(7));

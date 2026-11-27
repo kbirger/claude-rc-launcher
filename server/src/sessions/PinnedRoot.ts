@@ -9,13 +9,13 @@
  */
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
-import { changedIn } from "./gitchanges";
-import type { ChangedFile, GitDeps } from "./gitchanges";
 import { HttpError } from "../instances/InstanceService";
 import { absRefused, PathError, within } from "../shared/paths";
-import type { Session, SessionCatalog } from "./SessionCatalog";
 import { listIn } from "./files";
 import type { Download, Listing, Preview } from "./files";
+import { changedIn } from "./gitchanges";
+import type { ChangedFile, GitDeps } from "./gitchanges";
+import type { Session, SessionCatalog } from "./SessionCatalog";
 import { ClaudeSettings } from "./SettingsFile";
 import type { PermissionLayers } from "./SettingsFile";
 

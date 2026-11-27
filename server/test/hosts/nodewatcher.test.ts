@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { HostError } from "../../src/hosts/client";
 import type { HostClient, HostConfig } from "../../src/hosts/client";
 import type { HostRegistry, HostEntry } from "../../src/hosts/HostRegistry";
-import type { SseEvent } from "../../src/shared/ssereader";
 import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
+import type { SseEvent } from "../../src/shared/ssereader";
 import { UpdateLog } from "../../src/updates/UpdateLog";
 
 const flush = async () => {

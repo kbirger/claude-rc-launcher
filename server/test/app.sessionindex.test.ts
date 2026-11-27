@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
+import { describe, expect, test } from "bun:test";
 import { instanceApi, onError } from "../src/app";
 import type { Config } from "../src/config/parse";
 

@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp, onError } from "../../../src/app";
 import type { Config } from "../../../src/config/parse";
+import { NodeEvents } from "../../../src/hosts/NodeEvents";
+import type { NodeEvent } from "../../../src/hosts/NodeEvents";
 import type { Instances } from "../../../src/instances/InstanceService";
 import {
   FrameReader,
@@ -17,8 +19,6 @@ import {
 import { SshBroker, grantConfig, knownHostsLine, sshNodeApi, unsupportedSshApi } from "../../../src/ssh/api/node";
 import type { SshNodeOptions } from "../../../src/ssh/api/node";
 import { HOST_KEY_RE } from "../../../src/ssh/TargetStore";
-import { NodeEvents } from "../../../src/hosts/NodeEvents";
-import type { NodeEvent } from "../../../src/hosts/NodeEvents";
 
 function noop(): void {
   // The test ignores socket errors.

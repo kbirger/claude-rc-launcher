@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { certFingerprint } from "../../src/auth/hubproof";
 import type { HostClient, HostConfig } from "../../src/hosts/client";
 import { HostRegistry } from "../../src/hosts/HostRegistry";
-import { certFingerprint } from "../../src/auth/hubproof";
 import { ensureNodeCert } from "../../src/hosts/tls";
 import { rejection, defined } from "../support";
 

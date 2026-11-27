@@ -2,15 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { serviceCloner } from "../../src/instances/cloner";
 import type { Config } from "../../src/config/parse";
+import { serviceCloner } from "../../src/instances/cloner";
 import { HttpError, InstanceService } from "../../src/instances/InstanceService";
 import type { Instances } from "../../src/instances/InstanceService";
-import type { RunOptions, Runner } from "../../src/shared/runner";
 import type { TrustStore } from "../../src/instances/trust";
+import type { RunOptions, Runner } from "../../src/shared/runner";
 import type { SystemUser, UserDirectory } from "../../src/shared/users";
-import { allTrusted } from "./alltrusted";
 import { defined } from "../support";
+import { allTrusted } from "./alltrusted";
 
 const USERS: SystemUser[] = [
   { name: "root", uid: 0, gid: 0, home: "/root" },

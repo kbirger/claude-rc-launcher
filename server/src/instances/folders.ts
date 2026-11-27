@@ -1,9 +1,9 @@
 import { mkdir, readdir, realpath, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { PathError, resolveWithinRoots } from "../shared/paths";
 import { HttpError } from "./InstanceService";
 import { adoptNewDir } from "./ownedir";
 import type { AdoptDir } from "./ownedir";
-import { PathError, resolveWithinRoots } from "../shared/paths";
 import { repoKind } from "./repokind";
 import type { RepoKind } from "./repokind";
 

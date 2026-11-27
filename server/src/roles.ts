@@ -1,7 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { hasOwn } from "./shared/requests";
 import type { User } from "./auth/user";
+import { hasOwn } from "./shared/requests";
 
 /**
  * Roles of a hub user and the minimum role of each hub route. The identity provider sets the role through one claim

@@ -1,9 +1,9 @@
 import { chmod, chown as chownDefault, lstat, mkdir } from "node:fs/promises";
+import { ensurePrivateFolder, writeGrantFile } from "../../win/sshfiles";
+import type { RunIcacls } from "../../win/sshfiles";
 import { createPrivateFile, MAX_SOCKET_PATH, stageFits } from "./files";
 import type { Chown } from "./files";
 import type { AgentTransport } from "./GrantAgent";
-import { ensurePrivateFolder, writeGrantFile } from "../../win/sshfiles";
-import type { RunIcacls } from "../../win/sshfiles";
 
 // What the grants of a node do differently on Linux and on Windows: the folders and who may use them, the private
 // files, the agent transport and the check of the `ssh` client. `NodeGrantManager` (sshnodegrants.ts) holds the rules

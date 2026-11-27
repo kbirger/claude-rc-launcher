@@ -1,7 +1,11 @@
 import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Identity } from "../shared/asuser";
 import type { Config } from "../config/parse";
+import type { Identity } from "../shared/asuser";
+import { resolveWithinRoots } from "../shared/paths";
+import type { Runner } from "../shared/runner";
+import { passwdDirectory } from "../shared/users";
+import type { UserDirectory } from "../shared/users";
 import {
   ChangeLock,
   isValidPatch,
@@ -13,12 +17,10 @@ import {
   waitSettled,
 } from "./ChangeLock";
 import type { ProbeResult } from "./ChangeLock";
-import { settingsFromArgs } from "./settings";
-import type { InstanceSettings, SettingsPatch } from "./settings";
-import { resolveWithinRoots } from "../shared/paths";
 import { repoKind } from "./repokind";
 import type { RepoKind } from "./repokind";
-import type { Runner } from "../shared/runner";
+import { settingsFromArgs } from "./settings";
+import type { InstanceSettings, SettingsPatch } from "./settings";
 import { fileTrust } from "./trust";
 import type { TrustStore } from "./trust";
 import {
@@ -34,8 +36,6 @@ import {
   unitName,
 } from "./unit";
 import type { RunAs } from "./unit";
-import { passwdDirectory } from "../shared/users";
-import type { UserDirectory } from "../shared/users";
 
 export type { RunResult, Runner } from "../shared/runner";
 export { bunRunner } from "../shared/runner";

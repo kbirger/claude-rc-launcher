@@ -5,12 +5,12 @@ import { join } from "node:path";
 import type { Config } from "../../src/config/parse";
 import { HttpError, InstanceService } from "../../src/instances/InstanceService";
 import type { RunResult, Runner } from "../../src/instances/InstanceService";
-import { PathError } from "../../src/shared/paths";
 import type { TrustStore } from "../../src/instances/trust";
 import { instanceId, renderUnit, unitName } from "../../src/instances/unit";
+import { PathError } from "../../src/shared/paths";
 import type { SystemUser, UserDirectory } from "../../src/shared/users";
-import { allTrusted } from "./alltrusted";
 import { defined } from "../support";
+import { allTrusted } from "./alltrusted";
 
 let dir: string;
 let calls: { cmd: string; args: string[] }[];

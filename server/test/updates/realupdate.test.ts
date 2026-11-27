@@ -3,8 +3,14 @@ import { lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Config } from "../../src/config/parse";
-import { makeRegQuery, parseRegQuery, realUpdateEnv, registryStat, trustedClientCheck } from "../../src/updates/realupdate";
 import { VERSION } from "../../src/shared/version";
+import {
+  makeRegQuery,
+  parseRegQuery,
+  realUpdateEnv,
+  registryStat,
+  trustedClientCheck,
+} from "../../src/updates/realupdate";
 import { defined } from "../support";
 
 describe("realUpdateEnv", () => {

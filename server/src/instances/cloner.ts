@@ -1,8 +1,9 @@
 import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { Config } from "../config/parse";
 import { asUser } from "../shared/asuser";
 import type { IdentityFor } from "../shared/asuser";
-import type { Config } from "../config/parse";
+import type { Runner } from "../shared/runner";
 import { resolveChecked } from "./folders";
 import type { DirOwner } from "./folders";
 import { createLoginManager } from "./ghlogin";
@@ -12,7 +13,6 @@ import type { Instances } from "./InstanceService";
 import { adoptNewDir, DirChanged } from "./ownedir";
 import type { AdoptDir, AdoptedDir } from "./ownedir";
 import { parseRepoLink } from "./repolink";
-import type { Runner } from "../shared/runner";
 
 export interface RepoGroup {
   owner: string;

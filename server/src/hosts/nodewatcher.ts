@@ -1,10 +1,10 @@
-import { HostError } from "./client";
-import type { HostRegistry } from "./HostRegistry";
-import { isObject } from "../shared/requests";
 import type { SessionsPayload } from "../sessions/SessionIndex";
-import type { StepName } from "./NodeEvents";
+import { isObject } from "../shared/requests";
 import { cutLine, MAX_AT } from "../updates/UpdateLog";
 import type { UpdateLog } from "../updates/UpdateLog";
+import { HostError } from "./client";
+import type { HostRegistry } from "./HostRegistry";
+import type { StepName } from "./NodeEvents";
 
 export interface Presence {
   host: string;

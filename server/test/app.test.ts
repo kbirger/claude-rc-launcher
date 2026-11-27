@@ -1,5 +1,3 @@
-import { staticHandler } from "../src/web/static";
-import { closeStreams } from "../src/shared/sse";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, rm, stat } from "node:fs/promises";
@@ -9,15 +7,17 @@ import { createApp } from "../src/app";
 import { mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../src/auth/oidc";
 import type { UserAuthStrategy } from "../src/auth/user";
 import type { Config } from "../src/config/parse";
+import type { Presence } from "../src/hosts/nodewatcher";
 import { HttpError, type Instance } from "../src/instances/InstanceService";
 import { SETTINGS_HELP } from "../src/instances/settings";
 import { PathError } from "../src/shared/paths";
-import { UpdateRefused, type UpdateReport } from "../src/updates/serviceupdate";
+import { closeStreams } from "../src/shared/sse";
 import { VERSION } from "../src/shared/version";
 import { LatestError, type createLatestRelease } from "../src/updates/latest";
-import type { UpdateEntry, UpdateRecord } from "../src/updates/UpdateRecord";
+import { UpdateRefused, type UpdateReport } from "../src/updates/serviceupdate";
 import { UpdateLog } from "../src/updates/UpdateLog";
-import type { Presence } from "../src/hosts/nodewatcher";
+import type { UpdateEntry, UpdateRecord } from "../src/updates/UpdateRecord";
+import { staticHandler } from "../src/web/static";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io", role: "admin" };
 const ID = "0123456789ab";

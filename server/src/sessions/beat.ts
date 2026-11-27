@@ -2,10 +2,10 @@
  * The hub heartbeat. While at least one viewer is open, the hub tells every node that somebody watches the session list:
  * `POST /api/sessions/watch` on each online node and a direct beat on the local flag. One loop serves all viewers.
  */
-import { realTimers } from "../shared/PollSource";
-import type { Timers } from "../shared/PollSource";
 import type { HostRegistry } from "../hosts/HostRegistry";
 import type { Presence } from "../hosts/nodewatcher";
+import { realTimers } from "../shared/PollSource";
+import type { Timers } from "../shared/PollSource";
 
 export const BEAT_MS = 20_000;
 const CALL_TIMEOUT_MS = 3_000;

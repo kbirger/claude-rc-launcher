@@ -2,22 +2,16 @@ import { Hono } from "hono";
 import { lstat, mkdir, chmod, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { onError } from "../../app";
-import type { IdentityFor } from "../../shared/asuser";
 import type { Config } from "../../config/parse";
 import { HostError } from "../../hosts/client";
 import type { HostClient } from "../../hosts/client";
 import { LOCAL_HOST } from "../../hosts/id";
+import type { NodeEvents } from "../../hosts/NodeEvents";
 import { HttpError } from "../../instances/InstanceService";
 import type { Instance, Instances } from "../../instances/InstanceService";
-import { bunRunner } from "../../shared/runner";
-import type { AgentTransport } from "./GrantAgent";
-import { SshBroker, sshManagedApi, sshNodeApi } from "../api/node";
-import type { SshManagedOptions, SshNodeOptions } from "../api/node";
-import { SshControl } from "./SshControl";
-import { SSH_SKILL, ensureSkill, skillVersion } from "./skill";
-import type { SkillResult, SkillUser } from "./skill";
 import { SSH_RUN_DIR, runAsFor } from "../../instances/unit";
-import type { NodeEvents } from "../../hosts/NodeEvents";
+import type { IdentityFor } from "../../shared/asuser";
+import { bunRunner } from "../../shared/runner";
 import { passwdDirectory } from "../../shared/users";
 import type { UserDirectory } from "../../shared/users";
 import { newPipeName, pipeTransport, currentUserSid } from "../../win/pipe";
@@ -27,6 +21,12 @@ import type { SshClientCheck } from "../../win/sshclient";
 import { WinSshControl } from "../../win/sshcontrol";
 import { ensurePrivateFolder, removeStaleGrantFiles } from "../../win/sshfiles";
 import type { RunIcacls } from "../../win/sshfiles";
+import { SshBroker, sshManagedApi, sshNodeApi } from "../api/node";
+import type { SshManagedOptions, SshNodeOptions } from "../api/node";
+import type { AgentTransport } from "./GrantAgent";
+import { SSH_SKILL, ensureSkill, skillVersion } from "./skill";
+import type { SkillResult, SkillUser } from "./skill";
+import { SshControl } from "./SshControl";
 
 // The SSH parts of a node, wired together: the broker, the grant routes, the managed target routes and one control
 // socket for each instance that opted in. The node does not remember grants across a restart, so a start removes the
