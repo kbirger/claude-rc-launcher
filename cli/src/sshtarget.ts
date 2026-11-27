@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOST_ID_RE } from "../../server/src/hosts/id";
+import { HOST_ID_RE } from "../../server/src/shared/hostid";
 import { keyFingerprint } from "../../server/src/ssh/agentproto";
 import {
   CONFIRM_NODES_SUFFIX,

@@ -4,7 +4,7 @@ import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, w
 import os from "node:os";
 import path from "node:path";
 import UNIT_TEXT from "../../deploy/claude-rc-launcher.service" with { type: "text" };
-import { HOST_ID_RE } from "../../server/src/hosts/id";
+import { HOST_ID_RE } from "../../server/src/shared/hostid";
 import {
   downloadAsset,
   installWithBackup,

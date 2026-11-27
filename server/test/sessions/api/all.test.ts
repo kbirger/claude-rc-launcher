@@ -1,8 +1,8 @@
-import type { MiddlewareHandler } from "hono";
 import { describe, expect, test } from "bun:test";
+import type { MiddlewareHandler } from "hono";
 import { createApp } from "../../../src/app";
-import type { Config } from "../../../src/config/parse";
-import type { HostClient, HostConfig } from "../../../src/hosts/client";
+import type { Config, HostConfig } from "../../../src/config/parse";
+import type { HostClient } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import { SessionsStore } from "../../../src/sessions/SessionsStore";
 

@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync, rmSync 
 import os from "node:os";
 import path from "node:path";
 import { certFingerprint } from "../../src/auth/hubproof";
-import type { HostClient, HostConfig } from "../../src/hosts/client";
+import type { HostConfig } from "../../src/config/parse";
+import type { HostClient } from "../../src/hosts/client";
 import { HostRegistry } from "../../src/hosts/HostRegistry";
 import { ensureNodeCert } from "../../src/hosts/tls";
 import { rejection, defined } from "../support";

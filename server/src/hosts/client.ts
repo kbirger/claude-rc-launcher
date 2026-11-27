@@ -1,17 +1,8 @@
 import { certFingerprint, signProof } from "../auth/hubproof";
 import type { HubKey, ProofRequest } from "../auth/hubproof";
+import type { HostConfig } from "../config/parse";
 import { readSse, SseProtocolError } from "../shared/ssereader";
 import type { SseEvent } from "../shared/ssereader";
-
-export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
-export interface HostConfig {
-  id: string;
-  name: string;
-  url: string;
-  ca: string;
-  serverName?: string;
-  auth: HostAuth;
-}
 
 export type HostFailure =
   "unreachable" | "timeout" | "certificate mismatch" | "rejected our credentials" | "bad response";

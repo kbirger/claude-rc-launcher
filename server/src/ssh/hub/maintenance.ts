@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { HOST_ID_RE } from "../../hosts/id";
+import { HOST_ID_RE } from "../../shared/hostid";
 import { parseAnswer, parseCommand } from "../provisioner";
 import type { ProvisionerAnswer } from "../provisioner";
 import { NodeError } from "./SshService";

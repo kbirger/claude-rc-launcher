@@ -1,15 +1,15 @@
-import { Hono } from "hono";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createNodeApp, onError } from "../../../src/app";
 import { generateSecret, nodeAuth } from "../../../src/auth/node";
-import type { Config } from "../../../src/config/parse";
+import type { Config, HostConfig } from "../../../src/config/parse";
 import { hostAdminApi } from "../../../src/hosts/api/admin";
 import { PeekError, peekCertificate } from "../../../src/hosts/certpeek";
 import { createHostClient, secretAuthorizer } from "../../../src/hosts/client";
-import type { HostClient, HostConfig } from "../../../src/hosts/client";
+import type { HostClient } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import { ensureNodeCert } from "../../../src/hosts/tls";
 import { defined } from "../../support";

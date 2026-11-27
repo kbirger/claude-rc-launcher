@@ -1,9 +1,10 @@
-import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import { onError } from "../../../src/app";
+import type { HostConfig } from "../../../src/config/parse";
 import { hostsApi } from "../../../src/hosts/api/forward";
 import { HostError } from "../../../src/hosts/client";
-import type { HostClient, HostConfig } from "../../../src/hosts/client";
+import type { HostClient } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import { defined } from "../../support";
 

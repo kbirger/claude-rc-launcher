@@ -3,13 +3,14 @@ import type { MiddlewareHandler } from "hono";
 import { isIP } from "node:net";
 import type { User } from "../../auth/user";
 import { hostUrlProblem } from "../../config/parse";
+import type { HostConfig } from "../../config/parse";
+import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";
 import { readObject } from "../../shared/requests";
 import { PeekError, peekCertificate } from "../certpeek";
 import { HostError } from "../client";
-import type { HostClient, HostConfig } from "../client";
+import type { HostClient } from "../client";
 import type { HostRegistry } from "../HostRegistry";
-import { HOST_ID_RE } from "../id";
 
 const DNS_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const TEST_CALL_TIMEOUT_MS = 5_000;

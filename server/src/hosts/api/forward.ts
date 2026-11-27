@@ -11,6 +11,7 @@ import {
 } from "../../instances/requests";
 import { parseRuleEdit } from "../../sessions/api/permissions";
 import { downloadHeaders, lastSegment } from "../../shared/disposition";
+import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";
 import { isObject, readJson } from "../../shared/requests";
 import { VERSION } from "../../shared/version";
@@ -23,7 +24,6 @@ import type { UpdateRecord } from "../../updates/UpdateRecord";
 import { HostError } from "../client";
 import type { HostClient, HostFailure } from "../client";
 import type { HostRegistry } from "../HostRegistry";
-import { HOST_ID_RE } from "../id";
 
 /** Reads at most `max` bytes of a small body and cancels the rest. */
 async function readSmall(body: ReadableStream<Uint8Array> | null, max: number): Promise<string> {

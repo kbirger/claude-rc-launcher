@@ -1,5 +1,5 @@
-import { LOCAL_HOST } from "../../hosts/id";
 import { logToken } from "../../roles";
+import { LOCAL_HOST } from "../../shared/hostid";
 import { keyFingerprint } from "../agentproto";
 import { provisionScript } from "../provision";
 import type { Script } from "../provision";

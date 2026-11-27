@@ -1,5 +1,5 @@
-import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,9 +8,8 @@ import { cliBearerAuth } from "../src/auth/cli";
 import { createJwtVerifier } from "../src/auth/jwt";
 import { generateSecret, nodeAuth } from "../src/auth/node";
 import type { UserAuthStrategy } from "../src/auth/user";
-import type { Config } from "../src/config/parse";
+import type { Config, HostConfig } from "../src/config/parse";
 import { createHostClient, secretAuthorizer } from "../src/hosts/client";
-import type { HostConfig } from "../src/hosts/client";
 import { HostRegistry } from "../src/hosts/HostRegistry";
 import { ensureNodeCert } from "../src/hosts/tls";
 import { DEFAULT_ROLES } from "../src/roles";

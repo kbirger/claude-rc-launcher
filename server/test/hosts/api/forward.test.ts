@@ -6,15 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { createApp, createNodeApp } from "../../../src/app";
 import { generateSecret, nodeAuth } from "../../../src/auth/node";
-import type { Config } from "../../../src/config/parse";
+import type { Config, HostConfig } from "../../../src/config/parse";
 import { hostsApi } from "../../../src/hosts/api/forward";
-import {
-  HostError,
-  createHostClient,
-  secretAuthorizer,
-  type HostClient,
-  type HostConfig,
-} from "../../../src/hosts/client";
+import { HostError, createHostClient, secretAuthorizer, type HostClient } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import { ensureNodeCert } from "../../../src/hosts/tls";
 import type { Cloner } from "../../../src/instances/cloner";

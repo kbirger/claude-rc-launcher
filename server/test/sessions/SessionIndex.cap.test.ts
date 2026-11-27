@@ -1,8 +1,8 @@
-import type { MiddlewareHandler } from "hono";
 import { describe, expect, test } from "bun:test";
+import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../../src/app";
-import type { Config } from "../../src/config/parse";
-import { createHostClient, type HostConfig } from "../../src/hosts/client";
+import type { Config, HostConfig } from "../../src/config/parse";
+import { createHostClient } from "../../src/hosts/client";
 import type { HostEntry, HostRegistry } from "../../src/hosts/HostRegistry";
 import { NodeEvents } from "../../src/hosts/NodeEvents";
 import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";

@@ -1,12 +1,21 @@
 import { X509Certificate } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { validPeer } from "../auth/proxy";
-import type { HostConfig } from "../hosts/client";
-import { HOST_ID_RE } from "../hosts/id";
 import { DEFAULT_ROLES, isRole, isRoleValue } from "../roles";
 import type { RoleSettings, RoleValue } from "../roles";
+import { HOST_ID_RE } from "../shared/hostid";
+import { validPeer } from "../shared/ipnet";
 import { isObject, Tbl } from "./Tbl";
+
+export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
+export interface HostConfig {
+  id: string;
+  name: string;
+  url: string;
+  ca: string;
+  serverName?: string;
+  auth: HostAuth;
+}
 
 export interface OidcUserAuth {
   mode: "oidc";

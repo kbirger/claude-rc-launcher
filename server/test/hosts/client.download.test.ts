@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import type { HostConfig } from "../../src/config/parse";
 import { HostError, createHostClient, secretAuthorizer } from "../../src/hosts/client";
-import type { HostConfig } from "../../src/hosts/client";
 import { defined } from "../support";
 
 const host: HostConfig = {

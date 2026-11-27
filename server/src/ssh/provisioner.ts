@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { HOST_ID_RE } from "../hosts/id";
+import { HOST_ID_RE } from "../shared/hostid";
 import { AWK_PROGRAM, LOCK_LINES, shQuote } from "./provision";
 import type { Script } from "./provision";
 import { ADDRESS_RE, DROPBEAR_OPTIONS, SCRIPT_PATH_RE } from "./TargetStore";

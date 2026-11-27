@@ -1,5 +1,5 @@
-import { Hono } from "hono";
 import { afterAll, describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
@@ -7,9 +7,8 @@ import path from "node:path";
 import { createProofVerifier, certFingerprint, loadOrCreateHubKey } from "../../src/auth/hubproof";
 import { nodeAuth } from "../../src/auth/node";
 import { parseConfig } from "../../src/config/parse";
-import type { ConfigIo } from "../../src/config/parse";
+import type { ConfigIo, HostConfig } from "../../src/config/parse";
 import { HostError, createHostClient, hubAuthorizer, secretAuthorizer } from "../../src/hosts/client";
-import type { HostConfig } from "../../src/hosts/client";
 import { ensureNodeCert } from "../../src/hosts/tls";
 import { rejection, defined } from "../support";
 

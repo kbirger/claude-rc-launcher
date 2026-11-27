@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { HostConfig } from "../../src/config/parse";
 import { HostError } from "../../src/hosts/client";
-import type { HostClient, HostConfig } from "../../src/hosts/client";
+import type { HostClient } from "../../src/hosts/client";
 import type { HostRegistry, HostEntry } from "../../src/hosts/HostRegistry";
 import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
 import type { SseEvent } from "../../src/shared/ssereader";

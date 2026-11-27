@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { HOST_ID_RE } from "../../src/hosts/id";
+import { HOST_ID_RE } from "../../src/shared/hostid";
 
 describe("HOST_ID_RE", () => {
   test("accepts lower-case ids of 1 to 32 characters", () => {
@@ -30,6 +30,6 @@ describe("the host id format has a single definition", () => {
     const hits = [...files("server/src"), ...files("cli/src")].filter((item) =>
       readFileSync(path.join(root, item), "utf8").includes(pattern),
     );
-    expect(hits).toEqual([path.join("server/src", "hosts", "id.ts")]);
+    expect(hits).toEqual([path.join("server/src", "shared", "hostid.ts")]);
   });
 });
