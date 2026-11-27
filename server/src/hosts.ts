@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Config } from "./config";
-import { downloadHeaders, lastSegment } from "./disposition";
+import { downloadHeaders, lastSegment } from "./shared/disposition";
 import { HostError } from "./hostclient";
 import type { HostClient, HostFailure } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
@@ -18,13 +18,13 @@ import {
   parseStartRequest,
   parseUpdateRequest,
   readJson,
-} from "./requests";
+} from "./shared/requests";
 import type { UpdateReport } from "./serviceupdate";
 import type { UpdateRecord } from "./updaterecord";
 import type { UpdateTracker } from "./updatetracker";
 import type { User } from "./userauth";
-import { VERSION } from "./version";
-import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "./versions";
+import { VERSION } from "./shared/version";
+import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "./shared/versions";
 
 /** Reads at most `max` bytes of a small body and cancels the rest. */
 async function readSmall(body: ReadableStream<Uint8Array> | null, max: number): Promise<string> {

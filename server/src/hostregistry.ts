@@ -3,7 +3,7 @@ import path from "node:path";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";
 import { HttpError } from "./instances";
-import { isObject } from "./requests";
+import { isObject } from "./shared/requests";
 
 export interface HostEntry {
   host: HostConfig;

@@ -6,9 +6,9 @@ import { serviceCloner } from "../src/cloner";
 import type { Config } from "../src/config";
 import { HttpError, InstanceService } from "../src/instances";
 import type { Instances } from "../src/instances";
-import type { RunOptions, Runner } from "../src/runner";
+import type { RunOptions, Runner } from "../src/shared/runner";
 import type { TrustStore } from "../src/trust";
-import type { SystemUser, UserDirectory } from "../src/users";
+import type { SystemUser, UserDirectory } from "../src/shared/users";
 import { allTrusted } from "./helpers";
 import { defined } from "./support";
 

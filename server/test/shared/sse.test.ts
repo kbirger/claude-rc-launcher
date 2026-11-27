@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { expect, test } from "bun:test";
-import { closeStreams, sseResponse, stopServer, trackStreams } from "../src/sse";
-import { defined } from "./support";
+import { closeStreams, sseResponse, stopServer, trackStreams } from "../../src/shared/sse";
+import { defined } from "../support";
 
 test("stopServer ends an open stream with a proper end of body", async () => {
   const app = new Hono();

@@ -4,11 +4,11 @@
  * stream is one viewer of the beat loop, so the nodes scan fast only while somebody looks.
  */
 import type { Context } from "hono";
-import { realTimers } from "./changesource";
-import type { Timers } from "./changesource";
+import { realTimers } from "./shared/PollSource";
+import type { Timers } from "./shared/PollSource";
 import type { BeatLoop } from "./sessionbeat";
 import type { SessionsStore } from "./sessionsstore";
-import { sseResponse } from "./sse";
+import { sseResponse } from "./shared/sse";
 
 export function sessionsStream(options: {
   store: Pick<SessionsStore, "answer" | "subscribe">;

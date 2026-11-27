@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { HttpError } from "./instances";
 import { adoptNewDir } from "./ownedir";
 import type { AdoptDir } from "./ownedir";
-import { PathError, resolveWithinRoots } from "./paths";
+import { PathError, resolveWithinRoots } from "./shared/paths";
 import { repoKind } from "./repokind";
 import type { RepoKind } from "./repokind";
 

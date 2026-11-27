@@ -1,6 +1,6 @@
 import { installWithBackup, restorePrevious, ReleaseError } from "../../server/src/release";
 import type { ReleaseIo } from "../../server/src/release";
-import { VERSION } from "../../server/src/version";
+import { VERSION } from "../../server/src/shared/version";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import { obtainBinary, releaseCpu, sha256, realSys } from "./nodesetup";

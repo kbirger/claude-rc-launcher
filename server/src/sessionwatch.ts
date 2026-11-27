@@ -1,5 +1,5 @@
-import { realTimers } from "./changesource";
-import type { Timers, Trigger } from "./changesource";
+import { realTimers } from "./shared/PollSource";
+import type { Timers, Trigger } from "./shared/PollSource";
 
 /** A node stays active this long after the last heartbeat. */
 export const WATCH_WINDOW_MS = 60_000;

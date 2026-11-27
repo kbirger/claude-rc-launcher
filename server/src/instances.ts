@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Identity } from "./asuser";
+import type { Identity } from "./shared/asuser";
 import type { Config } from "./config";
 import {
   ChangeLock,
@@ -15,10 +15,10 @@ import {
 import type { ProbeResult } from "./instancechange";
 import { settingsFromArgs } from "./instancesettings";
 import type { InstanceSettings, SettingsPatch } from "./instancesettings";
-import { resolveWithinRoots } from "./paths";
+import { resolveWithinRoots } from "./shared/paths";
 import { repoKind } from "./repokind";
 import type { RepoKind } from "./repokind";
-import type { Runner } from "./runner";
+import type { Runner } from "./shared/runner";
 import { fileTrust } from "./trust";
 import type { TrustStore } from "./trust";
 import {
@@ -34,11 +34,11 @@ import {
   unitName,
 } from "./unit";
 import type { RunAs } from "./unit";
-import { passwdDirectory } from "./users";
-import type { UserDirectory } from "./users";
+import { passwdDirectory } from "./shared/users";
+import type { UserDirectory } from "./shared/users";
 
-export type { RunResult, Runner } from "./runner";
-export { bunRunner } from "./runner";
+export type { RunResult, Runner } from "./shared/runner";
+export { bunRunner } from "./shared/runner";
 
 export interface Instance {
   id: string;

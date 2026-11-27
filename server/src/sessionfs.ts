@@ -10,7 +10,7 @@ import { lstat, open, readdir, readlink, realpath, stat } from "node:fs/promises
 import type { FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { OPEN_READ_NO_FOLLOW } from "./openflags";
-import { PathError, within } from "./paths";
+import { PathError, within } from "./shared/paths";
 
 // Files inside a session root, for preview and download. The node runs as its service account and serves any
 // signed-in hub user, so the gate here is that a path stays inside the root. The caller (PinnedRoot.pin) checks

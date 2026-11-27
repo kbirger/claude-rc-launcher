@@ -6,7 +6,7 @@ import { readRegisteredClients } from "./installs";
 import type { RegQueryResult } from "./installs";
 import type { RunResult } from "./release";
 import type { UpdateEnv } from "./serviceupdate";
-import { VERSION } from "./version";
+import { VERSION } from "./shared/version";
 
 const TEMP_PREFIX = "claude-rc-update-";
 /** Added after the service's own PATH, so that install, cp, mv, systemctl and systemd-run are always found. */

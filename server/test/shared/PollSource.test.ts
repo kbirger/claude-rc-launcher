@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { PollSource, PASSIVE_ALL_MS, type Trigger } from "../src/changesource";
-import { fakeTimers } from "./faketimers";
-import { sourceContract } from "./changesource-contract";
+import { PollSource, PASSIVE_ALL_MS, type Trigger } from "../../src/shared/PollSource";
+import { fakeTimers } from "../faketimers";
+import { sourceContract } from "./PollSource.contract";
 
 sourceContract("PollSource", (t) => ({ source: new PollSource({ timers: t }), change: async () => {} }));
 

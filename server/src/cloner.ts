@@ -1,7 +1,7 @@
 import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import { asUser } from "./asuser";
-import type { IdentityFor } from "./asuser";
+import { asUser } from "./shared/asuser";
+import type { IdentityFor } from "./shared/asuser";
 import type { Config } from "./config";
 import { resolveChecked } from "./fsapi";
 import type { DirOwner } from "./fsapi";
@@ -12,7 +12,7 @@ import type { Instances } from "./instances";
 import { adoptNewDir, DirChanged } from "./ownedir";
 import type { AdoptDir, AdoptedDir } from "./ownedir";
 import { parseRepoLink } from "./repolink";
-import type { Runner } from "./runner";
+import type { Runner } from "./shared/runner";
 
 export interface RepoGroup {
   owner: string;

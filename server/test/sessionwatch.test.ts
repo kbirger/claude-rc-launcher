@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Trigger } from "../src/changesource";
+import type { Trigger } from "../src/shared/PollSource";
 import { WATCH_WINDOW_MS, WatchFlag } from "../src/sessionwatch";
 import { fakeTimers } from "./faketimers";
 

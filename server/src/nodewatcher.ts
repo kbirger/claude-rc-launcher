@@ -1,6 +1,6 @@
 import { HostError } from "./hostclient";
 import type { HostRegistry } from "./hostregistry";
-import { isObject } from "./requests";
+import { isObject } from "./shared/requests";
 import type { SessionsPayload } from "./sessionindex";
 import type { StepName } from "./updateevents";
 import { cutLine, MAX_AT } from "./updatelog";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ACTIVE_ALL_MS, PASSIVE_ALL_MS, type ChangeSource, type Trigger } from "../src/changesource";
-import { fakeTimers } from "./faketimers";
+import { ACTIVE_ALL_MS, PASSIVE_ALL_MS, type ChangeSource, type Trigger } from "../../src/shared/PollSource";
+import { fakeTimers } from "../faketimers";
 
 export function sourceContract(name: string, make: (t: ReturnType<typeof fakeTimers>) => { source: ChangeSource; change(): Promise<void> }): void {
   describe(name, () => {

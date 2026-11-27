@@ -5,7 +5,7 @@ import { startHub } from "./hubmain";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
 import { runNudgeSend } from "./nudge";
-import { VERSION } from "./version";
+import { VERSION } from "./shared/version";
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);

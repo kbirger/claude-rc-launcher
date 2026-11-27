@@ -4,7 +4,7 @@ import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config";
 import { HttpError } from "../src/instances";
 import { NodeEvents } from "../src/updateevents";
-import { VERSION } from "../src/version";
+import { VERSION } from "../src/shared/version";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;
 const ID = "0123456789ab";

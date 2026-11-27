@@ -11,8 +11,8 @@ import { generateSecret, hashSecret } from "../src/nodeauth";
 import { startNode } from "../src/nodemain";
 import type { UpdateReport } from "../src/serviceupdate";
 import { NodeEvents } from "../src/updateevents";
-import { readSse } from "../src/ssereader";
-import { VERSION } from "../src/version";
+import { readSse } from "../src/shared/ssereader";
+import { VERSION } from "../src/shared/version";
 import { fakeTimers } from "./faketimers";
 import { noSkill } from "./support";
 

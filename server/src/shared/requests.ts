@@ -1,7 +1,7 @@
 import type { Context } from "hono";
-import { HttpError } from "./instances";
-import type { SettingsPatch, SpawnMode } from "./instancesettings";
-import { RELEASE_TAG_RE } from "./release";
+import { HttpError } from "../instances";
+import type { SettingsPatch, SpawnMode } from "../instancesettings";
+import { RELEASE_TAG_RE } from "../release";
 import { normalizeVersion } from "./versions";
 
 /**

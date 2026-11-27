@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_SSE_BYTES, readSse } from "../src/ssereader";
-import type { SseEvent } from "../src/ssereader";
-import { rejection } from "./support";
+import { MAX_SSE_BYTES, readSse } from "../../src/shared/ssereader";
+import type { SseEvent } from "../../src/shared/ssereader";
+import { rejection } from "../support";
 
 const enc = new TextEncoder();
 const bodyOf = (chunks: string[]) =>

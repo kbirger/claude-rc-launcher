@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunRunner } from "../src/runner";
+import { bunRunner } from "../../src/shared/runner";
 
 test("cwd sets the working folder", async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "runner-")));

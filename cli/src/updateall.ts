@@ -1,7 +1,7 @@
 import type { HostInfo } from "../../server/src/hosts";
 import { RELEASE_TAG_RE } from "../../server/src/release";
 import type { ClientResult, UpdateReport } from "../../server/src/serviceupdate";
-import { VERSION } from "../../server/src/version";
+import { VERSION } from "../../server/src/shared/version";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";
 import { sanitizeLine, table } from "./format";

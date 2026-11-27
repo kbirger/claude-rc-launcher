@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createCloner } from "../src/cloner";
 import type { Config } from "../src/config";
 import { HttpError } from "../src/instances";
-import type { RunOptions, RunResult } from "../src/runner";
+import type { RunOptions, RunResult } from "../src/shared/runner";
 
 const id = { home: "/home/u", path: "/usr/bin" };
 interface Call {

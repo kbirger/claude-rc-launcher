@@ -20,7 +20,7 @@ import type { FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { markShadowed, parseRule, rulesOf, withRule, withoutRule } from "./permrules";
 import type { MarkedRule, RuleList } from "./permrules";
-import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./safefile";
+import { FileConflict, FileRefused, readUserFile, writeUserFile } from "./shared/safefile";
 
 export type LayerScope = "user" | "project" | "local" | "legacy-local" | "managed";
 

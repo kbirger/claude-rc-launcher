@@ -2,9 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { asUser } from "./asuser";
-import type { Identity } from "./asuser";
-import type { Runner } from "./runner";
+import { asUser } from "./shared/asuser";
+import type { Identity } from "./shared/asuser";
+import type { Runner } from "./shared/runner";
 
 // The Claude Code skill that teaches a session how to ask for SSH access. A node deploys it into the skills folder of
 // each user that its instances run as. The node usually runs as root and the skills folder belongs to a user with fewer

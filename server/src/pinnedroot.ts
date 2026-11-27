@@ -12,7 +12,7 @@ import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
 import { changedIn } from "./gitchanges";
 import type { ChangedFile, GitDeps } from "./gitchanges";
 import { HttpError } from "./instances";
-import { absRefused, PathError, within } from "./paths";
+import { absRefused, PathError, within } from "./shared/paths";
 import type { Session, SessionCatalog } from "./sessioncatalog";
 import { listIn } from "./sessionfs";
 import type { Download, Listing, Preview } from "./sessionfs";

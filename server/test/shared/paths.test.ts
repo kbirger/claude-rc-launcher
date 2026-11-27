@@ -2,7 +2,7 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { mkdtemp, mkdir, writeFile, symlink, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { absRefused, PathError, resolveWithinRoots } from "../src/paths";
+import { absRefused, PathError, resolveWithinRoots } from "../../src/shared/paths";
 
 let base: string;
 let home: string;

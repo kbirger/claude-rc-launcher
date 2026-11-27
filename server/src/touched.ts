@@ -5,7 +5,7 @@
  * "tool_use" or "tool_result".
  */
 import { posix, win32 } from "node:path";
-import { absRefused, within } from "./paths";
+import { absRefused, within } from "./shared/paths";
 import { dig, isRecord, parse } from "./transcript";
 import type { TranscriptFs } from "./transcriptfs";
 

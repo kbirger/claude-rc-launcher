@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { HostError } from "../src/hostclient";
 import type { HostClient, HostConfig } from "../src/hostclient";
 import type { HostRegistry, HostEntry } from "../src/hostregistry";
-import type { SseEvent } from "../src/ssereader";
+import type { SseEvent } from "../src/shared/ssereader";
 import { createNodeWatchers, type Presence } from "../src/nodewatcher";
 import { UpdateLog } from "../src/updatelog";
 

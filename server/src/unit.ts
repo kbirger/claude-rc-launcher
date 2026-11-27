@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { Config } from "./config";
 import { argsWith, settingsFromArgs } from "./instancesettings";
 import type { InstanceSettings } from "./instancesettings";
-import { USER_NAME_RE } from "./users";
-import type { SystemUser } from "./users";
+import { USER_NAME_RE } from "./shared/users";
+import type { SystemUser } from "./shared/users";
 
 const MARKER = "# managed-by: claude-rc-launcher path=";
 const NAME_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/; // no leading "-": it would be parsed as a CLI flag

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { join } from "node:path";
 import { allSessionsApi } from "./allsessions";
-import type { ChangeSource, Timers } from "./changesource";
+import type { ChangeSource, Timers } from "./shared/PollSource";
 import { cliConfigRoute } from "./cliauth";
 import type { Cloner } from "./cloner";
 import type { Config } from "./config";
@@ -21,7 +21,7 @@ import { LatestError } from "./latest";
 import type { createLatestRelease } from "./latest";
 import type { Presence } from "./nodewatcher";
 import type { AdoptDir } from "./ownedir";
-import { PathError, within } from "./paths";
+import { PathError, within } from "./shared/paths";
 import { permissionsApi } from "./permissionsapi";
 import { pushApi } from "./pushapi";
 import type { createReleaseList } from "./releaselist";
@@ -34,7 +34,7 @@ import {
   parseStartRequest,
   parseUpdateRequest,
   readJson,
-} from "./requests";
+} from "./shared/requests";
 import { enforceRoles, logToken } from "./roles";
 import { UpdateRefused } from "./serviceupdate";
 import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./serviceupdate";
@@ -47,7 +47,7 @@ import type { SessionIndexOptions, SessionsEvent } from "./sessionindex";
 import { SessionsStore } from "./sessionsstore";
 import { sessionsStream } from "./sessionsstream";
 import { WatchFlag } from "./sessionwatch";
-import { sseResponse, trackStreams } from "./sse";
+import { sseResponse, trackStreams } from "./shared/sse";
 import { sshApi } from "./sshapi";
 import type { GrantStore } from "./sshgrants";
 import type { SshKeyStore } from "./sshkeystore";
@@ -62,7 +62,7 @@ import type { UpdateLog } from "./updatelog";
 import type { UpdateRecord } from "./updaterecord";
 import { createUpdateTracker } from "./updatetracker";
 import type { User, UserAuthStrategy } from "./userauth";
-import { VERSION } from "./version";
+import { VERSION } from "./shared/version";
 import type { PushService } from "./webpush";
 import type { DefinitionStatus } from "./win/definition";
 

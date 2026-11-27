@@ -3,7 +3,7 @@
  * scan reads only the start of each file, up to the first record that has a cwd (the session folder and branch).
  */
 import { isAbsolute, join, resolve } from "node:path";
-import { within } from "./paths";
+import { within } from "./shared/paths";
 import {
   encodeProjectDir,
   dig,

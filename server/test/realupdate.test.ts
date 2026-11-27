@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Config } from "../src/config";
 import { makeRegQuery, parseRegQuery, realUpdateEnv, registryStat, trustedClientCheck } from "../src/realupdate";
-import { VERSION } from "../src/version";
+import { VERSION } from "../src/shared/version";
 import { defined } from "./support";
 
 describe("realUpdateEnv", () => {

@@ -4,7 +4,7 @@ import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
 import { timingSafeEqual } from "node:crypto";
 import type { Config, OidcUserAuth } from "./config";
-import { isObject } from "./requests";
+import { isObject } from "./shared/requests";
 import { isRole, rolesFrom } from "./roles";
 import type { RoleSettings } from "./roles";
 import { isAllowed, userFromClaims } from "./userauth";

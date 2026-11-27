@@ -1,9 +1,9 @@
-import { realTimers } from "./changesource";
-import type { Timers } from "./changesource";
+import { realTimers } from "./shared/PollSource";
+import type { Timers } from "./shared/PollSource";
 import type { HostClient } from "./hostclient";
 import { HOST_ID_RE, LOCAL_HOST } from "./hostid";
 import { HttpError } from "./instances";
-import { isObject } from "./requests";
+import { isObject } from "./shared/requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";
 import type { Grant, GrantStore, Maintenance, MaintenanceAction } from "./sshgrants";

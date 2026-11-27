@@ -8,7 +8,7 @@ import { bunRunner } from "./instances";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
 import { NodeEvents } from "./updateevents";
-import { VERSION } from "./version";
+import { VERSION } from "./shared/version";
 import { checkServiceAccount } from "./win/account";
 import { definitionStatus } from "./win/definition";
 import { taskkillTree, WinInstances } from "./win/instances";

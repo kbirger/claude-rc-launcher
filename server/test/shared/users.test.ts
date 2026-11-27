@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { passwdDirectory, USER_NAME_RE } from "../src/users";
+import { passwdDirectory, USER_NAME_RE } from "../../src/shared/users";
 
 const PASSWD = [
   "# comment",

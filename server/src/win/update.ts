@@ -5,11 +5,11 @@ import type { Config } from "../config";
 import { realUpdateEnv } from "../realupdate";
 import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256 } from "../release";
 import type { ReleaseIo } from "../release";
-import { isObject } from "../requests";
+import { isObject } from "../shared/requests";
 import { clientsOf, UpdateRefused } from "../serviceupdate";
 import type { ClientResult, UpdateReport } from "../serviceupdate";
 import type { UpdateHooks } from "../updateevents";
-import { VERSION } from "../version";
+import { VERSION } from "../shared/version";
 
 /**
  * Self-update of a Windows node. A running .exe can be renamed but not overwritten, so the swap is two renames:

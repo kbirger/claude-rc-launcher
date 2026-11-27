@@ -23,7 +23,7 @@ import type { Instances } from "./instances";
 import { nudge as realNudge, nudgeMessage } from "./nudge";
 import type { NudgeResult } from "./nudge";
 import type { RuleList } from "./permrules";
-import { isObject, readJson } from "./requests";
+import { isObject, readJson } from "./shared/requests";
 import { sessionLookup } from "./sessionapi";
 import type { SessionCatalog } from "./sessioncatalog";
 import { checkRule, ClaudeSettings, SettingsError } from "./settingsfile";

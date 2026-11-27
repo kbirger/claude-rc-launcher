@@ -8,7 +8,7 @@ import {
   normalizeVersion,
   releaseOf,
   stalestVersion,
-} from "../src/versions";
+} from "../../src/shared/versions";
 
 describe("versions", () => {
   test("normalizeVersion strips one leading v", () => {

@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { connect } from "node:net";
-import { asUser } from "./asuser";
-import type { Identity } from "./asuser";
+import { asUser } from "./shared/asuser";
+import type { Identity } from "./shared/asuser";
 import { findSessionSocket } from "./livesessions";
 
 /**

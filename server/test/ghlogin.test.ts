@@ -4,7 +4,7 @@ import type { Config } from "../src/config";
 import { bunLoginSpawner } from "../src/ghlogin";
 import type { LoginProc, LoginSpawner } from "../src/ghlogin";
 import { HttpError } from "../src/instances";
-import type { RunOptions, RunResult } from "../src/runner";
+import type { RunOptions, RunResult } from "../src/shared/runner";
 
 const id = { home: "/home/u", path: "/usr/bin" };
 const CODE = "! First copy your one-time code: ABCD-1234\n";

@@ -1,9 +1,9 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import { asUser } from "./asuser";
-import type { Identity } from "./asuser";
-import { within } from "./paths";
-import type { Runner } from "./runner";
+import { asUser } from "./shared/asuser";
+import type { Identity } from "./shared/asuser";
+import { within } from "./shared/paths";
+import type { Runner } from "./shared/runner";
 
 /**
  * The files of a session folder that changed since the session started, read from git. It lists what git shows, and git

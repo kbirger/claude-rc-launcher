@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { asUser, findSetpriv } from "../src/asuser";
+import { asUser, findSetpriv } from "../../src/shared/asuser";
 
 describe("asUser", () => {
   test("wraps in setpriv with uid and gid", () => {

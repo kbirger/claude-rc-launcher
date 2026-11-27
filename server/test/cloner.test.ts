@@ -19,7 +19,7 @@ import type { Config } from "../src/config";
 import { HttpError } from "../src/instances";
 import { adoptNewDir, DirChanged } from "../src/ownedir";
 import type { AdoptDir } from "../src/ownedir";
-import type { RunOptions, RunResult } from "../src/runner";
+import type { RunOptions, RunResult } from "../src/shared/runner";
 import { defined } from "./support";
 
 let base: string;

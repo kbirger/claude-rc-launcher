@@ -10,7 +10,7 @@ import type { Instance, Instances } from "../src/instances";
 import { accountIdentity, createNodeSsh, removeGrantFiles } from "../src/sshnodewiring";
 import { NodeEvents } from "../src/updateevents";
 import type { NodeEvent } from "../src/updateevents";
-import type { SystemUser, UserDirectory } from "../src/users";
+import type { SystemUser, UserDirectory } from "../src/shared/users";
 import { defined, noSkill, rejection } from "./support";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"], scope: "system", serviceUser: "svc" } as unknown as Config;

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import readline from "node:readline/promises";
 import { Writable } from "node:stream";
-import { VERSION } from "../../server/src/version";
+import { VERSION } from "../../server/src/shared/version";
 import { parseCli } from "./args";
 import { runCommand } from "./commands";
 import type { CommandName } from "./commands";

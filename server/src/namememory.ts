@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isObject } from "./requests";
+import { isObject } from "./shared/requests";
 import { NAME_RANK, tidy } from "./sessionnames";
 import type { NameInfo, NameSource } from "./sessionnames";
 import { SESSION_ID } from "./transcript";

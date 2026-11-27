@@ -16,8 +16,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileConflict, FileRefused, MAX_FILE_BYTES, readUserFile, writeUserFile } from "../src/safefile";
-import { rejection, defined } from "./support";
+import { FileConflict, FileRefused, MAX_FILE_BYTES, readUserFile, writeUserFile } from "../../src/shared/safefile";
+import { rejection, defined } from "../support";
 
 let dir: string;
 beforeEach(async () => {

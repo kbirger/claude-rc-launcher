@@ -12,7 +12,7 @@ import { ensureNodeCert } from "../src/tls";
 import { HostRegistry } from "../src/hostregistry";
 import type { Cloner } from "../src/cloner";
 import type { UpdateReport } from "../src/serviceupdate";
-import { VERSION } from "../src/version";
+import { VERSION } from "../src/shared/version";
 import { hostsApi } from "../src/hosts";
 import { Hono } from "hono";
 import { UpdateRecord } from "../src/updaterecord";

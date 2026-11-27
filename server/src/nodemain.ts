@@ -11,7 +11,7 @@ import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";
 import { createClientVersions, createServiceUpdater } from "./serviceupdate";
-import { stopServer } from "./sse";
+import { stopServer } from "./shared/sse";
 import { createNodeSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
 import { ensureNodeCert } from "./tls";

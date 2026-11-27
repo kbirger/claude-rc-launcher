@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { Hono, type MiddlewareHandler } from "hono";
 import { createApp } from "../src/app";
-import type { ChangeSource } from "../src/changesource";
+import type { ChangeSource } from "../src/shared/PollSource";
 import type { Config } from "../src/config";
 import type { Presence } from "../src/nodewatcher";
 import { SessionCatalog } from "../src/sessioncatalog";
 import { SessionIndex } from "../src/sessionindex";
 import type { HostPart, StoreChange } from "../src/sessionsstore";
 import { sessionsStream } from "../src/sessionsstream";
-import { trackStreams } from "../src/sse";
+import { trackStreams } from "../src/shared/sse";
 import type { UserAuthStrategy } from "../src/userauth";
 import { fakeTimers } from "./faketimers";
 

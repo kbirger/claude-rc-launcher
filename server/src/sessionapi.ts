@@ -38,14 +38,14 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { posix, win32 as win32Path } from "node:path";
-import type { Identity } from "./asuser";
-import { downloadHeaders } from "./disposition";
+import type { Identity } from "./shared/asuser";
+import { downloadHeaders } from "./shared/disposition";
 import { HttpError } from "./instances";
 import type { Instances } from "./instances";
 import type { LiveInfo } from "./livesessions";
 import type { PinnedRoot } from "./pinnedroot";
-import { bunRunner } from "./runner";
-import type { Runner } from "./runner";
+import { bunRunner } from "./shared/runner";
+import type { Runner } from "./shared/runner";
 import { SessionCatalog } from "./sessioncatalog";
 import type { Session, SessionCatalogOptions } from "./sessioncatalog";
 import type { openDownload as openDownloadDefault, previewIn as previewInDefault } from "./sessionfs";

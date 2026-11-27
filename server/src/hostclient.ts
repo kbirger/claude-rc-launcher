@@ -1,7 +1,7 @@
 import { certFingerprint, signProof } from "./hubproof";
 import type { HubKey, ProofRequest } from "./hubproof";
-import { readSse, SseProtocolError } from "./ssereader";
-import type { SseEvent } from "./ssereader";
+import { readSse, SseProtocolError } from "./shared/ssereader";
+import type { SseEvent } from "./shared/ssereader";
 
 export type HostAuth = { type: "hub_key" } | { type: "secret"; secret: string };
 export interface HostConfig {

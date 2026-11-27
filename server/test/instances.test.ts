@@ -5,10 +5,10 @@ import { join } from "node:path";
 import type { Config } from "../src/config";
 import { HttpError, InstanceService } from "../src/instances";
 import type { RunResult, Runner } from "../src/instances";
-import { PathError } from "../src/paths";
+import { PathError } from "../src/shared/paths";
 import type { TrustStore } from "../src/trust";
 import { instanceId, renderUnit, unitName } from "../src/unit";
-import type { SystemUser, UserDirectory } from "../src/users";
+import type { SystemUser, UserDirectory } from "../src/shared/users";
 import { allTrusted } from "./helpers";
 import { defined } from "./support";
 

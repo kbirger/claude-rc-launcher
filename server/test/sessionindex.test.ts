@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { capSessions, MAX_SESSIONS_BYTES, SessionIndex, type SessionRow, type SessionsEvent } from "../src/sessionindex";
 import type { SessionSummary } from "../src/sessioncatalog";
-import type { ChangeSource, Trigger } from "../src/changesource";
+import type { ChangeSource, Trigger } from "../src/shared/PollSource";
 import { fakeTimers } from "./faketimers";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");

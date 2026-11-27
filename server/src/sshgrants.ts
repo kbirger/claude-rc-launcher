@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { realTimers } from "./changesource";
-import type { Timers } from "./changesource";
+import { realTimers } from "./shared/PollSource";
+import type { Timers } from "./shared/PollSource";
 import { logToken } from "./roles";
 import type { UnlockedKey } from "./sshkeystore";
 

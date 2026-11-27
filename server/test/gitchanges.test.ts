@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { changedIn, parseLog, parseStatus } from "../src/gitchanges";
-import { bunRunner } from "../src/runner";
+import { bunRunner } from "../src/shared/runner";
 
 const win = process.platform === "win32";
 

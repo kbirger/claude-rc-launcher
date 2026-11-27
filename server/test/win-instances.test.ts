@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROBE_INTERVAL_MS, SETTLE_MS } from "../src/instancechange";
 import { HttpError } from "../src/instances";
-import { PathError } from "../src/paths";
+import { PathError } from "../src/shared/paths";
 import type { TrustStore } from "../src/trust";
 import { instanceId } from "../src/unit";
 import { WinInstances, taskkillTree } from "../src/win/instances";

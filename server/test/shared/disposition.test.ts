@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dispositionFor, downloadHeaders, lastSegment } from "../src/disposition";
+import { dispositionFor, downloadHeaders, lastSegment } from "../../src/shared/disposition";
 
 describe("disposition", () => {
   test("dispositionFor gives an ASCII fallback and the exact UTF-8 name", () => {

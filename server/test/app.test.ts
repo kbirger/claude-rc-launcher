@@ -1,5 +1,5 @@
 import { staticHandler } from "../src/static";
-import { closeStreams } from "../src/sse";
+import { closeStreams } from "../src/shared/sse";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, rm, stat } from "node:fs/promises";
@@ -11,9 +11,9 @@ import type { UserAuthStrategy } from "../src/userauth";
 import type { Config } from "../src/config";
 import { HttpError, type Instance } from "../src/instances";
 import { SETTINGS_HELP } from "../src/instancesettings";
-import { PathError } from "../src/paths";
+import { PathError } from "../src/shared/paths";
 import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
-import { VERSION } from "../src/version";
+import { VERSION } from "../src/shared/version";
 import { LatestError, type createLatestRelease } from "../src/latest";
 import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
 import { UpdateLog } from "../src/updatelog";

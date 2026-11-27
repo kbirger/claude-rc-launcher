@@ -14,8 +14,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Runner } from "../src/runner";
-import { bunRunner } from "../src/runner";
+import type { Runner } from "../src/shared/runner";
+import { bunRunner } from "../src/shared/runner";
 import { SSH_SKILL, ensureSkill, renderSkill, skillVersion } from "../src/sshskill";
 import type { SkillUser } from "../src/sshskill";
 import { defined } from "./support";
