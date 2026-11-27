@@ -147,8 +147,8 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   if (!status.setUp || !status.method) throw new ExitError("SSH access is not set up on the hub", 1);
   const method = status.method;
 
-  await step("creating the target", () =>
-    hub.request("POST", `${BASE}/targets`, {
+  const made = await step("creating the target", () =>
+    hub.request<{ keyFile?: string }>("POST", `${BASE}/targets`, {
       id,
       systemType: type,
       account,
@@ -161,6 +161,8 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   );
   created = true;
   out(`target ${id} created`);
+  // The hub picks the key file of a new managed linux target when --key-file is not given.
+  if (made.keyFile !== undefined) out(`key file: ~/.ssh/${made.keyFile}`);
 
   // The key.
   if (method === "passphrase") {
@@ -223,13 +225,22 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   }
 
   // The install.
+  let sshdCheck: "passed" | "skipped" | undefined;
+
   if (isManaged) {
-    await step("installing the key", () => hub.request("POST", `${target}/authorize`));
+    const installed = await step("installing the key", () =>
+      hub.request<{ sshdCheck?: "passed" | "skipped" }>("POST", `${target}/authorize`),
+    );
+    sshdCheck = installed.sshdCheck;
   } else {
     await step("installing the key", () => installWithSsh());
   }
 
   out("key installed");
+  if (sshdCheck === "skipped")
+    out(
+      `note: the node did not check that sshd reads ~/.ssh/${made.keyFile ?? ""}. It is not root, or its version is older.`,
+    );
 
   async function installWithSsh(): Promise<void> {
     const pinned = (await hub.request<TargetView>("GET", target)).hostKey ?? hostKey;

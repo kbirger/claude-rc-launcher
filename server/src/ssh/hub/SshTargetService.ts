@@ -1,6 +1,8 @@
 import { logToken } from "../../roles";
 import { LOCAL_HOST } from "../../shared/hostid";
 import { keyFingerprint } from "../agentproto";
+import { MANAGED_KEY_FILE } from "../constants";
+import { DEFAULT_KEY_FILE } from "../keyfile";
 import { provisionScript } from "../provision";
 import type { Script } from "../provision";
 import {
@@ -225,6 +227,7 @@ export class SshTargetService {
       address = this.deps.hostAddress(input.managedHost);
 
     if (address === undefined) throw new TargetError(400, "address is required");
+    const keyFile = defaultKeyFile(input);
 
     const target = await this.deps.targets.add({
       id: input.id,
@@ -234,7 +237,7 @@ export class SshTargetService {
       systemType: input.systemType,
       nodes: input.nodes,
       ...(input.managedHost !== undefined ? { managedHost: input.managedHost } : {}),
-      ...(input.keyFile !== undefined ? { keyFile: input.keyFile } : {}),
+      ...(keyFile !== undefined ? { keyFile } : {}),
     });
     await this.push(target.nodes);
     return target;
@@ -751,4 +754,15 @@ function needLongPassphrase(unlock: UnlockSecret): void {
   let count = 0;
   for (const _point of new TextDecoder().decode(unlock.secret)) count++;
   if (count < MIN_PASSPHRASE) throw new TargetError(400, `the passphrase needs at least ${MIN_PASSPHRASE} characters`);
+}
+
+/**
+ * The key file of a new target. `authorized_keys` is the file that sshd reads without any config, so it is stored as
+ * no key file. A named file stays. With no key file, a new managed Linux target gets `MANAGED_KEY_FILE`, and every
+ * other target gets none. A stored target never changes: this runs at the add only.
+ */
+function defaultKeyFile(input: NewTargetInput): string | undefined {
+  if (input.keyFile === DEFAULT_KEY_FILE) return undefined;
+  if (input.keyFile !== undefined) return input.keyFile;
+  return input.managedHost !== undefined && input.systemType === "linux" ? MANAGED_KEY_FILE : undefined;
 }

@@ -6,6 +6,7 @@ import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
 import { isObject } from "../../shared/requests";
 import { NO_WAITING_REQUEST } from "../constants";
+import { needsSshdCheck } from "../keyfile";
 import { formatCommand, validSources } from "../provisioner";
 import type { ProvisionerAnswer, ProvisionerCommand } from "../provisioner";
 import { authorizedKeysLine, hasProvisioner, MAX_NODES, TargetError } from "../TargetStore";
@@ -714,11 +715,13 @@ export class SshService {
   }
 
   /**
-   * Puts the key line of the target into the `authorized_keys` of the account, through the node that is the target.
-   * With `nodes`, the line holds the sources of that proposed list instead of the stored list, so that a change of the
-   * list can be installed before it is stored.
+   * Puts the key line of the target into the key file of the account (`authorized_keys`, or the `keyFile` of the
+   * target), through the node that is the target. With `nodes`, the line holds the sources of that proposed list
+   * instead of the stored list, so that a change of the list can be installed before it is stored.
+   * The answer holds `sshdCheck` when the install needs the sshd check (`needsSshdCheck`): `passed`, or `skipped` when
+   * the node is not root. A node that names the key file back but gives no check is older than the check: `skipped`.
    */
-  async authorizeManaged(targetId: string, nodes?: string[]): Promise<void> {
+  async authorizeManaged(targetId: string, nodes?: string[]): Promise<{ sshdCheck?: "passed" | "skipped" }> {
     const target = this.needManaged(targetId);
     const { keys, targets } = this.deps;
     const sources = targets.sourcesOf(nodes === undefined ? target : { nodes });
@@ -745,6 +748,10 @@ export class SshService {
       if (answered !== target.keyFile)
         throw new NodeError("the node does not know key files: update the node first, then install again");
     }
+
+    if (!needsSshdCheck(target.systemType, target.keyFile)) return {};
+    const check = isObject(reply.body) ? reply.body.sshdCheck : undefined;
+    return { sshdCheck: check === "passed" ? "passed" : "skipped" };
   }
 
   /**

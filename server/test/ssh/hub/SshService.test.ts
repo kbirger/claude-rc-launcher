@@ -755,6 +755,54 @@ describe("SshService managed targets", () => {
       expect(error).toBeInstanceOf(NodeError);
       expect(targets.get("alt")?.state).toBe("draft");
     });
+
+    test("a node 400 about sshd reaches the caller as a NodeError with the same text", async () => {
+      const text =
+        "sshd does not read ~/.ssh/authorized_keys2 for root. Run on this machine: sudo claude-rc node sshd install";
+      const { error } = await withKeyFile({ status: 400, body: { error: text } });
+      expect(error).toBeInstanceOf(NodeError);
+      expect((error as Error).message).toBe(text);
+    });
+  });
+
+  describe("authorizeManaged and the sshd check", () => {
+    async function authorize(reply: Reply, target: { systemType?: "linux" | "synology"; keyFile?: string }) {
+      const ctx = await managed({ "POST /api/ssh/authorize": reply });
+      await ctx.targets.add({
+        id: "alt",
+        address: "10.0.0.10",
+        port: 22,
+        account: "root",
+        systemType: target.systemType ?? "linux",
+        nodes: ["node1"],
+        managedHost: "pve",
+        ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+      });
+      await ctx.keys.create("alt", unlock);
+      return ctx.service.authorizeManaged("alt");
+    }
+
+    test("authorizeManaged passes the sshd check of the node back", async () => {
+      const keyFile = "authorized_keys.claude-rc";
+      expect(await authorize({ status: 200, body: { keyFile, sshdCheck: "passed" } }, { keyFile })).toEqual({
+        sshdCheck: "passed",
+      });
+      expect(await authorize({ status: 200, body: { keyFile, sshdCheck: "skipped" } }, { keyFile })).toEqual({
+        sshdCheck: "skipped",
+      });
+    });
+
+    test("authorizeManaged treats a missing sshd check as skipped", async () => {
+      const keyFile = "authorized_keys.claude-rc";
+      expect(await authorize({ status: 200, body: { keyFile } }, { keyFile })).toEqual({ sshdCheck: "skipped" });
+    });
+
+    test("authorizeManaged has no sshd check for a target that needs none", async () => {
+      // No key file: the node answers 204. Synology with a key file: the node never checks.
+      expect(await authorize({ status: 204 }, {})).toEqual({});
+      const keyFile = "authorized_keys.claude-rc";
+      expect(await authorize({ status: 200, body: { keyFile } }, { systemType: "synology", keyFile })).toEqual({});
+    });
   });
 
   test("authorizeManaged without an enabled node address is a 409", async () => {
