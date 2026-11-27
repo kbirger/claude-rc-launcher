@@ -40,6 +40,7 @@ export interface Flags {
   "key-file"?: string;
   "no-test"?: boolean;
   provisioner?: boolean;
+  "no-sshd"?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -89,6 +90,7 @@ export function parseCli(argv: string[]): { command: string[]; flags: Flags } {
         "key-file": { type: "string" },
         "no-test": { type: "boolean" },
         provisioner: { type: "boolean" },
+        "no-sshd": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean" },
       },

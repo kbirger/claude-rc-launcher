@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import readline from "node:readline/promises";
 import { Writable } from "node:stream";
 import { VERSION } from "../../server/src/shared/version";
+import type { SshdDropin } from "../../server/src/ssh";
 import { parseCli } from "./args";
 import { runCommand } from "./commands";
 import type { CommandName } from "./commands";
@@ -13,6 +14,7 @@ import type { NodeFs } from "./nodecmd";
 import { nodeRoots, ROOTS_USAGE } from "./noderoots";
 import { nodeSetup, nodeUpdate } from "./nodesetup";
 import type { Sys } from "./nodesetup";
+import { nodeSshd, SSHD_USAGE } from "./nodesshd";
 import { login, logout, renew } from "./oidc";
 import { sshRequest, sshTargets, SSH_OFF_MESSAGE } from "./sshcmd";
 import {
@@ -54,8 +56,10 @@ Commands:
   update [--release tag] [--all-nodes | --node id[,id...]]
                                      update this claude-rc binary (--all-nodes: every node, the hub, then this binary;
                                      --node: only the named nodes, in that order)
-  node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force]
+  node setup --listen <ip> [--hub url] [--name n] [--roots /a,/b] [--service-user u] [--binary file] [--release tag] [--force] [--no-sshd]
                                      install, start and register this machine as a node
+                                     (--no-sshd: do not install the sshd drop-in for the dedicated key file)
+  node sshd install|check|remove     the sshd drop-in that makes sshd read ~/.ssh/authorized_keys.claude-rc (root)
   node roots list [--config file] [--json]
                                      list the root folders of this node
   node roots add <dir> [--config file] [--no-restart]
@@ -92,6 +96,8 @@ export interface Env {
   readLine: (prompt: string, signal?: AbortSignal) => Promise<string>;
   nodeFs?: NodeFs;
   sys?: Sys;
+  /** The sshd drop-in of `node sshd`. Tests replace it. */
+  sshdDropin?: SshdDropin;
   /** The environment variables. Tests replace it. The default is `process.env`. */
   environ?: Record<string, string | undefined>;
   /** Asks for a secret and does not show what is typed. */
@@ -311,6 +317,19 @@ export async function main(
       return 0;
     }
 
+    if (name === "node" && args[0] === "sshd") {
+      // Works on this machine only and talks to no hub, so no login is needed.
+      const stray = Object.keys(flags).find((flag) => !["json", "help"].includes(flag));
+      if (stray) throw new ExitError(`--${stray} does not apply to node sshd. ${SSHD_USAGE}`, 1);
+      await nodeSshd({
+        args: args.slice(1),
+        out: io.out,
+        err: io.err,
+        ...(env.sshdDropin ? { dropin: env.sshdDropin } : {}),
+      });
+      return 0;
+    }
+
     if (name === "node" && args[0] === "roots") {
       // Works on the node machine only and talks to no hub, so no login is needed.
       const stray = Object.keys(flags).find((flag) => !["config", "no-restart", "json", "help"].includes(flag));
@@ -412,7 +431,7 @@ export async function main(
 
       if (args[0] !== "config")
         throw new ExitError(
-          "usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>] | claude-rc node roots list|add|remove",
+          "usage: claude-rc node config|setup --listen <address> [--names <name,name,...>] [--port <n>] [--name <n>] [--roots </dir,/dir>] | claude-rc node update [--binary <file>] [--release <tag>] | claude-rc node roots list|add|remove | claude-rc node sshd install|check|remove",
           1,
         );
       await nodeConfig({ flags, hubUrl: creds.hub, hub, out: io.out, ...(env.nodeFs ? { fs: env.nodeFs } : {}) });
@@ -436,7 +455,8 @@ export async function main(
     return 0;
   } catch (error) {
     if (error instanceof ExitError) {
-      io.err(error.message);
+      // An empty message: the command printed its own lines already.
+      if (error.message) io.err(error.message);
       return error.code;
     }
 

@@ -2,13 +2,14 @@
 # Installs the compiled claude-rc-launcher binary onto the system PATH, optionally sets up the
 # systemd service, and restarts the service if it is running.
 #
-#   sudo deploy/install-binary.sh [--service [--node]] [path/to/binary]
+#   sudo deploy/install-binary.sh [--service [--node] [--no-sshd]] [path/to/binary]
 #
 # The binary defaults to ./dist/claude-rc-launcher (from `./install.sh --build`); pass the path of
 # a downloaded release binary instead if you used that.
 #
 #   --service   also install the systemd unit and /etc/claude-rc-launcher/config.toml (see below)
 #   --node      with --service: set this host up as a NODE (managed by a hub) instead of a hub
+#   --no-sshd   with --service: do not install the sshd drop-in (see below)
 #
 # The binary is COPIED to $PREFIX/bin (never symlinked into a build tree: the service runs as
 # root, so it must not execute a file somebody else can modify) and replaced atomically, so
@@ -24,9 +25,14 @@
 #     placeholders left and oidc-client.secret exists and is non-empty (node: at least one
 #     [[node_auth.hub_key]] or [[node_auth.secret]] row is present). Otherwise it prints what to fill in; run the same command
 #     again afterwards.
+#   * on Linux, the sshd drop-in /etc/ssh/sshd_config.d/49-claude-rc.conf is installed with
+#     "claude-rc-launcher sshd-dropin install", for a hub and for a node: it makes sshd read the
+#     dedicated key file ~/.ssh/authorized_keys.claude-rc of managed targets. If it fails, a warning
+#     prints the command to run later and the install goes on. --no-sshd skips it.
 #
 # Environment (mainly for testing): PREFIX (default /usr/local), SYSTEMD_DIR (default
-# /etc/systemd/system), CONFIG_DIR (default /etc/claude-rc-launcher), SKIP_SYSTEMCTL=1.
+# /etc/systemd/system), CONFIG_DIR (default /etc/claude-rc-launcher), SKIP_SYSTEMCTL=1 (it also
+# skips the sshd drop-in and prints the command instead).
 set -euo pipefail
 
 NAME=claude-rc-launcher
@@ -39,18 +45,21 @@ DEST="$DEST_DIR/$NAME"
 
 SERVICE=0
 NODE=0
+NO_SSHD=0
 SRC=""
 for arg in "$@"; do
   case "$arg" in
-    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --service) SERVICE=1 ;;
     --node) NODE=1 ;;
+    --no-sshd) NO_SSHD=1 ;;
     -*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     *) [ -z "$SRC" ] || { echo "error: more than one binary path given" >&2; exit 2; }; SRC=$arg ;;
   esac
 done
 SRC=${SRC:-"$HERE/../dist/claude-rc-launcher"}
 [ "$NODE" -eq 0 ] || [ "$SERVICE" -eq 1 ] || { echo "error: --node requires --service" >&2; exit 2; }
+[ "$NO_SSHD" -eq 0 ] || [ "$SERVICE" -eq 1 ] || { echo "error: --no-sshd requires --service" >&2; exit 2; }
 
 [ -f "$SRC" ] || { echo "error: binary not found: $SRC (build it with ./install.sh --build, or pass a path)" >&2; exit 1; }
 
@@ -136,6 +145,17 @@ if [ "$NODE" -eq 0 ]; then
 fi
 
 if [ "$HAVE_SYSTEMCTL" -eq 1 ]; then systemctl daemon-reload; fi
+
+# sshd drop-in: a hub serves managed targets of `local` too, so both roles get it. A failure only warns.
+if [ "$(uname -s)" = "Linux" ]; then
+  if [ "$NO_SSHD" -eq 1 ]; then
+    echo "Skipped the sshd drop-in (--no-sshd)"
+  elif [ -n "${SKIP_SYSTEMCTL:-}" ]; then
+    echo "Would install the sshd drop-in: $DEST sshd-dropin install"
+  elif ! "$DEST" sshd-dropin install; then
+    echo "warning: the sshd drop-in was not installed. Run later: sudo $DEST sshd-dropin install" >&2
+  fi
+fi
 
 # Readiness: no placeholders left in config.toml, plus the auth material the role needs.
 MISSING=()
