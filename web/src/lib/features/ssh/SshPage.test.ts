@@ -45,7 +45,7 @@ async function showCode() {
   const mounted = mount(SshPageHarness, { target, props: { client } });
   open.push(() => unmount(mounted));
   await vi.waitFor(() => expect(document.body.textContent).toContain("SSH access setup"));
-  document.querySelector<HTMLInputElement>('input[value="passphrase"]')!.click();
+  document.querySelector<HTMLButtonElement>('[role="radio"][data-value="passphrase"]')!.click();
   flushSync();
   button("Continue").click();
   await vi.waitFor(() => expect(document.body.textContent).toContain(CODE));

@@ -7,20 +7,12 @@
   import { PASSPHRASE_NAME } from "./passphrase";
   import * as Sheet from "#lib/components/ui/sheet/index.js";
   import { untrack } from "svelte";
-  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { ApiError } from "../../shared/http";
-  import { hostsQuery } from "../hosts";
-  import { getSalt, listGrants, type Grant, type Maintenance, type SshStatus, type Unlock } from "./api";
-  import { hostLabel } from "./hostlabel";
-  import { approveGrantMutation } from "./mutations";
-  import { retireNotice } from "./retirenotice";
-  import { toBase64Url, unlockWithPasskey } from "./prf";
-  import { targetsQuery } from "./queries";
+  import { useQueryClient } from "@tanstack/svelte-query";
+  import type { Grant, Maintenance, SshStatus } from "./api";
+  import { createApproveModel, listText as list, maintenanceHeadline as headline } from "./approve.svelte";
 
-  // The owner reads one request and approves it. Mount it fresh for each grant: it reads `grant` once, so a refetch of
-  // the list that changes or drops the grant never changes the sheet. The node cannot prove which instance asked, so
-  // the instance is only "claimed by the session". Approval needs a new unlock: a secret (a passphrase, a PRF output)
-  // lives in a local variable of one call, and the passphrase field is cleared when the call ends, whatever the answer.
+  // The owner reads one request and approves it. The approve model holds the state. Mount it fresh for each grant: it
+  // reads `grant` once. The node cannot prove which instance asked, so the instance is only "claimed by the session".
   let {
     grant,
     status,
@@ -32,15 +24,15 @@
     onclose: () => void;
   } = $props();
 
-  const client = useQueryClient();
-  const targets = createQuery(() => targetsQuery());
-  const hosts = createQuery(() => hostsQuery());
-  const approve = createMutation(() => approveGrantMutation(client));
+  const model = createApproveModel({
+    client: useQueryClient(),
+    grant: untrack(() => grant),
+    status: () => status,
+    onclose: () => onclose(),
+  });
   const uid = $props.id();
   const wrap = "min-w-0 [overflow-wrap:anywhere]";
   const WARNING = "This gives the full power of the account on the target. The target cannot limit it to read-only.";
-
-  const ENDED_EARLY = "the grant ended before the run started";
   const MAINTENANCE_WARNING =
     "It uses the provisioner key, not the key of a session. The change runs as soon as you approve.";
   const ACTIONS: Record<Maintenance["action"], string> = {
@@ -48,112 +40,17 @@
     uninstall: "Retire: remove the key lines",
     install: "Put the key line back",
   };
-  const work = $derived(grant.maintenance);
-  const list = (items: string[]) => (items.length ? items.join(", ") : "none");
-  const nodeNames = (ids: string[]) => (ids.length ? ids.map((id) => hostLabel(id, hosts.data)).join(", ") : "none");
-  const headline = (maintenance: Maintenance, id: string, router: boolean) => {
-    if (maintenance.action === "uninstall") return `This removes the key line on ${id}.`;
-    if (router && maintenance.action === "sources") return `This changes the list of the router script on ${id}.`;
-    return `This changes the key line on ${id}.`;
-  };
-  // A Dropbear router has no address limit on the key line (Dropbear has no `from=`), so the address texts are false.
   const ROUTER_NO_LIMIT = "The router does not limit this key by address. Your approval is the control.";
   const ROUTER_SAME_LINE = "The key line on the router stays the same. Only the list of the router script changes.";
-  const sameAddresses = $derived(work?.action === "sources" && list(work.fromSources) === list(work.toSources ?? []));
-  // After a failed run the grant has ended, so a second approve can only give 409.
-  let finished = $state(false);
-  // The text after a retire: the run is done and the target is gone, whatever the run gave.
-  let notice = $state("");
-
-  const target = $derived(targets.data?.find((item) => item.id === grant.targetId));
-  const router = $derived(target?.systemType === "dropbear");
-  // A number input binds a number, or null while the field is empty.
-  let minutes = $state<number | null>(untrack(() => grant.minutes));
-  let passphrase = $state("");
-  let busy = $state(false);
-  let problem = $state("");
-
-  async function withUnlock<T>(use: (unlock: Unlock) => Promise<T>): Promise<T> {
-    try {
-      if (status.method === "prf") {
-        if (!status.credentialId) throw new Error("The hub has no passkey on record.");
-        const { salt } = await getSalt(grant.targetId, work ? "provisioner" : "main");
-        return await use({ method: "prf", secret: await unlockWithPasskey(status.credentialId, salt) });
-      }
-
-      if (passphrase === "") throw new Error("Type the passphrase.");
-      return await use({ method: "passphrase", secret: toBase64Url(new TextEncoder().encode(passphrase)) });
-    } finally {
-      passphrase = "";
-    }
-  }
-
-  async function submit() {
-    const count = minutes;
-    problem = "";
-
-    if (!work && (count === null || !Number.isInteger(count) || count < 1 || count > 480)) {
-      problem = "The minutes must be a whole number from 1 to 480.";
-      return;
-    }
-
-    busy = true;
-
-    try {
-      const done = await withUnlock((unlock) =>
-        approve.mutateAsync({ id: grant.id, unlock, ...(work || count === null ? {} : { minutes: count }) }),
-      );
-
-      // An uninstall always retires once it was approved. The notice tells what happened to the lines on the machine.
-      if (done.retired) {
-        notice = retireNotice(done.retired);
-        finished = true;
-        return;
-      }
-
-      // A maintenance run that failed ends the grant, and the hub still answers 200. The owner must read why.
-      if (done.maintenance?.result === "failed") {
-        problem = `The change failed. ${done.maintenance.detail || "The run gave no detail."}`;
-        finished = true;
-        return;
-      }
-
-      onclose();
-    } catch (error) {
-      problem = error instanceof Error ? error.message : "The approval failed.";
-
-      // The grant ended before the run started: nothing ran, and a second approve can only give 409.
-      if (error instanceof ApiError && error.status === 409 && error.message.startsWith(ENDED_EARLY)) {
-        problem = `${problem.charAt(0).toUpperCase()}${problem.slice(1)}`;
-        finished = true;
-      }
-
-      // The hub answers an error with a text only. The record of the grant holds the result and the detail.
-      if (work) {
-        try {
-          const found = (await listGrants()).find((item) => item.id === grant.id)?.maintenance;
-
-          if (found?.result === "failed") {
-            // An empty detail says nothing: the text of the error does.
-            const why = found.detail || (error instanceof Error ? error.message : "") || "The run gave no detail.";
-            problem = `The change failed. ${why}`;
-            finished = true;
-          }
-        } catch {
-          /* keep the error text */
-        }
-      }
-    } finally {
-      approve.reset();
-      busy = false;
-    }
-  }
+  const work = model.work;
+  const target = $derived(model.target);
+  const router = $derived(model.router);
 </script>
 
 <Sheet.Root
   open={true}
   onOpenChange={(value) => {
-    if (!value && !busy) onclose();
+    if (!value && !model.busy) onclose();
   }}
 >
   <Sheet.Content
@@ -174,7 +71,7 @@
         {:else}
           <div class="flex min-w-0 justify-between gap-3">
             <dt class="text-muted-foreground">Node</dt>
-            <dd class={wrap}>{hostLabel(grant.nodeId, hosts.data)}</dd>
+            <dd class={wrap}>{model.hostName(grant.nodeId)}</dd>
           </div>
           <div class="flex min-w-0 justify-between gap-3">
             <dt class="text-muted-foreground">Instance</dt>
@@ -210,28 +107,28 @@
               {#if work.action === "sources"}
                 <span data-router-text>{ROUTER_SAME_LINE}</span>
                 <span class="text-xs">
-                  Nodes now: {nodeNames(work.fromNodes)}. Nodes after: {nodeNames(work.toNodes ?? [])}.
+                  Nodes now: {model.nodeNames(work.fromNodes)}. Nodes after: {model.nodeNames(work.toNodes ?? [])}.
                 </span>
               {:else}
-                <span class="text-xs">Nodes: {nodeNames(work.fromNodes)}</span>
+                <span class="text-xs">Nodes: {model.nodeNames(work.fromNodes)}</span>
               {/if}
               <span data-router-text>{ROUTER_NO_LIMIT}</span>
             {:else if work.action === "sources"}
-              {#if sameAddresses}
+              {#if model.sameAddresses}
                 <span>The list of addresses does not change: {list(work.fromSources)}</span>
               {:else}
                 <span>SSH will be allowed only from: {list(work.toSources ?? [])}</span>
                 <span>from: {list(work.fromSources)}</span>
               {/if}
               <span class="text-xs">
-                Nodes now: {nodeNames(work.fromNodes)}. Nodes after: {nodeNames(work.toNodes ?? [])}.
+                Nodes now: {model.nodeNames(work.fromNodes)}. Nodes after: {model.nodeNames(work.toNodes ?? [])}.
               </span>
             {:else if work.action === "install"}
               <span>SSH will be allowed only from: {list(work.fromSources)}</span>
-              <span class="text-xs">Nodes: {nodeNames(work.fromNodes)}</span>
+              <span class="text-xs">Nodes: {model.nodeNames(work.fromNodes)}</span>
             {:else}
               <span>The addresses now allowed: {list(work.fromSources)}</span>
-              <span class="text-xs">Nodes: {nodeNames(work.fromNodes)}</span>
+              <span class="text-xs">Nodes: {model.nodeNames(work.fromNodes)}</span>
             {/if}
             <span>{MAINTENANCE_WARNING}</span>
           </Alert.Description>
@@ -252,12 +149,12 @@
             max="480"
             step="1"
             class="h-11"
-            disabled={busy}
-            bind:value={minutes}
+            disabled={model.busy}
+            bind:value={model.minutes}
           />
         </div>
       {/if}
-      {#if finished}
+      {#if model.finished}
         <!-- The run is over: nothing to unlock. -->
       {:else if status.method === "prf"}
         <p class="text-sm text-muted-foreground">The passkey asks you to confirm.</p>
@@ -273,28 +170,30 @@
             autocomplete="current-password"
             autocapitalize="off"
             spellcheck={false}
-            disabled={busy}
-            bind:value={passphrase}
+            disabled={model.busy}
+            bind:value={model.passphrase}
           />
         </div>
       {/if}
-      {#if notice}
+      {#if model.notice}
         <Alert.Root role="status">
-          <Alert.Description class={wrap}>{notice}</Alert.Description>
+          <Alert.Description class={wrap}>{model.notice}</Alert.Description>
         </Alert.Root>
       {/if}
-      {#if problem}
+      {#if model.problem}
         <Alert.Root variant="destructive" role="alert">
-          <Alert.Description class={wrap}>{problem}</Alert.Description>
+          <Alert.Description class={wrap}>{model.problem}</Alert.Description>
         </Alert.Root>
       {/if}
     </div>
     <Sheet.Footer class="px-4">
-      {#if !finished}
-        <Button type="button" size="touch" disabled={busy} onclick={submit}>{busy ? "Approving..." : "Approve"}</Button>
+      {#if !model.finished}
+        <Button type="button" size="touch" disabled={model.busy} onclick={model.submit}>
+          {model.busy ? "Approving..." : "Approve"}
+        </Button>
       {/if}
-      <Button type="button" variant="outline" size="touch" disabled={busy} onclick={onclose}>
-        {finished ? "Close" : "Cancel"}
+      <Button type="button" variant="outline" size="touch" disabled={model.busy} onclick={onclose}>
+        {model.finished ? "Close" : "Cancel"}
       </Button>
     </Sheet.Footer>
   </Sheet.Content>

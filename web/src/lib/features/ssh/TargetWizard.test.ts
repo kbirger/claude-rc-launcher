@@ -28,6 +28,14 @@ const PRF: SshStatus = {
     { host: "node2", enabled: false, sourceAddress: "" },
   ],
 };
+const BOTH: SshStatus = {
+  ...PRF,
+  nodes: [
+    { host: "node1", enabled: true, sourceAddress: "10.0.0.2" },
+    { host: "node2", enabled: true, sourceAddress: "10.0.0.3" },
+  ],
+};
+const NO_NODE = "No node of this target has SSH access on. Turn it on, with a source address, on the Nodes card.";
 const PASSPHRASE: SshStatus = { ...PRF, method: "passphrase", credentialId: undefined };
 
 const detail = (extra: Partial<TargetDetail> = {}): TargetDetail => ({
@@ -98,10 +106,24 @@ const typeInto = (selector: string, text: string) => {
   flushSync();
 };
 
-const choose = (selector: string, value: string) => {
-  const select = document.querySelector<HTMLSelectElement>(selector)!;
-  select.value = value;
-  select.dispatchEvent(new Event("change", { bubbles: true }));
+// bits-ui opens a select on ArrowDown, and picks an option on pointer up, so the tests send those events.
+const openSelect = async (trigger: HTMLElement) => {
+  trigger.focus();
+  trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  await vi.waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull());
+};
+
+const pick = async (selector: string, value: string) => {
+  await openSelect(document.querySelector<HTMLElement>(selector)!);
+  const option = await vi.waitFor(() => {
+    const found = document.querySelector<HTMLElement>(`[role="option"][data-value="${value}"]`);
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  for (const type of ["pointermove", "pointerdown", "pointerup"])
+    option.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: "mouse", button: 0 }));
+  option.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="option"]')).toBeNull());
   flushSync();
 };
 
@@ -130,7 +152,7 @@ test("the wizard does not show the install line before the key exists", async ()
   typeInto('input[id$="-id"]', "nas");
   typeInto('input[id$="-address"]', "10.0.0.5");
   typeInto('input[id$="-account"]', "root");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Create target");
   await waitText("Step 2 of 6: Key");
@@ -167,7 +189,7 @@ test("the wizard blocks the pin step until the admin selects They match", async 
   expect(posts().some((call) => call.url.endsWith("/pin"))).toBe(false);
   expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
 
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   expect(button("Pin host key")!.disabled).toBe(false);
   press("Pin host key");
@@ -181,7 +203,7 @@ test("the pin sends the first line when no key is ed25519", async () => {
   await resumeAt({ keyFingerprint: "SHA256:key" });
   press("Scan host key");
   await waitText("SHA256:rsa");
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Pin host key");
   await waitText("Step 4 of 6: Install");
@@ -206,7 +228,7 @@ test("the install step shows the line of the key answer with a Copy button", asy
   await waitText("Step 3 of 6");
   press("Scan host key");
   await waitText("SHA256:ed");
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Pin host key");
   await waitText("Step 4 of 6");
@@ -284,19 +306,22 @@ test("a managed target pins the host key from the node without a question", asyn
   expect(posts().find((call) => call.url.endsWith("/pin-managed"))).toBeDefined();
 });
 
-test("the type list holds linux, windows, synology and dropbear and nothing else", () => {
+test("the type list holds linux, windows, synology and dropbear and nothing else", async () => {
   show(PRF);
-  const options = [...document.querySelectorAll<HTMLOptionElement>('select[id$="-type"] option')].map(
-    (item) => item.value,
-  );
+  const trigger = document.querySelector<HTMLElement>('[id$="-type"]')!;
+  expect(trigger.labels[0]?.textContent).toBe("System type");
+  expect(trigger.textContent?.trim()).toBe("linux");
+  await openSelect(trigger);
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.dataset.value);
   expect(options).toEqual(["linux", "windows", "synology", "dropbear"]);
 });
 
 test("the form lists only the nodes with SSH access on, none checked, and checks the id", () => {
   show(PRF);
-  const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-  expect(boxes.map((box) => box.value)).toEqual(["node1"]);
-  expect(boxes[0]!.checked).toBe(false);
+  const boxes = [...document.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')];
+  expect(boxes.map((box) => box.dataset.value)).toEqual(["node1"]);
+  expect(boxes[0]!.getAttribute("aria-checked")).toBe("false");
+  expect(boxes[0]!.labels[0]?.textContent).toContain("node1");
   typeInto('input[id$="-id"]', "Bad Id");
   typeInto('input[id$="-address"]', "x");
   typeInto('input[id$="-account"]', "root");
@@ -311,14 +336,13 @@ test("a managed target is sent with its managed host and an optional address", a
   answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
   answers["POST /api/ssh/targets"] = () => ({ body: detail({ managedHost: "node2" }) });
   show(PRF);
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
   typeInto('input[id$="-id"]', "box");
-  choose('select[id$="-host"]', "node2");
-  choose('select[id$="-type"]', "windows");
+  await pick('[id$="-host"]', "node2");
+  await pick('[id$="-type"]', "windows");
   typeInto('input[id$="-account"]', "admin");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Create target");
   await waitText("Step 2 of 6");
@@ -339,25 +363,24 @@ test("the key file field shows only for a managed linux or synology target", asy
 
   // External: hidden for every type.
   for (const type of ["linux", "synology", "windows", "dropbear"]) {
-    choose('select[id$="-type"]', type);
+    await pick('[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
 
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
 
   for (const type of ["linux", "synology"]) {
-    choose('select[id$="-type"]', type);
+    await pick('[id$="-type"]', type);
     expect(keyFileInput()).not.toBeNull();
   }
 
   for (const type of ["windows", "dropbear"]) {
-    choose('select[id$="-type"]', type);
+    await pick('[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
 
-  choose('select[id$="-type"]', "linux");
+  await pick('[id$="-type"]', "linux");
   expect(keyFileInput()!.value).toBe("");
   expect(keyFileInput()!.placeholder).toBe("authorized_keys");
   expect(document.body.textContent).toContain(
@@ -370,14 +393,13 @@ const fillManaged = async (type: string) => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
   answers["POST /api/ssh/targets"] = () => ({ body: detail({ managedHost: "node2" }) });
   show(PRF);
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
   typeInto('input[id$="-id"]', "box");
-  choose('select[id$="-host"]', "node2");
-  choose('select[id$="-type"]', type);
+  await pick('[id$="-host"]', "node2");
+  await pick('[id$="-type"]', type);
   typeInto('input[id$="-account"]', "admin");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
 };
 
@@ -406,7 +428,7 @@ test("an empty key file is not posted", async () => {
 test("a key file typed for linux is not posted after the type changes to windows", async () => {
   await fillManaged("linux");
   typeInto('input[id$="-keyfile"]', "authorized_keys2");
-  choose('select[id$="-type"]', "windows");
+  await pick('[id$="-type"]', "windows");
   press("Create target");
   await waitText("Step 2 of 6");
   expect(posts()[0]!.body).not.toHaveProperty("keyFile");
@@ -415,13 +437,12 @@ test("a key file typed for linux is not posted after the type changes to windows
 const pickLocal = async (status: SshStatus) => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "local", name: "Hub", status: "ok" }] });
   show(status);
-  label("Managed").querySelector("input")!.click();
+  label("Managed").querySelector<HTMLElement>('[role="radio"]')!.click();
   flushSync();
-  await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="local"]')).not.toBeNull());
   typeInto('input[id$="-id"]', "hubhost");
-  choose('select[id$="-host"]', "local");
+  await pick('[id$="-host"]', "local");
   typeInto('input[id$="-account"]', "root");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
 };
 
@@ -433,6 +454,18 @@ test("a managed target of local prefills the address from the source address of 
   press("Create target");
   await waitText("Step 2 of 6");
   expect(posts()[0]!.body).toMatchObject({ managedHost: "local", address: "192.168.1.5" });
+});
+
+test("Choose a host takes the host back and the fill of the address of local with it", async () => {
+  await pickLocal({ ...PRF, nodes: [...PRF.nodes, { host: "local", enabled: true, sourceAddress: "192.168.1.5" }] });
+  const address = () => document.querySelector<HTMLInputElement>('input[id$="-address"]')!.value;
+  expect(address()).toBe("192.168.1.5");
+  const trigger = document.querySelector<HTMLElement>('[id$="-host"]')!;
+  expect(trigger.labels[0]?.textContent).toBe("Managed host");
+  await pick('[id$="-host"]', "");
+  expect(trigger.textContent?.trim()).toBe("Choose a host");
+  expect(address()).toBe("");
+  expect(button("Create target")!.disabled).toBe(true);
 });
 
 test("a managed target of local needs an address when the node local has no source address", async () => {
@@ -473,8 +506,8 @@ test("a passed test shows ready", async () => {
 test("the test step asks for a new unlock every time", async () => {
   prf.unlockWithPasskey.mockResolvedValueOnce("Zmlyc3Q").mockResolvedValueOnce("c2Vjb25k");
   answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: false, error: "nope" } });
-  await toTest({ nodes: ["node1", "node2"] });
-  choose('select[id$="-test-node"]', "node2");
+  await toTest({ nodes: ["node1", "node2"] }, BOTH);
+  await pick('[id$="-test-node"]', "node2");
   press("Test connection");
   await waitText("nope");
   press("Try again");
@@ -543,14 +576,14 @@ test("a failed refetch of the target does not move or unmount the step", async (
   const client = await resumeAt({ keyFingerprint: "SHA256:key" });
   press("Scan host key");
   await waitText("SHA256:ed");
-  label("They match").querySelector("input")!.click();
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   answers["GET /api/ssh/targets/nas"] = () => ({ status: 500, body: { error: "boom" } });
   await client.refetchQueries({ queryKey: ["ssh", "target", "nas"] });
   flushSync();
   expect(client.getQueryState(["ssh", "target", "nas"])?.status).toBe("error");
   expect(document.body.textContent).toContain("SHA256:ed");
-  expect(label("They match").querySelector("input")!.checked).toBe(true);
+  expect(label("They match").querySelector('[role="checkbox"]')!.getAttribute("aria-checked")).toBe("true");
   expect(button("Pin host key")!.disabled).toBe(false);
 });
 
@@ -562,10 +595,10 @@ test("Cancel calls onclose", () => {
 
 test("the node select shows the node that the scan uses when the admin does not touch it", async () => {
   answers["POST /api/ssh/targets/nas/scan"] = () => ({ body: { keys: [{ line: ED, fingerprint: "SHA256:ed" }] } });
-  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node1", "node2"] });
-  const select = document.querySelector<HTMLSelectElement>('select[id$="-scan-node"]')!;
-  expect(select.selectedIndex).toBe(0);
-  expect(select.value).toBe("node1");
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node1", "node2"] }, BOTH);
+  const select = document.querySelector<HTMLElement>('[id$="-scan-node"]')!;
+  expect(select.labels[0]?.textContent).toBe("Read the host key from this node");
+  expect(select.textContent?.trim()).toBe("node1");
   press("Scan host key");
   await waitText("SHA256:ed");
   expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
@@ -573,13 +606,13 @@ test("the node select shows the node that the scan uses when the admin does not 
 
 test("the node select of the test step shows the node that the test uses", async () => {
   answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: true } });
-  await toTest({ nodes: ["node1", "node2"] });
-  const select = document.querySelector<HTMLSelectElement>('select[id$="-test-node"]')!;
-  expect(select.selectedIndex).toBe(0);
+  await toTest({ nodes: ["node1", "node2"] }, BOTH);
+  const select = document.querySelector<HTMLElement>('[id$="-test-node"]')!;
+  expect(select.labels[0]?.textContent).toBe("Run the test from this node");
+  expect(select.textContent?.trim()).toBe("node1");
   press("Test connection");
   await waitText("nas is ready");
-  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: select.value });
-  expect(select.value).toBe("node1");
+  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: "node1" });
 });
 
 const checkUsername = () => {
@@ -660,4 +693,65 @@ test.each([
   await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready", ...extra });
   expect(document.body.textContent).toContain("is ready");
   expect(document.querySelector("[data-provisioner-hint]")).toBeNull();
+});
+
+test("the test step says what the test does", async () => {
+  await toTest();
+  const text = document.body.textContent!.replace(/\s+/g, " ");
+  expect(text).toContain("A test connects to the target from the node you choose.");
+  expect(text).toContain("The address of that node must be allowed for this target.");
+  expect(text).toContain("The test opens a connection for one minute and needs a new unlock.");
+  expect(text).toContain("A failed test leaves the target in draft.");
+});
+
+test("the node list leaves out a node with access off or no source address, and keeps the order", async () => {
+  const status: SshStatus = {
+    ...PRF,
+    nodes: [
+      { host: "node1", enabled: true, sourceAddress: "10.0.0.2" },
+      { host: "node2", enabled: false, sourceAddress: "10.0.0.3" },
+      { host: "node3", enabled: true, sourceAddress: "" },
+      { host: "node4", enabled: true, sourceAddress: "10.0.0.5" },
+    ],
+  };
+  await toTest({ nodes: ["node4", "node3", "node2", "node1"] }, status);
+  const trigger = document.querySelector<HTMLElement>('[id$="-test-node"]')!;
+  expect(trigger.textContent?.trim()).toBe("node4");
+  await openSelect(trigger);
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.dataset.value);
+  expect(options).toEqual(["node4", "node1"]);
+});
+
+test("one node left shows no selector and the requests use it", async () => {
+  answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: true } });
+  answers["POST /api/ssh/targets/nas/scan"] = () => ({ body: { keys: [{ line: ED, fingerprint: "SHA256:ed" }] } });
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node2", "node1"] });
+  expect(document.querySelector('[id$="-scan-node"]')).toBeNull();
+  press("Scan host key");
+  await waitText("SHA256:ed");
+  expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
+  flushSync();
+  answers["POST /api/ssh/targets/nas/pin"] = () => ({ body: detail({ hostKey: ED }) });
+  press("Pin host key");
+  await waitText("Step 4 of 6");
+  press("I installed it");
+  expect(document.querySelector('[id$="-test-node"]')).toBeNull();
+  press("Test connection");
+  await waitText("nas is ready");
+  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: "node1" });
+});
+
+test("no node left at the host key step shows the message and disables the scan", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node2"] });
+  expect(document.body.textContent).toContain(NO_NODE);
+  expect(document.querySelector('[id$="-scan-node"]')).toBeNull();
+  expect(button("Scan host key")!.disabled).toBe(true);
+});
+
+test("no node left at the test step shows the message and disables the test", async () => {
+  await toTest({ nodes: ["node2"] });
+  expect(document.body.textContent).toContain(NO_NODE);
+  expect(document.querySelector('[id$="-test-node"]')).toBeNull();
+  expect(button("Test connection")!.disabled).toBe(true);
 });
