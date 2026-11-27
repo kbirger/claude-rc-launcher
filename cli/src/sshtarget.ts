@@ -173,10 +173,10 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
         1,
       );
     const secret: Unlock = { method, secret: Buffer.from(typed, "utf8").toString("base64url") };
-    const made = await step("creating the key", () =>
+    const keyMade = await step("creating the key", () =>
       hub.request<{ fingerprint: string }>("POST", `${target}/key`, { unlock: secret }),
     );
-    out(`key created (${made.fingerprint})`);
+    out(`key created (${keyMade.fingerprint})`);
   } else {
     out(`open ${link} to unlock with your passkey`);
     const view = await step("waiting for the key", () => waitFor("the key", (item) => !!item.keyFingerprint));

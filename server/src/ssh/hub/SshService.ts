@@ -742,11 +742,19 @@ export class SshService {
     );
 
     // An old node ignores the key file and writes `authorized_keys`. It answers without the name, so the install
-    // would look fine. The node must name the file back.
+    // would look fine. The node must name the file back. When it does not, the line is already in `authorized_keys`:
+    // ask the same node to remove it from there (no key file), and keep the refusal.
     if (target.keyFile !== undefined) {
       const answered = isObject(reply.body) ? reply.body.keyFile : undefined;
-      if (answered !== target.keyFile)
-        throw new NodeError("the node does not know key files: update the node first, then install again");
+
+      if (answered !== target.keyFile) {
+        const cleanup = await this.removeLine(target, undefined);
+        const byHand =
+          cleanup.line === "failed"
+            ? ". The node may have written the key line into ~/.ssh/authorized_keys: remove the line from ~/.ssh/authorized_keys by hand"
+            : "";
+        throw new NodeError(`the node does not know key files: update the node first, then install again${byHand}`);
+      }
     }
 
     if (!needsSshdCheck(target.systemType, target.keyFile)) return {};
@@ -761,11 +769,25 @@ export class SshService {
    */
   async deauthorizeManaged(targetId: string): Promise<{ line: "removed" | "not-found" | "failed"; detail?: string }> {
     let target: Target & { managedHost: string };
-    let blob: string | undefined;
 
     try {
       target = this.needManaged(targetId);
+    } catch (error) {
+      return failed(message(error));
+    }
 
+    return this.removeLine(target, target.keyFile);
+  }
+
+  /** The removal of `deauthorizeManaged`, from the key file `keyFile` (`authorized_keys` when undefined). Never throws. */
+  private async removeLine(
+    target: Target & { managedHost: string },
+    keyFile: string | undefined,
+  ): Promise<{ line: "removed" | "not-found" | "failed"; detail?: string }> {
+    const targetId = target.id;
+    let blob: string | undefined;
+
+    try {
       try {
         blob = this.deps.keys.publicLine(targetId).split(" ")[1];
       } catch (error) {
@@ -783,7 +805,7 @@ export class SshService {
           systemType: target.systemType,
           key: blob,
           id: targetId,
-          ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+          ...(keyFile !== undefined ? { keyFile } : {}),
         },
         DEAUTHORIZE_TIMEOUT_MS,
       );

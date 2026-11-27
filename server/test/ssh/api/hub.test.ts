@@ -975,6 +975,31 @@ describe("host key and install", () => {
     expect(node2.paths()).toContain("POST /api/ssh/authorize");
   });
 
+  test("POST /targets/:id/authorize on an old node answers 502, keeps the draft and removes the line from authorized_keys", async () => {
+    const { call, node2, targets } = await setup({
+      replies2: {
+        "POST /api/ssh/authorize": { status: 204 },
+        "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } },
+      },
+    });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", {
+      id: "self",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "node2",
+    });
+    await call("POST", "/targets/self/key", "admin", { unlock });
+    const refused = await call("POST", "/targets/self/authorize");
+    expect(refused.status).toBe(502);
+    expect(refused.text).toContain("update the node first");
+    expect(targets.get("self")?.state).toBe("draft");
+    const cleanup = node2.calls.find((item) => item.path === "/api/ssh/deauthorize");
+    expect(cleanup?.json).not.toHaveProperty("keyFile");
+    expect(cleanup?.json).toMatchObject({ account: "root", systemType: "linux", id: "self" });
+  });
+
   test("POST /targets/:id/authorize answers sshdCheck", async () => {
     for (const sshdCheck of ["passed", "skipped"] as const) {
       const { call } = await setup({

@@ -718,8 +718,8 @@ describe("SshService managed targets", () => {
   });
 
   describe("authorizeManaged with a key file", () => {
-    async function withKeyFile(reply: Reply) {
-      const ctx = await managed({ "POST /api/ssh/authorize": reply });
+    async function withKeyFile(reply: Reply, more: Replies = {}) {
+      const ctx = await managed({ "POST /api/ssh/authorize": reply, ...more });
       await ctx.targets.add({
         id: "alt",
         address: "10.0.0.10",
@@ -754,6 +754,45 @@ describe("SshService managed targets", () => {
       const { error, targets } = await withKeyFile({ status: 200, body: { keyFile: "authorized_keys" } });
       expect(error).toBeInstanceOf(NodeError);
       expect(targets.get("alt")?.state).toBe("draft");
+    });
+
+    test("an old node gets a deauthorize call without a key file after the refused install", async () => {
+      const { error, targets, host, keys } = await withKeyFile(
+        { status: 204 },
+        { "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } } },
+      );
+      expect(error).toBeInstanceOf(NodeError);
+      expect((error as Error).message).toBe(
+        "the node does not know key files: update the node first, then install again",
+      );
+      expect(targets.get("alt")?.state).toBe("draft");
+      expect(host.paths()).toEqual(["POST /api/ssh/authorize", "POST /api/ssh/deauthorize"]);
+      expect(host.calls[1].json).toEqual({
+        account: "root",
+        systemType: "linux",
+        key: keys.publicLine("alt").split(" ")[1],
+        id: "alt",
+      });
+    });
+
+    test("a failed cleanup on an old node keeps the refusal and asks for a removal by hand", async () => {
+      const { error, targets, host } = await withKeyFile(
+        { status: 204 },
+        { "POST /api/ssh/deauthorize": new Error("connect refused") },
+      );
+      expect(error).toBeInstanceOf(NodeError);
+      expect((error as Error).message).toStartWith(
+        "the node does not know key files: update the node first, then install again",
+      );
+      expect((error as Error).message).toContain("remove the line from ~/.ssh/authorized_keys by hand");
+      expect(targets.get("alt")?.state).toBe("draft");
+      expect(host.paths()).toEqual(["POST /api/ssh/authorize", "POST /api/ssh/deauthorize"]);
+    });
+
+    test("a node that names the file back gets no deauthorize call", async () => {
+      const { error, host } = await withKeyFile({ status: 200, body: { keyFile: "authorized_keys2" } });
+      expect(error).toBeUndefined();
+      expect(host.paths()).toEqual(["POST /api/ssh/authorize"]);
     });
 
     test("a node 400 about sshd reaches the caller as a NodeError with the same text", async () => {
