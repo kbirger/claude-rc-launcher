@@ -15,6 +15,8 @@ export default tseslint.config(
       "web/**",
       "server/src/web/embedded.ts",
       "server/src/web/embedded.d.ts",
+      // The old path of the generated file (before the server layout move). gen-embed.ts deletes it.
+      "server/src/embedded.ts",
       ".local-data/**",
     ],
   },

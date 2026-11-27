@@ -14,6 +14,9 @@ bun run --cwd web dev           # Vite dev server for the UI (proxies /api and /
 bun run build                   # web build, embed, bun build --compile -> dist/claude-rc-launcher
 ```
 
+`bun run build` writes the generated file `server/src/web/embedded.ts`. Before the server layout move it was
+`server/src/embedded.ts`. The build deletes that old file, and Git and ESLint still ignore it.
+
 CI (`.github/workflows/ci.yml`) runs the typecheck, tests and build on Linux for every push and
 pull request.
 
