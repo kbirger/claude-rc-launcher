@@ -224,6 +224,14 @@ export class SshdDropin {
     return listHolds(list, keyFile, home);
   }
 
+  /**
+   * True when the list of `sshd -T` without an account holds `~/.ssh/<keyFile>`. When it does and `readsFor` is false, a
+   * Match block gives the account another list.
+   */
+  async readsGlobally(home: string, keyFile: string): Promise<boolean> {
+    return listHolds(await this.effectiveList(), keyFile, home);
+  }
+
   private requireRoot(word: "install" | "check" | "remove"): void {
     if (!this.machine.isRoot()) {
       throw new SshdDropinError("not-root", `the sshd drop-in needs root. Run: sudo ${this.command} ${word}`);

@@ -149,6 +149,7 @@ export function defaultSshdReads(
     if (!identityFor) throw new HttpError(501, "the node has no user switch");
     // identityFor rejects an unknown account with a 400.
     const { home } = await identityFor(account);
-    return (await dropin.readsFor(account, home, keyFile)) ? "passed" : "missing";
+    if (await dropin.readsFor(account, home, keyFile)) return "passed";
+    return (await dropin.readsGlobally(home, keyFile)) ? "match-block" : "missing";
   };
 }

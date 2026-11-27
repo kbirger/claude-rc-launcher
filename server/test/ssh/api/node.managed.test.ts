@@ -604,6 +604,16 @@ describe("defaultSshdReads", () => {
     expect(await reads("alice", "authorized_keys.claude-rc")).toBe("passed");
   });
 
+  test("defaultSshdReads answers match-block when only a Match block of the account leaves the file out", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${MANAGED_LIST}\n`);
+    fake.accountLists.set("alice", [".ssh/authorized_keys"]);
+    const reads = defaultSshdReads(identityFor, () => true, new SshdDropin(fake));
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("match-block");
+    expect(fake.calls).toContain("sshdEffective alice");
+    expect(fake.calls).toContain("sshdEffective");
+  });
+
   test("defaultSshdReads as root without a user switch is a 501", async () => {
     const reads = defaultSshdReads(undefined, () => true, new SshdDropin(new FakeSshd()));
     const error = await reads("alice", "authorized_keys.claude-rc").catch((caught: unknown) => caught);

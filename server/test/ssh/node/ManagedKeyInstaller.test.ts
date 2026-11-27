@@ -101,7 +101,7 @@ describe("ManagedKeyInstaller", () => {
   let calls: { account: string; script: Script; timeoutMs: number | undefined }[];
   let answer: { code: number; stderr: string; stdout?: string };
   let reads: [string, string][];
-  let readsAnswer: () => Promise<"passed" | "skipped" | "missing">;
+  let readsAnswer: () => Promise<"passed" | "skipped" | "missing" | "match-block">;
 
   const runAs: RunAs = (account, script, timeoutMs) => {
     calls.push({ account, script, timeoutMs });
@@ -300,6 +300,46 @@ describe("ManagedKeyInstaller", () => {
     expect(error).toBeInstanceOf(ManagedKeyError);
     expect(error).toMatchObject({ status: 500 });
     expect(error.message).toContain("sshd -T failed: bad config line 3");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a Match block with another list gives a 400 that names the Match block, not the install command", async () => {
+    readsAnswer = () => Promise.resolve("match-block");
+    const error = await refusal(
+      installer().authorize({
+        account: "alice",
+        systemType: "linux",
+        line: LINE,
+        keyFile: "authorized_keys.claude-rc",
+      }),
+    );
+
+    expect(error).toMatchObject({
+      status: 400,
+      message:
+        "A Match block in the sshd configuration sets another AuthorizedKeysFile list for alice. The owner must add .ssh/authorized_keys.claude-rc to the list of that Match block on this machine.",
+    });
+    expect(error.message).not.toContain("claude-rc node sshd install");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a failed check says that the key line was not written, not the install words", async () => {
+    readsAnswer = () =>
+      Promise.reject(new SshdDropinError("no-sshd", "sshd is not installed on this machine. Nothing was changed."));
+    const error = await refusal(
+      installer().authorize({
+        account: "alice",
+        systemType: "linux",
+        line: LINE,
+        keyFile: "authorized_keys.claude-rc",
+      }),
+    );
+
+    expect(error).toMatchObject({
+      status: 500,
+      message:
+        "cannot check that sshd reads ~/.ssh/authorized_keys.claude-rc: sshd is not installed on this machine. The key line was not written.",
+    });
     expect(calls).toHaveLength(0);
   });
 

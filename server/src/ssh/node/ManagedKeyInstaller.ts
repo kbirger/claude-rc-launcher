@@ -25,9 +25,10 @@ export type RunAs = (
 
 /**
  * Whether sshd reads `~/.ssh/<keyFile>` for the account. `skipped`: the node cannot ask sshd, because it is not root.
- * It throws when sshd cannot answer.
+ * `match-block`: the global list holds the file, but a Match block gives the account another list. It throws when
+ * sshd cannot answer.
  */
-export type SshdReads = (account: string, keyFile: string) => Promise<"passed" | "skipped" | "missing">;
+export type SshdReads = (account: string, keyFile: string) => Promise<"passed" | "skipped" | "missing" | "match-block">;
 
 /** The sshd check of an install. `not-needed`: the install uses `authorized_keys`, or is not for a Linux target. */
 export type SshdCheckResult = "passed" | "skipped" | "not-needed";
@@ -122,7 +123,7 @@ export class ManagedKeyInstaller {
 
   /** The check of `authorize`. sshd that does not read the file is a 400. A failed check is a 500, an `HttpError` keeps its status. */
   private async checkSshd(account: string, keyFile: string): Promise<"passed" | "skipped"> {
-    let answer: "passed" | "skipped" | "missing";
+    let answer: Awaited<ReturnType<SshdReads>>;
 
     try {
       answer = await this.deps.sshdReads(account, keyFile);
@@ -130,7 +131,20 @@ export class ManagedKeyInstaller {
       if (error instanceof HttpError || error instanceof ManagedKeyError) throw error;
       const detail = error instanceof Error ? error.message : String(error);
       if (error instanceof SshdDropinError && error.code === "bad-account") throw new ManagedKeyError(400, detail);
-      throw new ManagedKeyError(500, `cannot check that sshd reads ~/.ssh/${keyFile}: ${detail}`);
+      // The check runs before the script, so the key line is not written. The install words do not belong here.
+      const reason = detail.replace(/\s*Nothing was changed\.\s*$/, "").replace(/\.$/, "");
+      throw new ManagedKeyError(
+        500,
+        `cannot check that sshd reads ~/.ssh/${keyFile}: ${reason}. The key line was not written.`,
+      );
+    }
+
+    // The install command changes the global list only, so it cannot help an account with a Match block.
+    if (answer === "match-block") {
+      throw new ManagedKeyError(
+        400,
+        `A Match block in the sshd configuration sets another AuthorizedKeysFile list for ${account}. The owner must add .ssh/${keyFile} to the list of that Match block on this machine.`,
+      );
     }
 
     // The install command adds only the managed file to the list of sshd. Another file needs an edit by the owner.
