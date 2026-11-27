@@ -111,4 +111,16 @@ describe("sections model", () => {
     expect(page.model.open).toEqual(["targets", "settings"]);
     page.dispose();
   });
+
+  test("opening another section does not save a section that a need opened", () => {
+    const storage = memory({ [SECTIONS_KEY]: "[]" });
+    const page = mount(storage, [{ section: "requests", token: "g1" }]);
+    page.model.setOpen(["requests", "settings"]);
+    expect(page.model.open).toEqual(["requests", "settings"]);
+    expect(JSON.parse(storage.items.get(SECTIONS_KEY)!)).toEqual(["settings"]);
+    page.props.needs = [];
+    flushSync();
+    expect(page.model.open).toEqual(["settings"]);
+    page.dispose();
+  });
 });

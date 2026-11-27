@@ -78,12 +78,17 @@ export function createSectionsModel(opts: { storage: Storage | undefined; needs:
     get open() {
       return open;
     },
-    /** Called by the accordion when the owner opens or closes a section. */
+    /**
+     * Called by the accordion when the owner opens or closes a section. Only the sections that changed go into the saved
+     * choice, so that a section that a need opened is not saved as open.
+     */
     setOpen(value: string[]) {
       const next = inOrder(value.filter(isSection));
+      const opened = next.filter((section) => !open.includes(section));
+      const closed = open.filter((section) => !next.includes(section));
       open = next;
-      chosen = next;
-      save(storage, next);
+      chosen = inOrder([...chosen, ...opened].filter((section) => !closed.includes(section)));
+      save(storage, chosen);
     },
   };
 }
