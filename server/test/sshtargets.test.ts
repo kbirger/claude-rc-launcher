@@ -236,6 +236,19 @@ describe("TargetStore", () => {
     expect(new TargetStore(file).get("nas")?.nodes).toEqual([]);
   });
 
+  test("setNodesIf sets the list only while the stored list is the expected one", async () => {
+    const store = new TargetStore(file);
+    await store.add(input);
+    await store.setNodes("nas", ["a"]);
+    // A later change of the list stands: the undo of an earlier change does not land.
+    await store.setNodes("nas", ["b"]);
+    expect(await store.setNodesIf("nas", ["a"], ["pve"])).toBe(false);
+    expect(store.get("nas")?.nodes).toEqual(["b"]);
+    expect(await store.setNodesIf("nas", ["b"], ["pve"])).toBe(true);
+    expect(new TargetStore(file).get("nas")?.nodes).toEqual(["pve"]);
+    expect(await store.setNodesIf("gone", [], ["a"])).toBe(false);
+  });
+
   test("setNodes copies the list it gets and refuses a bad list", async () => {
     const store = new TargetStore();
     await store.add(input);
@@ -297,6 +310,16 @@ describe("authorizedKeysLine", () => {
     expect(authorizedKeysLine(key, ["10.0.0.1", "10.0.0.2"])).toBe(`from="10.0.0.1,10.0.0.2",restrict ${key}`);
   });
 
+  test("authorizedKeysLine for dropbear has the four flags and no from, and OpenSSH types keep from and restrict", () => {
+    expect(authorizedKeysLine(key, ["10.0.0.1"], "dropbear")).toBe(
+      `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ${key}`,
+    );
+    for (const type of ["linux", "synology"] as const)
+      expect(authorizedKeysLine(key, ["10.0.0.1"], type)).toBe(`from="10.0.0.1",restrict ${key}`);
+    expect(() => authorizedKeysLine(key, [], "dropbear")).toThrow();
+    expect(() => authorizedKeysLine(key, ["1.2.3.4 x"], "dropbear")).toThrow();
+  });
+
   test("authorizedKeysLine with no source address throws", () => {
     expect(() => authorizedKeysLine(key, [])).toThrow();
     expect(() => authorizedKeysLine(key, [""])).toThrow();
@@ -310,8 +333,11 @@ describe("authorizedKeysLine", () => {
 });
 
 describe("installNotes", () => {
-  test("installNotes for dropbear names the Authorized Keys page", () => {
-    expect(installNotes("dropbear").join("\n")).toContain("Authorized Keys");
+  test("installNotes for dropbear names the Authorized Keys page and says that there is no address limit", () => {
+    const text = installNotes("dropbear").join("\n");
+    expect(text).toContain("Authorized Keys");
+    expect(text).toContain("does not support from=");
+    expect(text).toContain("approval of the hub is the control");
   });
 
   test("installNotes for windows names administrators_authorized_keys", () => {

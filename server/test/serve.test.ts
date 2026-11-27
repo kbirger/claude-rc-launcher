@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { GITHUB_IDLE_TIMEOUT_SECONDS, UPDATE_IDLE_TIMEOUT_SECONDS, withLongUpdates } from "../src/serve";
+import { GITHUB_IDLE_TIMEOUT_SECONDS, SSH_APPROVE_IDLE_TIMEOUT_SECONDS, UPDATE_IDLE_TIMEOUT_SECONDS, withLongUpdates } from "../src/serve";
 import { REPOS_TIMEOUT_MS, UPDATE_TIMEOUT_MS } from "../src/hosts";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
@@ -124,6 +124,31 @@ describe("withLongUpdates: instance settings routes", () => {
       ["GET", `/api/instances/${ID}/logs`], ["POST", `/api/instances/${ID}/pause`], ["PATCH", `/api/instances/${ID}/logs`],
       ["PATCH", "/api/instances/zz"], ["PATCH", "/api/instances/0123456789abc"], ["POST", "/api/instances/ABCDEF012345/restart"], ["POST", "/api/instances/zz/restart"],
       ["PATCH", `/api/hosts/a/b/instances/${ID}`], ["PATCH", `/other/api/instances/${ID}`],
+    ]) expect([m, p, await timeouts(m!, p!)]).toEqual([m, p, []]);
+  });
+});
+
+describe("withLongUpdates: the approve of an SSH grant", () => {
+  const timeouts = async (method: string, p: string) => {
+    const seen: [string, number][] = [];
+    const server = { timeout: (req: Request, s: number) => void seen.push([new URL(req.url).pathname, s]) };
+    await withLongUpdates({ fetch: () => new Response("ok") }, 190, 125)(new Request(`http://x${p}`, { method }), server as any);
+    return seen;
+  };
+
+  test("POST approve gets the long limit for a maintenance run, on the browser and the CLI path", async () => {
+    for (const p of ["/api/ssh/grants/g1/approve", "/cli/api/ssh/grants/abc-1/approve"])
+      expect([p, await timeouts("POST", p)]).toEqual([p, [[p, SSH_APPROVE_IDLE_TIMEOUT_SECONDS]]]);
+    expect(SSH_APPROVE_IDLE_TIMEOUT_SECONDS).toBeGreaterThanOrEqual(90);
+    expect(SSH_APPROVE_IDLE_TIMEOUT_SECONDS).toBeLessThanOrEqual(255);
+  });
+
+  test("other methods and paths are left alone", async () => {
+    for (const [m, p] of [
+      ["GET", "/api/ssh/grants/g1/approve"],
+      ["POST", "/api/ssh/grants/g1/deny"],
+      ["POST", "/api/ssh/grants/a/b/approve"],
+      ["POST", "/x/api/ssh/grants/g1/approve"],
     ]) expect([m, p, await timeouts(m!, p!)]).toEqual([m, p, []]);
   });
 });

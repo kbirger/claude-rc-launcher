@@ -20,7 +20,7 @@ A provisioner key gives the hub one narrow way into the machine. The key can run
 
 ## Non-goals
 
-- No subnets or CIDR ranges by choice of the owner. The script reuses the source rule of the hub as it is. Read the threat model for what this rule allows.
+- No wildcards, subnets or CIDR ranges by choice of the owner. The script takes exact addresses and host names only. This rule is stricter than the source rule of the main line.
 - No write of the key line for a grant. A session grant never runs the script.
 - No ramdisk mode and no per-grant `on` and `off`.
 - No change for managed targets. A managed target keeps its node path.
@@ -97,17 +97,18 @@ The script reads `SSH_ORIGINAL_COMMAND`. The value must match one of these forms
 ```text
 command   = "on" / "off" / "status" / "uninstall" / sources
 sources   = "sources" SP list
-list      = pattern *( "," pattern )
-pattern   = 1*255( ALPHA / DIGIT / "." / "_" / ":" / "*" / "?" / "/" / "-" )
+list      = address *( "," address )
+address   = 1*255( ALPHA / DIGIT / "." / "_" / ":" / "-" ), not starting with "-"
 SP        = one space character (0x20)
 ```
 
 These limits also hold:
 
-- A list has at most 200 patterns. This is the node limit of the hub.
+- A list has at most 200 addresses. This is the node limit of the hub.
 - The whole value has at most 4096 bytes.
-- An unset or empty value is an error. A tab, a newline, a second space, a leading or trailing space and an empty pattern are errors.
-- The pattern rule is `SOURCE_RE` of `server/src/sshtargets.ts`. A shared table of test vectors keeps the hub and the script equal.
+- An unset or empty value is an error. A tab, a newline, a second space, a leading or trailing space and an empty address are errors.
+- The address rule is `ADDRESS_RE` of `server/src/sshtargets.ts`. A shared table of test vectors keeps the hub and the script equal.
+- So a target with a provisioner needs exact node source addresses. Else the install script route and each maintenance request answer 409.
 
 #### Answers
 
@@ -259,7 +260,7 @@ The flag needs the system type `linux`, `synology` or `dropbear`. The CLI refuse
 
 #### A provisioner for an existing target
 
-`claude-rc ssh target provisioner <id> --identity <file>` runs steps 2, 3, 4 and 6 for a target that exists. It needs a pinned host key. A target that has a provisioner already gets a new key. The install replaces the old provisioner line and the old script. The same command repairs a provisioner after the source address of `local` changed.
+`claude-rc ssh target provisioner <id> --identity <file>` runs steps 2, 3, 4 and 6 for a target that exists. It needs a pinned host key. A target that has a provisioner already gets a new key. The install removes every provisioner line of the target by its comment, also the line of an older key. It writes the script again. The same command repairs a provisioner after the source address of `local` changed.
 
 #### Change of nodes
 
@@ -360,14 +361,24 @@ Every new route needs the role `admin`. The rows go into the route table of `ser
 
 ### The router version
 
-The router runs Dropbear on Asuswrt-Merlin with BusyBox `sh`. The router keeps its key list in the NVRAM variable `sshd_authkeys`. It writes `/tmp/home/root/.ssh/authorized_keys` from that variable at boot. A change in the file alone is lost at the next reboot.
+The router runs Dropbear on Asuswrt-Merlin with BusyBox `sh`. The router keeps its key list in the NVRAM variable `sshd_authkeys`, with `>` between the lines. At each start of sshd, it writes `/root/.ssh/authorized_keys` from the first 3499 bytes of that variable. A change in the file alone is lost at the next reboot.
+
+Dropbear has no `from=` option. It refuses a whole key line with an option that it does not know. Dropbear before 2022.82 also refuses `restrict`. So no line on the router has `from=` or `restrict`. A ruling of the owner sets these forms:
+
+- The main line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <main key>`. The router does not limit this key by address. The approval of the hub is the control.
+- The provisioner line is `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,command="<script path>" <provisioner key>`.
+- The script checks the client address itself. The first field of `SSH_CONNECTION` must be the source of `local`. Else the script stops with exit 2 and `error bad-source`.
+- A change of the nodes does not change the main line. The action `sources` writes only the state file, and the hub asks for no confirm. If an older line with `from=` is there, `sources` replaces it.
+- The script checks the source before the grammar. So another address gets only `bad-source`.
 
 The router version of the script differs in these points:
 
 - It lives in `/jffs/scripts/claude-rc-provisioner-<id>.sh`, with its state file next to it. `/jffs` survives a reboot.
-- Each write builds the new key list, runs the guard, then runs `nvram set sshd_authkeys=<list>` and `nvram commit`. Then it writes the live file.
+- Each write builds the new key list and runs the guard. The guard also refuses a list over 3499 bytes. Then the script runs `nvram set`, reads the value back, and runs `nvram commit`. Then it writes the live file.
+- After a failed step, the script puts the old value back and stops. The live file stays as it was.
+- The script keeps the separator that it finds in the variable.
 - It uses only BusyBox commands. It has no `flock`, so it uses a lock folder made with `mkdir`.
-- The builder must check that this Dropbear honors `command=`, `from=` and `restrict`, and that it sets `SSH_ORIGINAL_COMMAND`. When `restrict` is unknown, the line uses `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty`.
+- The add writes the main line into the live file only. The install also puts that line into the variable, so a reboot keeps it.
 
 This version cannot be tested without the real router. The plan keeps it as a separate task with a manual test.
 
@@ -385,7 +396,7 @@ This version cannot be tested without the real router. The plan keeps it as a se
 A stolen provisioner key, used from the source address of `local`, can do these things:
 
 - Switch the main line on and off. Off is a denial of service. On puts back a line that the owner approved earlier.
-- Change the `from=` list of the main line within the pattern rule. The rule allows `*` and `?`. So `sources *` lets the main key in from any address. The thief still needs the main private key to log in.
+- Change the `from=` list of the main line to up to 200 exact addresses or host names of its choice. So the thief can let the main key in from an address that it controls. The thief still needs the main private key to log in.
 - Run `uninstall`. This removes both lines, which is a denial of service.
 
 It cannot add a key, read a file, open a terminal or forward a port. `restrict` and `command=` stop that. The `from=` part stops a use from any other address.
@@ -434,12 +445,13 @@ On a Linux target:
 On the router:
 
 1. Install the router version with `--provisioner`. Reboot the router. Check that both lines are still in `nvram get sshd_authkeys`.
-2. Change the nodes from the phone. Reboot. Check the new `from=` list.
+2. Change the nodes from the phone. Check that the main line did not change. Check the new list in the state file.
 3. Send `ls` with the provisioner key. Expect `error bad-command`.
 4. Retire. Reboot. Check that both lines are gone.
 
 ## Open risks
 
-- The pattern rule allows wildcards. Read the threat model.
+- A thief with the provisioner key can set exact addresses of its choice. Read the threat model.
 - A job that rewrites `authorized_keys` removes the provisioner line too. The action `install` cannot help then. Way 3 of the docs, a dedicated account, avoids this.
-- The router version depends on Dropbear features that nobody tested.
+- The router version depends on Dropbear features that nobody tested on a router.
+- On the router, the main key is not limited by address. The approval of the hub is the only control.

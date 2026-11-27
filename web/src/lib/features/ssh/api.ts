@@ -22,6 +22,8 @@ export type SshStatus = {
   /** False when no target has a key yet: the next passphrase is a new one. */
   hasKeys?: boolean;
   nodes: NodeStatus[];
+  /** Ids of the targets whose provisioner key needs one re-lock after a recovery. */
+  pendingProvisionerRewrap?: string[];
 };
 
 export type Target = {
@@ -38,6 +40,10 @@ export type Target = {
   /** The pinned host key, one line in the `known_hosts` format. */
   hostKey?: string;
   keyFingerprint?: string;
+  /** An external target with an installed provisioner: its key, the script path and the source address it allows. */
+  provisionerFingerprint?: string;
+  provisionerScript?: string;
+  provisionerSource?: string;
   state: TargetState;
 };
 export type NewTarget = {
@@ -58,6 +64,20 @@ export type HostKeyLine = { line: string; fingerprint: string };
 export type ProvisionScript = { shell: "sh" | "powershell"; script: string };
 export type NodeAccess = NodeStatus & { pushed: boolean };
 export type TestResult = { ok: boolean; error?: string };
+export type MaintenanceAction = "install" | "sources" | "uninstall";
+/** The work of a maintenance grant. The lists are plain strings: host ids and source addresses. */
+export type Maintenance = {
+  action: MaintenanceAction;
+  fromNodes: string[];
+  toNodes?: string[];
+  fromSources: string[];
+  toSources?: string[];
+  result?: "done" | "failed";
+  detail?: string;
+  changed?: boolean;
+  /** True once the hub started a step of the run on the target. A grant that ended without it changed nothing there. */
+  started?: boolean;
+};
 export type Grant = {
   id: string;
   nodeId: string;
@@ -72,6 +92,8 @@ export type Grant = {
   endsAt?: number;
   approvedBy?: string;
   endReason?: EndReason;
+  /** Set for a maintenance grant: a change of the key line on the target, approved with the provisioner key. */
+  maintenance?: Maintenance;
 };
 
 const BASE = "/api/ssh";
@@ -105,9 +127,21 @@ export const patchTarget = (id: string, state: "disabled" | "draft") =>
  * `pushed` is false when a node could not be told.
  */
 export type TargetNodesResult = Target & { installLine?: string; lineUpdated?: boolean; pushed?: boolean };
-/** Replaces the nodes of a target. A managed target gets the new key line before the answer. */
-export const patchTargetNodes = (id: string, nodes: string[]) =>
-  request<TargetNodesResult>("PATCH", targetUrl(id), { nodes });
+/** The 202 answer for a target with a provisioner: nothing has changed yet, and the owner approves the grant. */
+export type MaintenanceAnswer = { maintenance: Grant };
+export const isMaintenanceAnswer = (answer: unknown): answer is MaintenanceAnswer =>
+  typeof answer === "object" && answer !== null && "maintenance" in answer && !("id" in answer);
+/** The text that the hub adds to a 409 when the new list allows none of the addresses that work now. */
+export const CONFIRM_NODES_SUFFIX = ": send it again with confirm";
+/**
+ * Replaces the nodes of a target. A managed target gets the new key line before the answer. A target with a provisioner
+ * answers with a maintenance grant, and `confirm` answers the 409 about a list that locks out every address in use.
+ */
+export const patchTargetNodes = (id: string, nodes: string[], confirm = false) =>
+  request<TargetNodesResult | MaintenanceAnswer>("PATCH", targetUrl(id), {
+    nodes,
+    ...(confirm ? { confirm: true } : {}),
+  });
 /** What a retire did to the key line on the target: removed, not on the target, not removable (failed) or external (manual). */
 export type RetireLine = "removed" | "not-found" | "failed" | "manual";
 export type RetireResult = {
@@ -119,12 +153,25 @@ export type RetireResult = {
   managed: boolean;
   line: RetireLine;
   detail?: string;
+  /** Set when a provisioner stays on the machine: the two comments that end the lines to remove. */
+  comments?: string[];
+  /** The path of the provisioner script on the machine, when the script stays. */
+  script?: string;
 };
-export const deleteTarget = (id: string) => request<RetireResult>("DELETE", targetUrl(id));
+/** A target with a provisioner answers 202 with a maintenance grant. `cleanup: "none"` retires at once. */
+export const deleteTarget = (id: string, cleanup?: "none") =>
+  request<RetireResult | MaintenanceAnswer>("DELETE", `${targetUrl(id)}${cleanup ? "?cleanup=none" : ""}`);
+/** Puts the key line back on the target: the hub answers with a maintenance grant. */
+export const reinstallTarget = (id: string) => request<MaintenanceAnswer>("POST", `${targetUrl(id)}/reinstall`);
+/** Makes the provisioner key of an external target. The answer holds the public part only. */
+export const createProvisionerKey = (id: string, unlock: Unlock) =>
+  request<{ publicLine: string; fingerprint: string }>("POST", `${targetUrl(id)}/provisioner-key`, { unlock });
 
-export const getSalt = (id: string) => request<TargetSalt>("GET", `${targetUrl(id)}/salt`);
+/** The salt of the unlock of one key slot of a target. `provisioner` is the slot that a maintenance grant uses. */
+export const getSalt = (id: string, key: "main" | "provisioner" = "main") =>
+  request<TargetSalt>("GET", `${targetUrl(id)}/salt${key === "provisioner" ? "?key=provisioner" : ""}`);
 /** Re-locks the key of one target under the new unlock. The code is the recovery code. */
-export const rewrapTarget = (id: string, body: { code: string; unlock: Unlock }) =>
+export const rewrapTarget = (id: string, body: { code: string; unlock: Unlock; key?: "provisioner" }) =>
   request<void>("POST", `${targetUrl(id)}/rewrap`, body);
 export const createKey = (id: string, unlock: Unlock) => request<KeyResult>("POST", `${targetUrl(id)}/key`, { unlock });
 export const scanHostKey = (id: string, node: string) =>
@@ -137,7 +184,9 @@ export const testTarget = (id: string, node: string, unlock: Unlock) =>
   request<TestResult>("POST", `${targetUrl(id)}/test`, { node, unlock });
 
 export const listGrants = () => request<Grant[]>("GET", `${BASE}/grants`);
+/** The approve of an `uninstall` grant also answers `retired`: what the retire did to the lines on the machine. */
+export type ApprovedGrant = Grant & { retired?: RetireResult };
 export const approveGrant = (id: string, unlock: Unlock, minutes?: number) =>
-  request<Grant>("POST", `${grantUrl(id)}/approve`, { unlock, ...(minutes !== undefined ? { minutes } : {}) });
+  request<ApprovedGrant>("POST", `${grantUrl(id)}/approve`, { unlock, ...(minutes !== undefined ? { minutes } : {}) });
 export const denyGrant = (id: string) => request<Grant>("POST", `${grantUrl(id)}/deny`);
 export const revokeGrant = (id: string) => request<Grant>("POST", `${grantUrl(id)}/revoke`);

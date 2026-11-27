@@ -52,7 +52,7 @@ SSH delegation lets a session use an SSH key that the hub holds. Read [SSH deleg
 - Every grant needs a new unlock. The hub holds a key in memory only while a grant is active. A stolen login cannot approve a grant, because the approval needs the unlock too.
 - A grant lasts 60 minutes by default and 480 minutes at most. A grant cannot be extended. A hub restart ends all grants.
 - The hub pins the SSH host key of each target. A session cannot be sent to another machine.
-- The line in `authorized_keys` limits the key to the source addresses of the allowed nodes. It also turns off forwarding.
+- The line in `authorized_keys` limits the key to the source addresses of the allowed nodes. It also turns off forwarding. A Dropbear router is an exception. Read [The provisioner key](#the-provisioner-key).
 - When a session asks for SSH access, the hub sends a push message to each stored device. The message holds the target id, the instance name, the minutes and the reason, cut to 120 characters. It never holds a key, a passphrase or a grant secret. A test grant sends nothing.
 - Only an `admin` can register a device. A person who loses the admin role keeps getting messages. They cannot turn the switch off, because the route needs the admin role. When the push service drops the device, the messages end. To stop it at once, stop the hub, delete the file `<state_dir>/push/subscriptions.json`, and start the hub. A running hub writes the file again from its memory. The delete removes the devices of all users, so each admin must open the SSH page on each device.
 - The hub keeps at most 20 devices for each user. The oldest device drops first. If an endpoint is registered again, it moves to the latest person.
@@ -66,6 +66,57 @@ These limits remain:
 - If an SSH connection is open when a grant ends, it keeps working.
 - The instance name on a request is a claim of the node, not proof.
 - The hub is a larger target, because it holds the keys. Keep `<state_dir>/ssh` in your backup, and protect it like `hub-key.pem`.
+
+### The provisioner key
+
+An external target can have a provisioner key. Read [The provisioner key](ssh-delegation.md#the-provisioner-key) for how it works. This section gives the threat model.
+
+The hub stores the provisioner key like the main key. It has its own salt and its own sealed copy. One passkey tap or one passphrase opens one key only. The hub holds the provisioner key in memory only during a maintenance grant. The recovery code opens a recovery copy of it too.
+
+A maintenance grant is a grant that runs one action with the provisioner key. These rules hold for it:
+
+- It needs a new unlock of the provisioner key, from an `admin`. A stolen login cannot approve it.
+- It lasts 1 minute and ends after its one run. The hub caps the signatures of the grant to the planned runs.
+- A session can never create one, and it never opens the main key.
+- It runs through the node `local`. The provisioner line allows the source address of `local` only.
+- The approval sheet names the target, the action and the change before you unlock.
+- Each step writes an audit line that starts with `audit ssh maintenance`. No line holds a key, a signature, an unlock or the full output of the script.
+- The push message holds the target id and a short text. It holds no address and no key.
+
+A thief with the provisioner key and the source address of `local` can do these things:
+
+- Switch the main line on and off. Off is a denial of service. On puts back a line that you approved earlier.
+- Change the `from=` list of the main line with `sources <list>`. The list holds up to 200 exact addresses or host names. The thief chooses them, so the thief can let the main key in from an address that the thief controls. The thief still needs the main private key to log in.
+- Run `uninstall`. This removes both lines and is a denial of service.
+
+It cannot add a key, read a file, open a terminal or forward a port. The flags `restrict` and `command=` stop that. The `from=` part stops a use from any other address.
+
+The provisioner takes exact addresses and host names only. It refuses the wildcards `*` and `?` and a CIDR range. This rule is stricter than the rule for the main line, which allows patterns. So a target with a provisioner needs exact source addresses on all of its nodes. Else the hub refuses the install and each maintenance request with 409.
+
+A root session on the host of the hub can use the socket of a maintenance grant for its one minute. This is the known limit of the host `local`. The session can then run any of the five commands. The short window and the audit lines limit the harm.
+
+A bug in the script can expose the account, because the script runs as the account. These parts carry the risk:
+
+- The parse of the command that the caller sends. The script uses `case` patterns and quoted variables only, and it never uses `eval`.
+- The write of the key file. A wrong edit can drop other keys. Before each write, a check counts the two known lines. The same check compares all other lines with the old file and stops the write on a difference.
+- A link attack. The script refuses a symbolic link at the folder, the key file and the state file.
+- The script file itself. Anyone who can write it runs code as the account. Its folder has mode 700.
+
+A job that rewrites `authorized_keys` removes the provisioner line too. The provisioner then stops working until you run the repair command with your own key. A dedicated account avoids this problem.
+
+The field `detail` of a failed maintenance grant holds one line of text from the target. A hostile target controls that text. A `write` user can list grants, so a hostile target can show that user one line of text. The page shows it as plain text.
+
+The hub is a larger target, because it holds two keys for each external target. Both are encrypted at rest. Keep `<state_dir>/ssh` in your backup, and protect it like `hub-key.pem`.
+
+#### The router
+
+Dropbear has no `from=` flag, so no key line on a router has one. This holds for the main line and for the provisioner line. The router does not limit the main key or the provisioner key by address.
+
+- The approval of each grant is the only control for the main key on a router. A stolen main key logs in from any address, until you retire the target.
+- The provisioner script checks the client address itself. It reads `SSH_CONNECTION`, which Dropbear sets. A client cannot change it, because Dropbear ignores the environment request of a client. The manual test checks this on a real router.
+- The script check does not help against a thief who runs from the host `local`.
+
+The router version is not yet tested on a real router. Read [Manual test of the router version](ssh-delegation.md#manual-test-of-the-router-version).
 
 ## All security notes
 

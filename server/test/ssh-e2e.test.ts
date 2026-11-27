@@ -23,7 +23,14 @@ import type { Config } from "../src/config";
 import { startHub } from "../src/hubmain";
 import type { Instance } from "../src/instances";
 import { DEFAULT_ROLES } from "../src/roles";
-import { openWithRecovery } from "../src/sshwrap";
+import { GrantStore } from "../src/sshgrants";
+import { SshKeyStore } from "../src/sshkeystore";
+import { createLocalSsh } from "../src/sshnodewiring";
+import { linuxInstallScript } from "../src/sshprovisioner";
+import { SshService } from "../src/sshservice";
+import { TargetStore } from "../src/sshtargets";
+import { newRecovery, openWithRecovery } from "../src/sshwrap";
+import { NodeEvents } from "../src/updateevents";
 import { noSkill } from "./support";
 
 const INSTANCE_ID = "0123456789ab";
@@ -388,5 +395,242 @@ describe("SSH delegation with a real sshd", () => {
       }
     },
     30_000,
+  );
+});
+
+describe("SSH maintenance with a real sshd", () => {
+  let mRoot = "";
+  let mSshd: Bun.Subprocess | undefined;
+  let stopLocal: (() => Promise<void>) | undefined;
+
+  afterAll(async () => {
+    await stopLocal?.();
+    mSshd?.kill();
+    await mSshd?.exited;
+    if (mRoot) rmSync(mRoot, { recursive: true, force: true });
+  });
+
+  // The account HOME is a temporary folder: sshd sets it with `SetEnv`, so the script on the "target" writes
+  // `<temp>/.ssh/authorized_keys` and `<temp>/.claude-rc`, never the real home of the account. A probe key proves it
+  // before the script is installed.
+  test.skipIf(missing)(
+    "a maintenance sources run changes from= in authorized_keys, and uninstall removes both lines",
+    async () => {
+      mRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "rc-ssh-maint-e2e-")));
+      const mHome = path.join(mRoot, "home");
+      const sshFolder = path.join(mHome, ".ssh");
+      mkdirSync(sshFolder, { recursive: true });
+      const authorizedKeys = path.join(sshFolder, "authorized_keys");
+      const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: mHome };
+
+      const exec = async (command: string[], stdin?: string) => {
+        const child = Bun.spawn(command, {
+          env,
+          stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, code] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        return { code, out, err };
+      };
+
+      // sshd with its host key, the key file in the temporary home, and HOME set to that home.
+      const hostKeyFile = path.join(mRoot, "sshd", "host_ed25519");
+      mkdirSync(path.dirname(hostKeyFile), { recursive: true });
+      expect((await exec([need(keygenPath), "-q", "-t", "ed25519", "-N", "", "-f", hostKeyFile])).code).toBe(0);
+      const port = await freePort();
+      const sshdConfig = path.join(mRoot, "sshd", "sshd_config");
+      writeFileSync(
+        sshdConfig,
+        [
+          `Port ${port}`,
+          "ListenAddress 127.0.0.1",
+          `HostKey ${hostKeyFile}`,
+          `PidFile ${path.join(mRoot, "sshd", "sshd.pid")}`,
+          `AuthorizedKeysFile ${authorizedKeys}`,
+          `SetEnv HOME=${mHome}`,
+          "StrictModes no",
+          "UsePAM no",
+          "PasswordAuthentication no",
+          "KbdInteractiveAuthentication no",
+          "PubkeyAuthentication yes",
+          "PermitRootLogin yes",
+          "LogLevel ERROR",
+          "",
+        ].join("\n"),
+      );
+      mSshd = Bun.spawn([need(sshdPath), "-D", "-e", "-f", sshdConfig], {
+        env,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await until(() => canConnect(port), "sshd listens");
+      const hostKey = readFileSync(`${hostKeyFile}.pub`, "utf8").trim().split(" ").slice(0, 2).join(" ");
+      const account = os.userInfo().username;
+
+      // The probe: a forced command that prints HOME. Anything but the temporary home stops the test here.
+      const probeKey = path.join(mRoot, "probe");
+      expect((await exec([need(keygenPath), "-q", "-t", "ed25519", "-N", "", "-f", probeKey])).code).toBe(0);
+      writeFileSync(
+        authorizedKeys,
+        `command="printf '%s' \\"$HOME\\"",restrict ${readFileSync(`${probeKey}.pub`, "utf8").trim()}\n`,
+      );
+      const probe = await exec([
+        need(sshPath),
+        "-F",
+        "/dev/null",
+        "-i",
+        probeKey,
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        `UserKnownHostsFile=${path.join(mRoot, "probe_known_hosts")}`,
+        "-p",
+        String(port),
+        `${account}@127.0.0.1`,
+        "x",
+      ]);
+      if (probe.out !== mHome) throw new Error(`sshd does not set HOME to the temporary home: ${probe.out}`);
+
+      // The hub side: the stores, the grant store, the host `local` in process, and the service with the real runner.
+      const stateDir = path.join(mRoot, "state");
+      const sshDir = path.join(mRoot, "run-ssh");
+      const keys = new SshKeyStore(path.join(stateDir, "keys.json"));
+      const targets = new TargetStore(path.join(stateDir, "targets.json"));
+      const audit: string[] = [];
+      const cfg = {
+        scope: "user",
+        unitDir: path.join(mRoot, "units"),
+        serviceUser: "root",
+        serviceHome: mHome,
+        servicePath: "/bin",
+        claudeBin: "/bin/claude",
+        claudeRcArgs: [],
+        namePrefix: "",
+        mode: "hub",
+        stateDir,
+        name: "hub",
+        port: 0,
+        host: "127.0.0.1",
+        publicUrl: "https://rc.example.com",
+        roots: [mRoot],
+        hosts: [],
+        installSkill: false,
+      } as unknown as Config;
+      const instances = {
+        list: () => Promise.resolve([]),
+        stop: () => Promise.resolve(),
+        trustFilter: () => Promise.resolve(() => false),
+      } as never;
+      const events = new NodeEvents();
+      const local = createLocalSsh({ cfg, instances, events, dir: sshDir, deploySkill: noSkill });
+      stopLocal = () => local.stop();
+      const hook: { service?: SshService } = {};
+      const grants = new GrantStore({
+        audit: (line) => audit.push(line),
+        onEnd: (grant) => hook.service?.onGrantEnd(grant),
+      });
+      const service = new SshService({
+        keys,
+        targets,
+        grants,
+        client: (hostId) => (hostId === "local" ? local.client : undefined),
+        audit: (line) => audit.push(line),
+      });
+      hook.service = service;
+      const off = events.subscribe((event) => {
+        const { type, ...data } = event;
+        if (type === "ssh.sign") service.onNodeEvent("local", type, data);
+      });
+
+      try {
+        const secret = { method: "passphrase" as const, secret: new TextEncoder().encode(PASSPHRASE) };
+        await keys.setup({ method: "passphrase", recoveryPublicKey: newRecovery().publicKey });
+        await targets.add({ id: TARGET, address: "127.0.0.1", port, account, systemType: "linux", nodes: ["local"] });
+        await targets.setNodeAccess("local", { enabled: true, sourceAddress: "127.0.0.1" });
+        await targets.setNodeAccess("node2", { enabled: true, sourceAddress: "10.9.9.9" });
+        await targets.setHostKey(TARGET, hostKey);
+        await targets.setState(TARGET, "ready");
+        const main = await keys.create(TARGET, secret);
+        const provisioner = await keys.create(TARGET, secret, "provisioner");
+
+        // The owner's install: an owner line, the main line, then the install script in the temporary home.
+        const ownerLine =
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOwnerOwnerOwnerOwnerOwnerOwnerOwnerOwnerOwn owner@laptop";
+        writeFileSync(authorizedKeys, `${ownerLine}\nfrom="127.0.0.1",restrict ${main.publicLine}\n`);
+        const install = linuxInstallScript({
+          targetId: TARGET,
+          mainPublicLine: main.publicLine,
+          provisionerPublicLine: provisioner.publicLine,
+          localSource: "127.0.0.1",
+          sources: ["127.0.0.1"],
+        });
+        const installed = await exec(["sh", "-s"], install.script);
+        expect(installed.code).toBe(0);
+        const scriptPath = path.join(mHome, ".claude-rc", `provisioner-${TARGET}.sh`);
+        expect(installed.out.trim()).toBe(`ok installed ${scriptPath}`);
+        await targets.setProvisioner(TARGET, {
+          fingerprint: provisioner.fingerprint,
+          script: scriptPath,
+          source: "127.0.0.1",
+        });
+
+        // sources: the new list reaches the main line, and the provisioner line stays.
+        const change = service.requestMaintenance({
+          targetId: TARGET,
+          action: "sources",
+          toNodes: ["local", "node2"],
+          by: "kir",
+        });
+        const changed = await service.approve(change.id, "kir", secret);
+        expect(changed.maintenance).toMatchObject({ result: "done" });
+        expect(changed).toMatchObject({ state: "ended", endReason: "done" });
+        const afterChange = readFileSync(authorizedKeys, "utf8");
+        expect(afterChange).toContain(`from="127.0.0.1,10.9.9.9",restrict ${main.publicLine}\n`);
+        expect(afterChange).not.toContain(`from="127.0.0.1",restrict ${main.publicLine}`);
+        expect(afterChange).toContain(`claude-rc-provisioner:${TARGET}\n`);
+        expect(afterChange.startsWith(`${ownerLine}\n`)).toBe(true);
+        // The grant files and the agent socket of the grant go away.
+        const grantFolder = path.join(sshDir, "maintenance");
+        await until(() => !existsSync(grantFolder) || readdirSync(grantFolder).length === 0, "grant files removed");
+
+        // uninstall: both lines go, the script and its state file too, and the owner line keeps its bytes.
+        const retire = service.requestMaintenance({ targetId: TARGET, action: "uninstall", by: "kir" });
+        const retired = await service.approve(retire.id, "kir", secret);
+        expect(retired.maintenance).toMatchObject({ result: "done" });
+        expect(readFileSync(authorizedKeys, "utf8")).toBe(`${ownerLine}\n`);
+        expect(existsSync(scriptPath)).toBe(false);
+        expect(existsSync(path.join(mHome, ".claude-rc", `provisioner-${TARGET}.from`))).toBe(false);
+        await until(() => !existsSync(grantFolder) || readdirSync(grantFolder).length === 0, "grant files removed");
+
+        // The audit lines name the target, the action and the result only.
+        const text = audit.join("\n");
+        expect(text).toContain("event=run command=sources code=0 answer=sources");
+        expect(text).toContain("event=run command=uninstall code=0 answer=uninstall");
+        expect(text).not.toContain("10.9.9.9");
+        // A restore-failed line holds a fixed word and the exit code only, never the text of ssh.
+        for (const line of audit.filter((item) => item.includes("event=restore-failed")))
+          expect(line).toMatch(/ event=restore-failed code=\S+$/);
+        // The real ssh signs once for each run, so the sign cap of a grant (sources 3, uninstall 1) never stops a run.
+        const signed = (id: string) =>
+          audit.filter((line) => line.includes(`grant=${id} `) && line.includes(" event=signed ")).length;
+        expect(signed(change.id)).toBe(2);
+        expect(signed(retire.id)).toBe(1);
+        expect(audit.some((line) => line.includes("event=sign-refused"))).toBe(false);
+        expect(text).not.toContain(provisioner.publicLine.split(" ")[1]);
+      } finally {
+        off();
+      }
+    },
+    60_000,
   );
 });

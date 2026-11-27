@@ -17,7 +17,7 @@ bun run build                   # web build, embed, bun build --compile -> dist/
 CI (`.github/workflows/ci.yml`) runs the typecheck, tests and build on Linux for every push and
 pull request.
 
-Linux/systemd only at runtime.
+Linux with systemd, or a Windows node, at runtime.
 
 ## Run from a checkout
 
