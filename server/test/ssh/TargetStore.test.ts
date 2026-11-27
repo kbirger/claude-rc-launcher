@@ -415,6 +415,20 @@ describe("key file", () => {
     expect(again.list()).toEqual(store.list());
   });
 
+  test("a stored managed linux target without a key file loads without one", async () => {
+    // The default key file of a new managed linux target is set by the hub service at the add. The store never adds
+    // it, so a target from before the default keeps `authorized_keys`: no migration.
+    const store = new TargetStore(file);
+    await store.add({ ...input, managedHost: "pve" });
+    const text = await readFile(file, "utf8");
+    expect(text).not.toContain("keyFile");
+
+    const again = new TargetStore(file);
+    expect(again.get("nas")?.managedHost).toBe("pve");
+    expect(again.get("nas")?.systemType).toBe("linux");
+    expect(again.get("nas")).not.toHaveProperty("keyFile");
+  });
+
   test("a record with a bad key file in the file is skipped on load", async () => {
     const store = new TargetStore(file);
     await store.add({ ...input, managedHost: "pve", keyFile: "authorized_keys2" });

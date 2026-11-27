@@ -451,8 +451,8 @@ export function sshApi(options: SshApiOptions): Hono {
 
   hono.post("/targets/:id/authorize", async (context) => {
     const target = needTarget(context);
-    await service.authorizeManaged(target.id);
-    return context.json({ ok: true });
+    const { sshdCheck } = await service.authorizeManaged(target.id);
+    return context.json({ ok: true, ...(sshdCheck !== undefined ? { sshdCheck } : {}) });
   });
 
   hono.post("/targets/:id/test", async (context) => {

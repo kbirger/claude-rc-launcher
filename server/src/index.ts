@@ -6,6 +6,7 @@ import { startHub } from "./hubmain";
 import { startNode } from "./nodemain";
 import { runNudgeSend } from "./sessions/nudge";
 import { VERSION } from "./shared/version";
+import { LinuxSshdMachine, runSshdCommand, SshdDropin } from "./ssh";
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);
@@ -26,6 +27,22 @@ if (process.argv[2] === "gen-secret") {
   console.log("# Node: add the sha256 as a [[node_auth.secret]] entry. Never put the secret on the node.");
   // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
   process.exit(0);
+}
+
+if (process.argv[2] === "sshd-dropin") {
+  const dropin = new SshdDropin(new LinuxSshdMachine(), { command: "claude-rc-launcher sshd-dropin" });
+  const code = await runSshdCommand(process.argv[3], {
+    dropin,
+    out: (line) => {
+      console.log(line);
+    },
+    err: (line) => {
+      console.error(line);
+    },
+    platform: process.platform,
+  });
+  // eslint-disable-next-line n/no-process-exit -- the entry point ends the process with an exit code
+  process.exit(code);
 }
 
 let cfg: Config;

@@ -179,7 +179,9 @@ export const scanHostKey = (id: string, node: string) =>
 export const pinHostKey = (id: string, hostKey: string) => request<Target>("POST", `${targetUrl(id)}/pin`, { hostKey });
 export const pinManaged = (id: string) => request<{ keys: HostKeyLine[] }>("POST", `${targetUrl(id)}/pin-managed`);
 export const getProvision = (id: string) => request<ProvisionScript>("GET", `${targetUrl(id)}/provision`);
-export const authorizeManaged = (id: string) => request<{ ok: true }>("POST", `${targetUrl(id)}/authorize`);
+/** `sshdCheck`: present when the install needs the sshd check. `skipped` when the node is not root or is older. */
+export const authorizeManaged = (id: string) =>
+  request<{ ok: true; sshdCheck?: "passed" | "skipped" }>("POST", `${targetUrl(id)}/authorize`);
 export const testTarget = (id: string, node: string, unlock: Unlock) =>
   request<TestResult>("POST", `${targetUrl(id)}/test`, { node, unlock });
 

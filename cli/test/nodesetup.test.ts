@@ -53,6 +53,8 @@ function fake(
     healthy?: boolean;
     root?: boolean;
     files?: Record<string, string>;
+    /** The answer of `sudo timeout -k 5 20 <BIN> sshd-dropin install`. */
+    dropin?: { code: number; stdout: string; stderr: string };
   } = {},
 ) {
   const world: World = { calls: [], written: new Map(), fetched: [], started: false };
@@ -80,6 +82,14 @@ function fake(
         return world.started
           ? { code: 0, stdout: certPem, stderr: "" }
           : { code: 1, stdout: "", stderr: "no such file" };
+      if (args[0] === "timeout" && args[4] === BIN && args[5] === "sshd-dropin")
+        return (
+          options.dropin ?? {
+            code: 0,
+            stdout: "sshd reads .ssh/authorized_keys.claude-rc already. No change.\n",
+            stderr: "",
+          }
+        );
       if (args[0] === "journalctl")
         return { code: 0, stdout: "Nov 07 node[1]: startup failed: port in use", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
@@ -381,5 +391,77 @@ describe("nodeSetup", () => {
     expect((await fails(run(fake().sys, fakeHub().hub, { url: "http://192.168.1.111:8443" })))?.message).toContain(
       "https",
     );
+  });
+
+  describe("the sshd drop-in", () => {
+    const sudoCalls = (world: World) =>
+      world.calls.filter((call) => call.startsWith("sudo ")).map((call) => call.slice(5));
+
+    test("node setup installs the sshd drop-in after the binary", async () => {
+      const { sys, world } = fake();
+      const out = await run(sys, fakeHub().hub);
+      const calls = sudoCalls(world);
+      const moved = calls.indexOf(`mv -f ${BIN}.new ${BIN}`);
+      const dropin = calls.indexOf(`timeout -k 5 20 ${BIN} sshd-dropin install`);
+      const started = calls.indexOf("systemctl enable --now claude-rc-launcher");
+      expect(moved).toBeGreaterThanOrEqual(0);
+      expect(dropin).toBeGreaterThan(moved);
+      expect(started).toBeGreaterThan(dropin);
+      // The reload state of the launcher reaches the owner.
+      expect(out).toContain("sshd reads .ssh/authorized_keys.claude-rc already. No change.");
+    });
+
+    test("node setup with --no-sshd runs no sshd-dropin call", async () => {
+      const { sys, world } = fake();
+      const out = await run(sys, fakeHub().hub, { "no-sshd": true });
+      expect(sudoCalls(world).some((call) => call.includes("sshd-dropin"))).toBe(false);
+      expect(out).toContain("skipped the sshd drop-in (--no-sshd)");
+    });
+
+    test("node setup warns and goes on when the drop-in fails", async () => {
+      const { sys, world } = fake({
+        dropin: { code: 1, stdout: "", stderr: "sshd is not installed on this machine. Nothing was changed.\n" },
+      });
+      const { hub, requests } = fakeHub();
+      const out = await run(sys, hub);
+      expect(out).toContain(
+        "warning: the sshd drop-in was not installed: sshd is not installed on this machine. Nothing was changed. Run later: sudo claude-rc node sshd install",
+      );
+      expect(sudoCalls(world)).toContain("systemctl enable --now claude-rc-launcher");
+      expect(requests.map((request) => request.path)).toEqual(["/cli/api/node-enrollment", "/cli/api/hosts"]);
+      expect(out.join("\n")).toContain("registered host kirhub");
+    });
+
+    test("a drop-in call that hits the time limit warns and setup goes on", async () => {
+      for (const code of [124, 137]) {
+        const { sys, world } = fake({ dropin: { code, stdout: "", stderr: "" } });
+        const { hub, requests } = fakeHub();
+        const out = await run(sys, hub);
+        expect(out).toContain(
+          "warning: the sshd drop-in step did not end within 20 s (an older claude-rc-launcher has no sshd-dropin command and starts the server instead). Run later: sudo claude-rc node sshd install",
+        );
+        expect(sudoCalls(world)).toContain("systemctl enable --now claude-rc-launcher");
+        expect(requests.map((request) => request.path)).toEqual(["/cli/api/node-enrollment", "/cli/api/hosts"]);
+      }
+    });
+
+    test("without timeout on the machine the step is skipped with a warning", async () => {
+      const { sys, world } = fake();
+      sys.hasCommand = (name) => name !== "timeout";
+      const out = await run(sys, fakeHub().hub);
+      expect(sudoCalls(world).some((call) => call.includes("sshd-dropin"))).toBe(false);
+      expect(out).toContain(
+        "warning: the sshd drop-in was not installed: the timeout command was not found. Run later: sudo claude-rc node sshd install",
+      );
+      expect(sudoCalls(world)).toContain("systemctl enable --now claude-rc-launcher");
+    });
+
+    test("a failed drop-in without stderr names the exit code", async () => {
+      const { sys } = fake({ dropin: { code: 127, stdout: "", stderr: "" } });
+      const out = await run(sys, fakeHub().hub);
+      expect(out).toContain(
+        "warning: the sshd drop-in was not installed: exit code 127. Run later: sudo claude-rc node sshd install",
+      );
+    });
   });
 });

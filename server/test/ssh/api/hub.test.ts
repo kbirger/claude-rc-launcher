@@ -7,6 +7,7 @@ import type { Config, HostConfig } from "../../../src/config/parse";
 import type { HostClient } from "../../../src/hosts/client";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import { requiredRole } from "../../../src/roles";
+import { MANAGED_KEY_FILE } from "../../../src/ssh/constants";
 import { GrantStore } from "../../../src/ssh/hub/GrantStore";
 import { SshKeyStore } from "../../../src/ssh/hub/SshKeyStore";
 import { SshService } from "../../../src/ssh/hub/SshService";
@@ -441,7 +442,10 @@ describe("targets", () => {
     expect(targets.get("kf")?.keyFile).toBe("authorized_keys2");
     const plain = await call("POST", "/targets", "admin", { ...body, id: "plain" });
     expect(plain.status).toBe(201);
-    expect(plain.body).not.toHaveProperty("keyFile");
+    expect(plain.body).toMatchObject({ keyFile: MANAGED_KEY_FILE });
+    const optOut = await call("POST", "/targets", "admin", { ...body, id: "old", keyFile: "authorized_keys" });
+    expect(optOut.status).toBe(201);
+    expect(optOut.body).not.toHaveProperty("keyFile");
   });
 
   test("POST /targets refuses a bad key file, an external target with one, and dropbear and windows with 400", async () => {
@@ -750,7 +754,7 @@ describe("targets", () => {
       expect(sent).toEqual({
         method: "POST",
         path: "/api/ssh/deauthorize",
-        json: { account: "root", systemType: "linux", key: blob, id: "self" },
+        json: { account: "root", systemType: "linux", key: blob, id: "self", keyFile: MANAGED_KEY_FILE },
       });
       expect(grants.get(pending.id)).toMatchObject({ state: "ended", endReason: "target-disabled" });
       expect(grants.get(active.id)).toMatchObject({ state: "ended", endReason: "target-disabled" });
@@ -955,7 +959,9 @@ describe("host key and install", () => {
   });
 
   test("POST /targets/:id/authorize on a managed target asks its node", async () => {
-    const { call, node2 } = await setup();
+    const { call, node2 } = await setup({
+      replies2: { "POST /api/ssh/authorize": { status: 200, body: { keyFile: MANAGED_KEY_FILE } } },
+    });
     await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
     await call("POST", "/targets", "admin", {
       id: "self",
@@ -967,6 +973,67 @@ describe("host key and install", () => {
     await call("POST", "/targets/self/key", "admin", { unlock });
     expect((await call("POST", "/targets/self/authorize")).status).toBe(200);
     expect(node2.paths()).toContain("POST /api/ssh/authorize");
+  });
+
+  test("POST /targets/:id/authorize on an old node answers 502, keeps the draft and removes the line from authorized_keys", async () => {
+    const { call, node2, targets } = await setup({
+      replies2: {
+        "POST /api/ssh/authorize": { status: 204 },
+        "POST /api/ssh/deauthorize": { status: 200, body: { result: "removed" } },
+      },
+    });
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", {
+      id: "self",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "node2",
+    });
+    await call("POST", "/targets/self/key", "admin", { unlock });
+    const refused = await call("POST", "/targets/self/authorize");
+    expect(refused.status).toBe(502);
+    expect(refused.text).toContain("update the node first");
+    expect(targets.get("self")?.state).toBe("draft");
+    const cleanup = node2.calls.find((item) => item.path === "/api/ssh/deauthorize");
+    expect(cleanup?.json).not.toHaveProperty("keyFile");
+    expect(cleanup?.json).toMatchObject({ account: "root", systemType: "linux", id: "self" });
+  });
+
+  test("POST /targets/:id/authorize answers sshdCheck", async () => {
+    for (const sshdCheck of ["passed", "skipped"] as const) {
+      const { call } = await setup({
+        replies2: { "POST /api/ssh/authorize": { status: 200, body: { keyFile: MANAGED_KEY_FILE, sshdCheck } } },
+      });
+      await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+      await call("POST", "/targets", "admin", {
+        id: "self",
+        account: "root",
+        systemType: "linux",
+        nodes: ["node1"],
+        managedHost: "node2",
+      });
+      await call("POST", "/targets/self/key", "admin", { unlock });
+      const answer = await call("POST", "/targets/self/authorize");
+      expect(answer.status).toBe(200);
+      expect(answer.body).toEqual({ ok: true, sshdCheck });
+    }
+
+    // A target with no key file has no check: the answer has no sshdCheck.
+    const { call } = await setup();
+    await call("PUT", "/nodes/node1", "admin", { enabled: true, sourceAddress: "192.168.1.10" });
+    await call("POST", "/targets", "admin", {
+      id: "plain",
+      account: "root",
+      systemType: "linux",
+      nodes: ["node1"],
+      managedHost: "node2",
+      keyFile: "authorized_keys",
+    });
+    await call("POST", "/targets/plain/key", "admin", { unlock });
+    const plain = await call("POST", "/targets/plain/authorize");
+    expect(plain.status).toBe(200);
+    expect(plain.body).toEqual({ ok: true });
   });
 });
 
@@ -1440,7 +1507,9 @@ describe("passphrase length", () => {
 });
 
 describe("PATCH /targets/:id changes the nodes", () => {
-  const AUTH_OK = { "POST /api/ssh/authorize": { status: 204 } };
+  // A new managed linux target has the key file MANAGED_KEY_FILE, and the node names it back. Dropbear has none.
+  const AUTH_OK = { "POST /api/ssh/authorize": { status: 200, body: { keyFile: MANAGED_KEY_FILE } } };
+  const AUTH_NO_FILE = { "POST /api/ssh/authorize": { status: 204 } };
 
   /** An external target `nas` or a managed target `self` (on node2) with a key, two nodes with access, and the list [node1]. */
   const made = async (
@@ -1512,7 +1581,7 @@ describe("PATCH /targets/:id changes the nodes", () => {
   });
 
   test("an external dropbear target: the line has no from, and a change of the nodes gives no new line", async () => {
-    const { call, targets, keys } = await made("external", AUTH_OK, "dropbear");
+    const { call, targets, keys } = await made("external", AUTH_NO_FILE, "dropbear");
     const line = `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ${keys.publicLine("nas")}`;
     const before = await call("GET", "/targets/nas/provision");
     expect(str(before.body.script)).toContain(line);
@@ -1526,7 +1595,7 @@ describe("PATCH /targets/:id changes the nodes", () => {
   });
 
   test("a managed dropbear target sends the line without from to its node", async () => {
-    const { call, node2 } = await made("managed", AUTH_OK, "dropbear");
+    const { call, node2 } = await made("managed", AUTH_NO_FILE, "dropbear");
     expect((await call("PATCH", "/targets/self", "admin", { nodes: ["node1", "node2"] })).status).toBe(200);
     const sent = node2.calls.find((item) => item.path.endsWith("/authorize"));
     expect(str((sent?.json as { line: string }).line)).toStartWith(
@@ -1605,6 +1674,7 @@ describe("PATCH /targets/:id changes the nodes", () => {
       account: "root",
       systemType: "linux",
       line: `from="192.168.1.10,192.168.1.20",restrict ${keys.publicLine("self")}`,
+      keyFile: MANAGED_KEY_FILE,
     });
   });
 

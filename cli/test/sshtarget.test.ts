@@ -367,6 +367,32 @@ describe("sshTargetAdd key file", () => {
     expect(bodyOf(rg.calls.find((call) => call.path.endsWith("/targets")))).not.toHaveProperty("keyFile");
   });
 
+  test("target add of a managed linux target prints the key file", async () => {
+    const rg = rig({
+      "POST /cli/api/ssh/targets": () => ({ id: "nas", state: "draft", keyFile: "authorized_keys.claude-rc" }),
+      "POST /cli/api/ssh/targets/nas/authorize": () => ({ ok: true, sshdCheck: "passed" }),
+    });
+    await rg.run(managed);
+    expect(rg.out).toContain("key file: ~/.ssh/authorized_keys.claude-rc");
+    expect(rg.out.filter((line) => line.startsWith("note:"))).toEqual([]);
+
+    const plain = rig({});
+    await plain.run(managed);
+    expect(plain.out.filter((line) => line.startsWith("key file:"))).toEqual([]);
+  });
+
+  test("target add prints a note when the node skipped the sshd check", async () => {
+    const rg = rig({
+      "POST /cli/api/ssh/targets": () => ({ id: "nas", state: "draft", keyFile: "authorized_keys.claude-rc" }),
+      "POST /cli/api/ssh/targets/nas/authorize": () => ({ ok: true, sshdCheck: "skipped" }),
+    });
+    await rg.run(managed);
+    const note =
+      "note: the node did not check that sshd reads ~/.ssh/authorized_keys.claude-rc. It is not root, or its version is older. If the test fails, run sudo claude-rc node sshd check on the machine.";
+    expect(rg.out).toContain(note);
+    expect(rg.out.indexOf("key installed")).toBeLessThan(rg.out.indexOf(note));
+  });
+
   test("a bad name, an external add, dropbear and windows exit 1 with the usage text and call nothing", async () => {
     const cases: Flags[] = [
       { ...managed, "key-file": "../x" },

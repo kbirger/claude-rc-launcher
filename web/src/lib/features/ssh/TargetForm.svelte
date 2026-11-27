@@ -51,6 +51,8 @@
   const isLocal = $derived(!external && managedHost === "local");
   // Only a managed linux or synology target can use another key file.
   const takesKeyFile = $derived(!external && (systemType === "linux" || systemType === "synology"));
+  // The hub picks the key file when the field is empty: a linux target gets its own file, synology the main one.
+  const keyFilePlaceholder = $derived(systemType === "linux" ? "authorized_keys.claude-rc" : "authorized_keys");
   const valid = $derived(
     idOk &&
       portOk &&
@@ -199,16 +201,28 @@
       <Input
         id="{uid}-keyfile"
         class="h-11 font-mono"
-        placeholder="authorized_keys"
+        placeholder={keyFilePlaceholder}
         bind:value={keyFile}
         autocapitalize="off"
         autocomplete="off"
         spellcheck={false}
       />
-      <p class="text-xs text-muted-foreground">
-        Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile. The node
-        must be up to date. To change the file later, retire the target and add it again.
-      </p>
+      {#if systemType === "linux"}
+        <p class="text-xs text-muted-foreground">
+          Empty uses authorized_keys.claude-rc, a file that no other tool writes. Type authorized_keys to use the main
+          file.
+        </p>
+        <p class="text-xs text-muted-foreground">
+          A node installed before this release needs the sshd drop-in once. Run
+          <code class="font-mono">sudo claude-rc node sshd install</code> on it.
+        </p>
+        <p class="text-xs text-muted-foreground">To change the file later, retire the target and add it again.</p>
+      {:else}
+        <p class="text-xs text-muted-foreground">
+          Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile. The node
+          must be up to date. To change the file later, retire the target and add it again.
+        </p>
+      {/if}
     </div>
   {/if}
 
