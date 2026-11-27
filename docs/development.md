@@ -22,6 +22,11 @@ pull request.
 
 Linux with systemd, or a Windows node, at runtime.
 
+## Server layout
+
+The server code in `server/src/` is grouped by feature. The rules for folders, file names and imports are in
+[server/CLAUDE.md](../server/CLAUDE.md). `bun run lint` checks these rules.
+
 ## Run from a checkout
 
 To run on Linux or Windows without touching `/etc`, put your `config.toml` and its secret files in `.local-data/` (Git ignores it). Then run `bun run dev:local` (watch mode) or `bun run start:local`. Read [Configuration](configuration.md#run-from-a-checkout).

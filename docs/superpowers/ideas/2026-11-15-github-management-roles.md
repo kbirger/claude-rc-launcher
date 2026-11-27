@@ -12,7 +12,7 @@ This section comes from reading the code.
 
 - A node runs `gh` as the service user. `POST /github/login` starts the `gh` device login and stores a token in the home folder of that user. `GET /github/login/:id` reports the progress.
 - `GET /github/repos` lists the repositories that this token can reach. `POST /clone` clones a repository with the same token through the `gh` credential helper.
-- The three routes live in `server/src/app.ts` on the node. The hub forwards them in `server/src/hosts.ts`. The cloning code is in `server/src/cloner.ts`.
+- The three routes live in `server/src/app.ts` on the node. The hub forwards them in `server/src/hosts/api/forward.ts`. The cloning code is in `server/src/instances/cloner.ts`.
 - Each route takes an optional `user` field that names the service user. `POST /fs/mkdir` takes the same field.
 
 ## Rules decided for the role phase

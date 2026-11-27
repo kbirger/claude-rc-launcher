@@ -5,8 +5,8 @@ Date: 2026-11-14. These came from the task reviews and the final review of Phase
 ## Release notes (say these to the user)
 
 - Adding or removing a rule rewrites the whole settings file with `JSON.stringify`. Short inline arrays become one item per line. Numbers like `1.0` and `1e2` become `1` and `100`. Escapes such as `\/` are decoded. CRLF becomes LF. Duplicate keys collapse to the last one. A trailing newline is added.
-- On a root node, a service user that exists only in LDAP or sssd (not in `/etc/passwd`) now fails a trust add with a 500. Before, the node wrote `.claude.json` as root and the service user could not read it. The 500 text ("the owner of the file is not known") does not name the cause (`server/src/trust.ts`).
-- On a root node, the default user's settings files are now checked for the owner when read. A root-owned committed `.claude/settings.json` reads as refused. Git for the Changed list now runs as the service user (`server/src/instances.ts`, `claudeHome`).
+- On a root node, a trust add now fails with a 500 for a service user that exists only in LDAP or sssd. Such a user is not in `/etc/passwd`. Before, the node wrote `.claude.json` as root, and the service user had no read access to it. The 500 text ("the owner of the file is not known") does not name the cause (`server/src/instances/trust.ts`).
+- On a root node, the node now checks the owner of each settings file of the default user at each read. A root-owned committed `.claude/settings.json` reads as refused. Git for the Changed list now runs as the service user (`server/src/instances/InstanceService.ts`, `claudeHome`).
 
 ## Not verified by any test or run
 
@@ -20,11 +20,11 @@ Date: 2026-11-14. These came from the task reviews and the final review of Phase
 
 - `safefile.ts` `writeUserFile`: an error from `fh.close()` can hide the first error. A dangling symlink is replaced by a regular file instead of creating the target. An existing file gets the group of its folder on a root node, not its own group.
 - `trust.ts` could pass `expectedHash` to stop lost updates against Claude Code's own writes to `.claude.json`. The lstat-then-open gap on `.claude.json` is still there.
-- `settingsfile.ts` `makeFolder`: if the folder step works and `writeUserFile` then refuses, the new empty `.claude` folder stays (it belongs to the user). The `/proc/self/fd` check runs on Linux only. A parent folder swapped for a symlink between the check and the rename is an accepted gap (Node has no `renameat`).
+- `sessions/SettingsFile.ts` `makeFolder`: if the folder step works and `writeUserFile` then refuses, the new empty `.claude` folder stays (it belongs to the user). The `/proc/self/fd` check runs on Linux only. A parent folder swapped for a symlink between the check and the rename is an accepted gap (Node has no `renameat`).
 - `checkRule` also runs on remove, so a malformed rule already in a file cannot be removed (the rule list hides such rules). A bad rule on a managed file gives 400 before 403. `detectIndent` can return more than 10 spaces, and `JSON.stringify` clamps that to 10.
 - A DELETE with `expectedHash: null` always gets 409.
 - The failed-request audit line holds the raw rule up to the body cap. `JSON.stringify` does not escape U+2028 and U+2029.
-- `hosts.ts`: the hub log status folds any 2xx other than 200, and any 3xx, into 502. The hub imports `parseRuleEdit` from `permissionsapi.ts`, so the node settings code is in the hub module graph. A cleaner home is `requests.ts`. No test sets a real hub user for the hub audit line.
+- `hosts/api/forward.ts`: the hub log status folds any 2xx other than 200, and any 3xx, into 502. The hub imports `parseRuleEdit` from `sessions/requests.ts` now, no longer from the permission routes. No test sets a real hub user for the hub audit line.
 - The blocked scan reads the whole transcript on every request with no cache. No tsc run for the server (it has no tsconfig).
 - A 5-scope node route accepts managed and legacy-local and answers 403. The plan said the session routes accept three scopes.
 
