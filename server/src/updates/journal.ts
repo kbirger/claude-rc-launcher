@@ -1,4 +1,4 @@
-import type { UpdateEntry } from "./updaterecord";
+import type { UpdateEntry } from "./UpdateRecord";
 
 type Level = "log" | "warn" | "error";
 

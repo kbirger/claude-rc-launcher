@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sha256 } from "../src/release";
-import { UpdateRefused } from "../src/serviceupdate";
+import { sha256 } from "../src/updates/release";
+import { UpdateRefused } from "../src/updates/serviceupdate";
 import {
   PENDING_FILE,
   STAY_ACTIVE_SECONDS,

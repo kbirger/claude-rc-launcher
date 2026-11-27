@@ -4,7 +4,7 @@ import type { HostClient, HostConfig } from "../../src/hosts/client";
 import type { HostRegistry, HostEntry } from "../../src/hosts/HostRegistry";
 import type { SseEvent } from "../../src/shared/ssereader";
 import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
-import { UpdateLog } from "../../src/updatelog";
+import { UpdateLog } from "../../src/updates/UpdateLog";
 
 const flush = async () => {
   for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));

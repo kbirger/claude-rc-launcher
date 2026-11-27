@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { journalText, updateJournal } from "../src/updatejournal";
-import type { UpdateEntry } from "../src/updaterecord";
+import { journalText, updateJournal } from "../../src/updates/journal";
+import type { UpdateEntry } from "../../src/updates/UpdateRecord";
 
 const helper = (item: Partial<UpdateEntry> = {}): UpdateEntry => ({
   host: "aihub",

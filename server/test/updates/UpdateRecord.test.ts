@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { UpdateRecord } from "../src/updaterecord";
-import type { UpdateEntry } from "../src/updaterecord";
-import { rejection, defined } from "./support";
+import { UpdateRecord } from "../../src/updates/UpdateRecord";
+import type { UpdateEntry } from "../../src/updates/UpdateRecord";
+import { rejection, defined } from "../support";
 
 let dir: string;
 beforeEach(async () => {
@@ -254,7 +254,7 @@ async function eventually(check: () => void, ms = 2000): Promise<void> {
 
 describe("stepWriter", () => {
   test("writes step and a detail cut to 200 characters while running, and nothing otherwise", async () => {
-    const { stepWriter } = await import("../src/hubmain");
+    const { stepWriter } = await import("../../src/hubmain");
     const updateRecord = await UpdateRecord.load({ stateDir: dir });
     const write = stepWriter(updateRecord);
     write("nas", { step: "installing" });
@@ -277,7 +277,7 @@ describe("stepWriter", () => {
     });
   });
   test("a new run with another startedAt is not overwritten by a step of the old run", async () => {
-    const { stepWriter } = await import("../src/hubmain");
+    const { stepWriter } = await import("../../src/hubmain");
     const updateRecord = await UpdateRecord.load({ stateDir: dir });
     await updateRecord.set(entry({ host: "nas", startedAt: "2026-11-10T10:00:00.000Z", startedBy: "ann" }));
     const realSetIf = updateRecord.setIf.bind(updateRecord);
@@ -296,7 +296,7 @@ describe("stepWriter", () => {
     });
   });
   test("a step that repeats the current step and detail does not write", async () => {
-    const { stepWriter } = await import("../src/hubmain");
+    const { stepWriter } = await import("../../src/hubmain");
     const updateRecord = await UpdateRecord.load({ stateDir: dir });
     await updateRecord.set(entry({ host: "nas" }));
     let writes = 0;
@@ -316,7 +316,7 @@ describe("stepWriter", () => {
     });
   });
   test("a client detail is cut to 200 characters", async () => {
-    const { stepWriter } = await import("../src/hubmain");
+    const { stepWriter } = await import("../../src/hubmain");
     const updateRecord = await UpdateRecord.load({ stateDir: dir });
     await updateRecord.set(entry({ host: "nas" }));
     stepWriter(updateRecord)("nas", { step: "installing-client", client: "x".repeat(300) });

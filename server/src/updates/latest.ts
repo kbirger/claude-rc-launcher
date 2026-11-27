@@ -1,5 +1,5 @@
 import { RELEASE_REPO } from "./release";
-import { isTestBuild, normalizeVersion } from "./shared/versions";
+import { isTestBuild, normalizeVersion } from "../shared/versions";
 
 export interface LatestRelease {
   version: string;

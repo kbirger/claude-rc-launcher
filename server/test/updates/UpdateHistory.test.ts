@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { MAX_ITEMS, UpdateHistory } from "../src/updatehistory";
-import type { UpdateEntry } from "../src/updaterecord";
+import { MAX_ITEMS, UpdateHistory } from "../../src/updates/UpdateHistory";
+import type { UpdateEntry } from "../../src/updates/UpdateRecord";
 
 let dir: string;
 beforeEach(async () => void (dir = await mkdtemp(path.join(tmpdir(), "updatehistory-"))));

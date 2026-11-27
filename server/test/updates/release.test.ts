@@ -7,9 +7,9 @@ import {
   RELEASE_REPO,
   RELEASE_TAG_RE,
   sha256,
-} from "../src/release";
-import type { ReleaseIo, RunResult } from "../src/release";
-import { rejection } from "./support";
+} from "../../src/updates/release";
+import type { ReleaseIo, RunResult } from "../../src/updates/release";
+import { rejection } from "../support";
 
 const BASE = "https://github.com/kbirger/claude-rc-launcher/releases";
 const ASSET = "claude-rc-linux-x64";

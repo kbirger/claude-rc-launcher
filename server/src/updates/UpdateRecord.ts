@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { writeAtomic } from "./hosts/HostRegistry";
-import { isObject } from "./shared/requests";
+import { writeAtomic } from "../hosts/HostRegistry";
+import { isObject } from "../shared/requests";
 
 export type UpdateStatus = "running" | "updated" | "up-to-date" | "failed" | "rolled back" | "unknown";
 export interface UpdateEntry {

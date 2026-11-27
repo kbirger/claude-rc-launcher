@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Config } from "../src/config/parse";
-import { makeRegQuery, parseRegQuery, realUpdateEnv, registryStat, trustedClientCheck } from "../src/realupdate";
-import { VERSION } from "../src/shared/version";
-import { defined } from "./support";
+import type { Config } from "../../src/config/parse";
+import { makeRegQuery, parseRegQuery, realUpdateEnv, registryStat, trustedClientCheck } from "../../src/updates/realupdate";
+import { VERSION } from "../../src/shared/version";
+import { defined } from "../support";
 
 describe("realUpdateEnv", () => {
   test("fills every field from the process and the configuration", () => {

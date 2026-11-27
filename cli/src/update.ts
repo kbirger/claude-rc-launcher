@@ -1,5 +1,5 @@
-import { installWithBackup, restorePrevious, ReleaseError } from "../../server/src/release";
-import type { ReleaseIo } from "../../server/src/release";
+import { installWithBackup, restorePrevious, ReleaseError } from "../../server/src/updates/release";
+import type { ReleaseIo } from "../../server/src/updates/release";
 import { VERSION } from "../../server/src/shared/version";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";

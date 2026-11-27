@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { readRegisteredClients, registryPath, resetRegistryLog } from "../src/installs";
-import type { RegQueryResult, RegistryIo } from "../src/installs";
-import { defined } from "./support";
+import { readRegisteredClients, registryPath, resetRegistryLog } from "../../src/updates/installs";
+import type { RegQueryResult, RegistryIo } from "../../src/updates/installs";
+import { defined } from "../support";
 
 beforeEach(() => {
   resetRegistryLog();

@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { UpdateRecord } from "../src/updaterecord";
-import { createUpdateTracker, UNKNOWN_REASON } from "../src/updatetracker";
-import { defined } from "./support";
+import { UpdateRecord } from "../../src/updates/UpdateRecord";
+import { createUpdateTracker, UNKNOWN_REASON } from "../../src/updates/tracker";
+import { defined } from "../support";
 
 const fakePresence = () => {
   const subs = new Set<(value: any) => void>();

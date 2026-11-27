@@ -12,11 +12,11 @@ import type { Config } from "../src/config/parse";
 import { HttpError, type Instance } from "../src/instances/InstanceService";
 import { SETTINGS_HELP } from "../src/instances/settings";
 import { PathError } from "../src/shared/paths";
-import { UpdateRefused, type UpdateReport } from "../src/serviceupdate";
+import { UpdateRefused, type UpdateReport } from "../src/updates/serviceupdate";
 import { VERSION } from "../src/shared/version";
-import { LatestError, type createLatestRelease } from "../src/latest";
-import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
-import { UpdateLog } from "../src/updatelog";
+import { LatestError, type createLatestRelease } from "../src/updates/latest";
+import type { UpdateEntry, UpdateRecord } from "../src/updates/UpdateRecord";
+import { UpdateLog } from "../src/updates/UpdateLog";
 import type { Presence } from "../src/hosts/nodewatcher";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io", role: "admin" };

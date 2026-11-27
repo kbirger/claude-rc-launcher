@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createLatestRelease, LatestError } from "../src/latest";
-import { rejection } from "./support";
+import { createLatestRelease, LatestError } from "../../src/updates/latest";
+import { rejection } from "../support";
 
 function setup(tag: string | Error = "v0.8.3") {
   let now = Date.parse("2026-11-09T00:00:00Z");

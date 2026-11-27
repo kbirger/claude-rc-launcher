@@ -11,11 +11,11 @@ import { generateSecret, nodeAuth } from "../../../src/auth/node";
 import { ensureNodeCert } from "../../../src/hosts/tls";
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import type { Cloner } from "../../../src/instances/cloner";
-import type { UpdateReport } from "../../../src/serviceupdate";
+import type { UpdateReport } from "../../../src/updates/serviceupdate";
 import { VERSION } from "../../../src/shared/version";
 import { hostsApi } from "../../../src/hosts/api/forward";
 import { Hono } from "hono";
-import { UpdateRecord } from "../../../src/updaterecord";
+import { UpdateRecord } from "../../../src/updates/UpdateRecord";
 
 const ID = "0123456789ab";
 const inst = { id: ID, path: "/srv/p", name: "n", state: "active", startedAt: null };

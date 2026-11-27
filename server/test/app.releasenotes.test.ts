@@ -3,7 +3,7 @@ import { createApp } from "../src/app";
 import { mintSessionCookie, oidcUserAuth } from "../src/auth/oidc";
 import type { OidcClient, User } from "../src/auth/oidc";
 import type { Config } from "../src/config/parse";
-import type { createReleaseList, ReleaseNotes } from "../src/releaselist";
+import type { createReleaseList, ReleaseNotes } from "../src/updates/releaselist";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const oidc: OidcClient = {

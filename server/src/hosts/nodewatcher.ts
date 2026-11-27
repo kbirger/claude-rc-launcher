@@ -3,8 +3,8 @@ import type { HostRegistry } from "./HostRegistry";
 import { isObject } from "../shared/requests";
 import type { SessionsPayload } from "../sessions/SessionIndex";
 import type { StepName } from "./NodeEvents";
-import { cutLine, MAX_AT } from "../updatelog";
-import type { UpdateLog } from "../updatelog";
+import { cutLine, MAX_AT } from "../updates/UpdateLog";
+import type { UpdateLog } from "../updates/UpdateLog";
 
 export interface Presence {
   host: string;

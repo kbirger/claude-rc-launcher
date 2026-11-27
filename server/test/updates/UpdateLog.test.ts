@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { UpdateLog } from "../src/updatelog";
+import { UpdateLog } from "../../src/updates/UpdateLog";
 
 describe("UpdateLog", () => {
   test("keeps the last 200 lines for each host", () => {

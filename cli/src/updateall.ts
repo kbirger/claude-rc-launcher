@@ -1,6 +1,6 @@
 import type { HostInfo } from "../../server/src/hosts/api/forward";
-import { RELEASE_TAG_RE } from "../../server/src/release";
-import type { ClientResult, UpdateReport } from "../../server/src/serviceupdate";
+import { RELEASE_TAG_RE } from "../../server/src/updates/release";
+import type { ClientResult, UpdateReport } from "../../server/src/updates/serviceupdate";
 import { VERSION } from "../../server/src/shared/version";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";

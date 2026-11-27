@@ -1,5 +1,5 @@
 import { RELEASE_REPO } from "./release";
-import { compareVersions, isKnownVersion, isTestBuild, normalizeVersion, releaseOf } from "./shared/versions";
+import { compareVersions, isKnownVersion, isTestBuild, normalizeVersion, releaseOf } from "../shared/versions";
 
 export interface ReleaseNote {
   version: string;

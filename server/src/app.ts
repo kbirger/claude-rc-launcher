@@ -17,14 +17,14 @@ import { hostsApi } from "./hosts/api/forward";
 import { HttpError } from "./instances/InstanceService";
 import type { Instances } from "./instances/InstanceService";
 import { settingsFromArgs, settingsHelpFor } from "./instances/settings";
-import { LatestError } from "./latest";
-import type { createLatestRelease } from "./latest";
+import { LatestError } from "./updates/latest";
+import type { createLatestRelease } from "./updates/latest";
 import type { Presence } from "./hosts/nodewatcher";
 import type { AdoptDir } from "./instances/ownedir";
 import { PathError, within } from "./shared/paths";
 import { permissionsApi } from "./sessions/api/permissions";
 import { pushApi } from "./pushapi";
-import type { createReleaseList } from "./releaselist";
+import type { createReleaseList } from "./updates/releaselist";
 import {
   isObject,
   parseCloneRequest,
@@ -36,8 +36,8 @@ import {
   readJson,
 } from "./shared/requests";
 import { enforceRoles, logToken } from "./roles";
-import { UpdateRefused } from "./serviceupdate";
-import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./serviceupdate";
+import { UpdateRefused } from "./updates/serviceupdate";
+import type { ClientVersion, ClientVersionsLookup, UpdateReport } from "./updates/serviceupdate";
 import { sessionApi } from "./sessions/api/session";
 import { createBeatLoop } from "./sessions/beat";
 import type { BeatLoop } from "./sessions/beat";
@@ -57,10 +57,10 @@ import type { SshService } from "./ssh/hub/SshService";
 import type { TargetStore } from "./ssh/TargetStore";
 import { isPwaFile } from "./static";
 import type { NodeEvents } from "./hosts/NodeEvents";
-import type { UpdateHistory } from "./updatehistory";
-import type { UpdateLog } from "./updatelog";
-import type { UpdateRecord } from "./updaterecord";
-import { createUpdateTracker } from "./updatetracker";
+import type { UpdateHistory } from "./updates/UpdateHistory";
+import type { UpdateLog } from "./updates/UpdateLog";
+import type { UpdateRecord } from "./updates/UpdateRecord";
+import { createUpdateTracker } from "./updates/tracker";
 import type { User, UserAuthStrategy } from "./auth/user";
 import { VERSION } from "./shared/version";
 import type { PushService } from "./webpush";

@@ -1,12 +1,12 @@
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Config } from "./config/parse";
+import type { Config } from "../config/parse";
 import { readRegisteredClients } from "./installs";
 import type { RegQueryResult } from "./installs";
 import type { RunResult } from "./release";
 import type { UpdateEnv } from "./serviceupdate";
-import { VERSION } from "./shared/version";
+import { VERSION } from "../shared/version";
 
 const TEMP_PREFIX = "claude-rc-update-";
 /** Added after the service's own PATH, so that install, cp, mv, systemctl and systemd-run are always found. */

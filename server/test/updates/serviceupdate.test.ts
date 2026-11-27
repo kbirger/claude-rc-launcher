@@ -2,17 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sha256 } from "../src/release";
-import type { RunResult } from "../src/release";
+import { sha256 } from "../../src/updates/release";
+import type { RunResult } from "../../src/updates/release";
 import {
   createClientVersions,
   createServiceUpdater,
   findClients,
   UpdateRefused,
   watchdogScript,
-} from "../src/serviceupdate";
-import type { UpdateEnv } from "../src/serviceupdate";
-import { rejection, defined } from "./support";
+} from "../../src/updates/serviceupdate";
+import type { UpdateEnv } from "../../src/updates/serviceupdate";
+import { rejection, defined } from "../support";
 
 const BASE = "https://github.com/kbirger/claude-rc-launcher/releases";
 const BIN = "/usr/local/bin/claude-rc-launcher";

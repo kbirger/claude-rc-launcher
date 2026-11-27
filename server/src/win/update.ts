@@ -2,12 +2,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { win32 } from "node:path";
 import type { Config } from "../config/parse";
-import { realUpdateEnv } from "../realupdate";
-import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256 } from "../release";
-import type { ReleaseIo } from "../release";
+import { realUpdateEnv } from "../updates/realupdate";
+import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256 } from "../updates/release";
+import type { ReleaseIo } from "../updates/release";
 import { isObject } from "../shared/requests";
-import { clientsOf, UpdateRefused } from "../serviceupdate";
-import type { ClientResult, UpdateReport } from "../serviceupdate";
+import { clientsOf, UpdateRefused } from "../updates/serviceupdate";
+import type { ClientResult, UpdateReport } from "../updates/serviceupdate";
 import type { UpdateHooks } from "../hosts/NodeEvents";
 import { VERSION } from "../shared/version";
 

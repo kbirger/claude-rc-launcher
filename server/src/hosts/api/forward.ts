@@ -7,7 +7,7 @@ import type { HostClient, HostFailure } from "../client";
 import { HOST_ID_RE } from "../id";
 import type { HostRegistry } from "../HostRegistry";
 import { HttpError } from "../../instances/InstanceService";
-import type { LatestRelease } from "../../latest";
+import type { LatestRelease } from "../../updates/latest";
 import { parseRuleEdit } from "../../sessions/api/permissions";
 import {
   isObject,
@@ -19,9 +19,9 @@ import {
   parseUpdateRequest,
   readJson,
 } from "../../shared/requests";
-import type { UpdateReport } from "../../serviceupdate";
-import type { UpdateRecord } from "../../updaterecord";
-import type { UpdateTracker } from "../../updatetracker";
+import type { UpdateReport } from "../../updates/serviceupdate";
+import type { UpdateRecord } from "../../updates/UpdateRecord";
+import type { UpdateTracker } from "../../updates/tracker";
 import type { User } from "../../auth/user";
 import { VERSION } from "../../shared/version";
 import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "../../shared/versions";

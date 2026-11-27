@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createReleaseList } from "../src/releaselist";
+import { createReleaseList } from "../../src/updates/releaselist";
 
 interface Rel {
   tag_name: string;
