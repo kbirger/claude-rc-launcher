@@ -67,6 +67,29 @@ These limits remain:
 - The instance name on a request is a claim of the node, not proof.
 - The hub is a larger target, because it holds the keys. Keep `<state_dir>/ssh` in your backup, and protect it like `hub-key.pem`.
 
+### The sshd drop-in
+
+An sshd drop-in is a file in `/etc/ssh/sshd_config.d` that sshd reads as a part of its configuration. The installers and the command `claude-rc node sshd install` write one drop-in as root: `/etc/ssh/sshd_config.d/49-claude-rc.conf`. It makes sshd read the key file `~/.ssh/authorized_keys.claude-rc`. Read [SSH delegation](ssh-delegation.md#way-1-the-dedicated-key-file).
+
+These rules limit what the write can change:
+
+- The file holds a marker comment and one `AuthorizedKeysFile` line. The marker comment is the first line, and it shows that the launcher manages the file.
+- The line repeats every file of the list that sshd used before. It adds `.ssh/authorized_keys.claude-rc` and drops no file.
+- The command writes a temporary file and renames it over the drop-in path. The file has mode 644 and the owner root.
+- The command refuses a symbolic link at the drop-in path and at the folder `sshd_config.d`.
+- After the write, `sshd -t` must pass, and `sshd -T` must show the new file. If a check fails, the command puts back the old file or removes the new one.
+- The command changes or removes only a file that starts with the marker comment. A hand-made file with the same name stays as it is.
+- The node service and the hub never write to `/etc/ssh`. At start and before a managed install, a root node only reads the list with `sshd -T`.
+
+These limits remain:
+
+- The key file belongs to the account. A process of that account can add a key to it, as with `authorized_keys`. The key file protects the line against a job that rewrites `authorized_keys`. It does not protect the line against the account.
+- The `from=` part of the line limits where a key works. A root user of the machine can change any file.
+- On a shared machine, the root-owned folder of Way 2 is the stronger choice. The account cannot change a line in that folder. Read [Way 2](ssh-delegation.md#way-2-a-root-owned-folder).
+- sshd prints the list without quotes. So the install cannot repeat a path that has a space. On such a machine, write the drop-in by hand.
+
+An old node does not know key files. It writes the line into `authorized_keys`, and the hub refuses the install. The hub then asks the same node to remove that line. This cleanup is best effort. If it fails, the error tells the admin to remove the line by hand. Until the admin does so, the line keeps its `from=` list. A later change of the nodes and a retire change only the key file of the target. So an address of a removed node still matches the old line.
+
 ### The provisioner key
 
 An external target can have a provisioner key. Read [The provisioner key](ssh-delegation.md#the-provisioner-key) for how it works. This section gives the threat model.

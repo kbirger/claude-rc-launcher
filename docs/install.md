@@ -77,6 +77,33 @@ curl http://127.0.0.1:8080/healthz   # {"ok":true}
 
 When the service runs, sign in at `public_url`. If you use the [authentik setup script](authentication.md#authentik-setup-script), run it before you start the service, because it writes the OIDC values into `config.toml` for you.
 
+### The sshd drop-in
+
+An sshd drop-in is a file in `/etc/ssh/sshd_config.d` that sshd reads as a part of its configuration. A managed Linux target keeps its key line in the key file `~/.ssh/authorized_keys.claude-rc`. The drop-in `/etc/ssh/sshd_config.d/49-claude-rc.conf` makes sshd read that file. Read [SSH delegation](ssh-delegation.md#way-1-the-dedicated-key-file).
+
+On Linux, `install-binary.sh --service` installs the drop-in, for a hub and for a node. The hub needs it too, because the host `local` can be a managed target. The step runs after `systemctl daemon-reload`:
+
+```sh
+timeout -k 5 20 /usr/local/bin/claude-rc-launcher sshd-dropin install
+```
+
+- To skip the step, add `--no-sshd`. The script prints `Skipped the sshd drop-in (--no-sshd)`. Without `--service`, the script refuses `--no-sshd` and exits with 2.
+- If the step fails, the script prints a warning and goes on. The reason is on the line above the warning. The warning ends with `Run later: sudo /usr/local/bin/claude-rc-launcher sshd-dropin install`.
+- If the machine has no sshd, the step fails at each run. Add `--no-sshd` to stop the warning.
+- If the step does not end within 20 seconds, `timeout` stops it, and the script warns and goes on.
+- If the machine has no `timeout` command, the script skips the step and warns.
+- With `SKIP_SYSTEMCTL=1`, the script prints `Would install the sshd drop-in: <binary> sshd-dropin install` and runs nothing.
+
+The time limit is for an old launcher binary. A binary from before this release has no `sshd-dropin` command. It ignores the word, loads its configuration and starts the server in the foreground. The time limit stops it, so the install does not hang. The variable `SSHD_DROPIN_TIMEOUT` changes the limit in seconds. It is a switch for tests.
+
+`claude-rc node setup` installs the drop-in in the same way, and it has the same `--no-sshd` switch. Read [Command-line client](cli.md#the-sshd-drop-in).
+
+An update of the binary does not install the drop-in. On a hub or a node from before this release, run this command once:
+
+```sh
+sudo claude-rc-launcher sshd-dropin install
+```
+
 ## Windows node
 
 A Windows machine can be a node that a hub controls. It cannot be a hub. The service runs the node binary through
