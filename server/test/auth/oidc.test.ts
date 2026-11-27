@@ -1,6 +1,7 @@
-import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
-import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor } from "../../src/auth/oidc";
+import { Hono } from "hono";
+import { oidcUserAuth } from "../../src/auth/api/oidc";
+import { createOidcClient, mintSessionCookie, scopeFor } from "../../src/auth/oidc";
 import type { OidcClient, User } from "../../src/auth/oidc";
 import type { Config, OidcUserAuth } from "../../src/config/parse";
 import { DEFAULT_ROLES } from "../../src/roles";

@@ -1,12 +1,13 @@
 import path from "node:path";
 import { createApp, onError, sessionCatalogFor } from "./app";
 import type { CliDeps, Updater } from "./app";
+import { oidcUserAuth } from "./auth/api/oidc";
 import { cliBearerAuth } from "./auth/cli";
 import { loadOrCreateHubKey } from "./auth/hubproof";
 import type { HubKey } from "./auth/hubproof";
 import { createJwtVerifier, remoteKeys } from "./auth/jwt";
 import type { JwtVerifier } from "./auth/jwt";
-import { createOidcClient, oidcUserAuth } from "./auth/oidc";
+import { createOidcClient } from "./auth/oidc";
 import type { OidcClient } from "./auth/oidc";
 import { proxyJwtUserAuth } from "./auth/proxy";
 import type { PeerResolver } from "./auth/proxy";

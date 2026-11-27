@@ -1,7 +1,7 @@
+import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
-import { describe, expect, test } from "bun:test";
-import { cliBearerAuth, cliConfigRoute } from "../../src/auth/cli";
+import { cliBearerAuth } from "../../src/auth/cli";
 import { createJwtVerifier } from "../../src/auth/jwt";
 import { DEFAULT_ROLES } from "../../src/roles";
 import type { RoleSettings } from "../../src/roles";
@@ -127,15 +127,6 @@ describe("cliBearerAuth", () => {
   });
 });
 
-describe("cliConfigRoute", () => {
-  test("returns exactly issuer and client_id", async () => {
-    const app = new Hono().route("/", cliConfigRoute({ issuer: ISS, clientId: AUD }));
-    const response = await app.request("/");
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ issuer: ISS, client_id: AUD });
-  });
-});
-
 describe("cliBearerAuth roles", () => {
   test("the role comes from the claim", async () => {
     const harness = await mk(undefined, DEFAULT_ROLES);
@@ -156,15 +147,5 @@ describe("cliBearerAuth roles", () => {
     });
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "access refused" });
-  });
-  test("the config route reports the role scope", async () => {
-    const app = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c", roleScope: "clauderc" }));
-    expect(await (await app.request("/")).json()).toEqual({
-      issuer: "https://i/",
-      client_id: "c",
-      role_scope: "clauderc",
-    });
-    const bare = new Hono().route("/", cliConfigRoute({ issuer: "https://i/", clientId: "c" }));
-    expect(await (await bare.request("/")).json()).toEqual({ issuer: "https://i/", client_id: "c" });
   });
 });

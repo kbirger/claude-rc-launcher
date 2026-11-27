@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { join } from "node:path";
-import { cliConfigRoute } from "./auth/cli";
+import { cliConfigRoute } from "./auth/api/cli";
 import type { User, UserAuthStrategy } from "./auth/user";
 import type { Config, HostConfig } from "./config/parse";
 import { hostAdminApi, renameHandler } from "./hosts/api/admin";
