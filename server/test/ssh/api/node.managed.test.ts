@@ -9,9 +9,12 @@ import type { Instances } from "../../../src/instances/InstanceService";
 import { HttpError } from "../../../src/shared/HttpError";
 import { keyFingerprint } from "../../../src/ssh/agentproto";
 import { sshManagedApi } from "../../../src/ssh/api/node";
+import { defaultSshdReads } from "../../../src/ssh/node/commands";
+import { DROPIN_MARKER, DROPIN_PATH, SshdDropin } from "../../../src/ssh/node/SshdDropin";
 import type { SshManagedOptions } from "../../../src/ssh/node/types";
 import type { Script } from "../../../src/ssh/provision";
 import { isAccount } from "../../../src/ssh/TargetStore";
+import { FakeSshd } from "../node/fakesshd";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;
 const instances = { list: () => Promise.resolve([]) } as unknown as Instances;
@@ -36,6 +39,8 @@ let dir: string;
 let keyFile: string;
 let calls: { account: string; script: Script }[];
 let result: { code: number; stderr: string; stdout?: string };
+let checks: [string, string][];
+let sshdAnswer: "passed" | "skipped" | "missing";
 let app: ReturnType<typeof createNodeApp>;
 
 function build(options: Partial<SshManagedOptions> = {}): void {
@@ -48,6 +53,10 @@ function build(options: Partial<SshManagedOptions> = {}): void {
       runAs: (account, script) => {
         calls.push({ account, script });
         return Promise.resolve(result);
+      },
+      sshdReads: (account, file) => {
+        checks.push([account, file]);
+        return Promise.resolve(sshdAnswer);
       },
       ...options,
     },
@@ -66,6 +75,8 @@ beforeEach(async () => {
   keyFile = join(dir, "host.pub");
   await writeFile(keyFile, `ssh-ed25519 ${BLOB.toString("base64")} root@pi\n`);
   calls = [];
+  checks = [];
+  sshdAnswer = "passed";
   result = { code: 0, stderr: "" };
   build();
 });
@@ -100,6 +111,7 @@ describe("managed SSH targets on the node", () => {
 
   test("two authorize calls with another from= leave one line, with the real sh script in a temporary home", async () => {
     const home = join(dir, "home");
+
     const runReal: SshManagedOptions["runAs"] = async (_account, script) => {
       const proc = Bun.spawn(["sh", "-s"], {
         stdin: new Blob([script.script]),
@@ -110,6 +122,7 @@ describe("managed SSH targets on the node", () => {
       const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
       return { code: await proc.exited, stdout, stderr };
     };
+
     await mkdir(join(home, ".ssh"), { recursive: true, mode: 0o700 });
     await writeFile(join(home, ".ssh", "authorized_keys"), "ssh-rsa KEEP me\n", { mode: 0o600 });
     build({ runAs: runReal });
@@ -446,11 +459,61 @@ describe("key file on the node routes", () => {
   test("POST /authorize builds the script for the chosen key file", async () => {
     const response = await authorize({ keyFile: "authorized_keys2" });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ keyFile: "authorized_keys2" });
+    expect(await response.json()).toEqual({ keyFile: "authorized_keys2", sshdCheck: "passed" });
     expect(calls[0]?.script.script).toContain("'authorized_keys2'");
     // Without a key file the answer stays 204, for old hubs.
     expect((await authorize()).status).toBe(204);
     expect(calls[1]?.script.script).toContain("'authorized_keys'");
+  });
+
+  test("authorize answers the key file and the sshd check", async () => {
+    const passed = await authorize({ keyFile: "authorized_keys.claude-rc" });
+    expect(passed.status).toBe(200);
+    expect(await passed.json()).toEqual({ keyFile: "authorized_keys.claude-rc", sshdCheck: "passed" });
+    expect(checks).toEqual([["alice", "authorized_keys.claude-rc"]]);
+
+    sshdAnswer = "skipped";
+    const skipped = await authorize({ keyFile: "authorized_keys.claude-rc" });
+    expect(await skipped.json()).toEqual({ keyFile: "authorized_keys.claude-rc", sshdCheck: "skipped" });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("authorize with authorized_keys or a synology key file checks nothing and answers the key file alone", async () => {
+    const plain = await authorize({ keyFile: "authorized_keys" });
+    expect(await plain.json()).toEqual({ keyFile: "authorized_keys" });
+    const synology = await authorize({ keyFile: "authorized_keys2", systemType: "synology" });
+    expect(await synology.json()).toEqual({ keyFile: "authorized_keys2" });
+    expect(checks).toEqual([]);
+  });
+
+  test("authorize answers 400 that names the install command and writes nothing when sshd does not read the file", async () => {
+    sshdAnswer = "missing";
+    const response = await authorize({ keyFile: "authorized_keys.claude-rc" });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "sshd does not read ~/.ssh/authorized_keys.claude-rc for alice. Run on this machine: sudo claude-rc node sshd install",
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("under test the default sshd check refuses to run", async () => {
+    const standalone = sshManagedApi({
+      hostKeyFile: keyFile,
+      runAs: (account, script) => {
+        calls.push({ account, script });
+        return Promise.resolve(result);
+      },
+      identityFor: () => Promise.resolve({ home: dir, path: "/usr/bin:/bin" }),
+    });
+    standalone.onError(onError);
+    const response = await standalone.request("/authorize", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ account: "alice", systemType: "linux", line: LINE, keyFile: "authorized_keys.claude-rc" }),
+    });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toContain("inject sshdReads");
+    expect(calls).toHaveLength(0);
   });
 
   test("POST /deauthorize builds the removal script for the chosen key file", async () => {
@@ -475,6 +538,7 @@ describe("key file on the node routes", () => {
       { keyFile: "authorized_keys2", systemType: "dropbear" },
       { keyFile: "authorized_keys2", systemType: "windows" },
     ];
+
     for (const overrides of bad) {
       expect((await authorize(overrides)).status).toBe(400);
       const removal = call("POST", "/deauthorize", {
@@ -486,6 +550,91 @@ describe("key file on the node routes", () => {
       });
       expect((await removal).status).toBe(400);
     }
+
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("defaultSshdReads", () => {
+  const MANAGED_LIST = "AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys.claude-rc";
+  const homes: (string | undefined)[] = [];
+
+  const identityFor = (user?: string) => {
+    homes.push(user);
+    return Promise.resolve({ home: `/home/${user ?? "none"}`, path: "/usr/bin:/bin" });
+  };
+
+  beforeEach(() => {
+    homes.length = 0;
+  });
+
+  test("defaultSshdReads skips on a node that is not root", async () => {
+    const fake = new FakeSshd();
+    const reads = defaultSshdReads(identityFor, () => false, new SshdDropin(fake));
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("skipped");
+    expect(fake.calls).toEqual([]);
+    expect(homes).toEqual([]);
+  });
+
+  test("defaultSshdReads uses the home of the account", async () => {
+    const fake = new FakeSshd();
+    const dropin = new SshdDropin(fake);
+    const seen: [string, string, string][] = [];
+    const original = dropin.readsFor.bind(dropin);
+
+    dropin.readsFor = (account, home, file) => {
+      seen.push([account, home, file]);
+      return original(account, home, file);
+    };
+
+    fake.accountLists.set("alice", ["/home/alice/.ssh/authorized_keys.claude-rc"]);
+    const reads = defaultSshdReads(identityFor, () => true, dropin);
+
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("passed");
+    expect(seen).toEqual([["alice", "/home/alice", "authorized_keys.claude-rc"]]);
+    expect(fake.calls).toContain("sshdEffective alice");
+  });
+
+  test("defaultSshdReads answers missing when sshd does not read the file", async () => {
+    const fake = new FakeSshd();
+    const reads = defaultSshdReads(identityFor, () => true, new SshdDropin(fake));
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("missing");
+
+    fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${MANAGED_LIST}\n`);
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("passed");
+  });
+
+  test("defaultSshdReads answers match-block when only a Match block of the account leaves the file out", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${MANAGED_LIST}\n`);
+    fake.accountLists.set("alice", [".ssh/authorized_keys"]);
+    const reads = defaultSshdReads(identityFor, () => true, new SshdDropin(fake));
+    expect(await reads("alice", "authorized_keys.claude-rc")).toBe("match-block");
+    expect(fake.calls).toContain("sshdEffective alice");
+    expect(fake.calls).toContain("sshdEffective");
+  });
+
+  test("defaultSshdReads as root without a user switch is a 501", async () => {
+    const reads = defaultSshdReads(undefined, () => true, new SshdDropin(new FakeSshd()));
+    const error = await reads("alice", "authorized_keys.claude-rc").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HttpError);
+    expect((error as HttpError).status).toBe(501);
+  });
+
+  test("defaultSshdReads without a drop-in throws under test", async () => {
+    const reads = defaultSshdReads(identityFor, () => true);
+    const error = await reads("alice", "authorized_keys.claude-rc").catch((caught: unknown) => caught);
+    expect((error as Error).message).toContain("inject sshdReads");
+  });
+
+  test("an account with a control character never reaches sshd -C, through the route too", async () => {
+    const fake = new FakeSshd();
+    build({ sshdReads: defaultSshdReads(identityFor, () => true, new SshdDropin(fake)) });
+    const account = "al\u0001ice";
+    expect(isAccount(account)).toBe(true);
+    const response = await authorize({ account, keyFile: "authorized_keys.claude-rc" });
+    expect(response.status).toBe(400);
+    expect(fake.calls.filter((call) => call.startsWith("sshdEffective"))).toEqual([]);
     expect(calls).toHaveLength(0);
   });
 });

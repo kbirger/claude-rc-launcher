@@ -6,6 +6,7 @@ import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
 import { isObject } from "../../shared/requests";
 import { NO_WAITING_REQUEST } from "../constants";
+import { namesOtherKeyFile, needsSshdCheck } from "../keyfile";
 import { formatCommand, validSources } from "../provisioner";
 import type { ProvisionerAnswer, ProvisionerCommand } from "../provisioner";
 import { authorizedKeysLine, hasProvisioner, MAX_NODES, TargetError } from "../TargetStore";
@@ -714,11 +715,13 @@ export class SshService {
   }
 
   /**
-   * Puts the key line of the target into the `authorized_keys` of the account, through the node that is the target.
-   * With `nodes`, the line holds the sources of that proposed list instead of the stored list, so that a change of the
-   * list can be installed before it is stored.
+   * Puts the key line of the target into the key file of the account (`authorized_keys`, or the `keyFile` of the
+   * target), through the node that is the target. With `nodes`, the line holds the sources of that proposed list
+   * instead of the stored list, so that a change of the list can be installed before it is stored.
+   * The answer holds `sshdCheck` when the install needs the sshd check (`needsSshdCheck`): `passed`, or `skipped` when
+   * the node is not root. A node that names the key file back but gives no check is older than the check: `skipped`.
    */
-  async authorizeManaged(targetId: string, nodes?: string[]): Promise<void> {
+  async authorizeManaged(targetId: string, nodes?: string[]): Promise<{ sshdCheck?: "passed" | "skipped" }> {
     const target = this.needManaged(targetId);
     const { keys, targets } = this.deps;
     const sources = targets.sourcesOf(nodes === undefined ? target : { nodes });
@@ -739,12 +742,27 @@ export class SshService {
     );
 
     // An old node ignores the key file and writes `authorized_keys`. It answers without the name, so the install
-    // would look fine. The node must name the file back.
-    if (target.keyFile !== undefined) {
+    // would look fine. The node must name the file back. When it does not, the line is already in `authorized_keys`:
+    // ask the same node to remove it from there (no key file), and keep the refusal. A stored `authorized_keys` is
+    // the file an old node writes anyway: it counts as no key file, so the check and the cleanup skip it.
+    if (namesOtherKeyFile(target.keyFile)) {
       const answered = isObject(reply.body) ? reply.body.keyFile : undefined;
-      if (answered !== target.keyFile)
-        throw new NodeError("the node does not know key files: update the node first, then install again");
+
+      if (answered !== target.keyFile) {
+        const cleanup = await this.removeLine(target, undefined);
+        // `not-found`: the node did not write the line into `authorized_keys`, so nothing is left to remove by hand.
+        this.note(`target=${logToken(target.id)} old node cleanup line=${cleanup.line}`);
+        const byHand =
+          cleanup.line === "failed"
+            ? ". The node may have written the key line into ~/.ssh/authorized_keys: remove the line from ~/.ssh/authorized_keys by hand"
+            : "";
+        throw new NodeError(`the node does not know key files: update the node first, then install again${byHand}`);
+      }
     }
+
+    if (!needsSshdCheck(target.systemType, target.keyFile)) return {};
+    const check = isObject(reply.body) ? reply.body.sshdCheck : undefined;
+    return { sshdCheck: check === "passed" ? "passed" : "skipped" };
   }
 
   /**
@@ -754,11 +772,25 @@ export class SshService {
    */
   async deauthorizeManaged(targetId: string): Promise<{ line: "removed" | "not-found" | "failed"; detail?: string }> {
     let target: Target & { managedHost: string };
-    let blob: string | undefined;
 
     try {
       target = this.needManaged(targetId);
+    } catch (error) {
+      return failed(message(error));
+    }
 
+    return this.removeLine(target, target.keyFile);
+  }
+
+  /** The removal of `deauthorizeManaged`, from the key file `keyFile` (`authorized_keys` when undefined). Never throws. */
+  private async removeLine(
+    target: Target & { managedHost: string },
+    keyFile: string | undefined,
+  ): Promise<{ line: "removed" | "not-found" | "failed"; detail?: string }> {
+    const targetId = target.id;
+    let blob: string | undefined;
+
+    try {
       try {
         blob = this.deps.keys.publicLine(targetId).split(" ")[1];
       } catch (error) {
@@ -776,7 +808,7 @@ export class SshService {
           systemType: target.systemType,
           key: blob,
           id: targetId,
-          ...(target.keyFile !== undefined ? { keyFile: target.keyFile } : {}),
+          ...(keyFile !== undefined ? { keyFile } : {}),
         },
         DEAUTHORIZE_TIMEOUT_MS,
       );

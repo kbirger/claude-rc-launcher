@@ -1,12 +1,19 @@
 import { asUser } from "../../shared/asuser";
 import type { IdentityFor } from "../../shared/asuser";
 import { HttpError } from "../../shared/HttpError";
+import type { SshdReads } from "./ManagedKeyInstaller";
+import type { SshdDropin } from "./SshdDropin";
 import type { SshManagedOptions } from "./types";
 
-// The commands that the SSH routes of a node run by default: ssh-keyscan, an ssh probe and the provision script.
+// The commands that the SSH routes of a node run by default: ssh-keyscan, an ssh probe, the provision script and the
+// sshd check before a managed install.
 // A test injects its own functions in their place.
 
-async function runCommand(cmd: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+/** Runs a command with a time limit. A command that cannot start gives code 127. */
+export async function runCommand(
+  cmd: string[],
+  timeoutMs: number,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   let child: ReturnType<typeof Bun.spawn>;
 
   try {
@@ -117,5 +124,32 @@ export function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedO
     const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
     refuseUnderTest();
     return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env, timeoutMs);
+  };
+}
+
+/**
+ * The sshd check of a managed install. A node that is not root cannot run `sshd -T`, so it answers `skipped`. As root,
+ * it asks sshd for the list of the account, with the home of the account for the full path form. The caller gives the
+ * drop-in: `commands.ts` cannot build the real machine, which imports it. Without one, under test it refuses, and else
+ * it fails closed.
+ */
+export function defaultSshdReads(
+  identityFor: IdentityFor | undefined,
+  isRoot: () => boolean,
+  dropin?: SshdDropin,
+): SshdReads {
+  return async (account, keyFile) => {
+    if (!dropin) {
+      if (process.env.NODE_ENV === "test")
+        throw new HttpError(500, "the sshd check does not run under test: inject sshdReads in sshManaged");
+      throw new HttpError(500, "the node has no sshd check");
+    }
+
+    if (!isRoot()) return "skipped";
+    if (!identityFor) throw new HttpError(501, "the node has no user switch");
+    // identityFor rejects an unknown account with a 400.
+    const { home } = await identityFor(account);
+    if (await dropin.readsFor(account, home, keyFile)) return "passed";
+    return (await dropin.readsGlobally(home, keyFile)) ? "match-block" : "missing";
   };
 }

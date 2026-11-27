@@ -113,6 +113,7 @@ export function createTargetWizardModel(opts: {
   let passphrase = $state("");
   let nodeChoice = $state("");
   let testFailure = $state("");
+  let sshdSkipped = $state(false);
 
   const external = $derived(target?.managedHost === undefined);
   // The nodes of the target with access on and a source address, in the order of the target. Only these can run a scan
@@ -228,6 +229,10 @@ export function createTargetWizardModel(opts: {
     get testFailure() {
       return testFailure;
     },
+    /** True when the install on the node did not check that sshd reads the key file. */
+    get sshdSkipped() {
+      return sshdSkipped;
+    },
 
     submitForm: (body: NewTarget) =>
       act(async () => {
@@ -273,7 +278,8 @@ export function createTargetWizardModel(opts: {
 
     installOnNode: () =>
       act(async () => {
-        await authorize.mutateAsync(target!.id);
+        const answer = await authorize.mutateAsync(target!.id);
+        sshdSkipped = answer.sshdCheck === "skipped";
         step = "test";
       }),
 

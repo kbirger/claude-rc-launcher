@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -23,6 +23,7 @@ function setup() {
     SYSTEMD_DIR: path.join(file, "systemd"),
     CONFIG_DIR: path.join(file, "etc"),
   };
+  // The stub must not run: the sshd drop-in tests run the installed binary for real.
   return { dir: file, bin, env };
 }
 
@@ -117,5 +118,110 @@ describe.skipIf(process.platform === "win32")("install-binary.sh --service --nod
     );
     const outcome = run(["--service", "--node", bin], env);
     expect(outcome.out).not.toContain("Not enabling");
+  });
+});
+
+describe.skipIf(process.platform !== "linux")("install-binary.sh and the sshd drop-in", () => {
+  const dest = (env: { PREFIX: string }) => path.join(env.PREFIX, "bin/claude-rc-launcher");
+
+  test("--service names the sshd drop-in step and does not run it under SKIP_SYSTEMCTL", () => {
+    const { bin, env } = setup();
+    const outcome = run(["--service", bin], env);
+    expect(outcome.code).toBe(0);
+    expect(outcome.out).toContain(`Would install the sshd drop-in: ${dest(env)} sshd-dropin install`);
+  });
+
+  test("--service --node names the same step", () => {
+    const { bin, env } = setup();
+    const outcome = run(["--service", "--node", bin], env);
+    expect(outcome.code).toBe(0);
+    expect(outcome.out).toContain(`Would install the sshd drop-in: ${dest(env)} sshd-dropin install`);
+  });
+
+  test("--no-sshd skips the sshd drop-in", () => {
+    const { bin, env } = setup();
+    const outcome = run(["--service", "--no-sshd", bin], env);
+    expect(outcome.code).toBe(0);
+    expect(outcome.out).toContain("Skipped the sshd drop-in (--no-sshd)");
+    expect(outcome.out).not.toContain("Would install the sshd drop-in");
+  });
+
+  test("--no-sshd without --service is an error", () => {
+    const { bin, env } = setup();
+    const outcome = run(["--no-sshd", bin], env);
+    expect(outcome.code).toBe(2);
+    expect(outcome.out).toContain("--no-sshd requires --service");
+  });
+
+  test("without --service the script names no sshd drop-in step", () => {
+    const { bin, env } = setup();
+    expect(run([bin], env).out).not.toContain("sshd drop-in");
+  });
+
+  test("a failed drop-in warns, names the command and goes on", () => {
+    const { dir, bin, env } = setup();
+    // A fake systemctl first on PATH, so the script runs its systemctl steps without touching the real systemd. The
+    // installed stub binary cannot run, so the drop-in step fails like a real failure.
+    const shims = path.join(dir, "shims");
+    const log = path.join(dir, "systemctl.log");
+    mkdirSync(shims);
+    writeFileSync(path.join(shims, "systemctl"), `#!/usr/bin/env bash\necho "$*" >> "${log}"\n`, { mode: 0o755 });
+    const outcome = Bun.spawnSync(["bash", script, "--service", bin], {
+      env: { ...process.env, ...env, SKIP_SYSTEMCTL: "", PATH: `${shims}:${process.env.PATH ?? ""}` },
+    });
+    const out = outcome.stdout.toString() + outcome.stderr.toString();
+    expect(outcome.exitCode).toBe(0);
+    expect(out).toContain(
+      `warning: the sshd drop-in was not installed. Run later: sudo ${dest(env)} sshd-dropin install`,
+    );
+    expect(out).not.toContain("Would install the sshd drop-in");
+    expect(out).toContain("Not enabling the service yet");
+    expect(readFileSync(log, "utf8")).toBe("daemon-reload\n");
+  });
+
+  test("a drop-in call that never ends is killed at the time limit and the install goes on", () => {
+    const { dir, env } = setup();
+    // A real ELF as the source binary, so the magic check passes. `bash sshd-dropin install` then runs the stand-in
+    // file in the working folder, which never exits: like an older launcher that starts the server.
+    const bin = path.join(dir, "real-elf");
+    copyFileSync("/bin/bash", bin);
+    const work = path.join(dir, "work");
+    const pidFile = path.join(dir, "pid");
+    mkdirSync(work);
+    writeFileSync(path.join(work, "sshd-dropin"), `echo $$ > "${pidFile}"\nexec sleep 300\n`);
+    const shims = path.join(dir, "shims");
+    const log = path.join(dir, "systemctl.log");
+    mkdirSync(shims);
+    writeFileSync(path.join(shims, "systemctl"), `#!/usr/bin/env bash\necho "$*" >> "${log}"\n`, { mode: 0o755 });
+    const started = Date.now();
+    const outcome = Bun.spawnSync(["bash", script, "--service", bin], {
+      cwd: work,
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        ...env,
+        SKIP_SYSTEMCTL: "",
+        SSHD_DROPIN_TIMEOUT: "1",
+        PATH: `${shims}:${process.env.PATH ?? ""}`,
+      },
+    });
+    const out = outcome.stdout.toString() + outcome.stderr.toString();
+    expect(outcome.exitCode).toBe(0);
+    expect(Date.now() - started).toBeLessThan(12_000);
+    expect(out).toContain(
+      `warning: the sshd drop-in step did not end within 1 s (an older claude-rc-launcher has no sshd-dropin command and starts the server instead). Run later: sudo ${dest(env)} sshd-dropin install`,
+    );
+    expect(out).toContain("Not enabling the service yet");
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(pid).toBeGreaterThan(0);
+    let gone = "";
+
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      gone = String((error as NodeJS.ErrnoException).code);
+    }
+
+    expect(gone).toBe("ESRCH");
   });
 });

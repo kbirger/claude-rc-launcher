@@ -1,3 +1,4 @@
+import { DEFAULT_KEY_FILE } from "./keyfile";
 import { isKeyFile } from "./TargetStore";
 import type { SystemType } from "./TargetStore";
 
@@ -25,8 +26,6 @@ export interface ProvisionOptions {
   /** The `sh` variants only: the file in `~/.ssh` that holds the key line. Without it, the file is `authorized_keys`. */
   keyFile?: string;
 }
-
-const DEFAULT_KEY_FILE = "authorized_keys";
 
 /** The name of the key file for the `sh` scripts. A name that the target rule does not take is an error, never a path. */
 function keyFileName(keyFile: string | undefined): string {

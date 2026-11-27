@@ -3,13 +3,15 @@ import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";
 import { isObject, readObject } from "../../shared/requests";
 import { keyFingerprint } from "../agentproto";
-import { defaultRunAs, keyscanDefault, probeDefault } from "../node/commands";
+import { defaultRunAs, defaultSshdReads, keyscanDefault, probeDefault } from "../node/commands";
 import { LinuxGrantPlatform } from "../node/LinuxGrantPlatform";
+import { LinuxSshdMachine } from "../node/LinuxSshdMachine";
 import { ManagedKeyError, ManagedKeyInstaller } from "../node/ManagedKeyInstaller";
 import { NodeGrantError, NodeGrantManager } from "../node/NodeGrantManager";
 import type { GrantRequest, SignOutcome } from "../node/NodeGrantManager";
 import { PendingSigns } from "../node/PendingSigns";
 import type { TargetSummary } from "../node/SshBroker";
+import { SshdDropin } from "../node/SshdDropin";
 import type { SshManagedOptions, SshNodeOptions } from "../node/types";
 import { WindowsGrantPlatform } from "../node/WindowsGrantPlatform";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "../TargetStore";
@@ -25,7 +27,7 @@ import type { SystemType } from "../TargetStore";
 // The managed routes (`sshManagedApi`) are a separate router. A managed target is a machine that runs the launcher as a
 // node of this hub. The hub reads the sshd host key of the node and asks the node to add a key line to the
 // `authorized_keys` list of an account, so the owner needs no SSH key of their own. These routes also work on a
-// Windows node.
+// Windows node. An install into another key file of a Linux target first checks that sshd reads it (ManagedKeyInstaller).
 
 const DEFAULT_SIGN_TIMEOUT_MS = 10_000;
 const KEY_BLOB_PREFIX = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from("ssh-ed25519")]);
@@ -249,11 +251,21 @@ function keyFileOf(value: unknown, systemType: SystemType): string | undefined {
   return value as string | undefined;
 }
 
+/**
+ * The default sshd check: the sshd of the machine, as root. Under test there is no drop-in, so the check refuses to
+ * run: a test that sends a key file injects `sshdReads`.
+ */
+function defaultReads(options: SshManagedOptions): ReturnType<typeof defaultSshdReads> {
+  const dropin = process.env.NODE_ENV === "test" ? undefined : new SshdDropin(new LinuxSshdMachine());
+  return defaultSshdReads(options.identityFor, () => process.getuid?.() === 0, dropin);
+}
+
 /** The managed target routes: `GET /hostkey`, `POST /authorize` and `POST /deauthorize`. They work on every node. */
 export function sshManagedApi(options: SshManagedOptions = {}): Hono {
   const installer = new ManagedKeyInstaller({
     runAs: options.runAs ?? defaultRunAs(options.identityFor),
     hostKeyFile: options.hostKeyFile ?? defaultHostKeyFile(),
+    sshdReads: options.sshdReads ?? defaultReads(options),
   });
   const app = new Hono();
 
@@ -272,12 +284,14 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const line = authorizeLine(body.line, systemType);
     const keyFile = keyFileOf(body.keyFile, systemType);
 
-    await mapped(() =>
+    const sshdCheck = await mapped(() =>
       installer.authorize({ account, systemType, line, ...(keyFile === undefined ? {} : { keyFile }) }),
     );
-    // A hub that sent a key file gets it back, so it can tell this node from an old node that ignores the field.
-    if (keyFile !== undefined) return context.json({ keyFile });
-    return context.body(null, 204);
+    // A hub that sent a key file gets it back, so it can tell this node from an old node that ignores the field. When
+    // the node checked sshd, or could not because it is not root, the answer says so.
+    if (keyFile === undefined) return context.body(null, 204);
+    if (sshdCheck === "not-needed") return context.json({ keyFile });
+    return context.json({ keyFile, sshdCheck });
   });
 
   // Removes the key line of a target. The match is by blob and comment, because `from=` can change after the install.

@@ -116,12 +116,13 @@ The exit codes are: 0 for success, 1 for an error, and 2 for a login that you mu
 | `host add <id> --url <https-url> [--name <n>] [--server-name <n>] [--fingerprint <f>] [--force]` | Pair a node with the hub. |
 | `host rename <id> <name>` | Change the display name of a node. The id stays. |
 | `host remove <id>` | Remove a node that `host add` added. |
-| `node setup --listen <ip> [--hub <url>] [--name <n>] [--roots /a,/b] [--service-user <u>] [--binary <file>] [--release <tag>] [--force]` | Run on a new node: install, start and register this machine as a node. |
+| `node setup --listen <ip> [--hub <url>] [--name <n>] [--roots /a,/b] [--service-user <u>] [--binary <file>] [--release <tag>] [--force] [--no-sshd]` | Run on a new node: install, start and register this machine as a node. |
 | `node config --listen <addr> [--names <a,b>] [--port <n>] [--name <n>] [--roots /a,/b] [--output <file>\|-] [--force]` | Run on a node: write its `config.toml` with the values of the hub. |
 | `node roots list [--config <file>] [--json]` | Run on a node: list its root folders. |
 | `node roots add <dir> [--config <file>] [--no-restart]` | Run on a node: add a root folder and restart the service. |
 | `node roots remove <dir> [--config <file>] [--no-restart]` | Run on a node: remove a root folder and restart the service. |
 | `node update [--binary <file>] [--release <tag>]` | Run on a node: update its server binary and restart it. |
+| `node sshd install\|check\|remove` | Run on a node as root: install, check or remove the sshd drop-in for the dedicated key file. |
 
 ### SSH
 
@@ -199,10 +200,13 @@ These flags apply:
 - `--account` is the account on the target. It has no spaces, quotes, commas or backslashes. It does not start with a dash.
 - `--node` lists the host ids of the nodes that can reach the target, separated by commas and with no spaces.
 - `--port` is the SSH port. The default is 22.
-- `--key-file <name>` sets the file in `~/.ssh` for a managed target of the type `linux` or `synology`. The default is `authorized_keys`. The name starts with `authorized_keys`, for example `authorized_keys2`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
+- `--key-file <name>` sets the file in `~/.ssh` for a managed target of the type `linux` or `synology`. For `linux`, the default is `authorized_keys.claude-rc`. For `synology`, the default is `authorized_keys`. The name starts with `authorized_keys`, for example `authorized_keys2`. Read [SSH delegation](ssh-delegation.md#keys-that-a-job-overwrites).
+- `--key-file authorized_keys` keeps the key line of a managed `linux` target in the main file.
 - `--fingerprint SHA256:<value>` answers the host key question in advance for an external target.
 - `--provisioner` also gives an external target of the type `linux`, `synology` or `dropbear` a provisioner key. Read [The provisioner key](#the-provisioner-key).
 - `--no-test` skips the one-minute test grant. With `--provisioner`, it also skips the proof of the provisioner.
+
+When the target has a key file, the command prints `key file: ~/.ssh/<file>` after `target <id> created`. With `--key-file authorized_keys`, and for a `synology` target without `--key-file`, the target has no key file, and the command prints no such line. If the node skipped its sshd check, the command prints a `note:` line after `key installed`.
 
 The command makes the key, pins the host key, installs the key and runs the test. For a passphrase, you type it in the terminal. For a passkey, the command prints a link to the web UI and waits until you unlock there. The key of `--identity` stays on your machine and never goes to the hub. If a step fails, the target stays in `draft` on the hub.
 
@@ -365,7 +369,8 @@ first four have succeeded.
 3. It downloads `claude-rc-launcher-linux-<x64|arm64>` from the latest release (`--release v0.1.0` picks another one)
    and checks it against `SHA256SUMS`. `--binary <file>` installs a file you already have.
 4. It writes `/etc/claude-rc-launcher/config.toml`, the systemd unit and the binary, through `sudo`. You run the
-   command as yourself and sudo asks for your password.
+   command as yourself and sudo asks for your password. Then it installs the sshd drop-in. Read
+   [The sshd drop-in](#the-sshd-drop-in).
 5. It starts the service and waits up to 30 seconds for the node to answer over its own certificate. If it does not,
    it prints the last log lines and stops.
 6. It reads the fingerprint from the node's own `node-cert.pem` and registers the node with the hub. The hub reads the
@@ -380,6 +385,64 @@ installed for that user; the command only warns when it is missing.
 and `--names` is optional.
 
 The command does not change a firewall.
+
+## The sshd drop-in
+
+An sshd drop-in is a file that sshd reads as a part of its configuration. A key file is the file in `~/.ssh` that holds the key line of a target. A managed Linux target keeps its key line in the key file `~/.ssh/authorized_keys.claude-rc`. sshd reads that file only after the sshd drop-in `/etc/ssh/sshd_config.d/49-claude-rc.conf` adds it to the `AuthorizedKeysFile` list. Read [SSH delegation](ssh-delegation.md#way-1-the-dedicated-key-file).
+
+`node setup` installs the drop-in after it writes the binary. It runs `sudo timeout -k 5 20 /usr/local/bin/claude-rc-launcher sshd-dropin install`. The launcher prints the result, and `node setup` shows it.
+
+- To skip this step, add `--no-sshd`. The command prints `skipped the sshd drop-in (--no-sshd)`.
+- If the step fails, the command prints a warning and goes on. The reason is on the line above the warning.
+- If the step does not end within 20 seconds, the command stops it and warns. An older launcher binary has no `sshd-dropin` command, so it starts the server instead.
+- If the machine has no `timeout` command, the command skips the step and warns.
+
+Each warning ends with `Run later: sudo claude-rc node sshd install`.
+
+To manage the drop-in later, run one of these commands on the node. They need root, and they need no login:
+
+```sh
+sudo claude-rc node sshd check
+sudo claude-rc node sshd install
+sudo claude-rc node sshd remove
+```
+
+The launcher binary has the same command as `claude-rc-launcher sshd-dropin install|check|remove`. If `claude-rc` is not on the path of sudo, use the launcher:
+
+```sh
+sudo /usr/local/bin/claude-rc-launcher sshd-dropin install
+```
+
+The texts below show the `claude-rc node sshd` form. The launcher form names `claude-rc-launcher sshd-dropin` in its texts.
+
+`check` prints one of these lines to stdout:
+
+```text
+sshd reads .ssh/authorized_keys.claude-rc (AuthorizedKeysFile <list>)
+sshd does not read .ssh/authorized_keys.claude-rc. Run: sudo claude-rc node sshd install
+```
+
+`install` prints one of these lines, and after a write it also prints the reload state:
+
+```text
+sshd reads .ssh/authorized_keys.claude-rc already. No change.
+installed /etc/ssh/sshd_config.d/49-claude-rc.conf: AuthorizedKeysFile <list>
+sshd was reloaded.
+```
+
+`remove` prints `no drop-in to remove`, or `removed /etc/ssh/sshd_config.d/49-claude-rc.conf` and the reload state.
+
+If the reload fails, the command prints `sshd was not reloaded` with the error of `systemctl`. It prints this line in place of `sshd was reloaded.`
+
+The exit codes are these:
+
+- 0: the work is done, or `check` found that sshd reads the file.
+- 1: an error, or `check` found that sshd does not read the file. An error text goes to stderr.
+- 2: a wrong word. The command prints the usage.
+
+`claude-rc node sshd` also exits with 2 for an extra word. It exits with 1 for a flag other than `--help`. The output is plain text only, so `--json` exits with 1 too. The launcher form ignores an extra word.
+
+The command works on Linux only. On another system, it prints `the sshd drop-in works on Linux only` and exits with 1. Without root, it prints `the sshd drop-in needs root. Run: sudo claude-rc node sshd <word>`. `claude-rc update` and `node update` do not install the drop-in. On a node from before this release, run `sudo claude-rc node sshd install` once.
 
 ## Write a node's configuration
 

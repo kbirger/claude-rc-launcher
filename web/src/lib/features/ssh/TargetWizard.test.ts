@@ -380,13 +380,85 @@ test("the key file field shows only for a managed linux or synology target", asy
     expect(keyFileInput()).toBeNull();
   }
 
-  await pick('[id$="-type"]', "linux");
+  await pick('[id$="-type"]', "synology");
   expect(keyFileInput()!.value).toBe("");
-  expect(keyFileInput()!.placeholder).toBe("authorized_keys");
   expect(document.body.textContent).toContain(
     "Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile.",
   );
   expect(document.body.textContent).toContain("To change the file later, retire the target and add it again.");
+});
+
+const LINUX_HELP =
+  "Empty uses authorized_keys.claude-rc, a file that no other tool writes. Type authorized_keys to use the main file.";
+const DROPIN_HELP =
+  "A node installed before this release needs the sshd drop-in once. Run sudo claude-rc node sshd install on it.";
+const RETIRE_HELP = "To change the file later, retire the target and add it again.";
+// The text of the page with each run of white space as one space: the markup wraps long lines.
+const flatText = () => (document.body.textContent ?? "").replace(/\s+/g, " ");
+
+test("the key file field shows authorized_keys.claude-rc for a managed linux target", async () => {
+  await fillManaged("linux");
+  expect(keyFileInput()!.value).toBe("");
+  expect(keyFileInput()!.placeholder).toBe("authorized_keys.claude-rc");
+  expect(flatText()).toContain(LINUX_HELP);
+  expect(flatText()).toContain(DROPIN_HELP);
+  expect(flatText()).toContain(RETIRE_HELP);
+  expect(document.querySelector("form code")?.textContent).toBe("sudo claude-rc node sshd install");
+  expect(flatText()).not.toContain("Use another file when a job rewrites authorized_keys.");
+});
+
+test("the key file field shows authorized_keys for a managed synology target", async () => {
+  await fillManaged("synology");
+  expect(keyFileInput()!.placeholder).toBe("authorized_keys");
+  expect(flatText()).toContain("Use another file when a job rewrites authorized_keys.");
+  expect(flatText()).not.toContain(LINUX_HELP);
+  expect(flatText()).not.toContain(DROPIN_HELP);
+});
+
+test("an empty key file field sends no keyFile", async () => {
+  await fillManaged("linux");
+  press("Create target");
+  await waitText("Step 2 of 6");
+  expect(posts()[0]!.body).toEqual({
+    id: "box",
+    account: "admin",
+    systemType: "linux",
+    nodes: ["node1"],
+    managedHost: "node2",
+  });
+});
+
+const SKIPPED_NOTE =
+  "The node did not check that sshd reads the key file. It is not root, or its version is older. If the test fails, run sudo claude-rc node sshd check on the machine.";
+
+test("the install step shows a note when the node skipped the sshd check", async () => {
+  answers["POST /api/ssh/targets/nas/authorize"] = () => ({ body: { ok: true, sshdCheck: "skipped" } });
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, managedHost: "node1", systemType: "linux" });
+  expect(document.body.textContent).not.toContain(SKIPPED_NOTE);
+  press("Install on the node");
+  await waitText("Step 5 of 6: Test");
+  expect(document.querySelector("[data-sshd-note]")?.textContent?.replace(/\s+/g, " ").trim()).toBe(SKIPPED_NOTE);
+});
+
+test("the install step shows no note when the node passed the sshd check", async () => {
+  answers["POST /api/ssh/targets/nas/authorize"] = () => ({ body: { ok: true, sshdCheck: "passed" } });
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, managedHost: "node1", systemType: "linux" });
+  press("Install on the node");
+  await waitText("Step 5 of 6: Test");
+  expect(document.querySelector("[data-sshd-note]")).toBeNull();
+  expect(document.body.textContent).not.toContain(SKIPPED_NOTE);
+});
+
+test("a failed install shows the node text with the sshd command", async () => {
+  const text =
+    "sshd does not read ~/.ssh/authorized_keys.claude-rc for root. Run on this machine: sudo claude-rc node sshd install";
+  answers["POST /api/ssh/targets/nas/authorize"] = () => ({ status: 502, body: { error: text } });
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, managedHost: "node1", systemType: "linux" });
+  press("Install on the node");
+  await waitText(text);
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("sudo claude-rc node sshd install");
+  expect(document.body.textContent).toContain("Step 4 of 6: Install");
+  expect(document.querySelector("[data-sshd-note]")).toBeNull();
 });
 
 const fillManaged = async (type: string) => {

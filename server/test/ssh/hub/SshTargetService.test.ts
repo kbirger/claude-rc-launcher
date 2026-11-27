@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { MANAGED_KEY_FILE } from "../../../src/ssh/constants";
 import { GrantStore } from "../../../src/ssh/hub/GrantStore";
 import { NodeError } from "../../../src/ssh/hub/NodeError";
 import { SshKeyStore } from "../../../src/ssh/hub/SshKeyStore";
@@ -85,6 +86,48 @@ describe("SshTargetService.addTarget", () => {
 
     const none = await refusal(domain.addTarget({ ...external, id: "e1", address: undefined }));
     expect(none.message).toBe("address is required");
+  });
+
+  test("addTarget gives a new managed linux target the key file authorized_keys.claude-rc", async () => {
+    const { domain, targets } = await setup();
+    const made = await domain.addTarget({ ...external, id: "m1", managedHost: "node1" });
+    expect(MANAGED_KEY_FILE).toBe("authorized_keys.claude-rc");
+    expect(made.keyFile).toBe("authorized_keys.claude-rc");
+    expect(targets.get("m1")?.keyFile).toBe("authorized_keys.claude-rc");
+  });
+
+  test("addTarget gives no key file to synology, windows, dropbear and external targets", async () => {
+    const { domain } = await setup();
+
+    for (const systemType of ["synology", "windows", "dropbear"] as const) {
+      const made = await domain.addTarget({ ...external, id: `m-${systemType}`, systemType, managedHost: "node1" });
+      expect(made).not.toHaveProperty("keyFile");
+    }
+
+    for (const systemType of ["linux", "synology", "windows", "dropbear"] as const) {
+      const made = await domain.addTarget({ ...external, id: `e-${systemType}`, systemType });
+      expect(made).not.toHaveProperty("keyFile");
+    }
+  });
+
+  test("addTarget stores an explicit authorized_keys as no key file", async () => {
+    const { domain, targets } = await setup();
+    const made = await domain.addTarget({ ...external, id: "m1", managedHost: "node1", keyFile: "authorized_keys" });
+    expect(made).not.toHaveProperty("keyFile");
+    expect(targets.get("m1")).not.toHaveProperty("keyFile");
+
+    const synology = { ...external, id: "s1", systemType: "synology" as const, managedHost: "node1" };
+    const nas = await domain.addTarget({ ...synology, keyFile: "authorized_keys" });
+    expect(nas).not.toHaveProperty("keyFile");
+  });
+
+  test("addTarget keeps a named key file", async () => {
+    const { domain } = await setup();
+    const linux = await domain.addTarget({ ...external, id: "m1", managedHost: "node1", keyFile: "authorized_keys2" });
+    expect(linux.keyFile).toBe("authorized_keys2");
+    const synology = { ...external, id: "s1", systemType: "synology" as const, managedHost: "node1" };
+    const nas = await domain.addTarget({ ...synology, keyFile: MANAGED_KEY_FILE });
+    expect(nas.keyFile).toBe(MANAGED_KEY_FILE);
   });
 });
 

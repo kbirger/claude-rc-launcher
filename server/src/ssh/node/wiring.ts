@@ -16,11 +16,15 @@ import { ensurePrivateFolder, removeStaleGrantFiles } from "../../win/sshfiles";
 import type { RunIcacls } from "../../win/sshfiles";
 import type { WinSshBridge } from "../../win/WinSshBridge";
 import { WinSshControl } from "../../win/WinSshControl";
+import { MANAGED_KEY_FILE } from "../constants";
+import { defaultSshdReads } from "./commands";
 import type { AgentTransport } from "./GrantAgent";
+import { LinuxSshdMachine } from "./LinuxSshdMachine";
 import { SSH_SKILL, ensureSkill, skillVersion } from "./skill";
 import type { SkillResult, SkillUser } from "./skill";
 import { SshBroker } from "./SshBroker";
 import { SshControl } from "./SshControl";
+import { SshdDropin } from "./SshdDropin";
 import type { SshManagedOptions, SshNodeOptions } from "./types";
 
 // The SSH parts of a node, wired together: the broker, the grant routes, the managed target routes and one control
@@ -70,6 +74,11 @@ export interface NodeSshOptions {
   winTransports?: { control: () => AgentTransport; agent: (grantId: string) => AgentTransport };
   /** Windows only: whether the node may offer SSH requests at all. Default: true. */
   winEnabled?: boolean;
+  /**
+   * Linux only: the sshd drop-in, for the check at start and before a managed install. Default: the sshd of the
+   * machine. Under test it has no default: the start does not check, and the managed routes refuse the check.
+   */
+  sshd?: SshdDropin;
 }
 
 export interface NodeSsh {
@@ -87,6 +96,8 @@ export interface NodeSsh {
   stop(): Promise<void>;
   /** Resolves when the skill deployments that are queued now are done. For tests and shutdown. */
   skillsSettled(): Promise<void>;
+  /** Resolves when the sshd check of the start is done. The start does not wait for it. For tests and shutdown. */
+  sshdSettled(): Promise<void>;
 }
 
 /** The identity of an account of the machine: its home and a uid and gid that are always set. Rejects an unknown account with a 400. */
@@ -158,9 +169,12 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       console.error(line);
     });
   const linux = platform !== "win32";
+  const sshd =
+    options.sshd ?? (process.env.NODE_ENV === "test" || !linux ? undefined : new SshdDropin(new LinuxSshdMachine()));
+  const managedIdentity = accountIdentity(cfg, users, isRoot, () => process.getuid?.());
 
   const sshManaged: SshManagedOptions = linux
-    ? { identityFor: accountIdentity(cfg, users, isRoot, () => process.getuid?.()) }
+    ? { identityFor: managedIdentity, sshdReads: defaultSshdReads(managedIdentity, isRoot, sshd) }
     : {};
 
   if (!linux && options.winEnabled !== false && options.bridge) return createWindowsSsh(options, dir, events, log);
@@ -172,6 +186,7 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       start: () => Promise.resolve(),
       stop: () => Promise.resolve(),
       skillsSettled: () => Promise.resolve(),
+      sshdSettled: () => Promise.resolve(),
     };
 
   const broker = new SshBroker({ events });
@@ -179,6 +194,8 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
   const controls = new Map<string, SshControl>();
   let chain: Promise<void> = Promise.resolve();
   let skillChain: Promise<void> = Promise.resolve();
+  /** The sshd check of the start. It runs in the background: a slow `sshd -T` must not delay the listener. */
+  let sshdCheck: Promise<void> = Promise.resolve();
   /** The version of the skill that each user got in this process. A failure is not recorded, so the next reconcile tries again. */
   const skillDone = new Map<string, string>();
   const skillText = options.skillContent ?? (() => SSH_SKILL);
@@ -286,6 +303,30 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     }
   }
 
+  /**
+   * A node that was installed before the drop-in existed has an sshd that does not read the dedicated key file. Then
+   * each new managed Linux target on it fails, so the start says it once. It needs root, because `sshd -T` reads the
+   * host keys. It never throws: a failed check is one log line too.
+   */
+  async function checkSshd(): Promise<void> {
+    if (!sshd || !isRoot()) return;
+
+    try {
+      if (!(await sshd.check()).reads)
+        log(
+          `ssh: sshd does not read ~/.ssh/${MANAGED_KEY_FILE}, so a new managed Linux target on this node fails. Run on this machine: sudo claude-rc node sshd install`,
+        );
+    } catch (error) {
+      // "Nothing was changed." belongs to the install text. The start changes nothing anyway.
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(/\s*Nothing was changed\.\s*$/, "")
+        .replace(/\.$/, "");
+      log(
+        `ssh: cannot check that sshd reads ~/.ssh/${MANAGED_KEY_FILE}: ${detail}. To check by hand, run: sudo claude-rc node sshd check`,
+      );
+    }
+  }
+
   /** One reconcile at a time. It never throws: a failure is one log line. */
   function sync(): Promise<void> {
     chain = chain.then(async () => {
@@ -328,6 +369,7 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     sshManaged,
     instances,
     skillsSettled: () => skillChain,
+    sshdSettled: () => sshdCheck,
     async start() {
       // The default user gets the skill also when the list of instances fails.
       scheduleSkills([]);
@@ -339,9 +381,12 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       }
 
       await sync();
+      // checkSshd never throws, so nobody needs to wait for it.
+      sshdCheck = checkSshd();
     },
     async stop() {
       await chain;
+      await sshdCheck;
 
       for (const [id, control] of controls) {
         controls.delete(id);
@@ -495,6 +540,7 @@ function createWindowsSsh(
     sshUsable: async () => pipe !== "" && (await cachedCheck()).ok,
     instances,
     skillsSettled: () => Promise.resolve(),
+    sshdSettled: () => Promise.resolve(),
     async start() {
       try {
         await ensurePrivateFolder(dir, sid(), options.winIcacls);
