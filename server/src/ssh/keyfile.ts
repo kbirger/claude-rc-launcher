@@ -6,10 +6,15 @@ import type { SystemType } from "./TargetStore";
 /** The file that sshd reads without any config. An install into it needs no check. */
 export const DEFAULT_KEY_FILE = "authorized_keys";
 
+/** True when a target names a key file other than `authorized_keys`. A stored `authorized_keys` counts as none. */
+export function namesOtherKeyFile(keyFile: string | undefined): keyFile is string {
+  return keyFile !== undefined && keyFile !== DEFAULT_KEY_FILE;
+}
+
 /**
  * True when a managed install must first check that sshd reads the key file: a Linux target with a key file other than
  * `authorized_keys`. A Synology, Dropbear or Windows target keeps its own rules and is never checked.
  */
 export function needsSshdCheck(systemType: SystemType, keyFile: string | undefined): boolean {
-  return systemType === "linux" && keyFile !== undefined && keyFile !== DEFAULT_KEY_FILE;
+  return systemType === "linux" && namesOtherKeyFile(keyFile);
 }

@@ -6,7 +6,7 @@ import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
 import { isObject } from "../../shared/requests";
 import { NO_WAITING_REQUEST } from "../constants";
-import { needsSshdCheck } from "../keyfile";
+import { namesOtherKeyFile, needsSshdCheck } from "../keyfile";
 import { formatCommand, validSources } from "../provisioner";
 import type { ProvisionerAnswer, ProvisionerCommand } from "../provisioner";
 import { authorizedKeysLine, hasProvisioner, MAX_NODES, TargetError } from "../TargetStore";
@@ -743,12 +743,15 @@ export class SshService {
 
     // An old node ignores the key file and writes `authorized_keys`. It answers without the name, so the install
     // would look fine. The node must name the file back. When it does not, the line is already in `authorized_keys`:
-    // ask the same node to remove it from there (no key file), and keep the refusal.
-    if (target.keyFile !== undefined) {
+    // ask the same node to remove it from there (no key file), and keep the refusal. A stored `authorized_keys` is
+    // the file an old node writes anyway: it counts as no key file, so the check and the cleanup skip it.
+    if (namesOtherKeyFile(target.keyFile)) {
       const answered = isObject(reply.body) ? reply.body.keyFile : undefined;
 
       if (answered !== target.keyFile) {
         const cleanup = await this.removeLine(target, undefined);
+        // `not-found`: the node did not write the line into `authorized_keys`, so nothing is left to remove by hand.
+        this.note(`target=${logToken(target.id)} old node cleanup line=${cleanup.line}`);
         const byHand =
           cleanup.line === "failed"
             ? ". The node may have written the key line into ~/.ssh/authorized_keys: remove the line from ~/.ssh/authorized_keys by hand"

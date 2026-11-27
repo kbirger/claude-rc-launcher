@@ -789,6 +789,33 @@ describe("SshService managed targets", () => {
       expect(host.paths()).toEqual(["POST /api/ssh/authorize", "POST /api/ssh/deauthorize"]);
     });
 
+    test("a target stored with authorized_keys on an old node gets no cleanup and the install passes", async () => {
+      const ctx = await managed({ "POST /api/ssh/authorize": { status: 204 } });
+      await ctx.targets.add({
+        id: "alt",
+        address: "10.0.0.10",
+        port: 22,
+        account: "root",
+        systemType: "linux",
+        nodes: ["node1"],
+        managedHost: "pve",
+        keyFile: "authorized_keys",
+      });
+      await ctx.keys.create("alt", unlock);
+      expect(await ctx.service.authorizeManaged("alt")).toEqual({});
+      expect(ctx.host.paths()).toEqual(["POST /api/ssh/authorize"]);
+    });
+
+    test("the cleanup of an old node writes one audit line with its result", async () => {
+      const { audit } = await withKeyFile(
+        { status: 204 },
+        { "POST /api/ssh/deauthorize": { status: 200, body: { result: "not-found" } } },
+      );
+      expect(audit.filter((line) => line.includes("old node cleanup"))).toEqual([
+        "audit ssh target=alt old node cleanup line=not-found",
+      ]);
+    });
+
     test("a node that names the file back gets no deauthorize call", async () => {
       const { error, host } = await withKeyFile({ status: 200, body: { keyFile: "authorized_keys2" } });
       expect(error).toBeUndefined();
