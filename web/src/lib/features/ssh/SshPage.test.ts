@@ -33,6 +33,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   for (const helper of open.splice(0)) helper();
   document.body.innerHTML = "";
+  localStorage.clear();
 });
 
 const button = (label: string) =>
@@ -461,4 +462,129 @@ test("a link with provisioner=1 shows the card that makes the provisioner key", 
 test("one target with two keys to recover counts as one target in the banner", async () => {
   showWith({ ...PENDING, pendingRewrap: ["nas"], pendingProvisionerRewrap: ["nas"] });
   await vi.waitFor(() => expect(squashed()).toContain("1 target needs its key recovered."));
+});
+
+// The accordion. Each section is an item with a trigger button; closed content stays mounted with `hidden`.
+const trigger = (name: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('[data-slot="accordion-trigger"]')].find((item) =>
+    item.textContent?.includes(name),
+  )!;
+const contentOf = (name: string) =>
+  trigger(name).closest('[data-slot="accordion-item"]')!.querySelector<HTMLElement>('[data-slot="accordion-content"]')!;
+const isOpen = (name: string) => trigger(name).getAttribute("aria-expanded") === "true";
+const SESSION_GRANT = {
+  id: "g1",
+  nodeId: "node1",
+  instanceId: "i1",
+  targetId: "box",
+  minutes: 30,
+  test: false,
+  state: "pending",
+  requestedAt: 1,
+};
+
+test("the sections come in order, with Access requests and Targets open and Settings closed", async () => {
+  showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(trigger("Settings")).toBeDefined());
+  const names = [...document.querySelectorAll('[data-slot="accordion-trigger"]')].map((item) =>
+    item.textContent!.replace(/\s+/g, " ").trim(),
+  );
+  expect(names).toEqual(["Access requests", "Targets", "Nodes", "Settings"]);
+  expect(isOpen("Access requests")).toBe(true);
+  expect(isOpen("Targets")).toBe(true);
+  expect(isOpen("Nodes")).toBe(false);
+  expect(isOpen("Settings")).toBe(false);
+  expect(contentOf("Settings").hidden).toBe(true);
+  expect(squashed()).toContain("A target is a machine that you connect to. The hub holds one key for each target.");
+  expect(squashed()).toContain(
+    "A node is a machine that runs the launcher. Choose which nodes may ask for SSH access, and the address that targets see for each.",
+  );
+});
+
+test("a closed Settings shows its content in order when the owner opens it", async () => {
+  vi.stubGlobal("PushManager", class {});
+  vi.stubGlobal("Notification", { permission: "default", requestPermission: async () => "default" });
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: new Promise(() => {}) } });
+
+  try {
+    showCheck(PRF_STATUS);
+    await vi.waitFor(() => expect(contentOf("Settings").textContent).toContain("Notify this device"));
+    expect(contentOf("Settings").hidden).toBe(true);
+    trigger("Settings").click();
+    flushSync();
+    expect(isOpen("Settings")).toBe(true);
+    expect(contentOf("Settings").hidden).toBe(false);
+    const text = contentOf("Settings").textContent!;
+    const order = ["Notify this device", CHECK, "Lost your passkey? Recover"].map((label) => text.indexOf(label));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((left, right) => left - right)).toEqual(order);
+  } finally {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+  }
+});
+
+test("the Access requests header counts the pending requests, and shows no badge without one", async () => {
+  showReady({}, [SESSION_GRANT, { ...SESSION_GRANT, id: "g2" }, { ...SESSION_GRANT, id: "g3", state: "active" }]);
+  await vi.waitFor(() =>
+    expect(trigger("Access requests").querySelector('[data-slot="badge"]')?.textContent?.trim()).toBe("2 pending"),
+  );
+  for (const helper of open.splice(0)) helper();
+  document.body.innerHTML = "";
+  showReady();
+  await vi.waitFor(() => expect(trigger("Access requests")).toBeDefined());
+  await vi.waitFor(() => expect(document.body.textContent).toContain("No requests yet."));
+  expect(trigger("Access requests").querySelector('[data-slot="badge"]')).toBeNull();
+});
+
+test("the owner's choice is remembered in the browser", async () => {
+  showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(trigger("Settings")).toBeDefined());
+  trigger("Settings").click();
+  trigger("Access requests").click();
+  flushSync();
+  expect(JSON.parse(localStorage.getItem("ssh-sections")!)).toEqual(["targets", "settings"]);
+  for (const helper of open.splice(0)) helper();
+  document.body.innerHTML = "";
+  showCheck(PRF_STATUS);
+  await vi.waitFor(() => expect(trigger("Settings")).toBeDefined());
+  expect(isOpen("Settings")).toBe(true);
+  expect(isOpen("Access requests")).toBe(false);
+});
+
+test("a pending request opens a closed Access requests", async () => {
+  localStorage.setItem("ssh-sections", "[]");
+  showReady({}, [SESSION_GRANT]);
+  await vi.waitFor(() => expect(isOpen("Access requests")).toBe(true));
+  expect(isOpen("Targets")).toBe(false);
+  expect(contentOf("Access requests").hidden).toBe(false);
+});
+
+test("a target link and a provisioner link open a closed Targets", async () => {
+  localStorage.setItem("ssh-sections", "[]");
+  showReady({ target: "box" });
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Step 2 of 6: Key"));
+  expect(isOpen("Targets")).toBe(true);
+  for (const helper of open.splice(0)) helper();
+  document.body.innerHTML = "";
+  showReady({ target: "box", provisioner: true });
+  await vi.waitFor(() => expect(document.body.textContent).toContain("Make the provisioner key"));
+  expect(isOpen("Targets")).toBe(true);
+  expect(isOpen("Access requests")).toBe(false);
+});
+
+test("the setup page has no accordion, and the notify switch stays above the setup form", async () => {
+  vi.stubGlobal("PushManager", class {});
+  vi.stubGlobal("Notification", { permission: "default", requestPermission: async () => "default" });
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: new Promise(() => {}) } });
+
+  try {
+    showCheck({ setUp: false, nodes: [] });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("SSH access setup"));
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Notify this device"));
+    expect(document.querySelector('[data-slot="accordion"]')).toBeNull();
+    const text = squashed();
+    expect(text.indexOf("Notify this device")).toBeLessThan(text.indexOf("SSH access setup"));
+  } finally {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+  }
 });

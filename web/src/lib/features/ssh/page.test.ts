@@ -51,7 +51,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function mount(link: { target: string | null; provisioner: boolean }) {
+// An in-memory storage with every section closed, so that only a need opens one.
+const closed = () => {
+  const items = new Map([["ssh-sections", "[]"]]);
+  return {
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => void items.set(key, value),
+  };
+};
+
+function mount(link: { target: string | null; provisioner: boolean }, storage = closed()) {
   const client = new QueryClient();
   const props = reactive(link);
   const onclose = vi.fn();
@@ -61,6 +70,7 @@ function mount(link: { target: string | null; provisioner: boolean }) {
       target: () => props.target,
       provisioner: () => props.provisioner,
       onclose,
+      storage,
     }),
   );
   flushSync();
@@ -200,6 +210,57 @@ describe("ssh page model", () => {
     const page = mount({ target: null, provisioner: false });
     await vi.waitFor(() => expect(page.model.pending).toEqual(["a", "b"]));
     expect(page.model.nodeCount).toBe(1);
+    page.dispose();
+  });
+
+  test("with no need, the saved state holds: every section stays closed", async () => {
+    const page = mount({ target: null, provisioner: false });
+    await loaded(page.client);
+    flushSync();
+    expect(page.model.sections.open).toEqual([]);
+    expect(page.model.pendingRequests).toBe(0);
+    page.dispose();
+  });
+
+  test("a pending request opens Access requests and counts in the badge; an active grant does not", async () => {
+    grants = { status: 200, body: [grant(), grant({ id: "g2", state: "active" }), maintenance()] };
+    const page = mount({ target: null, provisioner: false });
+    await vi.waitFor(() => expect(page.model.sections.open).toEqual(["requests"]));
+    expect(page.model.pendingRequests).toBe(2);
+    page.dispose();
+  });
+
+  test("a target link opens Targets at once", () => {
+    hold = true;
+    const page = mount({ target: "box", provisioner: false });
+    expect(page.model.sections.open).toEqual(["targets"]);
+    page.dispose();
+  });
+
+  test("provisioner=1 opens Targets", () => {
+    const page = mount({ target: "box", provisioner: true });
+    expect(page.model.sections.open).toEqual(["targets"]);
+    page.dispose();
+  });
+
+  test("the link of a pending maintenance request opens Access requests and Targets", async () => {
+    grants = { status: 200, body: [maintenance()] };
+    const page = mount({ target: "box", provisioner: false });
+    await vi.waitFor(() => expect(page.model.sheet?.kind).toBe("approve"));
+    expect(page.model.sections.open).toEqual(["requests", "targets"]);
+    page.dispose();
+  });
+
+  test("a refetch with the same pending request does not open a section that the owner closed", async () => {
+    grants = { status: 200, body: [grant()] };
+    const page = mount({ target: null, provisioner: false });
+    await vi.waitFor(() => expect(page.model.sections.open).toEqual(["requests"]));
+    page.model.sections.setOpen([]);
+    await refetchGrants(page.client);
+    expect(page.model.sections.open).toEqual([]);
+    grants = { status: 200, body: [grant(), grant({ id: "g3" })] };
+    await refetchGrants(page.client);
+    expect(page.model.sections.open).toEqual(["requests"]);
     page.dispose();
   });
 });
