@@ -100,7 +100,7 @@ export function dropinText(list: string[]): string {
 /** Installs, checks and removes the managed sshd drop-in. */
 export class SshdDropin {
   readonly command: string;
-  private readonly dropinPath: string;
+  readonly dropinPath: string;
   private readonly mainConfigPath: string;
 
   constructor(

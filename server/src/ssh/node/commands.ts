@@ -6,7 +6,11 @@ import type { SshManagedOptions } from "./types";
 // The commands that the SSH routes of a node run by default: ssh-keyscan, an ssh probe and the provision script.
 // A test injects its own functions in their place.
 
-async function runCommand(cmd: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+/** Runs a command with a time limit. A command that cannot start gives code 127. */
+export async function runCommand(
+  cmd: string[],
+  timeoutMs: number,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   let child: ReturnType<typeof Bun.spawn>;
 
   try {
