@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HostClient, HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
-import { certFingerprint } from "../src/hubproof";
+import { certFingerprint } from "../src/auth/hubproof";
 import { ensureNodeCert } from "../src/tls";
 import { rejection, defined } from "./support";
 

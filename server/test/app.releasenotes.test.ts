@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
-import { mintSessionCookie, oidcUserAuth } from "../src/auth";
-import type { OidcClient, User } from "../src/auth";
+import { mintSessionCookie, oidcUserAuth } from "../src/auth/oidc";
+import type { OidcClient, User } from "../src/auth/oidc";
 import type { Config } from "../src/config/parse";
 import type { createReleaseList, ReleaseNotes } from "../src/releaselist";
 

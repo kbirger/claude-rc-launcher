@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_ROLES } from "../src/roles";
-import { isAllowed, userFromClaims } from "../src/userauth";
-import { defined } from "./support";
+import { DEFAULT_ROLES } from "../../src/roles";
+import { isAllowed, userFromClaims } from "../../src/auth/user";
+import { defined } from "../support";
 
 describe("userFromClaims", () => {
   test("full claims", () => {

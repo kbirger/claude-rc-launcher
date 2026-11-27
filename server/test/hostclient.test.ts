@@ -8,8 +8,8 @@ import { parseConfig } from "../src/config/parse";
 import type { ConfigIo } from "../src/config/parse";
 import { HostError, createHostClient, hubAuthorizer, secretAuthorizer } from "../src/hostclient";
 import type { HostConfig } from "../src/hostclient";
-import { createProofVerifier, certFingerprint, loadOrCreateHubKey } from "../src/hubproof";
-import { nodeAuth } from "../src/nodeauth";
+import { createProofVerifier, certFingerprint, loadOrCreateHubKey } from "../src/auth/hubproof";
+import { nodeAuth } from "../src/auth/node";
 import { ensureNodeCert } from "../src/tls";
 import { rejection, defined } from "./support";
 

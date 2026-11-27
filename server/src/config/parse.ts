@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HostConfig } from "../hostclient";
 import { HOST_ID_RE } from "../hostid";
-import { validPeer } from "../proxyauth";
+import { validPeer } from "../auth/proxy";
 import { DEFAULT_ROLES, isRole, isRoleValue } from "../roles";
 import type { RoleSettings, RoleValue } from "../roles";
 

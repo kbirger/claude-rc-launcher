@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { describe, expect, test } from "bun:test";
-import { cliBearerAuth, cliConfigRoute } from "../src/cliauth";
-import { createJwtVerifier } from "../src/jwt";
-import { DEFAULT_ROLES } from "../src/roles";
-import type { RoleSettings } from "../src/roles";
+import { cliBearerAuth, cliConfigRoute } from "../../src/auth/cli";
+import { createJwtVerifier } from "../../src/auth/jwt";
+import { DEFAULT_ROLES } from "../../src/roles";
+import type { RoleSettings } from "../../src/roles";
 
 const ISS = "https://auth.example.com/o/cli/";
 const AUD = "cli-client";

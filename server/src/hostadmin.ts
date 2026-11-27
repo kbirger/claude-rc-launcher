@@ -9,7 +9,7 @@ import { HOST_ID_RE } from "./hostid";
 import type { HostRegistry } from "./hostregistry";
 import { HttpError } from "./instances";
 import { readObject } from "./shared/requests";
-import type { User } from "./userauth";
+import type { User } from "./auth/user";
 
 const DNS_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const TEST_CALL_TIMEOUT_MS = 5_000;

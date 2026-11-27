@@ -10,7 +10,7 @@ import { hostAdminApi } from "../src/hostadmin";
 import { createHostClient, secretAuthorizer } from "../src/hostclient";
 import type { HostClient, HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
-import { generateSecret, nodeAuth } from "../src/nodeauth";
+import { generateSecret, nodeAuth } from "../src/auth/node";
 import { ensureNodeCert } from "../src/tls";
 import { defined } from "./support";
 

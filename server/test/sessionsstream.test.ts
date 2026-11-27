@@ -9,7 +9,7 @@ import { SessionIndex } from "../src/sessionindex";
 import type { HostPart, StoreChange } from "../src/sessionsstore";
 import { sessionsStream } from "../src/sessionsstream";
 import { trackStreams } from "../src/shared/sse";
-import type { UserAuthStrategy } from "../src/userauth";
+import type { UserAuthStrategy } from "../src/auth/user";
 import { fakeTimers } from "./faketimers";
 
 const tick = async (n = 3) => {

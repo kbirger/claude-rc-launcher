@@ -11,7 +11,7 @@ import {
 import { X509Certificate, createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { actStore } from "./roles";
+import { actStore } from "../roles";
 
 export interface HubKey {
   privateKey: CryptoKey;

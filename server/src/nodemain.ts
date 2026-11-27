@@ -5,7 +5,7 @@ import { serviceCloner } from "./cloner";
 import type { Config } from "./config/parse";
 import { bunRunner, InstanceService } from "./instances";
 import type { Instances } from "./instances";
-import { nodeAuth } from "./nodeauth";
+import { nodeAuth } from "./auth/node";
 import { resolveDirOwner } from "./owner";
 import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates } from "./serve";

@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadOrCreateHubKey, signProof } from "../src/hubproof";
-import type { HubKey } from "../src/hubproof";
-import { generateSecret, hashSecret, nodeAuth } from "../src/nodeauth";
-import type { NodeAuthSettings } from "../src/nodeauth";
-import { actStore } from "../src/roles";
+import { loadOrCreateHubKey, signProof } from "../../src/auth/hubproof";
+import type { HubKey } from "../../src/auth/hubproof";
+import { generateSecret, hashSecret, nodeAuth } from "../../src/auth/node";
+import type { NodeAuthSettings } from "../../src/auth/node";
+import { actStore } from "../../src/roles";
 
 const FP = "sha256:" + "ab".repeat(32);
 

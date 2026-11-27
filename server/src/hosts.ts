@@ -22,7 +22,7 @@ import {
 import type { UpdateReport } from "./serviceupdate";
 import type { UpdateRecord } from "./updaterecord";
 import type { UpdateTracker } from "./updatetracker";
-import type { User } from "./userauth";
+import type { User } from "./auth/user";
 import { VERSION } from "./shared/version";
 import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "./shared/versions";
 

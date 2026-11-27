@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
-import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor } from "../src/auth";
-import type { OidcClient, User } from "../src/auth";
-import type { Config, OidcUserAuth } from "../src/config/parse";
-import { DEFAULT_ROLES } from "../src/roles";
-import { rejection, defined } from "./support";
+import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor } from "../../src/auth/oidc";
+import type { OidcClient, User } from "../../src/auth/oidc";
+import type { Config, OidcUserAuth } from "../../src/config/parse";
+import { DEFAULT_ROLES } from "../../src/roles";
+import { rejection, defined } from "../support";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };
 const withSecret = (config: Config, item: string): Config => ({

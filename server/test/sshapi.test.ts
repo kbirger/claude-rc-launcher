@@ -11,7 +11,7 @@ import { SshKeyStore } from "../src/sshkeystore";
 import { SshService } from "../src/sshservice";
 import { installNotes, TargetStore } from "../src/sshtargets";
 import { newRecovery } from "../src/sshwrap";
-import type { UserAuthStrategy } from "../src/userauth";
+import type { UserAuthStrategy } from "../src/auth/user";
 import { fakeTimers } from "./faketimers";
 import { fakeRunner } from "./sshrunner";
 

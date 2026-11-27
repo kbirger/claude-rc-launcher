@@ -4,9 +4,9 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { certFingerprint, createProofVerifier, loadOrCreateHubKey, ProofError, signProof, type ProofRequest } from "../src/hubproof";
-import { actStore } from "../src/roles";
-import { ensureNodeCert } from "../src/tls";
+import { certFingerprint, createProofVerifier, loadOrCreateHubKey, ProofError, signProof, type ProofRequest } from "../../src/auth/hubproof";
+import { actStore } from "../../src/roles";
+import { ensureNodeCert } from "../../src/tls";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-hubproof-"));
 const AUD = "sha256:" + "ab".repeat(32);

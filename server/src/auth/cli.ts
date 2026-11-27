@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import type { JwtVerifier } from "./jwt";
-import type { RoleSettings } from "./roles";
-import { isAllowed, userFromClaims } from "./userauth";
+import type { RoleSettings } from "../roles";
+import { isAllowed, userFromClaims } from "./user";
 
 const unauthenticated = (context: Parameters<MiddlewareHandler>[0]) => context.json({ error: "unauthenticated" }, 401);
 

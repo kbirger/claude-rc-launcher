@@ -2,7 +2,7 @@ import { ConfigError } from "./config/parse";
 import type { Config } from "./config/parse";
 import { applyLocal, loadConfigFile, resolveConfigPath } from "./config/file";
 import { startHub } from "./hubmain";
-import { generateSecret } from "./nodeauth";
+import { generateSecret } from "./auth/node";
 import { startNode } from "./nodemain";
 import { runNudgeSend } from "./nudge";
 import { VERSION } from "./shared/version";

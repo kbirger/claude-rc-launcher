@@ -17,8 +17,8 @@ import {
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { mintSessionCookie } from "../src/auth";
-import type { OidcClient } from "../src/auth";
+import { mintSessionCookie } from "../src/auth/oidc";
+import type { OidcClient } from "../src/auth/oidc";
 import type { Config } from "../src/config/parse";
 import { startHub } from "../src/hubmain";
 import type { Instance } from "../src/instances";

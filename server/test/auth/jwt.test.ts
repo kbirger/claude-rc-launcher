@@ -1,7 +1,7 @@
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { describe, expect, test } from "bun:test";
-import { JwtError, createJwtVerifier, remoteKeys } from "../src/jwt";
-import { rejection } from "./support";
+import { JwtError, createJwtVerifier, remoteKeys } from "../../src/auth/jwt";
+import { rejection } from "../support";
 
 const ISS = "https://auth.example.com/o/x/";
 const AUD = "rc";

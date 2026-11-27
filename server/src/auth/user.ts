@@ -1,6 +1,6 @@
 import type { Hono, MiddlewareHandler } from "hono";
-import { resolveRole } from "./roles";
-import type { RoleSettings, RoleValue } from "./roles";
+import { resolveRole } from "../roles";
+import type { RoleSettings, RoleValue } from "../roles";
 
 export interface User {
   sub: string;

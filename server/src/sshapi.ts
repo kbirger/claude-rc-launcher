@@ -16,7 +16,7 @@ import type { TargetState, TargetStore } from "./sshtargets";
 import { SshTargetService } from "./sshtargetservice";
 import type { ApproveResult } from "./sshtargetservice";
 import { newRecovery } from "./sshwrap";
-import type { User } from "./userauth";
+import type { User } from "./auth/user";
 
 // The routes of SSH delegation on the hub, mounted at `/ssh` of the browser API and of the CLI API. They set up the
 // unlock method, manage targets and the access of nodes, install and pin keys, and approve, deny and revoke grants.

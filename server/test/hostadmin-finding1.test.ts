@@ -9,8 +9,8 @@ import { hostAdminApi } from "../src/hostadmin";
 import { createHostClient, hubAuthorizer } from "../src/hostclient";
 import type { HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";
-import { loadOrCreateHubKey } from "../src/hubproof";
-import { nodeAuth } from "../src/nodeauth";
+import { loadOrCreateHubKey } from "../src/auth/hubproof";
+import { nodeAuth } from "../src/auth/node";
 import { ensureNodeCert } from "../src/tls";
 import { defined } from "./support";
 

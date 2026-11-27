@@ -7,7 +7,7 @@ import { createApp, createNodeApp } from "../src/app";
 import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import { HostError, createHostClient, secretAuthorizer, type HostClient, type HostConfig } from "../src/hostclient";
-import { generateSecret, nodeAuth } from "../src/nodeauth";
+import { generateSecret, nodeAuth } from "../src/auth/node";
 import { ensureNodeCert } from "../src/tls";
 import { HostRegistry } from "../src/hostregistry";
 import type { Cloner } from "../src/cloner";

@@ -5,7 +5,7 @@ import { windowsDataDir } from "./config/parse";
 import type { Config } from "./config/parse";
 import { loadConfigFile, resolveConfigPath } from "./config/file";
 import { bunRunner } from "./instances";
-import { generateSecret } from "./nodeauth";
+import { generateSecret } from "./auth/node";
 import { startNode } from "./nodemain";
 import { NodeEvents } from "./updateevents";
 import { VERSION } from "./shared/version";

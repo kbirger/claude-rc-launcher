@@ -3,7 +3,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./shared/requests";
 import { logToken } from "./roles";
-import type { User } from "./userauth";
+import type { User } from "./auth/user";
 import { PushValidationError } from "./webpush";
 import type { PushService, PushSubscriptionJson } from "./webpush";
 
