@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { HOST_ID_RE } from "../../hosts/id";
 import type { NodeEvents } from "../../hosts/NodeEvents";
-import { HttpError } from "../../instances/InstanceService";
 import { asUser } from "../../shared/asuser";
 import type { IdentityFor } from "../../shared/asuser";
+import { HttpError } from "../../shared/HttpError";
 import { isObject, readObject } from "../../shared/requests";
 import { keyFingerprint } from "../agentproto";
 import { LinuxGrantPlatform } from "../node/LinuxGrantPlatform";

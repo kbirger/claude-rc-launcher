@@ -1,9 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { HttpError } from "../shared/HttpError";
 import { hasOwn } from "../shared/requests";
 import { FileConflict, FileRefused, readUserFile, writeUserFile } from "../shared/safefile";
 import type { SystemUser } from "../shared/users";
-import { HttpError } from "./InstanceService";
 
 export type TrustOwner = Pick<SystemUser, "home"> & { uid?: number; gid?: number };
 

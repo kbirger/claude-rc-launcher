@@ -38,10 +38,10 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { posix, win32 as win32Path } from "node:path";
-import { HttpError } from "../../instances/InstanceService";
 import type { Instances } from "../../instances/InstanceService";
 import type { Identity } from "../../shared/asuser";
 import { downloadHeaders } from "../../shared/disposition";
+import { HttpError } from "../../shared/HttpError";
 import { bunRunner } from "../../shared/runner";
 import type { Runner } from "../../shared/runner";
 import type { openDownload as openDownloadDefault, previewIn as previewInDefault } from "../files";

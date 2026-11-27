@@ -8,8 +8,9 @@ import { mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../
 import type { UserAuthStrategy } from "../src/auth/user";
 import type { Config } from "../src/config/parse";
 import type { Presence } from "../src/hosts/nodewatcher";
-import { HttpError, type Instance } from "../src/instances/InstanceService";
+import type { Instance } from "../src/instances/InstanceService";
 import { SETTINGS_HELP } from "../src/instances/settings";
+import { HttpError } from "../src/shared/HttpError";
 import { PathError } from "../src/shared/paths";
 import { closeStreams } from "../src/shared/sse";
 import { VERSION } from "../src/shared/version";

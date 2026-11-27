@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { isIP } from "node:net";
 import type { User } from "../../auth/user";
 import { hostUrlProblem } from "../../config/parse";
-import { HttpError } from "../../instances/InstanceService";
+import { HttpError } from "../../shared/HttpError";
 import { readObject } from "../../shared/requests";
 import { PeekError, peekCertificate } from "../certpeek";
 import { HostError } from "../client";

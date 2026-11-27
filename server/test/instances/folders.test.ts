@@ -3,8 +3,8 @@ import { lstat, mkdtemp, mkdir, writeFile, symlink, realpath, rename, rm, rmdir,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listDirs, makeDir } from "../../src/instances/folders";
-import { HttpError } from "../../src/instances/InstanceService";
 import { adoptNewDir, DirChanged } from "../../src/instances/ownedir";
+import { HttpError } from "../../src/shared/HttpError";
 import { defined } from "../support";
 
 const win = process.platform === "win32";

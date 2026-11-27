@@ -16,9 +16,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config/parse";
 import { createCloner } from "../../src/instances/cloner";
-import { HttpError } from "../../src/instances/InstanceService";
 import { adoptNewDir, DirChanged } from "../../src/instances/ownedir";
 import type { AdoptDir } from "../../src/instances/ownedir";
+import { HttpError } from "../../src/shared/HttpError";
 import type { RunOptions, RunResult } from "../../src/shared/runner";
 import { defined } from "../support";
 

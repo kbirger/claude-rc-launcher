@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
-import { HttpError } from "../instances/InstanceService";
 import type { TrustOwner, TrustStore } from "../instances/trust";
+import { HttpError } from "../shared/HttpError";
 import { hasOwn } from "../shared/requests";
 
 /**

@@ -3,7 +3,7 @@ import type { Config } from "../../src/config/parse";
 import { createCloner } from "../../src/instances/cloner";
 import { bunLoginSpawner } from "../../src/instances/ghlogin";
 import type { LoginProc, LoginSpawner } from "../../src/instances/ghlogin";
-import { HttpError } from "../../src/instances/InstanceService";
+import { HttpError } from "../../src/shared/HttpError";
 import type { RunOptions, RunResult } from "../../src/shared/runner";
 
 const id = { home: "/home/u", path: "/usr/bin" };

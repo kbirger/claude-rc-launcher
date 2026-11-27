@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HttpError } from "../../src/instances/InstanceService";
+import { HttpError } from "../../src/shared/HttpError";
 import { isTrustedWin, trustKey, windowsTrust } from "../../src/win/trust";
 import { rejection } from "../support";
 

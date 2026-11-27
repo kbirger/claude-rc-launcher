@@ -1,6 +1,6 @@
 import { mkdir, open, readdir, lstat, rmdir, unlink } from "node:fs/promises";
 import { basename, join, win32 } from "node:path";
-import { HttpError } from "../instances/InstanceService";
+import { HttpError } from "../shared/HttpError";
 
 // The grant files of a session on a Windows node: the `ssh` config, the `known_hosts` file and the public key file. They
 // live in one folder for each instance under the data folder of the node. A folder gets an access list for SYSTEM,

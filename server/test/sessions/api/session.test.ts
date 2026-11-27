@@ -1,14 +1,14 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import { existsSync } from "node:fs";
 import { link, mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onError } from "../../../src/app";
-import { HttpError } from "../../../src/instances/InstanceService";
 import type { Instances } from "../../../src/instances/InstanceService";
 import { sessionApi } from "../../../src/sessions/api/session";
 import type { TranscriptFs } from "../../../src/sessions/transcriptfs";
+import { HttpError } from "../../../src/shared/HttpError";
 import { defined } from "../../support";
 
 const ID = "0123456789ab";

@@ -1,7 +1,7 @@
 import type { HostClient } from "../../hosts/client";
 import { HOST_ID_RE, LOCAL_HOST } from "../../hosts/id";
-import { HttpError } from "../../instances/InstanceService";
 import { logToken } from "../../roles";
+import { HttpError } from "../../shared/HttpError";
 import { realTimers } from "../../shared/PollSource";
 import type { Timers } from "../../shared/PollSource";
 import { isObject } from "../../shared/requests";

@@ -2,8 +2,8 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { link, mkdtemp, readdir, readFile, readlink, writeFile, rm, stat, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HttpError } from "../../src/instances/InstanceService";
 import { fileTrust, isTrustedIn } from "../../src/instances/trust";
+import { HttpError } from "../../src/shared/HttpError";
 
 let home: string;
 beforeEach(async () => {

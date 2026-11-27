@@ -1,12 +1,12 @@
-import type { MiddlewareHandler } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { MiddlewareHandler } from "hono";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp, onError } from "../../../src/app";
 import type { Config } from "../../../src/config/parse";
 import type { Instances } from "../../../src/instances/InstanceService";
-import { HttpError } from "../../../src/instances/InstanceService";
+import { HttpError } from "../../../src/shared/HttpError";
 import { keyFingerprint } from "../../../src/ssh/agentproto";
 import { sshManagedApi } from "../../../src/ssh/api/node";
 import type { SshManagedOptions } from "../../../src/ssh/api/node";

@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { User } from "../../auth/user";
 import type { Config } from "../../config/parse";
-import { HttpError } from "../../instances/InstanceService";
 import { parseRuleEdit } from "../../sessions/api/permissions";
 import { downloadHeaders, lastSegment } from "../../shared/disposition";
+import { HttpError } from "../../shared/HttpError";
 import {
   isObject,
   parseCloneRequest,

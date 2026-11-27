@@ -1,5 +1,5 @@
+import { HttpError } from "../shared/HttpError";
 import { isValidDirName } from "./folders";
-import { HttpError } from "./InstanceService";
 
 export interface RepoRef {
   owner: string;

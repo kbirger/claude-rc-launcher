@@ -1,6 +1,6 @@
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,7 +18,7 @@ import {
 import { HostRegistry } from "../../../src/hosts/HostRegistry";
 import { ensureNodeCert } from "../../../src/hosts/tls";
 import type { Cloner } from "../../../src/instances/cloner";
-import { HttpError } from "../../../src/instances/InstanceService";
+import { HttpError } from "../../../src/shared/HttpError";
 import { VERSION } from "../../../src/shared/version";
 import type { UpdateReport } from "../../../src/updates/serviceupdate";
 import { UpdateRecord } from "../../../src/updates/UpdateRecord";

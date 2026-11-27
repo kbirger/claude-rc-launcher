@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { HttpError } from "../../src/instances/InstanceService";
+import { HttpError } from "../../src/shared/HttpError";
 import {
   isObject,
   parseCloneRequest,

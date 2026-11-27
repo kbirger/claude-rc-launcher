@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { HttpError } from "../../src/instances/InstanceService";
+import { HttpError } from "../../src/shared/HttpError";
 import { grantConfig, sshConfigPath } from "../../src/ssh/api/node";
 import { newPipeName, currentUserSid } from "../../src/win/pipe";
 import {

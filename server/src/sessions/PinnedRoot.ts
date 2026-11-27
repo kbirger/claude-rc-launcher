@@ -9,7 +9,7 @@
  */
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve, win32 as win32Path } from "node:path";
-import { HttpError } from "../instances/InstanceService";
+import { HttpError } from "../shared/HttpError";
 import { absRefused, PathError, within } from "../shared/paths";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { listIn } from "./files";

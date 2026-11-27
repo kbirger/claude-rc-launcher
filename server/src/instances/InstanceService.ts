@@ -2,6 +2,7 @@ import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "nod
 import { join } from "node:path";
 import type { Config } from "../config/parse";
 import type { Identity } from "../shared/asuser";
+import { HttpError } from "../shared/HttpError";
 import { resolveWithinRoots } from "../shared/paths";
 import type { Runner } from "../shared/runner";
 import { passwdDirectory } from "../shared/users";
@@ -101,17 +102,6 @@ interface Target {
   uid?: number;
   gid?: number;
   isDefault: boolean;
-}
-
-export class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public extra?: object,
-  ) {
-    super(message);
-    this.name = "HttpError";
-  }
 }
 
 const ID_RE = /^[0-9a-f]{12}$/;

@@ -18,8 +18,8 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { HttpError } from "../../instances/InstanceService";
 import type { Instances } from "../../instances/InstanceService";
+import { HttpError } from "../../shared/HttpError";
 import { isObject, readJson } from "../../shared/requests";
 import { ClaudeSettings } from "../ClaudeSettings";
 import { nudge as realNudge, nudgeMessage } from "../nudge";

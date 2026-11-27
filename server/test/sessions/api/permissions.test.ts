@@ -1,15 +1,15 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onError } from "../../../src/app";
-import { HttpError } from "../../../src/instances/InstanceService";
 import type { Instances } from "../../../src/instances/InstanceService";
 import { permissionsApi } from "../../../src/sessions/api/permissions";
 import type { nudge as nudgeFn } from "../../../src/sessions/nudge";
 import { SessionCatalog } from "../../../src/sessions/SessionCatalog";
 import type { TranscriptFs } from "../../../src/sessions/transcriptfs";
+import { HttpError } from "../../../src/shared/HttpError";
 import { defined } from "../../support";
 
 const ID = "0123456789ab";

@@ -15,7 +15,6 @@ import type { Presence } from "./hosts/nodewatcher";
 import type { Cloner } from "./instances/cloner";
 import { listDirs, makeDir, resolveChecked } from "./instances/folders";
 import type { DirOwner } from "./instances/folders";
-import { HttpError } from "./instances/InstanceService";
 import type { Instances } from "./instances/InstanceService";
 import type { AdoptDir } from "./instances/ownedir";
 import { settingsFromArgs, settingsHelpFor } from "./instances/settings";
@@ -33,6 +32,7 @@ import { SessionIndex } from "./sessions/SessionIndex";
 import type { SessionIndexOptions, SessionsEvent } from "./sessions/SessionIndex";
 import { SessionsStore } from "./sessions/SessionsStore";
 import { WatchFlag } from "./sessions/WatchFlag";
+import { HttpError } from "./shared/HttpError";
 import { PathError, within } from "./shared/paths";
 import type { ChangeSource, Timers } from "./shared/PollSource";
 import {

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { HttpError } from "../../src/instances/InstanceService";
 import * as pinnedroot from "../../src/sessions/PinnedRoot";
 import { PinnedRoot } from "../../src/sessions/PinnedRoot";
 import type { PinnedFile } from "../../src/sessions/PinnedRoot";
@@ -10,6 +9,7 @@ import { Session } from "../../src/sessions/Session";
 import { SessionCatalog } from "../../src/sessions/SessionCatalog";
 import type { SessionCatalogOptions } from "../../src/sessions/SessionCatalog";
 import type { TranscriptFs } from "../../src/sessions/transcriptfs";
+import { HttpError } from "../../src/shared/HttpError";
 
 // The real-root cases use symlinks and POSIX folders, so they skip on Windows. The two type tests never run their bodies.
 const win = process.platform === "win32";

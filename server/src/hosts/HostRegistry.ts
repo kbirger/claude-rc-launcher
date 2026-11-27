@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { HttpError } from "../instances/InstanceService";
+import { HttpError } from "../shared/HttpError";
 import { isObject } from "../shared/requests";
 import type { HostClient, HostConfig } from "./client";
 import { HOST_ID_RE } from "./id";
