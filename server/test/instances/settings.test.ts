@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SETTINGS, SETTINGS_HELP, argsWith, settingsFromArgs, settingsHelpFor } from "../src/instancesettings";
-import { defined } from "./support";
+import { DEFAULT_SETTINGS, SETTINGS_HELP, argsWith, settingsFromArgs, settingsHelpFor } from "../../src/instances/settings";
+import { defined } from "../support";
 
 describe("sshRequests", () => {
   test("default settings have sshRequests false", () => {

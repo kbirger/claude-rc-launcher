@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { HOST_ID_RE } from "./hosts/id";
-import { HttpError } from "./instances";
+import { HttpError } from "./instances/InstanceService";
 import { isObject, readObject } from "./shared/requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";

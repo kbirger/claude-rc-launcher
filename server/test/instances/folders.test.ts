@@ -2,10 +2,10 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { lstat, mkdtemp, mkdir, writeFile, symlink, realpath, rename, rm, rmdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listDirs, makeDir } from "../src/fsapi";
-import { HttpError } from "../src/instances";
-import { adoptNewDir, DirChanged } from "../src/ownedir";
-import { defined } from "./support";
+import { listDirs, makeDir } from "../../src/instances/folders";
+import { HttpError } from "../../src/instances/InstanceService";
+import { adoptNewDir, DirChanged } from "../../src/instances/ownedir";
+import { defined } from "../support";
 
 const win = process.platform === "win32";
 let base: string;
@@ -210,7 +210,7 @@ describe("makeDir", () => {
     },
   );
   test("the default owner change is the fd-based adoptNewDir, never a path chown", async () => {
-    const src = await Bun.file(join(import.meta.dir, "../src/fsapi.ts")).text();
+    const src = await Bun.file(join(import.meta.dir, "../../src/instances/folders.ts")).text();
     expect(src).toMatch(/import \{[^}]*\badoptNewDir\b[^}]*\} from "\.\/ownedir"/);
     expect(src).not.toMatch(/\bl?chown\b/);
   });

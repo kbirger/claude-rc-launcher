@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sshRequest, sshTargets } from "../../cli/src/sshcmd";
 import type { Config } from "../src/config/parse";
-import type { Instance, Instances } from "../src/instances";
+import type { Instance, Instances } from "../src/instances/InstanceService";
 import { Hono } from "hono";
 import { onError } from "../src/app";
 import type { SshNodeOptions } from "../src/sshnodeapi";

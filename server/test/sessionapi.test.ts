@@ -5,8 +5,8 @@ import { link, mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onError } from "../src/app";
-import { HttpError } from "../src/instances";
-import type { Instances } from "../src/instances";
+import { HttpError } from "../src/instances/InstanceService";
+import type { Instances } from "../src/instances/InstanceService";
 import { sessionApi } from "../src/sessionapi";
 import type { TranscriptFs } from "../src/transcriptfs";
 import { defined } from "./support";

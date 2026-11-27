@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { asUser } from "./shared/asuser";
 import type { IdentityFor } from "./shared/asuser";
 import { HOST_ID_RE } from "./hosts/id";
-import { HttpError } from "./instances";
+import { HttpError } from "./instances/InstanceService";
 import { isObject, readObject } from "./shared/requests";
 import { keyFingerprint } from "./sshagentproto";
 import { LinuxGrantPlatform, WindowsGrantPlatform } from "./sshgrantplatform";

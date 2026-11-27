@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { HttpError } from "../src/instances";
+import { HttpError } from "../src/instances/InstanceService";
 import * as pinnedroot from "../src/pinnedroot";
 import { PinnedRoot } from "../src/pinnedroot";
 import type { PinnedFile } from "../src/pinnedroot";

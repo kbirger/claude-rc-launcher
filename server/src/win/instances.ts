@@ -10,18 +10,18 @@ import {
   SETTLE_MS,
   settleReason,
   waitSettled,
-} from "../instancechange";
-import type { ProbeResult } from "../instancechange";
-import { HttpError } from "../instances";
-import type { Instance, Instances, UpdateResult, UsersInfo } from "../instances";
-import { argsWith, settingsFromArgs } from "../instancesettings";
-import type { InstanceSettings, SettingsPatch, SpawnMode } from "../instancesettings";
+} from "../instances/ChangeLock";
+import type { ProbeResult } from "../instances/ChangeLock";
+import { HttpError } from "../instances/InstanceService";
+import type { Instance, Instances, UpdateResult, UsersInfo } from "../instances/InstanceService";
+import { argsWith, settingsFromArgs } from "../instances/settings";
+import type { InstanceSettings, SettingsPatch, SpawnMode } from "../instances/settings";
 import { resolveWithinRoots } from "../shared/paths";
-import { repoKind } from "../repokind";
-import type { RepoKind } from "../repokind";
+import { repoKind } from "../instances/repokind";
+import type { RepoKind } from "../instances/repokind";
 import type { Runner } from "../shared/runner";
-import type { TrustStore } from "../trust";
-import { defaultName, instanceId, isValidName } from "../unit";
+import type { TrustStore } from "../instances/trust";
+import { defaultName, instanceId, isValidName } from "../instances/unit";
 import { RestrictedTokenError } from "./token";
 import { windowsTrust } from "./trust";
 

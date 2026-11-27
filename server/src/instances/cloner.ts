@@ -1,18 +1,18 @@
 import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import { asUser } from "./shared/asuser";
-import type { IdentityFor } from "./shared/asuser";
-import type { Config } from "./config/parse";
-import { resolveChecked } from "./fsapi";
-import type { DirOwner } from "./fsapi";
+import { asUser } from "../shared/asuser";
+import type { IdentityFor } from "../shared/asuser";
+import type { Config } from "../config/parse";
+import { resolveChecked } from "./folders";
+import type { DirOwner } from "./folders";
 import { createLoginManager } from "./ghlogin";
 import type { LoginClock, LoginSpawner } from "./ghlogin";
-import { bunRunner, HttpError, InstanceService } from "./instances";
-import type { Instances } from "./instances";
+import { bunRunner, HttpError, InstanceService } from "./InstanceService";
+import type { Instances } from "./InstanceService";
 import { adoptNewDir, DirChanged } from "./ownedir";
 import type { AdoptDir, AdoptedDir } from "./ownedir";
 import { parseRepoLink } from "./repolink";
-import type { Runner } from "./shared/runner";
+import type { Runner } from "../shared/runner";
 
 export interface RepoGroup {
   owner: string;

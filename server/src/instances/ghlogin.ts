@@ -1,7 +1,7 @@
-import { asUser } from "./shared/asuser";
-import type { Identity, IdentityFor } from "./shared/asuser";
-import { HttpError } from "./instances";
-import type { Runner, RunResult } from "./shared/runner";
+import { asUser } from "../shared/asuser";
+import type { Identity, IdentityFor } from "../shared/asuser";
+import { HttpError } from "./InstanceService";
+import type { Runner, RunResult } from "../shared/runner";
 
 export interface LoginProc {
   onOutput(cb: (chunk: string) => void): void;

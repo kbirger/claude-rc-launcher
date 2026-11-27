@@ -4,8 +4,8 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { onError } from "../src/app";
-import { HttpError } from "../src/instances";
-import type { Instances } from "../src/instances";
+import { HttpError } from "../src/instances/InstanceService";
+import type { Instances } from "../src/instances/InstanceService";
 import type { nudge as nudgeFn } from "../src/nudge";
 import { permissionsApi } from "../src/permissionsapi";
 import { SessionCatalog } from "../src/sessioncatalog";

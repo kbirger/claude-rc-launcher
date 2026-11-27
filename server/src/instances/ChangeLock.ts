@@ -1,7 +1,7 @@
 /**
  * Parts of a settings change that every platform shares. This file must not use systemd or the file system.
  */
-import type { InstanceSettings, SettingsPatch } from "./instancesettings";
+import type { InstanceSettings, SettingsPatch } from "./settings";
 
 export type ProbeResult = "up" | "refused" | "down";
 export type SettleResult = "ok" | "refused" | "failed";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ChangeLock, waitSettled } from "../src/instancechange";
-import { defined } from "./support";
+import { ChangeLock, waitSettled } from "../../src/instances/ChangeLock";
+import { defined } from "../support";
 
 function fakeSleep() {
   const slept: number[] = [];

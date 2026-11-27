@@ -1,6 +1,6 @@
-import type { Config } from "./config/parse";
-import type { DirOwner } from "./fsapi";
-import { bunRunner } from "./instances";
+import type { Config } from "../config/parse";
+import type { DirOwner } from "./folders";
+import { bunRunner } from "./InstanceService";
 
 /** Folders created via the UI must be owned by the service user when we run as root for another user. */
 export async function resolveDirOwner(cfg: Config): Promise<DirOwner | undefined> {

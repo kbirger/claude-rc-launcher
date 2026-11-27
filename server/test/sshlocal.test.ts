@@ -8,7 +8,7 @@ import type { OidcClient } from "../src/auth/oidc";
 import type { Config } from "../src/config/parse";
 import type { HostClient } from "../src/hosts/client";
 import { sshHostClient, startHub } from "../src/hubmain";
-import type { Instance } from "../src/instances";
+import type { Instance } from "../src/instances/InstanceService";
 import { DEFAULT_ROLES } from "../src/roles";
 import { identitiesAnswer, FrameReader, publicKeyBlob } from "../src/sshagentproto";
 import { TargetStore } from "../src/sshtargets";

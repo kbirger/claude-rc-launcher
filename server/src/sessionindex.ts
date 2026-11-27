@@ -7,8 +7,8 @@
  */
 import { PollSource, realTimers } from "./shared/PollSource";
 import type { ChangeSource, Timers, Trigger } from "./shared/PollSource";
-import { HttpError } from "./instances";
-import type { Instance, Instances } from "./instances";
+import { HttpError } from "./instances/InstanceService";
+import type { Instance, Instances } from "./instances/InstanceService";
 import type { LiveInfo } from "./livesessions";
 import { liveOf, mapLimit } from "./sessioncatalog";
 import type { SessionCatalog, SessionSummary } from "./sessioncatalog";

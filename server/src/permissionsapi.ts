@@ -18,8 +18,8 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { HttpError } from "./instances";
-import type { Instances } from "./instances";
+import { HttpError } from "./instances/InstanceService";
+import type { Instances } from "./instances/InstanceService";
 import { nudge as realNudge, nudgeMessage } from "./nudge";
 import type { NudgeResult } from "./nudge";
 import type { RuleList } from "./permrules";

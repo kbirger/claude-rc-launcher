@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createCloner } from "../src/cloner";
-import type { Config } from "../src/config/parse";
-import { HttpError } from "../src/instances";
-import type { RunOptions, RunResult } from "../src/shared/runner";
+import { createCloner } from "../../src/instances/cloner";
+import type { Config } from "../../src/config/parse";
+import { HttpError } from "../../src/instances/InstanceService";
+import type { RunOptions, RunResult } from "../../src/shared/runner";
 
 const id = { home: "/home/u", path: "/usr/bin" };
 interface Call {

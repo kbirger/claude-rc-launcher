@@ -1,5 +1,5 @@
-import { isValidDirName } from "./fsapi";
-import { HttpError } from "./instances";
+import { isValidDirName } from "./folders";
+import { HttpError } from "./InstanceService";
 
 export interface RepoRef {
   owner: string;

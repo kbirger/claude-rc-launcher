@@ -14,13 +14,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCloner } from "../src/cloner";
-import type { Config } from "../src/config/parse";
-import { HttpError } from "../src/instances";
-import { adoptNewDir, DirChanged } from "../src/ownedir";
-import type { AdoptDir } from "../src/ownedir";
-import type { RunOptions, RunResult } from "../src/shared/runner";
-import { defined } from "./support";
+import { createCloner } from "../../src/instances/cloner";
+import type { Config } from "../../src/config/parse";
+import { HttpError } from "../../src/instances/InstanceService";
+import { adoptNewDir, DirChanged } from "../../src/instances/ownedir";
+import type { AdoptDir } from "../../src/instances/ownedir";
+import type { RunOptions, RunResult } from "../../src/shared/runner";
+import { defined } from "../support";
 
 let base: string;
 let root: string;
@@ -338,7 +338,7 @@ describe("clone", () => {
 
   test("the owner is set through an open handle (adoptNewDir), never by path", async () => {
     // The real default must be the fd-based adoptNewDir: a path-based chown can be redirected by a rename.
-    const src = await Bun.file(join(import.meta.dir, "../src/cloner.ts")).text();
+    const src = await Bun.file(join(import.meta.dir, "../../src/instances/cloner.ts")).text();
     expect(src).toMatch(/import \{[^}]*\badoptNewDir\b[^}]*\} from "\.\/ownedir"/);
     expect(src).not.toMatch(/\bl?chown\b/);
     expect(src).not.toMatch(/\blstatFn\b/);

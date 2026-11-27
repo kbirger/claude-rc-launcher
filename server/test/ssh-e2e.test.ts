@@ -21,7 +21,7 @@ import { mintSessionCookie } from "../src/auth/oidc";
 import type { OidcClient } from "../src/auth/oidc";
 import type { Config } from "../src/config/parse";
 import { startHub } from "../src/hubmain";
-import type { Instance } from "../src/instances";
+import type { Instance } from "../src/instances/InstanceService";
 import { DEFAULT_ROLES } from "../src/roles";
 import { GrantStore } from "../src/sshgrants";
 import { SshKeyStore } from "../src/sshkeystore";

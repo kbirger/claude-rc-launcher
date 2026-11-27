@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { link, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoKind } from "../src/repokind";
+import { repoKind } from "../../src/instances/repokind";
 
 const win = process.platform === "win32";
 const hasMkfifo = !win && spawnSync("mkfifo", ["--version"]).error === undefined;

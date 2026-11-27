@@ -1,10 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { createCloner } from "../src/cloner";
-import type { Config } from "../src/config/parse";
-import { bunLoginSpawner } from "../src/ghlogin";
-import type { LoginProc, LoginSpawner } from "../src/ghlogin";
-import { HttpError } from "../src/instances";
-import type { RunOptions, RunResult } from "../src/shared/runner";
+import { createCloner } from "../../src/instances/cloner";
+import type { Config } from "../../src/config/parse";
+import { bunLoginSpawner } from "../../src/instances/ghlogin";
+import type { LoginProc, LoginSpawner } from "../../src/instances/ghlogin";
+import { HttpError } from "../../src/instances/InstanceService";
+import type { RunOptions, RunResult } from "../../src/shared/runner";
 
 const id = { home: "/home/u", path: "/usr/bin" };
 const CODE = "! First copy your one-time code: ABCD-1234\n";

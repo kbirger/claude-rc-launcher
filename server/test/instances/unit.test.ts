@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseConfig } from "../src/config/parse";
+import { parseConfig } from "../../src/config/parse";
 import {
   defaultName,
   instanceId,
@@ -11,8 +11,8 @@ import {
   renderUnit,
   runAsFor,
   unitName,
-} from "../src/unit";
-import { defined } from "./support";
+} from "../../src/instances/unit";
+import { defined } from "../support";
 
 const KEYS: Record<string, string> = {
   CLAUDE_BIN: "claude_bin",

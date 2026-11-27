@@ -7,7 +7,7 @@ import { HostError } from "../client";
 import type { HostClient, HostConfig } from "../client";
 import { HOST_ID_RE } from "../id";
 import type { HostRegistry } from "../HostRegistry";
-import { HttpError } from "../../instances";
+import { HttpError } from "../../instances/InstanceService";
 import { readObject } from "../../shared/requests";
 import type { User } from "../../auth/user";
 

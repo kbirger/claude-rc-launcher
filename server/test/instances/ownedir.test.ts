@@ -3,9 +3,9 @@ import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { adoptNewDir, DirChanged, realOps } from "../src/ownedir";
-import type { OwnedirOps } from "../src/ownedir";
-import { defined } from "./support";
+import { adoptNewDir, DirChanged, realOps } from "../../src/instances/ownedir";
+import type { OwnedirOps } from "../../src/instances/ownedir";
+import { defined } from "../support";
 
 const win = process.platform === "win32";
 let base: string;
@@ -64,7 +64,7 @@ describe.skipIf(win)("adoptNewDir on the real filesystem", () => {
   });
 
   test("the real open asks for a directory and never follows a symlink", async () => {
-    const src = await Bun.file(join(import.meta.dir, "../src/ownedir.ts")).text();
+    const src = await Bun.file(join(import.meta.dir, "../../src/instances/ownedir.ts")).text();
     expect(src).toMatch(/O_NOFOLLOW/);
     expect(src).toMatch(/O_DIRECTORY/);
     expect(src).toMatch(/\.chown\(/);

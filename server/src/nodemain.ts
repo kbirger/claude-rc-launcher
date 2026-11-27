@@ -1,12 +1,12 @@
 import { join } from "node:path";
 import { createNodeApp } from "./app";
 import type { Updater } from "./app";
-import { serviceCloner } from "./cloner";
+import { serviceCloner } from "./instances/cloner";
 import type { Config } from "./config/parse";
-import { bunRunner, InstanceService } from "./instances";
-import type { Instances } from "./instances";
+import { bunRunner, InstanceService } from "./instances/InstanceService";
+import type { Instances } from "./instances/InstanceService";
 import { nodeAuth } from "./auth/node";
-import { resolveDirOwner } from "./owner";
+import { resolveDirOwner } from "./instances/owner";
 import { realUpdateEnv } from "./realupdate";
 import { withLongUpdates } from "./serve";
 import type { ServeLimits } from "./serve";

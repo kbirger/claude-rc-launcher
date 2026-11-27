@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { HttpError } from "../src/instances";
-import { parseRepoLink } from "../src/repolink";
+import { HttpError } from "../../src/instances/InstanceService";
+import { parseRepoLink } from "../../src/instances/repolink";
 
 const ok = {
   owner: "kbirger",

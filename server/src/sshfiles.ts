@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { chmod, chown as chownDefault, mkdir, open, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { HttpError } from "./instances";
+import { HttpError } from "./instances/InstanceService";
 
 // Safe file work in a folder that belongs to an instance user. The node runs as root, and a session of the instance
 // owns the folder of its instance, so it can put a link at any name there at any time. Nothing here follows a link:

@@ -2,7 +2,7 @@ import { realTimers } from "./shared/PollSource";
 import type { Timers } from "./shared/PollSource";
 import type { HostClient } from "./hosts/client";
 import { HOST_ID_RE, LOCAL_HOST } from "./hosts/id";
-import { HttpError } from "./instances";
+import { HttpError } from "./instances/InstanceService";
 import { isObject } from "./shared/requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";

@@ -6,7 +6,7 @@ import { HostError } from "../client";
 import type { HostClient, HostFailure } from "../client";
 import { HOST_ID_RE } from "../id";
 import type { HostRegistry } from "../HostRegistry";
-import { HttpError } from "../../instances";
+import { HttpError } from "../../instances/InstanceService";
 import type { LatestRelease } from "../../latest";
 import { parseRuleEdit } from "../../permissionsapi";
 import {
