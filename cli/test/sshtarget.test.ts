@@ -388,7 +388,7 @@ describe("sshTargetAdd key file", () => {
     });
     await rg.run(managed);
     const note =
-      "note: the node did not check that sshd reads ~/.ssh/authorized_keys.claude-rc. It is not root, or its version is older.";
+      "note: the node did not check that sshd reads ~/.ssh/authorized_keys.claude-rc. It is not root, or its version is older. If the test fails, run sudo claude-rc node sshd check on the machine.";
     expect(rg.out).toContain(note);
     expect(rg.out.indexOf("key installed")).toBeLessThan(rg.out.indexOf(note));
   });

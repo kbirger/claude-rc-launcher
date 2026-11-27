@@ -231,7 +231,8 @@
           </p>
           {#if model.sshdSkipped}
             <p class="text-sm text-muted-foreground" data-sshd-note>
-              The node did not check that sshd reads the key file. It is not root, or its version is older.
+              The node did not check that sshd reads the key file. It is not root, or its version is older. If the test
+              fails, run <code>sudo claude-rc node sshd check</code> on the machine.
             </p>
           {/if}
           {#if model.allowed.length === 0}

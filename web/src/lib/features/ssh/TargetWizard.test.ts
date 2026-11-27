@@ -428,7 +428,8 @@ test("an empty key file field sends no keyFile", async () => {
   });
 });
 
-const SKIPPED_NOTE = "The node did not check that sshd reads the key file. It is not root, or its version is older.";
+const SKIPPED_NOTE =
+  "The node did not check that sshd reads the key file. It is not root, or its version is older. If the test fails, run sudo claude-rc node sshd check on the machine.";
 
 test("the install step shows a note when the node skipped the sshd check", async () => {
   answers["POST /api/ssh/targets/nas/authorize"] = () => ({ body: { ok: true, sshdCheck: "skipped" } });
@@ -436,7 +437,7 @@ test("the install step shows a note when the node skipped the sshd check", async
   expect(document.body.textContent).not.toContain(SKIPPED_NOTE);
   press("Install on the node");
   await waitText("Step 5 of 6: Test");
-  expect(document.querySelector("[data-sshd-note]")?.textContent?.trim()).toBe(SKIPPED_NOTE);
+  expect(document.querySelector("[data-sshd-note]")?.textContent?.replace(/\s+/g, " ").trim()).toBe(SKIPPED_NOTE);
 });
 
 test("the install step shows no note when the node passed the sshd check", async () => {

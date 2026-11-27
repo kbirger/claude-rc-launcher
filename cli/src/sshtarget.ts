@@ -239,7 +239,7 @@ export async function sshTargetAdd(options: SshTargetAddOptions): Promise<void> 
   out("key installed");
   if (sshdCheck === "skipped")
     out(
-      `note: the node did not check that sshd reads ~/.ssh/${made.keyFile ?? ""}. It is not root, or its version is older.`,
+      `note: the node did not check that sshd reads ~/.ssh/${made.keyFile ?? ""}. It is not root, or its version is older. If the test fails, run sudo claude-rc node sshd check on the machine.`,
     );
 
   async function installWithSsh(): Promise<void> {
