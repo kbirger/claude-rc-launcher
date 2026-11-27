@@ -7,7 +7,7 @@ import type { SshService } from "../../../src/ssh/hub/SshService";
 import { MIN_PASSPHRASE, SshTargetService } from "../../../src/ssh/hub/SshTargetService";
 import { TargetLocks } from "../../../src/ssh/hub/TargetLocks";
 import { newRecovery } from "../../../src/ssh/hub/wrap";
-import { CONFIRM_NODES_SUFFIX, CONFIRM_NODES_TEXT } from "../../../src/ssh/provisioner/key";
+import { CONFIRM_NODES_SUFFIX, CONFIRM_NODES_TEXT } from "../../../src/ssh/provisioner";
 import { TargetError, TargetStore } from "../../../src/ssh/TargetStore";
 
 const passphrase = (text: string): UnlockSecret => ({ method: "passphrase", secret: new TextEncoder().encode(text) });

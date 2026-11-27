@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { provisionScript } from "../../../src/ssh/provision";
-import { linuxInstallScript, linuxScript, provisionerLine } from "../../../src/ssh/provisioner/key";
-import vectors from "../../../src/ssh/provisioner/key.vectors.json";
-import { authorizedKeysLine } from "../../../src/ssh/TargetStore";
+import { provisionScript } from "../../src/ssh/provision";
+import { linuxInstallScript, linuxScript, provisionerLine } from "../../src/ssh/provisioner";
+import vectors from "../../src/ssh/provisioner.vectors.json";
+import { authorizedKeysLine } from "../../src/ssh/TargetStore";
 
 const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIGmainmainmainmainmainmainmainmainmainmain";
 const PBLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIGprovprovprovprovprovprovprovprovprovprov";

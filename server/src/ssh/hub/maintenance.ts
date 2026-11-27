@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { HOST_ID_RE } from "../../hosts/id";
-import { parseAnswer, parseCommand } from "../provisioner/key";
-import type { ProvisionerAnswer } from "../provisioner/key";
+import { parseAnswer, parseCommand } from "../provisioner";
+import type { ProvisionerAnswer } from "../provisioner";
 import { NodeError } from "./SshService";
 
 // The `ssh` child process of the hub for a maintenance grant. The hub runs one command of the provisioner script on the

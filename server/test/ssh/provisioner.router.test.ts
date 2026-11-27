@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { provisionScript } from "../../../src/ssh/provision";
+import { provisionScript } from "../../src/ssh/provision";
 import {
   ROUTER_APPLETS,
   ROUTER_MAX_VALUE,
@@ -11,9 +11,9 @@ import {
   routerProvisionerLine,
   routerScript,
   routerScriptPath,
-} from "../../../src/ssh/provisioner/key";
-import vectors from "../../../src/ssh/provisioner/key.vectors.json";
-import { authorizedKeysLine, DROPBEAR_OPTIONS } from "../../../src/ssh/TargetStore";
+} from "../../src/ssh/provisioner";
+import vectors from "../../src/ssh/provisioner.vectors.json";
+import { authorizedKeysLine, DROPBEAR_OPTIONS } from "../../src/ssh/TargetStore";
 
 // The router version of the provisioner script (Dropbear on Asuswrt-Merlin). There is no router here, so the tests run
 // the script under `busybox sh` and `dash` with a fake `nvram` program and a temporary folder that stands in for `/`.

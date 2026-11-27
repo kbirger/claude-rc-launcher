@@ -8,7 +8,7 @@ import {
   HAS_PROVISIONER_KEY_TEXT,
   NO_PROVISIONER_KEY_TEXT,
   parseAnswer,
-} from "../../server/src/ssh/provisioner/key";
+} from "../../server/src/ssh/provisioner";
 import { keyFileProblem } from "../../server/src/ssh/TargetStore";
 import type { Flags } from "./args";
 import { ExitError } from "./creds";

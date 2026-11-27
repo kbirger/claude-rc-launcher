@@ -1,8 +1,8 @@
 import { isIP } from "node:net";
-import { HOST_ID_RE } from "../../hosts/id";
-import { AWK_PROGRAM, LOCK_LINES, shQuote } from "../provision";
-import type { Script } from "../provision";
-import { ADDRESS_RE, DROPBEAR_OPTIONS, SCRIPT_PATH_RE } from "../TargetStore";
+import { HOST_ID_RE } from "../hosts/id";
+import { AWK_PROGRAM, LOCK_LINES, shQuote } from "./provision";
+import type { Script } from "./provision";
+import { ADDRESS_RE, DROPBEAR_OPTIONS, SCRIPT_PATH_RE } from "./TargetStore";
 
 // The provisioner key of an external target. The pure part: the grammar of the commands that the script on the target
 // takes, the parse of its answers, the line that goes into `authorized_keys`, and the text of the Linux scripts.

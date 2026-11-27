@@ -7,8 +7,8 @@ import {
   parseAnswer,
   parseCommand,
   provisionerLine,
-} from "../../../src/ssh/provisioner/key";
-import vectors from "../../../src/ssh/provisioner/key.vectors.json";
+} from "../../src/ssh/provisioner";
+import vectors from "../../src/ssh/provisioner.vectors.json";
 
 const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIGmainmainmainmainmainmainmainmainmainmain";
 const PBLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIGprovprovprovprovprovprovprovprovprovprov";

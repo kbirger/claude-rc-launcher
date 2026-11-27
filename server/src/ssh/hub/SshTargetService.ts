@@ -11,7 +11,7 @@ import {
   routerInstallScript,
   routerScriptPath,
   NO_PROVISIONER_KEY_TEXT,
-} from "../provisioner/key";
+} from "../provisioner";
 import { authorizedKeysLine, hasProvisioner, installNotes, SCRIPT_PATH_RE, TargetError } from "../TargetStore";
 import type { SystemType, Target, TargetState, TargetStore } from "../TargetStore";
 import { GrantError } from "./GrantStore";

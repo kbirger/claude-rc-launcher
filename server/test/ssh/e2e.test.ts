@@ -29,7 +29,7 @@ import { SshKeyStore } from "../../src/ssh/hub/SshKeyStore";
 import { SshService } from "../../src/ssh/hub/SshService";
 import { newRecovery, openWithRecovery } from "../../src/ssh/hub/wrap";
 import { createLocalSsh } from "../../src/ssh/node/wiring";
-import { linuxInstallScript } from "../../src/ssh/provisioner/key";
+import { linuxInstallScript } from "../../src/ssh/provisioner";
 import { TargetStore } from "../../src/ssh/TargetStore";
 import { noSkill } from "../support";
 
