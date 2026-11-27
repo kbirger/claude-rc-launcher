@@ -32,7 +32,8 @@
 #
 # Environment (mainly for testing): PREFIX (default /usr/local), SYSTEMD_DIR (default
 # /etc/systemd/system), CONFIG_DIR (default /etc/claude-rc-launcher), SKIP_SYSTEMCTL=1 (it also
-# skips the sshd drop-in and prints the command instead).
+# skips the sshd drop-in and prints the command instead), SSHD_DROPIN_TIMEOUT (seconds, default 20:
+# the time limit of the sshd drop-in call; tests set it low).
 set -euo pipefail
 
 NAME=claude-rc-launcher
@@ -49,7 +50,7 @@ NO_SSHD=0
 SRC=""
 for arg in "$@"; do
   case "$arg" in
-    -h|--help) sed -n '2,/^set -euo/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/{/^#/p;}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --service) SERVICE=1 ;;
     --node) NODE=1 ;;
     --no-sshd) NO_SSHD=1 ;;
@@ -152,8 +153,18 @@ if [ "$(uname -s)" = "Linux" ]; then
     echo "Skipped the sshd drop-in (--no-sshd)"
   elif [ -n "${SKIP_SYSTEMCTL:-}" ]; then
     echo "Would install the sshd drop-in: $DEST sshd-dropin install"
-  elif ! "$DEST" sshd-dropin install; then
-    echo "warning: the sshd drop-in was not installed. Run later: sudo $DEST sshd-dropin install" >&2
+  elif ! command -v timeout >/dev/null 2>&1; then
+    echo "warning: the sshd drop-in was not installed: the timeout command was not found. Run later: sudo $DEST sshd-dropin install" >&2
+  else
+    # An older launcher has no sshd-dropin command and starts the server instead, so the call has a time limit.
+    SSHD_LIMIT=${SSHD_DROPIN_TIMEOUT:-20}
+    SSHD_CODE=0
+    timeout -k 5 "$SSHD_LIMIT" "$DEST" sshd-dropin install || SSHD_CODE=$?
+    if [ "$SSHD_CODE" -eq 124 ] || [ "$SSHD_CODE" -eq 137 ]; then
+      echo "warning: the sshd drop-in step did not end within $SSHD_LIMIT s (an older claude-rc-launcher has no sshd-dropin command and starts the server instead). Run later: sudo $DEST sshd-dropin install" >&2
+    elif [ "$SSHD_CODE" -ne 0 ]; then
+      echo "warning: the sshd drop-in was not installed. Run later: sudo $DEST sshd-dropin install" >&2
+    fi
   fi
 fi
 

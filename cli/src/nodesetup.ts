@@ -30,6 +30,8 @@ const STATE_DIR = "/var/lib/claude-rc-launcher";
 const CERT = `${STATE_DIR}/node-cert.pem`;
 const HEALTH_WAIT_MS = 30_000;
 const STAY_ACTIVE_MS = 2_000;
+/** The time limit of the sshd drop-in call. The real call ends in well under a second. */
+const SSHD_DROPIN_TIMEOUT_S = 20;
 
 interface Result {
   code: number;
@@ -377,12 +379,29 @@ function installSshdDropin(sys: Sys, flags: Flags, out: (line: string) => void):
     return;
   }
 
-  const result = sys.sudo([BIN, "sshd-dropin", "install"]);
+  const later = "Run later: sudo claude-rc node sshd install";
+
+  if (!sys.hasCommand("timeout")) {
+    out(`warning: the sshd drop-in was not installed: the timeout command was not found. ${later}`);
+    return;
+  }
+
+  // An older launcher has no `sshd-dropin` command and starts the server instead, so the call has a time limit.
+  // `timeout` runs as root next to the launcher, so it can kill it. A time limit on the sudo process could not.
+  const result = sys.sudo(["timeout", "-k", "5", String(SSHD_DROPIN_TIMEOUT_S), BIN, "sshd-dropin", "install"]);
   // The launcher prints the result and the reload state.
   for (const line of result.stdout.split("\n")) if (line.trim()) out(line);
   if (result.code === 0) return;
+
+  if (result.code === 124 || result.code === 137) {
+    out(
+      `warning: the sshd drop-in step did not end within ${SSHD_DROPIN_TIMEOUT_S} s (an older claude-rc-launcher has no sshd-dropin command and starts the server instead). ${later}`,
+    );
+    return;
+  }
+
   const detail = result.stderr.trim().replace(/\.$/, "") || `exit code ${result.code}`;
-  out(`warning: the sshd drop-in was not installed: ${detail}. Run later: sudo claude-rc node sshd install`);
+  out(`warning: the sshd drop-in was not installed: ${detail}. ${later}`);
 }
 
 /**
