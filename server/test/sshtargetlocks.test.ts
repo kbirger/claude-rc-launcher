@@ -53,7 +53,7 @@ describe("TargetLocks", () => {
     await first;
   });
 
-  test("a retire wins the message over a change, and a change over a maintenance grant", async () => {
+  test("each lock gives its own message, and a maintenance grant stays busy after the others end", async () => {
     const locks = locksWith(new Set(["t1"]));
     const retire = blocked();
     const edit = blocked();

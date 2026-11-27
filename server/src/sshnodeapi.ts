@@ -27,7 +27,7 @@ export { NO_WAITING_REQUEST } from "./sshnodegrants";
 // are in `NodeGrantManager` (sshnodegrants.ts): the routes parse a request, call it and map a `NodeGrantError`.
 // The broker is the other way round: the node CLI asks for access, the node tells the hub with an `ssh.request` event,
 // and the hub answers through `POST /grants` (with the request id) or `POST /requests/:id/reject`.
-// A Windows node has no grant routes: `createNodeApp` mounts `unsupportedSshApi` there.
+// A node that has no SSH wiring mounts `unsupportedSshApi` instead, and its grant routes answer 501.
 // The managed routes (`sshManagedApi`) are a separate router. A managed target is a machine that runs the launcher as a
 // node of this hub. The hub reads the sshd host key of the node and asks the node to add a key line to the
 // `authorized_keys` list of an account, so the owner needs no SSH key of their own. These routes also work on a
@@ -125,7 +125,7 @@ export class SshBroker {
 }
 
 export interface SshNodeOptions {
-  /** The folder for the sockets and the files of the grants. The routes create it with mode 700. */
+  /** The folder for the sockets and the files of the grants. The routes create it with mode 711. Each instance gets its own folder inside it with mode 700. */
   dir: string;
   events: NodeEvents;
   broker: SshBroker;
