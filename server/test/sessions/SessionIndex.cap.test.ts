@@ -5,8 +5,9 @@ import type { Config, HostConfig } from "../../src/config/parse";
 import { createHostClient } from "../../src/hosts/client";
 import type { HostEntry, HostRegistry } from "../../src/hosts/HostRegistry";
 import { NodeEvents } from "../../src/hosts/NodeEvents";
-import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
+import { createNodeWatchers } from "../../src/hosts/nodewatcher";
 import type { SessionsPayload } from "../../src/sessions/SessionIndex";
+import type { Presence } from "../../src/shared/presence";
 import { UpdateLog } from "../../src/updates/UpdateLog";
 
 // A node with a very large session list: the whole path from the index to the hub watcher, through the real SSE reader.

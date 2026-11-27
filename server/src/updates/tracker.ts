@@ -1,4 +1,4 @@
-import type { Presence } from "../hosts/nodewatcher";
+import type { Presence } from "../shared/presence";
 import { normalizeVersion } from "../shared/versions";
 import type { UpdateReport } from "./serviceupdate";
 import type { UpdateEntry, UpdateRecord } from "./UpdateRecord";

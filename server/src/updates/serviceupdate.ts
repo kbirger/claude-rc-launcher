@@ -1,7 +1,14 @@
 import path from "node:path";
-import type { UpdateHooks } from "../hosts/NodeEvents";
 import { downloadAsset, installWithBackup, ReleaseError, RELEASE_TAG_RE, restorePrevious, sha256 } from "./release";
 import type { ReleaseIo, RunResult } from "./release";
+
+export type StepName =
+  "downloading" | "verifying" | "installing-client" | "installing" | "restarting" | "failed" | "up-to-date";
+
+export interface UpdateHooks {
+  onStep?(options: { step: StepName; to?: string; client?: string; detail?: string }): void;
+  onLog?(line: string): void;
+}
 
 /** The installed service. The updater works on this layout only. */
 export const SERVICE_BIN = "/usr/local/bin/claude-rc-launcher";

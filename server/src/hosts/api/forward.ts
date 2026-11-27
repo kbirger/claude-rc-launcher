@@ -9,7 +9,7 @@ import {
   parseSettingsPatch,
   parseStartRequest,
 } from "../../instances/requests";
-import { parseRuleEdit } from "../../sessions/api/permissions";
+import { parseRuleEdit } from "../../sessions/requests";
 import { downloadHeaders, lastSegment } from "../../shared/disposition";
 import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";

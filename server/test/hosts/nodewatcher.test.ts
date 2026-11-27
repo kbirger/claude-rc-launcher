@@ -3,7 +3,8 @@ import type { HostConfig } from "../../src/config/parse";
 import { HostError } from "../../src/hosts/client";
 import type { HostClient } from "../../src/hosts/client";
 import type { HostRegistry, HostEntry } from "../../src/hosts/HostRegistry";
-import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
+import { createNodeWatchers } from "../../src/hosts/nodewatcher";
+import type { Presence } from "../../src/shared/presence";
 import type { SseEvent } from "../../src/shared/ssereader";
 import { UpdateLog } from "../../src/updates/UpdateLog";
 

@@ -1,7 +1,5 @@
 import type { SessionsEvent, SessionsPayload } from "../sessions/SessionIndex";
-
-export type StepName =
-  "downloading" | "verifying" | "installing-client" | "installing" | "restarting" | "failed" | "up-to-date";
+import type { StepName, UpdateHooks } from "../updates/serviceupdate";
 
 export type NodeEvent =
   | { type: "step"; step: StepName; to?: string; client?: string; detail?: string }
@@ -11,11 +9,6 @@ export type NodeEvent =
   /** The node stopped the control socket of an instance: it opted out, or it was deleted. The hub ends its grants. */
   | { type: "ssh.instance-off"; instanceId: string }
   | SessionsEvent;
-
-export interface UpdateHooks {
-  onStep?(options: { step: StepName; to?: string; client?: string; detail?: string }): void;
-  onLog?(line: string): void;
-}
 
 interface Line {
   line: string;

@@ -1,6 +1,7 @@
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { HostConfig } from "../config/parse";
+import { writeAtomic } from "../shared/atomicwrite";
 import { HOST_ID_RE } from "../shared/hostid";
 import { HttpError } from "../shared/HttpError";
 import { isObject } from "../shared/requests";
@@ -243,11 +244,4 @@ async function ensureDirs(dir: string): Promise<void> {
   if (created && process.platform !== "win32") await chmod(dir, 0o700);
   await mkdir(path.join(dir, "pins"), { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") await chmod(path.join(dir, "pins"), 0o700);
-}
-
-export async function writeAtomic(file: string, data: string, mode: number): Promise<void> {
-  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(tmp, data, { mode });
-  if (process.platform !== "win32") await chmod(tmp, mode);
-  await rename(tmp, file);
 }

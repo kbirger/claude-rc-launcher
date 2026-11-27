@@ -1,18 +1,11 @@
 import type { SessionsPayload } from "../sessions/SessionIndex";
+import type { Presence } from "../shared/presence";
 import { isObject } from "../shared/requests";
+import type { StepName } from "../updates/serviceupdate";
 import { cutLine, MAX_AT } from "../updates/UpdateLog";
 import type { UpdateLog } from "../updates/UpdateLog";
 import { HostError } from "./client";
 import type { HostRegistry } from "./HostRegistry";
-import type { StepName } from "./NodeEvents";
-
-export interface Presence {
-  host: string;
-  status: "online" | "offline" | "restarting" | "error";
-  version?: string;
-  reason?: string;
-  at: string;
-}
 
 interface StepEvent {
   step: StepName;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { Presence } from "../../src/hosts/nodewatcher";
 import type { SessionRow, SessionsPayload } from "../../src/sessions/SessionIndex";
 import { SessionsStore, type StoreChange } from "../../src/sessions/SessionsStore";
+import type { Presence } from "../../src/shared/presence";
 
 const row = (id: string): SessionRow => ({
   id,

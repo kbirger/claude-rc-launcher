@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Presence } from "../../src/hosts/nodewatcher";
 import { BEAT_MS, createBeatLoop } from "../../src/sessions/beat";
+import type { Presence } from "../../src/shared/presence";
 import { fakeTimers } from "../faketimers";
 
 function setup(opts: { fail?: boolean } = {}) {
