@@ -12,7 +12,14 @@ Inside a feature folder:
 - Platform code that differs by operating system sits behind an interface, in its own folder or files.
 - `index.ts` lists what other features may import.
 
-Entry points (`index.ts`, `index.win.ts`, `hubmain.ts`, `nodemain.ts`) and `app.ts`, which mounts the routers, stay at the top of `server/src/`. When you add a file, look for its feature folder first. Create a new feature folder only for a new feature.
+These files stay at the top of `server/src/`:
+
+- The entry points `index.ts`, `index.win.ts`, `hubmain.ts` and `nodemain.ts`, and `app.ts`, which mounts the routers. Together they are the composition root.
+- `roles.ts` and `serve.ts`. Many features use them, so they are in no feature.
+
+`win/` is a platform folder, not a feature. It holds the code that runs only on Windows. It has no `index.ts`: a feature imports a `win/` file directly.
+
+When you add a file, look for its feature folder first. Create a new feature folder only for a new feature.
 
 ## File names
 
@@ -24,12 +31,14 @@ Entry points (`index.ts`, `index.win.ts`, `hubmain.ts`, `nodemain.ts`) and `app.
 
 ## Imports
 
-- `api/` may import services. A service must never import `api/`.
-- A feature may import another feature only through its `index.ts`.
+- `api/` can import services. A service must never import `api/`. Only the `api/` folder of the same feature and the composition root import an `api/` file.
+- A feature imports another feature only through its `index.ts`. `win/`, `roles.ts` and `serve.ts` also import a feature only through its `index.ts`. The composition root and the tests are exempt. `cli/` is a separate package, and these rules do not apply to it.
 - `shared/` never imports a feature.
-- Hub-only code never imports node-only code, and node-only code never imports hub-only code.
+- Hub-only code never imports node-only code, and node-only code never imports hub-only code. In `ssh/`, this means `hub/` and `node/`.
 
 Put code in `shared/` only when two features need it and it knows nothing about either of them.
+
+`eslint.config.js` checks these rules and the file name rules.
 
 ## Tests
 
@@ -37,4 +46,4 @@ Tests live in `server/test/`, in the same folder layout as `server/src/`. A test
 
 ## Existing code
 
-The current files in `server/src/` are flat and do not follow this layout yet. When you move or add a file, follow the layout above. Do not start a partial move on your own. A planned move updates all the files of one feature at once.
+The files in `server/src/` follow this layout. When you move or add a file, keep to it. Do not start a partial move on your own. A planned move updates all the files of one feature at once.
