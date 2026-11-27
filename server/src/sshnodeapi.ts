@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { readFile } from "node:fs/promises";
 import { asUser } from "./asuser";
 import type { IdentityFor } from "./asuser";
 import { HOST_ID_RE } from "./hostid";
@@ -8,11 +7,11 @@ import { isObject, readObject } from "./requests";
 import { keyFingerprint } from "./sshagentproto";
 import { LinuxGrantPlatform, WindowsGrantPlatform } from "./sshgrantplatform";
 import type { WindowsGrantOptions } from "./sshgrantplatform";
+import { ManagedKeyError, ManagedKeyInstaller } from "./sshmanagedkeys";
+import type { RunAs } from "./sshmanagedkeys";
 import { NodeGrantError, NodeGrantManager } from "./sshnodegrants";
 import type { GrantRequest, SignOutcome } from "./sshnodegrants";
 import { PendingSigns } from "./sshnodesigns";
-import { deprovisionScript, provisionScript } from "./sshprovision";
-import type { Script } from "./sshprovision";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
 import type { SystemType } from "./sshtargets";
 import type { NodeEvents } from "./updateevents";
@@ -247,12 +246,16 @@ export function unsupportedSshApi(): Hono {
   return app;
 }
 
-/** Runs `work` and answers a `NodeGrantError` with its status and text. Every other error is thrown on unchanged. */
+/**
+ * Runs `work` and answers a `NodeGrantError` or a `ManagedKeyError` with its status and text. Every other error is
+ * thrown on unchanged: it keeps its own answer (an `HttpError`) or becomes the 500 "internal error" of `onError`.
+ */
 async function mapped<T>(work: () => T | Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (error) {
-    if (error instanceof NodeGrantError) throw new HttpError(error.status, error.message);
+    if (error instanceof NodeGrantError || error instanceof ManagedKeyError)
+      throw new HttpError(error.status, error.message);
     throw error;
   }
 }
@@ -353,19 +356,12 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
-// The hub waits 10 seconds for a removal. The script itself stops sooner. A removal that waits behind another script of
-// the same account can still show `failed` and remove the line later. That is harmless, because the key is deleted already.
-const DEAUTHORIZE_TIMEOUT_MS = 8_000;
 
 export interface SshManagedOptions {
   /** The sshd host key file. Default: the Ed25519 key of sshd on Linux and on Windows. */
   hostKeyFile?: string;
   /** Runs a provisioning script as the account. For tests. The default runs `sh -s` or PowerShell with the script on stdin. */
-  runAs?: (
-    account: string,
-    script: Script,
-    timeoutMs?: number,
-  ) => Promise<{ code: number; stderr: string; stdout?: string }>;
+  runAs?: RunAs;
   /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
   identityFor?: IdentityFor;
 }
@@ -438,21 +434,6 @@ function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions[
   };
 }
 
-/** The first line of the host key file as `<type> <base64>`, without the comment. */
-async function readHostKey(file: string): Promise<string> {
-  let text: string;
-
-  try {
-    text = await readFile(file, "utf8");
-  } catch {
-    throw new HttpError(404, "sshd has no ed25519 host key");
-  }
-
-  const [type, key] = (text.split("\n")[0] ?? "").trim().split(/\s+/);
-  if (type !== "ssh-ed25519" || !key) throw new HttpError(404, "sshd has no ed25519 host key");
-  return `${type} ${key}`;
-}
-
 /**
  * The line of `/authorize`. An OpenSSH line starts with `from="` or `ssh-ed25519 `. The line of a `dropbear` target
  * starts with the Dropbear flags and then `ssh-ed25519 `. Only a `dropbear` target takes that form.
@@ -497,27 +478,14 @@ function keyFileOf(value: unknown, systemType: SystemType): string | undefined {
 
 /** The managed target routes: `GET /hostkey`, `POST /authorize` and `POST /deauthorize`. They work on every node. */
 export function sshManagedApi(options: SshManagedOptions = {}): Hono {
-  const runUnserialized = options.runAs ?? defaultRunAs(options.identityFor);
-  // Two scripts for one account would read and rewrite the same authorized_keys file, and one could lose the change of
-  // the other. They run one after the other. A failure does not stop the next one.
-  const tails = new Map<string, Promise<unknown>>();
-
-  const runAs: typeof runUnserialized = (account, script, timeoutMs) => {
-    const run = (tails.get(account) ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => runUnserialized(account, script, timeoutMs));
-    const tail = run.catch(() => undefined);
-    tails.set(account, tail);
-    void tail.then(() => {
-      if (tails.get(account) === tail) tails.delete(account);
-    });
-    return run;
-  };
-
+  const installer = new ManagedKeyInstaller({
+    runAs: options.runAs ?? defaultRunAs(options.identityFor),
+    hostKeyFile: options.hostKeyFile ?? defaultHostKeyFile(),
+  });
   const app = new Hono();
 
   app.get("/hostkey", async (context) => {
-    const line = await readHostKey(options.hostKeyFile ?? defaultHostKeyFile());
+    const line = await mapped(() => installer.hostKey());
     const blob = Buffer.from(line.split(" ")[1] ?? "", "base64");
     return context.json({ keys: [{ line, fingerprint: keyFingerprint(new Uint8Array(blob)) }] });
   });
@@ -531,11 +499,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const line = authorizeLine(body.line, systemType);
     const keyFile = keyFileOf(body.keyFile, systemType);
 
-    const script = provisionScript(systemType, line, systemType === "windows" ? { account } : { keyFile });
-    const { code, stderr } = await runAs(account, script);
-    const failure = stderr.trim();
-    if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
-    if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
+    await mapped(() =>
+      installer.authorize({ account, systemType, line, ...(keyFile === undefined ? {} : { keyFile }) }),
+    );
     // A hub that sent a key file gets it back, so it can tell this node from an old node that ignores the field.
     if (keyFile !== undefined) return context.json({ keyFile });
     return context.body(null, 204);
@@ -551,13 +517,9 @@ export function sshManagedApi(options: SshManagedOptions = {}): Hono {
     const key = deauthorizeKey(body.key);
     const keyFile = keyFileOf(body.keyFile, systemType);
 
-    const script = deprovisionScript(systemType, key, id, systemType === "windows" ? { account } : { keyFile });
-    const { code, stderr, stdout } = await runAs(account, script, DEAUTHORIZE_TIMEOUT_MS);
-    const failure = stderr.trim();
-    if (code !== 0 && failure.includes("no profile for account")) throw new HttpError(400, failure);
-    if (code !== 0) throw new HttpError(500, failure || `the script exited with code ${code}`);
-    const result = (stdout ?? "").trim();
-    if (result !== "removed" && result !== "not-found") throw new HttpError(500, "the script gave no result");
+    const result = await mapped(() =>
+      installer.deauthorize({ account, systemType, key, id, ...(keyFile === undefined ? {} : { keyFile }) }),
+    );
     return context.json({ result });
   });
 
