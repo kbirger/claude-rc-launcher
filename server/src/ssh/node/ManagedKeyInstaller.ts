@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { deprovisionScript, provisionScript } from "../provision";
 import type { Script } from "../provision";
 import type { SystemType } from "../TargetStore";
+import { AccountQueue } from "./AccountQueue";
 
 // The hub asks a managed node to add or remove the key line of a target in the `authorized_keys` list of an account.
 // The node runs a provisioning script as that account. The routes in `sshnodeapi.ts` check the body, call
@@ -26,30 +27,6 @@ export class ManagedKeyError extends Error {
   ) {
     super(message);
     this.name = "ManagedKeyError";
-  }
-}
-
-/**
- * Runs the work of one account one after the other. Two scripts for one account would read and rewrite the same
- * authorized_keys file, and one could lose the change of the other. A failure does not stop the next one. Accounts do
- * not wait for each other.
- */
-export class AccountQueue {
-  private readonly tails = new Map<string, Promise<unknown>>();
-
-  run<T>(account: string, work: () => Promise<T>): Promise<T> {
-    const run = (this.tails.get(account) ?? Promise.resolve()).catch(() => undefined).then(work);
-    const tail = run.catch(() => undefined);
-    this.tails.set(account, tail);
-    void tail.then(() => {
-      if (this.tails.get(account) === tail) this.tails.delete(account);
-    });
-    return run;
-  }
-
-  /** Whether work of the account runs or waits. */
-  isBusy(account: string): boolean {
-    return this.tails.has(account);
   }
 }
 
