@@ -23,6 +23,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 import serverLayout, { serverImportBlocks } from "./scripts/eslint/serverlayout.js";
 
+const importX = honoConfig.find((block) => block.plugins?.["import-x"])?.plugins["import-x"];
+
 export default tseslint.config(
   {
     ignores: [
@@ -58,6 +60,12 @@ export default tseslint.config(
   {
     files: ["server/src/**/*.ts"],
     plugins: { "server-layout": serverLayout },
+    // no-cycle must resolve "./x" to x.ts, or it sees no edge at all. The resolver comes with import-x, which the
+    // hono config loads, so it adds no dependency.
+    settings: {
+      "import-x/extensions": [".ts", ".js"],
+      "import-x/resolver-next": [importX.createNodeResolver({ extensions: [".ts", ".js", ".json"] })],
+    },
     rules: { "server-layout/file-names": "error", "import-x/no-cycle": "error" },
   },
   // Explicit exceptions to the layout rules. Each one names the file and the reason.
