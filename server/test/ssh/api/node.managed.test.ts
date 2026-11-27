@@ -9,7 +9,7 @@ import type { Instances } from "../../../src/instances/InstanceService";
 import { HttpError } from "../../../src/shared/HttpError";
 import { keyFingerprint } from "../../../src/ssh/agentproto";
 import { sshManagedApi } from "../../../src/ssh/api/node";
-import type { SshManagedOptions } from "../../../src/ssh/api/node";
+import type { SshManagedOptions } from "../../../src/ssh/node/types";
 import type { Script } from "../../../src/ssh/provision";
 import { isAccount } from "../../../src/ssh/TargetStore";
 

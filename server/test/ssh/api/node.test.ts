@@ -16,10 +16,10 @@ import {
   signAnswer,
 } from "../../../src/ssh/agentproto";
 import { sshNodeApi, unsupportedSshApi } from "../../../src/ssh/api/node";
-import type { SshNodeOptions } from "../../../src/ssh/api/node";
 import { FrameReader } from "../../../src/ssh/FrameReader";
 import { grantConfig, knownHostsLine } from "../../../src/ssh/node/grantconfig";
 import { SshBroker } from "../../../src/ssh/node/SshBroker";
+import type { SshNodeOptions } from "../../../src/ssh/node/types";
 import { HOST_KEY_RE } from "../../../src/ssh/TargetStore";
 
 function noop(): void {

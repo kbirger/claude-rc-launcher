@@ -271,7 +271,7 @@ describe("SSH for the hub-local host", () => {
   });
 
   test("the stop of the local SSH resets the grant routes, so an agent that the hub forgot goes too", async () => {
-    const { createLocalSsh } = await import("../../../src/ssh/node/wiring");
+    const { createLocalSsh } = await import("../../../src/ssh/api/local");
     const { NodeEvents } = await import("../../../src/hosts/NodeEvents");
     const { onError } = await import("../../../src/app");
     const root = tmp();
@@ -383,7 +383,7 @@ describe("SSH for the hub-local host", () => {
   });
 
   test("startHub without sshDir is refused under test, so that the live folder is never touched", async () => {
-    const { createLocalSsh } = await import("../../../src/ssh/node/wiring");
+    const { createLocalSsh } = await import("../../../src/ssh/api/local");
     const { NodeEvents } = await import("../../../src/hosts/NodeEvents");
     const { onError } = await import("../../../src/app");
     expect(() =>

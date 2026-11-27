@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import type { NodeEvents } from "../../hosts";
 import { asUser } from "../../shared/asuser";
 import type { IdentityFor } from "../../shared/asuser";
 import { HOST_ID_RE } from "../../shared/hostid";
@@ -8,13 +7,12 @@ import { isObject, readObject } from "../../shared/requests";
 import { keyFingerprint } from "../agentproto";
 import { LinuxGrantPlatform } from "../node/LinuxGrantPlatform";
 import { ManagedKeyError, ManagedKeyInstaller } from "../node/ManagedKeyInstaller";
-import type { RunAs } from "../node/ManagedKeyInstaller";
 import { NodeGrantError, NodeGrantManager } from "../node/NodeGrantManager";
 import type { GrantRequest, SignOutcome } from "../node/NodeGrantManager";
 import { PendingSigns } from "../node/PendingSigns";
-import type { SshBroker, TargetSummary } from "../node/SshBroker";
+import type { TargetSummary } from "../node/SshBroker";
+import type { SshManagedOptions, SshNodeOptions } from "../node/types";
 import { WindowsGrantPlatform } from "../node/WindowsGrantPlatform";
-import type { WindowsGrantOptions } from "../node/WindowsGrantPlatform";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "../TargetStore";
 import type { SystemType } from "../TargetStore";
 
@@ -38,23 +36,6 @@ const KEY_BLOB_LEN = 51;
 const TOKEN_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** One word without white space, control characters or a leading dash. It ends up on one line of the config file. */
 const WORD_RE = /^[^\s\p{Cc}-][^\s\p{Cc}]{0,252}$/u;
-
-export interface SshNodeOptions {
-  /** The folder for the sockets and the files of the grants. The routes create it with mode 711. Each instance gets its own folder inside it with mode 700. */
-  dir: string;
-  events: NodeEvents;
-  broker: SshBroker;
-  /** The user and group of an instance. When both are known, the files of its grants belong to them. */
-  resolveUser?: (instanceId: string) => { uid: number; gid: number } | undefined;
-  /** The host keys of a server as `<type> <base64>` lines. */
-  keyscan?: (address: string, port: number) => Promise<string[]>;
-  probe?: (config: string, targetId: string) => Promise<{ code: number; stderr: string }>;
-  signTimeoutMs?: number;
-  /** Changes the owner of a path. For tests. */
-  chown?: (path: string, uid: number, gid: number) => Promise<void>;
-  /** Set on a Windows node. */
-  windows?: WindowsGrantOptions;
-}
 
 async function runCommand(cmd: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
   let child: ReturnType<typeof Bun.spawn>;
@@ -271,15 +252,6 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 
 const MAX_LINE = 2000;
 const SCRIPT_TIMEOUT_MS = 60_000;
-
-export interface SshManagedOptions {
-  /** The sshd host key file. Default: the Ed25519 key of sshd on Linux and on Windows. */
-  hostKeyFile?: string;
-  /** Runs a provisioning script as the account. For tests. The default runs `sh -s` or PowerShell with the script on stdin. */
-  runAs?: RunAs;
-  /** The user switch for the default `runAs` on Linux. It rejects an account that does not exist with a 400. */
-  identityFor?: IdentityFor;
-}
 
 const defaultHostKeyFile = () =>
   process.platform === "win32" ? "C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub" : "/etc/ssh/ssh_host_ed25519_key.pub";

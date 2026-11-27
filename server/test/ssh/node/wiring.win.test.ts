@@ -1,5 +1,5 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Hono } from "hono";
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,8 +10,8 @@ import type { Config } from "../../../src/config/parse";
 import { NodeEvents } from "../../../src/hosts/NodeEvents";
 import type { NodeEvent } from "../../../src/hosts/NodeEvents";
 import type { Instance, Instances } from "../../../src/instances/InstanceService";
-import type { SshNodeOptions } from "../../../src/ssh/api/node";
 import { sshNodeApi } from "../../../src/ssh/api/node";
+import type { SshNodeOptions } from "../../../src/ssh/node/types";
 import { createNodeSsh } from "../../../src/ssh/node/wiring";
 import { WinSshBridge } from "../../../src/win/sshbridge";
 import type { SshClientCheck } from "../../../src/win/sshclient";
