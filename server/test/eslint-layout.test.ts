@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import serverLayout, { COMPOSITION_ROOT } from "../../scripts/eslint/serverlayout.js";
 
@@ -242,11 +242,29 @@ describe("import-x/no-cycle with the real eslint.config.js", () => {
     writeFileSync(join(root, file), code);
   };
 
+  // A run that was killed leaves its folders behind. Remove those of processes that no longer run.
+  const running = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  };
+
   beforeAll(() => {
+    for (const name of readdirSync(join(root, "server/src"))) {
+      const pid = /^zzcycle(\d+)(one|two)$/.exec(name)?.[1];
+
+      if (pid !== undefined && !running(Number(pid)))
+        rmSync(join(root, "server/src", name), { recursive: true, force: true });
+    }
+
     for (const folder of [one, two]) mkdirSync(join(root, folder), { recursive: true });
     write(`${one}/plainA.ts`, 'import { bb } from "./plainB";\n\nexport const aa = (): number => bb() + 1;\n');
     write(`${one}/plainB.ts`, 'import { aa } from "./plainA";\n\nexport const bb = (): number => aa() - 1;\n');
-    write(`${one}/extA.ts`, 'import { dd } from "./extB.ts";\n\nexport const cc = (): number => dd() + 1;\n');
+    write(`${one}/extA.ts`, 'import { dd } from "./extB";\n\nexport const cc = (): number => dd() + 1;\n');
     write(`${one}/extB.ts`, 'import { cc } from "./extA.js";\n\nexport const dd = (): number => cc() - 1;\n');
     write(`${one}/typeA.ts`, 'import type { Tb } from "./typeB";\n\nexport interface Ta {\n  tb?: Tb;\n}\n');
     write(`${one}/typeB.ts`, 'import type { Ta } from "./typeA";\n\nexport interface Tb {\n  ta?: Ta;\n}\n');
@@ -271,7 +289,7 @@ describe("import-x/no-cycle with the real eslint.config.js", () => {
     expect(await cycles(`${one}/plainA.ts`)).toBe(1);
   });
 
-  test("a cycle written with .ts and .js extensions fails", async () => {
+  test("a cycle with a .js specifier for a .ts file fails", async () => {
     expect(await cycles(`${one}/extA.ts`)).toBe(1);
     expect(await cycles(`${one}/extB.ts`)).toBe(1);
   });
