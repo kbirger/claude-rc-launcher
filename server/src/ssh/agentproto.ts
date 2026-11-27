@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { AgentProtocolError } from "./AgentProtocolError";
+import { Cursor } from "./Cursor";
 
 // SSH agent wire format (draft-miller-ssh-agent). Only what the launcher needs: list identities (type 11) and sign
 // (type 13) for Ed25519 keys. Every other request type is reported as "other" so the caller can answer with a failure.
@@ -17,14 +19,6 @@ const REQUEST_IDENTITIES = 11;
 const IDENTITIES_ANSWER = 12;
 const SIGN_REQUEST = 13;
 const SIGN_RESPONSE = 14;
-
-/** A frame that is too big or a request that is cut short or malformed. The caller should close the connection. */
-export class AgentProtocolError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AgentProtocolError";
-  }
-}
 
 export type AgentRequest =
   | { type: "identities" }
@@ -75,27 +69,6 @@ export function publicKeyLine(raw: Uint8Array, comment: string, options?: string
 /** The fingerprint that `ssh-keygen -lf` prints: `SHA256:` and the base64 of the SHA-256 of the blob, without padding. */
 export function keyFingerprint(blob: Uint8Array): string {
   return `SHA256:${createHash("sha256").update(blob).digest("base64").replace(/=+$/, "")}`;
-}
-
-/** Reads fields from a payload and throws AgentProtocolError when a field is cut. */
-class Cursor {
-  private at = 0;
-  constructor(private readonly bytes: Uint8Array) {}
-
-  u32(): number {
-    if (this.at + 4 > this.bytes.length) throw new AgentProtocolError("request is cut short");
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset + this.at, 4).getUint32(0);
-    this.at += 4;
-    return value;
-  }
-
-  string(): Uint8Array {
-    const length = this.u32();
-    if (this.at + length > this.bytes.length) throw new AgentProtocolError("request is cut short");
-    const value = this.bytes.slice(this.at, this.at + length);
-    this.at += length;
-    return value;
-  }
 }
 
 /** Reads one request payload. Types other than 11 and 13 give "other" with the type code. */

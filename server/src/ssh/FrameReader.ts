@@ -1,4 +1,5 @@
-import { AgentProtocolError, concat, MAX_FRAME } from "./agentproto";
+import { concat, MAX_FRAME } from "./agentproto";
+import { AgentProtocolError } from "./AgentProtocolError";
 
 /** Cuts a byte stream into frames. A frame that is not complete yet stays in the buffer until the next chunk. */
 export class FrameReader {

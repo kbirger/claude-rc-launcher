@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AgentProtocolError,
   MAX_FRAME,
   failureAnswer,
   identitiesAnswer,
@@ -13,6 +12,7 @@ import {
   publicKeyLine,
   signAnswer,
 } from "../../src/ssh/agentproto";
+import { AgentProtocolError } from "../../src/ssh/AgentProtocolError";
 import { FrameReader } from "../../src/ssh/FrameReader";
 
 const raw = Uint8Array.from(Array.from({ length: 32 }, (_item, index) => index + 1));
