@@ -213,8 +213,10 @@
           file.
         </p>
         <p class="text-xs text-muted-foreground">
-          The machine needs the sshd drop-in. Run sudo claude-rc node sshd install once.
+          A node installed before this release needs the sshd drop-in once. Run
+          <code class="font-mono">sudo claude-rc node sshd install</code> on it.
         </p>
+        <p class="text-xs text-muted-foreground">To change the file later, retire the target and add it again.</p>
       {:else}
         <p class="text-xs text-muted-foreground">
           Use another file when a job rewrites authorized_keys. sshd must list the file in AuthorizedKeysFile. The node

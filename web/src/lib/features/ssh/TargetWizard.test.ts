@@ -390,7 +390,9 @@ test("the key file field shows only for a managed linux or synology target", asy
 
 const LINUX_HELP =
   "Empty uses authorized_keys.claude-rc, a file that no other tool writes. Type authorized_keys to use the main file.";
-const DROPIN_HELP = "The machine needs the sshd drop-in. Run sudo claude-rc node sshd install once.";
+const DROPIN_HELP =
+  "A node installed before this release needs the sshd drop-in once. Run sudo claude-rc node sshd install on it.";
+const RETIRE_HELP = "To change the file later, retire the target and add it again.";
 // The text of the page with each run of white space as one space: the markup wraps long lines.
 const flatText = () => (document.body.textContent ?? "").replace(/\s+/g, " ");
 
@@ -400,6 +402,8 @@ test("the key file field shows authorized_keys.claude-rc for a managed linux tar
   expect(keyFileInput()!.placeholder).toBe("authorized_keys.claude-rc");
   expect(flatText()).toContain(LINUX_HELP);
   expect(flatText()).toContain(DROPIN_HELP);
+  expect(flatText()).toContain(RETIRE_HELP);
+  expect(document.querySelector("form code")?.textContent).toBe("sudo claude-rc node sshd install");
   expect(flatText()).not.toContain("Use another file when a job rewrites authorized_keys.");
 });
 
