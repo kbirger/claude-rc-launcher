@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config } from "../config/parse";
+import type { Config } from "../config";
 import type { Identity } from "../shared/asuser";
 import { HttpError } from "../shared/HttpError";
 import { resolveWithinRoots } from "../shared/paths";

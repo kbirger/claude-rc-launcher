@@ -1,9 +1,8 @@
-import type { SessionsPayload } from "../sessions/SessionIndex";
+import type { SessionsPayload } from "../sessions";
 import type { Presence } from "../shared/presence";
 import { isObject } from "../shared/requests";
-import type { StepName } from "../updates/serviceupdate";
-import { cutLine, MAX_AT } from "../updates/UpdateLog";
-import type { UpdateLog } from "../updates/UpdateLog";
+import type { StepName, UpdateLog } from "../updates";
+import { cutLine, MAX_AT } from "../updates";
 import { HostError } from "./client";
 import type { HostRegistry } from "./HostRegistry";
 

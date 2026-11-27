@@ -1,4 +1,4 @@
-import type { NodeEvents } from "../../hosts/NodeEvents";
+import type { NodeEvents } from "../../hosts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 

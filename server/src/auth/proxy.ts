@@ -1,6 +1,6 @@
 import { getConnInfo } from "@hono/bun";
 import type { Context } from "hono";
-import type { ProxyJwtUserAuth } from "../config/parse";
+import type { ProxyJwtUserAuth } from "../config";
 import { cidrContains } from "../shared/ipnet";
 import type { JwtVerifier } from "./jwt";
 import { isAllowed, userFromClaims } from "./user";

@@ -1,6 +1,6 @@
 import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config } from "../config/parse";
+import type { Config } from "../config";
 import { asUser } from "../shared/asuser";
 import type { IdentityFor } from "../shared/asuser";
 import { HttpError } from "../shared/HttpError";

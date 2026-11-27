@@ -38,7 +38,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { posix, win32 as win32Path } from "node:path";
-import type { Instances } from "../../instances/InstanceService";
+import type { Instances } from "../../instances";
 import type { Identity } from "../../shared/asuser";
 import { downloadHeaders } from "../../shared/disposition";
 import { HttpError } from "../../shared/HttpError";

@@ -10,15 +10,25 @@ import {
   SETTLE_MS,
   settleReason,
   waitSettled,
-} from "../instances/ChangeLock";
-import type { ProbeResult } from "../instances/ChangeLock";
-import type { Instance, Instances, UpdateResult, UsersInfo } from "../instances/InstanceService";
-import { repoKind } from "../instances/repokind";
-import type { RepoKind } from "../instances/repokind";
-import { argsWith, settingsFromArgs } from "../instances/settings";
-import type { InstanceSettings, SettingsPatch, SpawnMode } from "../instances/settings";
-import type { TrustStore } from "../instances/trust";
-import { defaultName, instanceId, isValidName } from "../instances/unit";
+  repoKind,
+  argsWith,
+  settingsFromArgs,
+  defaultName,
+  instanceId,
+  isValidName,
+} from "../instances";
+import type {
+  ProbeResult,
+  Instance,
+  Instances,
+  UpdateResult,
+  UsersInfo,
+  RepoKind,
+  InstanceSettings,
+  SettingsPatch,
+  SpawnMode,
+  TrustStore,
+} from "../instances";
 import { HttpError } from "../shared/HttpError";
 import { resolveWithinRoots } from "../shared/paths";
 import type { Runner } from "../shared/runner";

@@ -1,4 +1,4 @@
-import type { HostClient } from "../../hosts/client";
+import type { HostClient } from "../../hosts";
 import { logToken } from "../../roles";
 import { HOST_ID_RE, LOCAL_HOST } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";

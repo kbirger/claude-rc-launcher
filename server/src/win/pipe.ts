@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { join } from "node:path";
-import type { AgentTransport } from "../ssh/node/GrantAgent";
+import type { AgentTransport } from "../ssh";
 
 // Named pipes for the SSH agent of a grant on a Windows node. The pipe is served by node:net. A pipe that the full
 // service token makes has no entry for the service user alone, and a restricted session cannot open it. So after

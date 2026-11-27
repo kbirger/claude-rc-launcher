@@ -1,4 +1,4 @@
-import type { PushMessage } from "../../push/PushService";
+import type { PushMessage } from "../../push";
 import type { Target } from "../TargetStore";
 import type { Grant, MaintenanceAction } from "./GrantStore";
 

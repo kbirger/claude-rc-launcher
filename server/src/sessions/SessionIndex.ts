@@ -5,7 +5,7 @@
  * emits a full `sessions` event if the list changed. Events are combined: at most one in each combine window.
  * `get()` answers the node route with the last result and does not change the scan rate. See docs/session-files.md.
  */
-import type { Instance, Instances } from "../instances/InstanceService";
+import type { Instance, Instances } from "../instances";
 import { HttpError } from "../shared/HttpError";
 import { PollSource, realTimers } from "../shared/PollSource";
 import type { ChangeSource, Timers, Trigger } from "../shared/PollSource";

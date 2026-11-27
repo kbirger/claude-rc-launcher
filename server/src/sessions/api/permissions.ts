@@ -18,7 +18,7 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { Instances } from "../../instances/InstanceService";
+import type { Instances } from "../../instances";
 import { HttpError } from "../../shared/HttpError";
 import { isObject, readJson } from "../../shared/requests";
 import { ClaudeSettings } from "../ClaudeSettings";

@@ -1,5 +1,5 @@
-import type { SessionsEvent, SessionsPayload } from "../sessions/SessionIndex";
-import type { StepName, UpdateHooks } from "../updates/serviceupdate";
+import type { SessionsEvent, SessionsPayload } from "../sessions";
+import type { StepName, UpdateHooks } from "../updates";
 
 export type NodeEvent =
   | { type: "step"; step: StepName; to?: string; client?: string; detail?: string }

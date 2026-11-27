@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import type { HostConfig } from "../config/parse";
+import type { HostConfig } from "../config";
 import { writeAtomic } from "../shared/atomicwrite";
 import { HOST_ID_RE } from "../shared/hostid";
 import { HttpError } from "../shared/HttpError";

@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { deleteCookie, getSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
-import type { Config, OidcUserAuth } from "../config/parse";
+import type { Config, OidcUserAuth } from "../config";
 import { isRole, rolesFrom } from "../roles";
 import type { RoleSettings } from "../roles";
 import { isObject } from "../shared/requests";

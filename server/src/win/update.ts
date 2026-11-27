@@ -1,14 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { win32 } from "node:path";
-import type { Config } from "../config/parse";
+import type { Config } from "../config";
 import { isObject } from "../shared/requests";
 import { VERSION } from "../shared/version";
-import { realUpdateEnv } from "../updates/realupdate";
-import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256 } from "../updates/release";
-import type { ReleaseIo } from "../updates/release";
-import type { ClientResult, UpdateHooks, UpdateReport } from "../updates/serviceupdate";
-import { clientsOf, UpdateRefused } from "../updates/serviceupdate";
+import {
+  realUpdateEnv,
+  downloadAsset,
+  ReleaseError,
+  RELEASE_TAG_RE,
+  sha256,
+  clientsOf,
+  UpdateRefused,
+} from "../updates";
+import type { ReleaseIo, ClientResult, UpdateHooks, UpdateReport } from "../updates";
 
 /**
  * Self-update of a Windows node. A running .exe can be renamed but not overwritten, so the swap is two renames:

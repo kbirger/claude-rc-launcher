@@ -1,7 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
-import type { AgentTransport, ConnectionHandler, RawConnection } from "../ssh/node/GrantAgent";
-import type { AccessResult, TargetSummary } from "../ssh/node/SshBroker";
+import type { AgentTransport, ConnectionHandler, RawConnection, AccessResult, TargetSummary } from "../ssh";
 
 // The control channel of a Windows node. A session runs `claude-rc ssh targets` or `claude-rc ssh request` and the command
 // talks to one named pipe of the node. All instances share the pipe, so the identity of the caller is a random token that

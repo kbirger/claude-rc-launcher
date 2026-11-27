@@ -1,6 +1,6 @@
-import { certFingerprint, signProof } from "../auth/hubproof";
-import type { HubKey, ProofRequest } from "../auth/hubproof";
-import type { HostConfig } from "../config/parse";
+import { certFingerprint, signProof } from "../auth";
+import type { HubKey, ProofRequest } from "../auth";
+import type { HostConfig } from "../config";
 import { readSse, SseProtocolError } from "../shared/ssereader";
 import type { SseEvent } from "../shared/ssereader";
 

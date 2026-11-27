@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { isIP } from "node:net";
-import type { User } from "../../auth/user";
-import { hostUrlProblem } from "../../config/parse";
-import type { HostConfig } from "../../config/parse";
+import type { User } from "../../auth";
+import { hostUrlProblem } from "../../config";
+import type { HostConfig } from "../../config";
 import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";
 import { readObject } from "../../shared/requests";

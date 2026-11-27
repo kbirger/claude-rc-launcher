@@ -1,26 +1,23 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { User } from "../../auth/user";
-import type { Config } from "../../config/parse";
+import type { User } from "../../auth";
+import type { Config } from "../../config";
 import {
   parseCloneRequest,
   parseLoginRequest,
   parseMkdirRequest,
   parseSettingsPatch,
   parseStartRequest,
-} from "../../instances/requests";
-import { parseRuleEdit } from "../../sessions/requests";
+} from "../../instances";
+import { parseRuleEdit } from "../../sessions";
 import { downloadHeaders, lastSegment } from "../../shared/disposition";
 import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";
 import { isObject, readJson } from "../../shared/requests";
 import { VERSION } from "../../shared/version";
 import { installableRelease, isStale, normalizeVersion, releaseOf, stalestVersion } from "../../shared/versions";
-import type { LatestRelease } from "../../updates/latest";
-import { parseUpdateRequest } from "../../updates/requests";
-import type { UpdateReport } from "../../updates/serviceupdate";
-import type { UpdateTracker } from "../../updates/tracker";
-import type { UpdateRecord } from "../../updates/UpdateRecord";
+import type { LatestRelease, UpdateReport, UpdateTracker, UpdateRecord } from "../../updates";
+import { parseUpdateRequest } from "../../updates";
 import { HostError } from "../client";
 import type { HostClient, HostFailure } from "../client";
 import type { HostRegistry } from "../HostRegistry";

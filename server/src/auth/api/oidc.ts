@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
 import { timingSafeEqual } from "node:crypto";
-import type { Config } from "../../config/parse";
+import type { Config } from "../../config";
 import { isObject } from "../../shared/requests";
 import { isSecure, oidcOf, requireUser, SESSION_COOKIE } from "../oidc";
 import type { OidcClient } from "../oidc";

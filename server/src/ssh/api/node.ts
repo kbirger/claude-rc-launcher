@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { NodeEvents } from "../../hosts/NodeEvents";
+import type { NodeEvents } from "../../hosts";
 import { asUser } from "../../shared/asuser";
 import type { IdentityFor } from "../../shared/asuser";
 import { HOST_ID_RE } from "../../shared/hostid";
