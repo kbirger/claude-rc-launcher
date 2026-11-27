@@ -55,7 +55,7 @@ import { sshManagedApi, sshNodeApi, unsupportedSshApi } from "./ssh/api/node";
 import type { SshManagedOptions, SshNodeOptions } from "./ssh/api/node";
 import type { SshService } from "./ssh/hub/SshService";
 import type { TargetStore } from "./ssh/TargetStore";
-import { isPwaFile } from "./static";
+import { isPwaFile } from "./web/static";
 import type { NodeEvents } from "./hosts/NodeEvents";
 import type { UpdateHistory } from "./updates/UpdateHistory";
 import type { UpdateLog } from "./updates/UpdateLog";

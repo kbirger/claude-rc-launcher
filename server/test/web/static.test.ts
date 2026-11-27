@@ -3,9 +3,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { staticHandler } from "../src/static";
-import { loadWebFilesFromDisk } from "../src/webfiles";
-import { defined } from "./support";
+import { staticHandler } from "../../src/web/static";
+import { loadWebFilesFromDisk } from "../../src/web/files";
+import { defined } from "../support";
 
 let dir: string;
 let app: Hono;

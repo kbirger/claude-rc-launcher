@@ -1,4 +1,4 @@
-import { staticHandler } from "../src/static";
+import { staticHandler } from "../src/web/static";
 import { closeStreams } from "../src/shared/sse";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";

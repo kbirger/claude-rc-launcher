@@ -42,7 +42,7 @@ import type { NodeSshOptions } from "./ssh/node/wiring";
 import { closeMessage, createMaintenanceNotifier, createRequestNotifier } from "./ssh/hub/notify";
 import { SshService } from "./ssh/hub/SshService";
 import { TargetStore } from "./ssh/TargetStore";
-import { staticHandler } from "./static";
+import { staticHandler } from "./web/static";
 import { NodeEvents } from "./hosts/NodeEvents";
 import type { UpdateHooks } from "./hosts/NodeEvents";
 import { UpdateHistory } from "./updates/UpdateHistory";
@@ -51,7 +51,7 @@ import { UpdateLog } from "./updates/UpdateLog";
 import { UpdateRecord } from "./updates/UpdateRecord";
 import type { UserAuthStrategy } from "./auth/user";
 import { VERSION } from "./shared/version";
-import { loadWebFiles } from "./webfiles";
+import { loadWebFiles } from "./web/files";
 import { PushService } from "./push/PushService";
 
 export interface HubDeps {

@@ -37,6 +37,6 @@ export async function loadWebFiles(): Promise<WebFiles> {
     return mod.embeddedFiles;
   } catch (caught) {
     if (!isModuleNotFound(caught)) console.error("failed to load embedded web files:", caught);
-    return loadWebFilesFromDisk(resolve(import.meta.dir, "../../web/dist"));
+    return loadWebFilesFromDisk(resolve(import.meta.dir, "../../../web/dist"));
   }
 }
