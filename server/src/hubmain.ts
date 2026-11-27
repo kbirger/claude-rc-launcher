@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createApp, sessionCatalogFor } from "./app";
+import { createApp, onError, sessionCatalogFor } from "./app";
 import type { CliDeps, Updater } from "./app";
 import { cliBearerAuth } from "./auth/cli";
 import { loadOrCreateHubKey } from "./auth/hubproof";
@@ -298,6 +298,7 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     ...(deps.sshDir ? { dir: deps.sshDir } : {}),
     ...(deps.platform ? { platform: deps.platform } : {}),
     ...(deps.deploySkill ? { deploySkill: deps.deploySkill } : {}),
+    onError,
   });
 
   const sshHook: { service?: SshService } = {};

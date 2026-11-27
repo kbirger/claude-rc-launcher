@@ -273,6 +273,7 @@ describe("SSH for the hub-local host", () => {
   test("the stop of the local SSH resets the grant routes, so an agent that the hub forgot goes too", async () => {
     const { createLocalSsh } = await import("../../../src/ssh/node/wiring");
     const { NodeEvents } = await import("../../../src/hosts/NodeEvents");
+    const { onError } = await import("../../../src/app");
     const root = tmp();
     cleanups.push(() => {
       rmSync(root, { recursive: true, force: true });
@@ -284,6 +285,7 @@ describe("SSH for the hub-local host", () => {
       dir: path.join(root, "ssh"),
       platform: "linux",
       deploySkill: noSkill,
+      onError,
     });
     await local.start();
     const created = await local.client?.call("POST", "/api/ssh/grants", {
@@ -383,8 +385,15 @@ describe("SSH for the hub-local host", () => {
   test("startHub without sshDir is refused under test, so that the live folder is never touched", async () => {
     const { createLocalSsh } = await import("../../../src/ssh/node/wiring");
     const { NodeEvents } = await import("../../../src/hosts/NodeEvents");
+    const { onError } = await import("../../../src/app");
     expect(() =>
-      createLocalSsh({ cfg: {} as Config, instances: {} as never, events: new NodeEvents(), platform: "linux" }),
+      createLocalSsh({
+        cfg: {} as Config,
+        instances: {} as never,
+        events: new NodeEvents(),
+        platform: "linux",
+        onError,
+      }),
     ).toThrow("needs a dir under test");
   });
 

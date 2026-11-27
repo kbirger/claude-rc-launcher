@@ -1,7 +1,7 @@
 import { Hono } from "hono";
+import type { ErrorHandler } from "hono";
 import { lstat, mkdir, chmod, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { onError } from "../../app";
 import type { Config } from "../../config/parse";
 import { HostError } from "../../hosts/client";
 import type { HostClient } from "../../hosts/client";
@@ -357,6 +357,11 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
   };
 }
 
+export interface LocalSshOptions extends NodeSshOptions {
+  /** The error handler of the router: the one of the app, so that a local call answers as a call to a node does. */
+  onError: ErrorHandler;
+}
+
 export interface LocalSsh extends NodeSsh {
   /** The in-process client for the host `local`. Missing on Windows: the host has no grant routes there. */
   client?: HostClient;
@@ -396,7 +401,7 @@ export function localHostClient(router: Hono, host = LOCAL_HOST): HostClient {
  * The SSH wiring of the host `local`, for the hub process: `createNodeSsh`, plus a router with the same SSH routes as a
  * node has and an in-process client for them. Linux only: on Windows there is no client.
  */
-export function createLocalSsh(options: NodeSshOptions): LocalSsh {
+export function createLocalSsh(options: LocalSshOptions): LocalSsh {
   // The folder guard for tests is in `createNodeSsh`.
   const node = createNodeSsh(options);
   if (!node.ssh) return node;
@@ -406,7 +411,7 @@ export function createLocalSsh(options: NodeSshOptions): LocalSsh {
   api.route("/ssh", sshNodeApi(node.ssh));
   const router = new Hono();
   router.route("/api", api);
-  router.onError(onError);
+  router.onError(options.onError);
   const client = localHostClient(router);
 
   return {

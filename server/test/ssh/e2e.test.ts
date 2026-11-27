@@ -17,6 +17,7 @@ import {
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { onError } from "../../src/app";
 import { mintSessionCookie } from "../../src/auth/oidc";
 import type { OidcClient } from "../../src/auth/oidc";
 import type { Config } from "../../src/config/parse";
@@ -532,7 +533,7 @@ describe("SSH maintenance with a real sshd", () => {
         trustFilter: () => Promise.resolve(() => false),
       } as never;
       const events = new NodeEvents();
-      const local = createLocalSsh({ cfg, instances, events, dir: sshDir, deploySkill: noSkill });
+      const local = createLocalSsh({ cfg, instances, events, dir: sshDir, deploySkill: noSkill, onError });
       stopLocal = () => local.stop();
       const hook: { service?: SshService } = {};
       const grants = new GrantStore({
