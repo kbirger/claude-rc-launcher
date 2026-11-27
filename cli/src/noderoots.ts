@@ -29,7 +29,7 @@ export function normalizeRoot(input: string): string {
   return lenientRoot(input);
 }
 
-/** The roots that the node uses. With no `roots` key the server uses the home of the service user (`server/src/config.ts`). */
+/** The roots that the node uses. With no `roots` key the server uses the home of the service user (`server/src/config/parse.ts`). */
 export function effectiveRoots(cfg: NodeConfig): { roots: string[]; implicit: boolean } {
   const inst = instanceOf(cfg);
   if (Array.isArray(inst.roots) && inst.roots.length) return { roots: inst.roots.map(String), implicit: false };

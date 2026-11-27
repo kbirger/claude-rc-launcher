@@ -1,0 +1,292 @@
+import { describe, expect, test } from "bun:test";
+import { Session } from "../../src/sessions/Session";
+import { SessionCatalog } from "../../src/sessions/SessionCatalog";
+import type { TranscriptFs } from "../../src/sessions/transcriptfs";
+import { rejection, defined } from "../support";
+
+// The fake file system and the expected paths are POSIX strings, so the tests that read them skip on Windows.
+const win = process.platform === "win32";
+const HOME = "/h";
+const PATH = "/work/proj";
+const ID1 = "11111111-1111-1111-1111-111111111111";
+const FILE = "/h/.claude/projects/-work-proj/" + ID1 + ".jsonl";
+const FIRST = JSON.stringify({
+  type: "user",
+  cwd: "/work/proj",
+  timestamp: "2026-01-01T00:00:00.000Z",
+  gitBranch: "main",
+  message: { content: "hello there" },
+});
+const WRITE = JSON.stringify({
+  type: "assistant",
+  timestamp: "2026-01-01T00:00:10.000Z",
+  message: { content: [{ type: "tool_use", id: "t1", name: "Write", input: { file_path: "/work/proj/a.txt" } }] },
+});
+const DONE = JSON.stringify({
+  type: "user",
+  timestamp: "2026-01-01T00:00:11.000Z",
+  message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+});
+
+interface Calls {
+  readdir: number;
+  stat: number;
+  lines: number;
+  tail: number;
+}
+
+function fakeFs(calls: Calls, lines: string[] = [FIRST, WRITE, DONE]): TranscriptFs {
+  const files: Record<string, string[]> = { [FILE]: lines };
+  return {
+    readdir(dir) {
+      calls.readdir++;
+      const prefix = dir.endsWith("/") ? dir : dir + "/";
+      const names = new Set<string>();
+      for (const key of Object.keys(files))
+        if (key.startsWith(prefix)) names.add(key.slice(prefix.length).split("/")[0]);
+      if (names.size === 0 && dir !== "/h/.claude/projects") return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve([...names]);
+    },
+    stat(path) {
+      calls.stat++;
+      if (!files[path]) return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve({ mtimeMs: 1000 });
+    },
+    async *lines(path) {
+      calls.lines++;
+      for (const entry of files[path] ?? []) yield entry;
+    },
+    tail(path) {
+      calls.tail++;
+      return Promise.resolve(files[path] ?? []);
+    },
+  };
+}
+
+const none = (): Calls => ({ readdir: 0, stat: 0, lines: 0, tail: 0 });
+
+describe("SessionCatalog", () => {
+  test("instance() and the Session constructor read no file", () => {
+    const calls = none();
+    const inst = new SessionCatalog({ fs: fakeFs(calls) }).instance({ path: PATH, home: HOME });
+    new Session(inst, { id: ID1, file: FILE, mtimeMs: 1, root: PATH, worktree: false });
+    expect(calls).toEqual(none());
+  });
+
+  test("two instance() calls of one catalog share the name cache", () => {
+    const sessionCatalog = new SessionCatalog({ fs: fakeFs(none()) });
+    expect(sessionCatalog.instance({ path: PATH, home: HOME }).catalog.names).toBe(
+      sessionCatalog.instance({ path: PATH, home: HOME }).catalog.names,
+    );
+  });
+
+  test("two catalogs do not share a name cache", () => {
+    expect(new SessionCatalog().names).not.toBe(new SessionCatalog().names);
+  });
+
+  test.skipIf(win)("list() returns plain records with only the old keys", async () => {
+    const live = () =>
+      Promise.resolve(new Map([[ID1, { status: "busy" as const, remoteControl: true, name: "Live name" }]]));
+    const list = await new SessionCatalog({ fs: fakeFs(none()), live }).instance({ path: PATH, home: HOME }).list();
+    expect(list.length).toBe(1);
+    expect(list[0] instanceof Session).toBe(false);
+    expect(Object.getPrototypeOf(list[0])).toBe(Object.prototype);
+    const json = JSON.parse(JSON.stringify(list));
+    expect(Object.keys(json[0])).toEqual(["id", "root", "startedAt", "lastActiveAt", "name", "live", "branch"]);
+    expect(Object.keys(json[0].live)).toEqual(["remoteControl", "status"]);
+  });
+
+  describe.skipIf(win)("the name of a running session", () => {
+    const TITLE = JSON.stringify({ type: "custom-title", customTitle: "Real title" });
+
+    const nameOfList = async (lines: string[], info: { nameIsDefault?: boolean }) => {
+      const live = () => Promise.resolve(new Map([[ID1, { remoteControl: true, name: "proj-91", ...info }]]));
+      return (
+        await new SessionCatalog({ fs: fakeFs(none(), lines), live }).instance({ path: PATH, home: HOME }).list()
+      )[0].name;
+    };
+
+    test("a default live name loses to a title in the transcript", async () => {
+      expect(await nameOfList([FIRST, TITLE, WRITE, DONE], { nameIsDefault: true })).toBe("Real title");
+    });
+    test("a default live name loses to the first prompt", async () => {
+      expect(await nameOfList([FIRST, WRITE, DONE], { nameIsDefault: true })).toBe("hello there");
+    });
+    test("a live name that someone set still wins", async () => {
+      expect(await nameOfList([FIRST, TITLE, WRITE, DONE], {})).toBe("proj-91");
+    });
+    test("a default live name is the last resort", async () => {
+      expect(
+        await nameOfList(
+          [
+            JSON.stringify({
+              type: "user",
+              cwd: "/work/proj",
+              timestamp: "2026-01-01T00:00:00.000Z",
+              message: { content: "<local-command-caveat>x</local-command-caveat>" },
+            }),
+            WRITE,
+            DONE,
+          ],
+          { nameIsDefault: true },
+        ),
+      ).toBe("proj-91");
+    });
+  });
+
+  describe.skipIf(win)("a chain made by /clear", () => {
+    const ID2 = "22222222-2222-2222-2222-222222222222";
+    const FILE2 = "/h/.claude/projects/-work-proj/" + ID2 + ".jsonl";
+    const first = (item: string, text: string) =>
+      JSON.stringify({
+        type: "user",
+        cwd: "/work/proj",
+        timestamp: item,
+        gitBranch: "main",
+        message: { content: text },
+      });
+    const CLEAR_AT = "2026-01-01T02:00:00.000Z";
+    const clearCmd = JSON.stringify({
+      type: "user",
+      cwd: "/work/proj",
+      timestamp: CLEAR_AT,
+      message: { content: "<command-name>/clear</command-name>\n<command-message>clear</command-message>" },
+    });
+
+    function twoFs(options: { cleared?: boolean; oldMtime?: number } = {}): TranscriptFs {
+      const files: Record<string, string[]> = {
+        [FILE]: [first("2026-01-01T00:00:00.000Z", "Out theming is rudimentary")],
+        [FILE2]: options.cleared
+          ? [
+              first("2026-01-01T02:00:00.000Z", "x"),
+              clearCmd,
+              first("2026-01-01T02:05:00.000Z", "better parity please"),
+            ]
+          : [first("2026-01-01T02:00:00.000Z", "better parity please")],
+      };
+      const mt: Record<string, number> = { [FILE]: options.oldMtime ?? 1000, [FILE2]: Date.parse(CLEAR_AT) + 300_000 };
+      return {
+        readdir(dir) {
+          return Promise.resolve(
+            dir === "/h/.claude/projects"
+              ? ["-work-proj"]
+              : Object.keys(files).map((key) => defined(key.split("/").pop())),
+          );
+        },
+        stat(path) {
+          if (!files[path]) return Promise.reject(new Error("ENOENT"));
+          return Promise.resolve({ mtimeMs: mt[path] });
+        },
+        async *lines(path) {
+          for (const value of files[path] ?? []) yield value;
+        },
+        tail(path) {
+          return Promise.resolve(files[path] ?? []);
+        },
+      };
+    }
+
+    const liveOf = (bridge: string | undefined) => () =>
+      Promise.resolve(
+        new Map([
+          [ID2, { remoteControl: true, name: "proj-91", nameIsDefault: true, ...(bridge ? { bridgeId: bridge } : {}) }],
+        ]),
+      );
+
+    test("sessions that shared a bridge id show as one, with the first name and start", async () => {
+      const cat = new SessionCatalog({ fs: twoFs(), live: liveOf("cse_1") });
+      await cat.chains.observe([["cse_1", ID1]]);
+      const list = await cat.instance({ path: PATH, home: HOME }).list();
+      expect(list.length).toBe(1);
+      expect(list[0].id).toBe(ID2);
+      expect(list[0].name).toBe("Out theming is rudimentary");
+      expect(list[0].startedAt).toBe("2026-01-01T00:00:00.000Z");
+      expect(list[0].earlier).toEqual([ID1]);
+      expect(list[0].live?.remoteControl).toBe(true);
+    });
+
+    test("a /clear transcript joins the transcript whose last write was at the /clear, with no running file", async () => {
+      const cat = new SessionCatalog({
+        fs: twoFs({ cleared: true, oldMtime: Date.parse(CLEAR_AT) + 190 }),
+        live: () => Promise.resolve(new Map()),
+      });
+      const list = await cat.instance({ path: PATH, home: HOME }).list();
+      expect(list.length).toBe(1);
+      expect(list[0].id).toBe(ID2);
+      expect(list[0].earlier).toEqual([ID1]);
+    });
+
+    test("a /clear transcript with no matching last write stays separate", async () => {
+      const cat = new SessionCatalog({
+        fs: twoFs({ cleared: true, oldMtime: Date.parse(CLEAR_AT) - 25_000 }),
+        live: () => Promise.resolve(new Map()),
+      });
+      expect((await cat.instance({ path: PATH, home: HOME }).list()).length).toBe(2);
+    });
+
+    test("the first session of the running process joins the current one", async () => {
+      const live = () =>
+        Promise.resolve(
+          new Map([[ID2, { remoteControl: false, name: "proj-91", nameIsDefault: true, firstSessionId: ID1 }]]),
+        );
+      const list = await new SessionCatalog({ fs: twoFs(), live }).instance({ path: PATH, home: HOME }).list();
+      expect(list.map((sessionSummary) => sessionSummary.id)).toEqual([ID2]);
+      expect(list[0].earlier).toEqual([ID1]);
+    });
+
+    test("without a shared bridge id both sessions stay", async () => {
+      const cat = new SessionCatalog({ fs: twoFs(), live: liveOf("cse_1") });
+      const list = await cat.instance({ path: PATH, home: HOME }).list();
+      expect(list.map((sessionSummary) => sessionSummary.id).sort()).toEqual([ID1, ID2]);
+      expect(list.every((sessionSummary) => sessionSummary.earlier === undefined)).toBe(true);
+    });
+  });
+
+  test.skipIf(win)("find() returns a Session whose touched() reads its own file and does not scan", async () => {
+    const calls = none();
+    const session = await new SessionCatalog({ fs: fakeFs(calls) }).instance({ path: PATH, home: HOME }).find(ID1);
+    expect(session).toBeInstanceOf(Session);
+    expect(session?.root).toBe("/work/proj");
+    expect(session?.file).toBe(FILE);
+    const readdirs = calls.readdir;
+    const files = await defined(session).touched({ dirs: [] });
+    expect(files.map((touchedFile) => touchedFile.path)).toEqual(["/work/proj/a.txt"]);
+    expect(calls.readdir).toBe(readdirs);
+  });
+  test.skipIf(win)("blocked() returns the blocked calls of its own transcript and does not scan", async () => {
+    const use = JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-01-01T00:00:20.000Z",
+      message: { content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "touch x" } }] },
+    });
+    const res = JSON.stringify({
+      type: "user",
+      timestamp: "2026-01-01T00:00:21.000Z",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t2",
+            content: "touch in '/work/proj/x' needs approval.",
+            is_error: true,
+          },
+        ],
+      },
+    });
+    const calls = none();
+    const session = await new SessionCatalog({ fs: fakeFs(calls, [FIRST, WRITE, DONE, use, res]) })
+      .instance({ path: PATH, home: HOME })
+      .find(ID1);
+    const readdirs = calls.readdir;
+    const out = await defined(session).blocked();
+    expect(out.map((blockedCall) => [blockedCall.id, blockedCall.tool, blockedCall.reason])).toEqual([
+      ["t2", "Bash", "needs_approval"],
+    ]);
+    expect(calls.readdir).toBe(readdirs);
+  });
+
+  test.skipIf(win)("permissions() is a 404 when the real-root check fails (the folder is not on disk)", async () => {
+    const session = await new SessionCatalog({ fs: fakeFs(none()) }).instance({ path: PATH, home: HOME }).find(ID1);
+    expect(await rejection(defined(session).permissions({}))).toMatchObject({ status: 404 });
+  });
+});

@@ -5,32 +5,32 @@ who read or review the code. The user guide is in the "Session files" part of th
 
 ## Module map
 
-All server files are in `server/src`. All web files are in `web/src/lib/features/sessions`.
+The server paths start at `server/src`. All web files are in `web/src/lib/features/sessions`.
 
 | File | Job |
 | --- | --- |
-| `transcript.ts` | Pure helpers for transcripts: the session id pattern, the project folder name rule and the record parser. It reads nothing. |
-| `transcriptfs.ts` | The seam that reads transcript files: list a folder, stat a file, read the lines, read the end of a file. The default reads the real disk. |
-| `sessionscan.ts` | Finds the transcripts that belong to an instance folder (`scan`). It reads the start of each transcript, up to the first `cwd`. |
-| `sessionnames.ts` | Finds the name of a session and keeps it in a cache. |
-| `touched.ts` | Finds the files that one session wrote or edited (`touchedIn`), in one known transcript. |
-| `sessioncatalog.ts` | The session classes. One `SessionCatalog` for each app holds the seams and the name cache. `catalog.instance()` gives an `InstanceSessions`, whose `list()` gives plain records and whose `find(id)` gives a `Session`. It never opens a project file. |
-| `pinnedroot.ts` | `PinnedRoot` and `PinnedFile`. `Session.open()` runs the real-root check and gives a `PinnedRoot`. Only a `PinnedRoot` lists a folder, makes a preview or opens a download, and only its `touchedFile` method gives a file outside the session folder (the `abs` gate). |
-| `livesessions.ts` | Reads the running-session files. It tells which sessions run now, their status, their name in the Claude app, and whether they use Remote Control. |
-| `sessionfs.ts` | Opens project files safely inside one root folder. It lists a folder, makes a preview of a file and opens a file for download. It never reads a transcript. |
-| `paths.ts` | Path helpers. `within` checks that a path is inside a folder. `absRefused` checks that a full path is in a refused place. |
-| `sessionindex.ts` | `SessionIndex`. It keeps the sessions of all instances of the node in memory, compares each new result with the last event, and emits a `sessions` event when the list changed. Read [The list of all sessions](#the-list-of-all-sessions). |
-| `changesource.ts` | The change source. It tells the index when to look again. `PollSource` is the first one. |
-| `sessionwatch.ts` | `WatchFlag`. It turns the heartbeat of the hub into the active state of the index. |
-| `sessionbeat.ts` | The hub beat loop. It sends the heartbeat to all nodes while somebody looks at the Sessions view. |
-| `sessionsstore.ts` | The hub store. It keeps the last list of each host in memory. |
-| `sessionsstream.ts` | The hub stream `GET /api/sessions/events` for browsers. |
-| `allsessions.ts` | The hub route `GET /api/sessions`. It answers from the hub store and calls no node. |
-| `sessionapi.ts` | The HTTP routes on the node. It is a thin layer over the session classes. It checks the instance id, the session id and the query, and it never holds a checked root as a string. |
+| `sessions/transcript.ts` | Pure helpers for transcripts: the session id pattern, the project folder name rule and the record parser. It reads nothing. |
+| `sessions/transcriptfs.ts` | The seam that reads transcript files: list a folder, stat a file, read the lines, read the end of a file. The default reads the real disk. |
+| `sessions/scan.ts` | Finds the transcripts that belong to an instance folder (`scan`). It reads the start of each transcript, up to the first `cwd`. |
+| `sessions/names.ts` | Finds the name of a session and keeps it in a cache. |
+| `sessions/touched.ts` | Finds the files that one session wrote or edited (`touchedIn`), in one known transcript. |
+| `sessions/SessionCatalog.ts`, `sessions/InstanceSessions.ts`, `sessions/Session.ts` | The session classes. One `SessionCatalog` for each app holds the seams and the name cache. `catalog.instance()` gives an `InstanceSessions`, whose `list()` gives plain records and whose `find(id)` gives a `Session`. These classes never open a project file. |
+| `sessions/PinnedRoot.ts` | `PinnedRoot` and `PinnedFile`. `Session.open()` runs the real-root check and gives a `PinnedRoot`. Only a `PinnedRoot` lists a folder, makes a preview or opens a download. Only its `touchedFile` method gives a file outside the session folder (the `abs` gate). |
+| `sessions/live.ts` | Reads the running-session files. It tells which sessions run now, their status, their name in the Claude app, and whether they use Remote Control. |
+| `sessions/files.ts` | Opens project files safely inside one root folder. It lists a folder, makes a preview of a file and opens a file for download. It never reads a transcript. |
+| `shared/paths.ts` | Path checks. `within` checks that a path is inside a folder. `absRefused` checks that a full path is in a refused place. |
+| `sessions/SessionIndex.ts` | `SessionIndex`. It keeps the sessions of all instances of the node in memory. It compares each new result with the last event. If the list changed, it emits a `sessions` event. Read [The list of all sessions](#the-list-of-all-sessions). |
+| `shared/PollSource.ts` | The change source. It starts each new look of the index. `PollSource` is the first one. |
+| `sessions/WatchFlag.ts` | `WatchFlag`. It turns the heartbeat of the hub into the active state of the index. |
+| `sessions/beat.ts` | The hub beat loop. It sends the heartbeat to all nodes while somebody looks at the Sessions view. |
+| `sessions/SessionsStore.ts` | The hub store. It keeps the last list of each host in memory. |
+| `sessions/api/stream.ts` | The hub stream `GET /api/sessions/events` for browsers. |
+| `sessions/api/all.ts` | The hub route `GET /api/sessions`. It answers from the hub store and calls no node. |
+| `sessions/api/session.ts` | The HTTP routes on the node. It is a thin layer over the session classes. It checks the instance id, the session id and the query, and it never holds a checked root as a string. |
 | `app.ts` | Mounts the routes. It builds one `SessionCatalog` for each app, with the state folders of the node. |
-| `hosts.ts` | The hub routes. They pass session requests to the node of the host. |
-| `hostclient.ts` | The hub client for one node. Its `download` call streams the bytes. |
-| `disposition.ts` | Makes the download headers (the file name). |
+| `hosts/api/forward.ts` | The hub routes. They pass session requests to the node of the host. |
+| `hosts/client.ts` | The hub client for one node. Its `download` call streams the bytes. |
+| `shared/disposition.ts` | Makes the download headers (the file name). |
 | `api.ts` (web) | The browser calls and the types. |
 | `format.ts` (web) | Small pure helpers for the screens, such as the rows of the Touched list and the live badges. |
 | `viewkind.ts` (web) | Pure. Decides how a preview shows a text file: markdown, code or plain, and the language. It holds the file name map and the size rules. |
@@ -45,15 +45,15 @@ All server files are in `server/src`. All web files are in `web/src/lib/features
 1. The user taps a file. The browser opens a plain link:
    `/api/hosts/<host>/instances/<id>/sessions/<session>/download?abs=<path>` (or `?path=<relative path>`).
    The browser sends its login cookie with the link. The link comes from `downloadUrl` in `api.ts`.
-2. The hub checks the login. Then `hosts.ts` calls `download` in `hostclient.ts`. This sends the request to the node
+2. The hub checks the login. Then `hosts/api/forward.ts` calls `download` in `hosts/client.ts`. This sends the request to the node
    over HTTPS. The hub pins the certificate of the node and sends a signed hub proof (or the shared secret of the
    host) in the `Authorization` header.
-3. On the node, `sessionapi.ts` handles the request. `InstanceSessions.find` finds the session from the transcript
+3. On the node, `sessions/api/session.ts` handles the request. `InstanceSessions.find` finds the session from the transcript
    and gives a `Session`. `Session.open()` checks the real place of the session folder and gives a `PinnedRoot`.
    Only a `PinnedRoot` opens a file. For a `path` request, `PinnedRoot.download` opens the file inside the real
    folder. For an `abs` request, `PinnedRoot.touchedFile` is the `abs` gate. It reads the touched list
    (`touchedIn` in `touched.ts`), checks the path and gives a `PinnedFile`, whose `download` opens the file.
-4. `openDownload` in `sessionfs.ts` opens the file and checks that the open file is the file that was checked.
+4. `openDownload` in `sessions/files.ts` opens the file and checks that the open file is the file that was checked.
 5. The node answers with a stream. The hub passes the stream on to the browser. Nobody holds the whole file in memory.
 
 A preview (`/file`) takes the same path, but the node answers with JSON and the hub passes the JSON on.
@@ -92,7 +92,7 @@ A transcript has one JSON record on each line. These short examples show the rec
 - The title records give the name. A custom title comes first, then an AI title, then an agent name, then the first
   real prompt. A record that Claude Code wrote is not a prompt. This includes the summary that `/compact` puts at the
   start of a transcript (`isCompactSummary`).
-- `chooseName` in `sessionnames.ts` orders the sources of the name of a session: a live name that someone set, the name
+- `chooseName` in `sessions/names.ts` orders the sources of the name of a session: a live name that someone set, the name
   of the first transcript of the chain, the name of this transcript, and last a live name that Claude Code made up.
 - A `tool_use` block is a call. A `tool_result` block with the same id is its answer. When `is_error` is absent or
   false, the write succeeded. The code then sets `confirmed` to true for the file.
@@ -138,7 +138,7 @@ The file has the process id, the session id and the status (`idle` or `busy`). I
 app shows. For a session that uses Remote Control, it has `bridgeSessionId`. The same folder also has `.key` files
 with a secret token.
 
-`livesessions.ts` follows these rules:
+`sessions/live.ts` follows these rules:
 
 - It opens only files whose names end in `.json`. It never opens a `.key` file.
 - The real place of the sessions folder must be inside the real home folder. If `.claude` or `.claude/sessions` is a
@@ -152,7 +152,8 @@ with a secret token.
   The `pidDomain` of the file must also name this machine and this pid namespace. If `/proc` cannot be read, and on
   Windows, the check is `process.kill(pid, 0)`.
 - It returns only the status, the Remote Control state, the name, `nameIsDefault` and `bridgeId`. No other field
-  leaves the module. Only `sessionchains.ts` reads `bridgeId`, and it never reaches the web.
+  leaves the module. Only `sessions/InstanceSessions.ts` reads `bridgeId`. It gives the pairs of bridge id and
+  session id to the chain store in `sessions/SessionChains.ts`. The bridge id never reaches the web.
   `nameIsDefault` is true only when the file has `nameSource: "derived"`. Claude Code then made the name itself, from
   the folder name and two characters. A missing or unknown `nameSource` counts as a name that someone set. The value
   `derived` comes from reading the Claude binary (2.1.323). It is not documented and can change.
@@ -184,7 +185,7 @@ no pager. The files open by their path inside the session folder, so the same ch
 ## Sessions that `/clear` joins
 
 `/clear` starts a new transcript with a new session id, but the process keeps its Remote Control connection and its
-`bridgeSessionId`. The transcripts do not name their predecessor. `sessionchains.ts` therefore remembers, for each
+`bridgeSessionId`. The transcripts do not name their predecessor. `sessions/SessionChains.ts` therefore remembers, for each
 bridge id, the session ids that a running-session file showed with it, oldest first. The store is the file
 `session-chains.json` in the state folder of the node. It holds at most 1000 bridge ids and 100 session ids for each.
 
@@ -193,13 +194,13 @@ Three sources join sessions. Each one is saved in the same store:
 - **The bridge id (exact).** A running-session file shows a bridge id with the current session id. The match starts when
   the launcher first sees the pair.
 - **The first session of the process (exact, Linux only).** A running process keeps the folder
-  `/tmp/claude-<uid>/<project>/<first session id>/tasks` open. `livesessions.ts` reads the links in `/proc/<pid>/fd`
+  `/tmp/claude-<uid>/<project>/<first session id>/tasks` open. `sessions/live.ts` reads the links in `/proc/<pid>/fd`
   and takes only the session id from the name. This links the first session of a running process to the current one,
   also when the process has no bridge id. It is a Claude Code internal: if a version changes it, this source gives
   nothing and the others still work. A process of another user, or a system without `/proc`, gives nothing too.
 - **The time of the `/clear` (a guess, with a safe rule).** A transcript that starts with the `/clear` command has the
   time of that command. The old transcript gets its last write a moment after it (0.11 to 0.23 seconds in the real
-  data). `matchByTime` in `sessioncatalog.ts` joins a `/clear` transcript to the other transcript of the folder whose
+  data). `matchByTime` in `sessions/InstanceSessions.ts` joins a `/clear` transcript to the other transcript of the folder whose
   last write is from 0.5 seconds before to 2.5 seconds after the command. If two transcripts fit, or if two `/clear`
   transcripts want the same old one, it joins none: a wrong join is worse than a missing one. A transcript that was
   written again after the `/clear` (for example after a resume) does not match any more.
@@ -210,7 +211,7 @@ connection from it). Its start time is the start of the first transcript. The id
 
 ## The list of all sessions
 
-The Sessions view shows the sessions of all instances on all nodes. A node does not scan its folders for each request. `SessionIndex` (`sessionindex.ts`) keeps the last result in memory. The node route `GET /api/sessions` answers from it at once, with the time of the scan (`scannedAt`). The route does not change the scan rate.
+The Sessions view shows the sessions of all instances on all nodes. A node does not scan its folders for each request. `SessionIndex` (`sessions/SessionIndex.ts`) keeps the last result in memory. The node route `GET /api/sessions` answers from it at once, with the time of the scan (`scannedAt`). The route does not change the scan rate.
 
 The index works in three steps: trigger, compare and emit.
 
@@ -224,13 +225,13 @@ The 30 second rule: a move of `lastActiveAt` counts as a change only if it is 30
 
 A node is active only while a hub watches. The hub sends a heartbeat, `POST /api/sessions/watch`, every 20 000 ms while at least one browser has the sessions stream open. The first heartbeat after a quiet time makes the node active and fires an `all` trigger. Each heartbeat restarts a timer of 60 000 ms. When the timer ends with no new heartbeat, the node drops to the passive mode. If nobody looks, the hub sends no heartbeat, so the cost stays low.
 
-The hub merges the lists of all nodes in `sessionsstore.ts`. Each node sends its list in the snapshot of its event stream, and again in each `sessions` event. The hub does not call a node to answer `GET /api/sessions`. A node that is not online shows its status from the watcher at once, and a node that returns keeps its old list. Before the first list of a node arrives, the host has the status `loading`.
+The hub merges the lists of all nodes in `sessions/SessionsStore.ts`. Each node sends its list in the snapshot of its event stream, and again in each `sessions` event. The hub does not call a node to answer `GET /api/sessions`. A node that is not online shows its status from the watcher at once, and a node that returns keeps its old list. Before the first list of a node arrives, the host has the status `loading`.
 
 A rename of a host makes the hub send a new `snapshot` on each open sessions stream, so the rows show the new name.
 
 ### Known limits
 
-- **A large list is cut.** The hub reads at most 1 MiB in one event of the node stream. A node with some thousand sessions can go over that. So the index keeps the payload of each `sessions` event below 900 000 bytes of JSON (`MAX_SESSIONS_BYTES` in `sessionindex.ts`). The snapshot of the node stream holds the same payload, so it also stays below the cap. If the list is larger, the index keeps only the newest rows (by `lastActiveAt`) that fit, and it adds `truncated: true`. The older sessions do not show in the Sessions view. The hub keeps the flag on the status of the host, but the web app does not show it. The list of `local` on the hub comes from the same index, so the same cap applies to it.
+- **A large list is cut.** The hub reads at most 1 MiB in one event of the node stream. A node with some thousand sessions can go over that. So the index keeps the payload of each `sessions` event below 900 000 bytes of JSON (`MAX_SESSIONS_BYTES` in `sessions/SessionIndex.ts`). The snapshot of the node stream holds the same payload, so it also stays below the cap. If the list is larger, the index keeps only the newest rows (by `lastActiveAt`) that fit, and it adds `truncated: true`. The older sessions do not show in the Sessions view. The hub keeps the flag on the status of the host, but the web app does not show it. The list of `local` on the hub comes from the same index, so the same cap applies to it.
 - A node whose first scan always fails stays `loading`, because the index emits no event until a scan succeeds.
 
 ## Cost and threading
@@ -377,7 +378,7 @@ note, "... N more characters not shown". The text is not changed. At four times 
 ## Name memory
 
 A Remote Control session has no title record in its transcript: the server that started it keeps the title in memory.
-After `/compact` the transcript holds only a summary and the later prompts, so the first prompt is gone. `namememory.ts`
+After `/compact` the transcript holds only a summary and the later prompts, so the first prompt is gone. `sessions/NameMemory.ts`
 therefore remembers the best name that the launcher ever read for each session, in the file `session-names.json` in the
 state folder of the node. Each entry holds the name, where it came from, the transcript file and the time it was last seen.
 

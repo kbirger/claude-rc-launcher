@@ -4,7 +4,7 @@
 import { dlopen, ptr, read, toArrayBuffer } from "bun:ffi";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Spawned, WinDeps } from "./instances";
+import type { Spawned, WinDeps } from "./WinInstances";
 
 /** A token step failed. Permanent: trying again cannot help, and there is no fallback to the full token. */
 export class RestrictedTokenError extends Error {

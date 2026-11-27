@@ -2,7 +2,11 @@ node_modules
 web/dist
 dist
 .superpowers
+server/src/web/embedded.ts
+# The old path of the generated file, from before the server layout move. Kept so an old checkout stays clean.
 server/src/embedded.ts
+# Temporary cycle fixtures of server/test/eslint-layout.test.ts.
+server/src/zzcycle*/
 
 # Local run: your config.toml and its secret files (see "Run from a checkout" in the README)
 /.local-data/

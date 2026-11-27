@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { testBuildTag } from "../../scripts/testbuild";
-import { RELEASE_TAG_RE } from "../src/release";
-import { isTestBuild, releaseOf } from "../src/versions";
+import { isTestBuild, releaseOf } from "../src/shared/versions";
+import { RELEASE_TAG_RE } from "../src/updates/release";
 
 const sha = "5bf4ca1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b";
 

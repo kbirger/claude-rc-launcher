@@ -1,4 +1,4 @@
-import type { Timers } from "../src/changesource";
+import type { Timers } from "../src/shared/PollSource";
 
 type Entry = { id: number; at: number; fn: () => void };
 

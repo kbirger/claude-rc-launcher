@@ -1,11 +1,11 @@
-import { ConfigError } from "./config";
-import type { Config } from "./config";
-import { applyLocal, loadConfigFile, resolveConfigPath } from "./configfile";
+import { generateSecret } from "./auth/node";
+import { applyLocal, loadConfigFile, resolveConfigPath } from "./config/file";
+import { ConfigError } from "./config/parse";
+import type { Config } from "./config/parse";
 import { startHub } from "./hubmain";
-import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";
-import { runNudgeSend } from "./nudge";
-import { VERSION } from "./version";
+import { runNudgeSend } from "./sessions/nudge";
+import { VERSION } from "./shared/version";
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);

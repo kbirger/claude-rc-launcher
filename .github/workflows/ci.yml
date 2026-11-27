@@ -36,10 +36,10 @@ jobs:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
       - run: >-
-          bun test server/test/win-config.test.ts server/test/win-instances.test.ts server/test/win-trust.test.ts
-          server/test/win-update.test.ts server/test/win-install.test.ts server/test/win-launcher.test.ts
-          server/test/win-path.test.ts server/test/win-bootstrap.test.ts server/test/win-token.test.ts
-          server/test/updateevents.test.ts server/test/nodeapp.test.ts server/test/win-definition.test.ts
-          server/test/sessionfs.test.ts server/test/sessioncatalog.test.ts server/test/pinnedroot.test.ts
-          server/test/instancechange.test.ts server/test/instancesettings.test.ts
+          bun test server/test/config/parse.win.test.ts server/test/win/WinInstances.test.ts server/test/win/trust.test.ts
+          server/test/win/update.test.ts server/test/win-install.test.ts server/test/win-launcher.test.ts
+          server/test/win-path.test.ts server/test/win-bootstrap.test.ts server/test/win/token.test.ts
+          server/test/hosts/NodeEvents.test.ts server/test/app.node.test.ts server/test/win/definition.test.ts
+          server/test/sessions/files.test.ts server/test/sessions/SessionCatalog.test.ts server/test/sessions/PinnedRoot.test.ts
+          server/test/instances/ChangeLock.test.ts server/test/instances/settings.test.ts
       - run: bun run build:win
