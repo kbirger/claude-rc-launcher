@@ -1,13 +1,12 @@
-import type { Grant } from "./sshgrants";
+import type { Grant, MaintenanceAction } from "./sshgrants";
 import type { Target } from "./sshtargets";
 import type { PushMessage } from "./webpush";
 
 const MAX_REASON_CHARS = 120;
 
-const CONTROL = new RegExp(
-  "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]",
-  "g",
-);
+// The control characters are the point of this pattern.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 /** Plain text for a notification: control, bidi and zero-width characters (newlines too) become spaces, and the text is cut to `max` characters, never inside a surrogate pair. */
 function plain(text: string, max: number): string {
@@ -23,6 +22,27 @@ export function requestMessage(grant: Grant, target: Target, instanceName: strin
   return {
     title: "SSH access requested",
     body: `${plain(target.id, 80)} on ${plain(instanceName, 80)}, ${grant.minutes} min${reason}`,
+    url: "/ssh",
+    tag: `ssh-${grant.id}`,
+    grantId: grant.id,
+  };
+}
+
+const MAINTENANCE_BODY: Record<MaintenanceAction, string> = {
+  sources: "change of nodes",
+  uninstall: "remove the key lines (retire)",
+  install: "put the key line back",
+};
+
+/**
+ * The push message for a new maintenance request. The body holds the target id and a fixed sentence for the action.
+ * It holds no address, no node list, no reason and no secret.
+ */
+export function maintenanceMessage(grant: Grant, target: Target): PushMessage {
+  const action = grant.maintenance?.action;
+  return {
+    title: "SSH maintenance requested",
+    body: `${plain(target.id, 80)}: ${action ? MAINTENANCE_BODY[action] : "maintenance"}`,
     url: "/ssh",
     tag: `ssh-${grant.id}`,
     grantId: grant.id,
@@ -70,7 +90,9 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
       const pending = options.listInstances(grant.nodeId);
       if (!pending) return grant.instanceId;
       const timeout = new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), timeoutMs);
+        timer = setTimeout(() => {
+          resolve(undefined);
+        }, timeoutMs);
       });
       const list = await Promise.race([pending, timeout]);
       const found = Array.isArray(list) ? list.find((item) => item.id === grant.instanceId) : undefined;
@@ -90,6 +112,26 @@ export function createRequestNotifier(options: RequestNotifierOptions): (grant: 
           ? undefined
           : options.send(requestMessage(grant, target, name)),
       )
-      .catch((error) => options.onError?.(error instanceof Error ? error.message : String(error)));
+      .catch((error: unknown) => {
+        options.onError?.(error instanceof Error ? error.message : String(error));
+      });
+  };
+}
+
+/** Makes the notifier of a maintenance request. It sends nothing when the grant is no longer pending. A failed send goes to `onError`. */
+export function createMaintenanceNotifier(options: {
+  send: (message: PushMessage) => unknown;
+  isPending?: (grantId: string) => boolean;
+  onError?: (text: string) => void;
+}): (grant: Grant, target: Target) => void {
+  const fail = (error: unknown) => options.onError?.(error instanceof Error ? error.message : String(error));
+
+  return (grant, target) => {
+    try {
+      if (options.isPending && !options.isPending(grant.id)) return;
+      void Promise.resolve(options.send(maintenanceMessage(grant, target))).catch(fail);
+    } catch (error) {
+      fail(error);
+    }
   };
 }

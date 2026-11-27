@@ -166,6 +166,20 @@ describe("managed SSH targets on the node", () => {
     expect(await response.text()).toContain("cannot write authorized_keys");
   });
 
+  test("POST /authorize takes the line of a dropbear target without from", async () => {
+    const line =
+      "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA claude-rc:nas";
+    expect((await authorize({ systemType: "dropbear", line })).status).toBe(204);
+    expect((await authorize({ line: "no-pty ssh-ed25519 AAAA x" })).status).toBe(400);
+    // The Dropbear form only for a dropbear target, and only with ssh-ed25519 right after the flags.
+    expect((await authorize({ systemType: "linux", line })).status).toBe(400);
+    const flags = "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty";
+    expect((await authorize({ systemType: "dropbear", line: `${flags} ssh-rsa AAAA claude-rc:nas` })).status).toBe(400);
+    expect((await authorize({ systemType: "dropbear", line: `${flags} command="x" ssh-ed25519 AAAA` })).status).toBe(
+      400,
+    );
+  });
+
   test("POST /authorize rejects a line that does not start with from= or ssh-ed25519 with 400", async () => {
     for (const line of ["ssh-rsa AAAA x", 'command="x" ssh-ed25519 AAAA', "", 5]) {
       expect((await authorize({ line })).status).toBe(400);

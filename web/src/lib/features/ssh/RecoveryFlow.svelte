@@ -7,7 +7,7 @@
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
   import { onDestroy } from "svelte";
   import { ApiError } from "../../shared/http";
-  import { getSalt, type SshStatus, type Unlock, type UnlockMethod } from "./api";
+  import { getSalt, getStatus, type SshStatus, type Unlock, type UnlockMethod } from "./api";
   import { beginRecoveryMutation, rewrapTargetMutation } from "./mutations";
   import { longEnough, MIN_PASSPHRASE, PASSPHRASE_NAME, TOO_SHORT } from "./passphrase";
   import UsernameHint from "./UsernameHint.svelte";
@@ -41,14 +41,19 @@
   let untested = $state("");
   let note = $state("");
   let hint = $state(false);
-  let targets = $state<string[]>([]);
+  // One re-lock for each key: the main key of each target, and the provisioner key of a target that has one.
+  type Row = { id: string; key: "main" | "provisioner" };
+  let rows = $state<Row[]>([]);
   let done = $state<string[]>([]);
+  let provisionerKnown = $state(false);
+  let listProblem = $state("");
   let busy = $state(false);
   let working = $state("");
   let problem = $state("");
 
-  const left = $derived(targets.filter((id) => !done.includes(id)));
-  const complete = $derived(step === "relock" && left.length === 0);
+  const slotKey = (row: Row) => `${row.key}:${row.id}`;
+  const left = $derived(rows.filter((row) => !done.includes(slotKey(row))));
+  const complete = $derived(step === "relock" && left.length === 0 && provisionerKnown);
 
   function wipe() {
     code = "";
@@ -88,6 +93,25 @@
     } else problem = error instanceof Error ? error.message : "The recovery failed.";
   }
 
+  // The provisioner keys that wait are in the status. Without that list the flow cannot say that it is complete.
+  async function loadProvisioner() {
+    try {
+      const ids = (await getStatus()).pendingProvisionerRewrap ?? [];
+      const known = rows.filter((row) => row.key === "provisioner").map((row) => row.id);
+      rows = [...rows, ...ids.filter((id) => !known.includes(id)).map((id): Row => ({ id, key: "provisioner" }))];
+      provisionerKnown = true;
+      listProblem = "";
+    } catch {
+      listProblem = "The hub did not give the list of provisioner keys. Tap Try again to read it.";
+    }
+  }
+
+  async function retryList() {
+    busy = true;
+    await loadProvisioner();
+    busy = false;
+  }
+
   // The hub switches to the new method. For a passkey, `credentialId` already holds a passkey with a secret.
   async function submit() {
     const answer = await begin.mutateAsync({
@@ -96,8 +120,11 @@
       ...(choice === "prf" ? { credentialId } : {}),
     });
     method = choice;
-    targets = answer.targets;
+    // The answer names the main keys. The provisioner keys that wait are in the status.
+    rows = answer.targets.map((id): Row => ({ id, key: "main" }));
     done = [];
+    provisionerKnown = false;
+    await loadProvisioner();
     step = "relock";
   }
 
@@ -187,21 +214,22 @@
     }
   }
 
-  async function relock(id: string) {
+  async function relock(row: Row) {
+    const { id, key } = row;
     problem = "";
     busy = true;
-    working = id;
+    working = slotKey(row);
 
     try {
       let unlock: Unlock;
 
       if (method === "prf") {
-        const { salt } = await getSalt(id);
+        const { salt } = await getSalt(id, key);
         unlock = { method: "prf", secret: await unlockWithPasskey(credentialId, salt) };
       } else unlock = passphraseUnlock();
 
-      await rewrap.mutateAsync({ id, code: code.trim(), unlock });
-      done = [...done, id];
+      await rewrap.mutateAsync({ id, code: code.trim(), unlock, ...(key === "provisioner" ? { key } : {}) });
+      done = [...done, slotKey(row)];
     } catch (error) {
       if (error instanceof ApiError && error.status === 403 && error.message === "wrong recovery code")
         problem = WRONG_CODE;
@@ -338,26 +366,43 @@
           </p>
         {/if}
         <ul class="grid gap-2">
-          {#each targets as id (id)}
+          {#each rows as row (slotKey(row))}
             <li class="flex min-h-11 min-w-0 items-center justify-between gap-3 rounded-lg border p-3">
-              <span class="font-medium {wrap}">{id}</span>
-              {#if done.includes(id)}
+              <span class="font-medium {wrap}">
+                {row.id}
+                {#if row.key === "provisioner"}<span class="block text-xs font-normal text-muted-foreground">
+                    provisioner key
+                  </span>{/if}
+              </span>
+              {#if done.includes(slotKey(row))}
                 <span class="text-sm text-muted-foreground">Done</span>
               {:else}
                 <Button
                   type="button"
                   size="touch"
                   variant="outline"
-                  aria-label="Re-lock {id}"
+                  aria-label={row.key === "main" ? `Re-lock ${row.id}` : `Re-lock the provisioner key of ${row.id}`}
                   disabled={busy}
-                  onclick={() => relock(id)}
+                  onclick={() => relock(row)}
                 >
-                  {working === id ? "Working..." : "Re-lock"}
+                  {working === slotKey(row) ? "Working..." : "Re-lock"}
                 </Button>
               {/if}
             </li>
           {/each}
         </ul>
+      {/if}
+      {#if step === "relock" && listProblem}
+        <Alert.Root variant="destructive" role="alert">
+          <Alert.Description class="{wrap} grid gap-2">
+            <span>{listProblem}</span>
+            <span>
+              <Button type="button" size="touch" variant="outline" disabled={busy} onclick={retryList}>
+                Try again
+              </Button>
+            </span>
+          </Alert.Description>
+        </Alert.Root>
       {/if}
       {#if problem}
         <Alert.Root variant="destructive" role="alert">

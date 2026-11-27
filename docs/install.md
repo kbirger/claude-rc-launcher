@@ -101,7 +101,7 @@ The script downloads the release zip that has the other installer files, checks 
 installer inside. `| iex` cannot take parameters, so give options as environment variables, and set them first:
 
 ```powershell
-$env:CLAUDE_RC_OPEN_FIREWALL = '1'   # also: CLAUDE_RC_RELEASE='v1.2.3', CLAUDE_RC_CLIENT_ONLY='1', CLAUDE_RC_NO_CLIENT='1'
+$env:CLAUDE_RC_OPEN_FIREWALL = '1'   # also: CLAUDE_RC_RELEASE='v1.2.3', CLAUDE_RC_CLIENT_ONLY='1', CLAUDE_RC_NO_CLIENT='1', CLAUDE_RC_NO_SSH_CLIENT='1'
 irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1 | iex
 ```
 
@@ -140,7 +140,7 @@ entry and the registry value, with no node and no service. The script keeps the 
 and adds the folder only once.
 
 The script also checks for the Windows OpenSSH client, version 9.0 or newer, because SSH requests need it. The check looks only in
-`%SystemRoot%System32OpenSSH` and `%ProgramFiles%OpenSSH`. If the client is missing, the script adds it with
+`%SystemRoot%\System32\OpenSSH` and `%ProgramFiles%\OpenSSH`. If the client is missing, the script adds it with
 `Add-WindowsCapability` and then with `dism.exe` if that fails. If it cannot install a client, it prints the reason and goes on.
 SSH requests then stay off. The switch `-NoSshClient` skips this step.
 

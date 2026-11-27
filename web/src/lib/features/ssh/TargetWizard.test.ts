@@ -216,6 +216,14 @@ test("the install step shows the line of the key answer with a Copy button", asy
   await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(LINE));
 });
 
+test("the install step of a dropbear target says that the router does not limit the key by address", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, systemType: "dropbear" });
+  const text = document.querySelector("[data-dropbear-line]")!.textContent!.replace(/\s+/g, " ");
+  expect(text).toContain("Dropbear does not support from=");
+  expect(text).toContain("Your approval of each request is the control.");
+  expect(document.body.textContent).not.toContain("The line limits the key to the source addresses");
+});
+
 test("the wizard resumes at the unlock step for a target with no key", async () => {
   await resumeAt({});
   expect(document.body.textContent).toContain("Step 2 of 6: Key");
@@ -328,22 +336,27 @@ const keyFileInput = () => document.querySelector<HTMLInputElement>('input[id$="
 test("the key file field shows only for a managed linux or synology target", async () => {
   answers["GET /api/hosts"] = () => ({ body: [{ id: "node2", name: "Box", status: "ok" }] });
   show(PRF);
+
   // External: hidden for every type.
   for (const type of ["linux", "synology", "windows", "dropbear"]) {
     choose('select[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
+
   label("Managed").querySelector("input")!.click();
   flushSync();
   await vi.waitFor(() => expect(document.querySelector('select[id$="-host"] option[value="node2"]')).not.toBeNull());
+
   for (const type of ["linux", "synology"]) {
     choose('select[id$="-type"]', type);
     expect(keyFileInput()).not.toBeNull();
   }
+
   for (const type of ["windows", "dropbear"]) {
     choose('select[id$="-type"]', type);
     expect(keyFileInput()).toBeNull();
   }
+
   choose('select[id$="-type"]', "linux");
   expect(keyFileInput()!.value).toBe("");
   expect(keyFileInput()!.placeholder).toBe("authorized_keys");
@@ -626,4 +639,25 @@ test("a status without hasKeys asks for the current password and shows no rule",
   await resumeAt({}, PASSPHRASE);
   expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.autocomplete).toBe("current-password");
   expect(document.body.textContent).not.toContain("at least 12 characters");
+});
+
+test("the wizard of an external target names the provisioner command", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready" });
+  const hint = document.querySelector("[data-provisioner-hint]")!;
+  expect(hint.textContent!.replace(/\s+/g, " ")).toContain("claude-rc ssh target provisioner nas --identity <file>");
+});
+
+test("the wizard of an external dropbear target names the provisioner command too", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready", systemType: "dropbear" });
+  expect(document.querySelector("[data-provisioner-hint]")).not.toBeNull();
+});
+
+test.each([
+  ["a managed target", { managedHost: "node1" }],
+  ["a windows target", { systemType: "windows" as const }],
+  ["a target that has a provisioner", { provisionerFingerprint: "SHA256:prov" }],
+])("the done screen of %s names no provisioner command", async (_name, extra) => {
+  await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready", ...extra });
+  expect(document.body.textContent).toContain("is ready");
+  expect(document.querySelector("[data-provisioner-hint]")).toBeNull();
 });

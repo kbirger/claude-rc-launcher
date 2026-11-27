@@ -36,9 +36,10 @@ import { WatchFlag } from "./sessionwatch";
 import { stopServer } from "./sse";
 import { GrantStore } from "./sshgrants";
 import { SshKeyStore } from "./sshkeystore";
+import { defaultRunner } from "./sshmaintenance";
 import { createLocalSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
-import { closeMessage, createRequestNotifier } from "./sshnotify";
+import { closeMessage, createMaintenanceNotifier, createRequestNotifier } from "./sshnotify";
 import { SshService } from "./sshservice";
 import { TargetStore } from "./sshtargets";
 import { staticHandler } from "./static";
@@ -311,7 +312,18 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
     grants: sshGrants,
     client: (hostId) => sshHostClient(hostId, localSsh.client, (id) => hosts.get(id)?.client),
     audit: sshAudit,
+    // A maintenance grant runs `ssh` on the hub machine through the grant files of the host `local`.
+    runSsh: defaultRunner,
+    hasSsh: () => Bun.which("ssh") !== null,
+    localReady: () => localSsh.client !== undefined,
     notifyClose: (grant) => void push.send(closeMessage(grant)),
+    notifyMaintenance: createMaintenanceNotifier({
+      send: (message) => push.send(message),
+      isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
+      onError: (text) => {
+        sshAudit(`push notify: maintenance send failed: ${logToken(text)}`);
+      },
+    }),
     notify: createRequestNotifier({
       send: (message) => push.send(message),
       isPending: (grantId) => sshGrants.get(grantId)?.state === "pending",
@@ -324,7 +336,9 @@ export async function startHub(cfg: Config, deps: HubDeps = {}): Promise<{ port:
           return reply.body as { id: string; name: string }[];
         });
       },
-      onError: (text) => sshAudit(`push notify: name lookup failed: ${logToken(text)}`),
+      onError: (text) => {
+        sshAudit(`push notify: name lookup failed: ${logToken(text)}`);
+      },
     }),
   });
   sshHook.service = ssh;

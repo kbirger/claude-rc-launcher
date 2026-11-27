@@ -330,6 +330,21 @@ export class TargetStore {
     await this.update(id, (target) => ({ ...target, nodes: [...nodes] }));
   }
 
+  /**
+   * Sets the node list only if the stored list is still `expected`, in one change of the store: a later change of the
+   * list is never undone by an earlier one. True when the list was set.
+   */
+  async setNodesIf(id: string, expected: string[], nodes: string[]): Promise<boolean> {
+    return this.mutate((draft) => {
+      const current = draft.targets.get(id);
+      if (!current) return false;
+      if (current.nodes.length !== expected.length || current.nodes.some((node, index) => node !== expected[index]))
+        return false;
+      draft.targets.set(id, { ...current, nodes: [...nodes] });
+      return true;
+    });
+  }
+
   async remove(id: string): Promise<void> {
     await this.mutate((draft) => {
       if (!draft.targets.delete(id)) throw new TargetError(404, "no such target");
@@ -413,14 +428,23 @@ export class TargetStore {
 }
 
 /**
- * The line to add to `authorized_keys`. `from=` limits the key to the source addresses of the allowed nodes, and
- * `restrict` turns off port, agent and X11 forwarding and the terminal. It throws for no address, and for an address or
- * a key line that could add an option.
+ * The options of a Dropbear line. Dropbear has no `from=` and refuses a whole line with an option that it does not know.
+ * `restrict` came in Dropbear 2022.82, so older routers refuse it too. These four flags do the same as `restrict` and
+ * work in every version. A Dropbear key is not limited by address: the approval of the hub is the control.
  */
-export function authorizedKeysLine(publicLine: string, sourceAddresses: string[]): string {
+export const DROPBEAR_OPTIONS = "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty";
+
+/**
+ * The line to add to `authorized_keys`. For OpenSSH, `from=` limits the key to the source addresses of the allowed
+ * nodes, and `restrict` turns off port, agent and X11 forwarding and the terminal. For `dropbear`, the line has the
+ * four flags of `DROPBEAR_OPTIONS` and no address limit. It throws for no address, and for an address or a key line
+ * that could add an option. The addresses are checked for Dropbear too: the hub still needs them for its nodes.
+ */
+export function authorizedKeysLine(publicLine: string, sourceAddresses: string[], systemType?: SystemType): string {
   if (sourceAddresses.length === 0) throw new Error("at least one source address is needed");
   if (!sourceAddresses.every((address) => SOURCE_RE.test(address))) throw new Error("a source address is not valid");
   if (!singleLine(publicLine)) throw new Error("the public key must be one line");
+  if (systemType === "dropbear") return `${DROPBEAR_OPTIONS} ${publicLine}`;
   return `from="${sourceAddresses.join(",")}",restrict ${publicLine}`;
 }
 
@@ -464,7 +488,8 @@ export function installNotes(systemType: SystemType): string[] {
     case "dropbear":
       return [
         "Paste the line into Administration, System, Authorized Keys in the router web page.",
-        "This type covers Asuswrt-Merlin. Check that this Dropbear version honors from= and restrict. If it ignores from=, the source limit does not apply.",
+        "This type covers Asuswrt-Merlin. Dropbear does not support from=, so the router does not limit this key by address.",
+        "The approval of the hub is the control: every grant needs your approval.",
         "Check that the key survives a reboot.",
       ];
   }

@@ -8,11 +8,13 @@
   const shell = getShell();
 
   const target = $derived(page.url.searchParams.get("target"));
+  const provisioner = $derived(page.url.searchParams.get("provisioner") === "1");
 </script>
 
 <!-- Closing the wizard drops `?target=`, so that the link of a draft target opens it again. -->
 <SshPage
   {target}
+  {provisioner}
   canAdmin={shell.can("admin")}
   onclose={() => target && goto(resolve("/ssh"), { replaceState: true })}
 />

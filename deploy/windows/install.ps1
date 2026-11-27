@@ -8,7 +8,7 @@
     irm https://github.com/kbirger/claude-rc-launcher/releases/latest/download/install.ps1 | iex
 
   `| iex` cannot take parameters. Use environment variables instead (CLAUDE_RC_RELEASE=v1.2.3, CLAUDE_RC_CLIENT_ONLY=1,
-  CLAUDE_RC_NO_CLIENT=1, CLAUDE_RC_OPEN_FIREWALL=1), or run it as a script block:
+  CLAUDE_RC_NO_CLIENT=1, CLAUDE_RC_NO_SSH_CLIENT=1, CLAUDE_RC_OPEN_FIREWALL=1), or run it as a script block:
 
     & ([scriptblock]::Create((irm <url>))) -ClientOnly
 
@@ -84,7 +84,7 @@ $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest is much faster wit
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # `irm <url> | iex` cannot pass parameters, so the main options can also be given as environment variables:
-# CLAUDE_RC_RELEASE=v1.2.3, CLAUDE_RC_CLIENT_ONLY=1, CLAUDE_RC_NO_CLIENT=1, CLAUDE_RC_OPEN_FIREWALL=1.
+# CLAUDE_RC_RELEASE=v1.2.3, CLAUDE_RC_CLIENT_ONLY=1, CLAUDE_RC_NO_CLIENT=1, CLAUDE_RC_NO_SSH_CLIENT=1, CLAUDE_RC_OPEN_FIREWALL=1.
 # A parameter that is given on the command line always wins.
 function Get-EnvFlag([string]$Var) {
   $v = [Environment]::GetEnvironmentVariable($Var)

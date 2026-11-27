@@ -329,7 +329,7 @@ This task cannot pass without the real router. Mark it done only after the owner
 
 **Interfaces:**
 - Produces:
-  - `export function routerScript(input: { targetId: string, mainPublicLine: string, provisionerBlob: string }): string`
+  - `export function routerScript(input: { targetId: string, mainPublicLine: string, provisionerBlob: string, localSource: string }): string`
   - `export function routerInstallScript(input: { targetId: string, mainPublicLine: string, provisionerPublicLine: string, localSource: string, sources: string[] }): Script`
 - The files live in `/jffs/scripts`. Each write runs the guard, then `nvram set sshd_authkeys`, then `nvram commit`, then the live file.
 
@@ -346,8 +346,8 @@ This task cannot pass without the real router. Mark it done only after the owner
   2. On the router, run `nvram get sshd_authkeys`. Check that it holds both lines.
   3. Reboot the router. Run the same command again. Check both lines again.
   4. From the hub, send `ls` with the provisioner key. Expect `error bad-command`.
-  5. Change the nodes from the phone and approve. Reboot. Check the new `from=` list.
-  6. If `restrict` is unknown to this Dropbear, the login fails. Then switch to the long form of the options.
+  5. Change the nodes from the phone and approve. Reboot. Check that the main line did not change.
+  6. No line on the router has `from=` or `restrict` (a ruling of the owner). The lines use the four `no-` flags.
   7. Retire from the phone and approve. Reboot. Check that both lines are gone.
 - [ ] **Step 6: Reviewer gate.** A reviewer checks the NVRAM order and the size limit of `sshd_authkeys`.
 - [ ] **Step 7: Commit** `feat(ssh): router version of the provisioner script (untested on a router)`.

@@ -1,12 +1,20 @@
+import { realTimers } from "./changesource";
+import type { Timers } from "./changesource";
 import type { HostClient } from "./hostclient";
+import { HOST_ID_RE, LOCAL_HOST } from "./hostid";
+import { HttpError } from "./instances";
 import { isObject } from "./requests";
 import { logToken } from "./roles";
 import { GrantError } from "./sshgrants";
-import type { Grant, GrantStore } from "./sshgrants";
+import type { Grant, GrantStore, Maintenance, MaintenanceAction } from "./sshgrants";
 import { KeyError } from "./sshkeystore";
-import type { SshKeyStore, UnlockSecret } from "./sshkeystore";
+import type { KeySlot, SshKeyStore, UnlockSecret } from "./sshkeystore";
+import { defaultRunner, runProvisioner } from "./sshmaintenance";
+import type { SshRunner } from "./sshmaintenance";
 import { NO_WAITING_REQUEST } from "./sshnodeapi";
-import { authorizedKeysLine, TargetError } from "./sshtargets";
+import { formatCommand, validSources } from "./sshprovisioner";
+import type { ProvisionerAnswer, ProvisionerCommand } from "./sshprovisioner";
+import { authorizedKeysLine, hasProvisioner, MAX_NODES, TargetError } from "./sshtargets";
 import type { Target, TargetStore } from "./sshtargets";
 
 // Hub service for SSH delegation. It joins the key store, the target store and the grant store to the nodes. A node
@@ -27,6 +35,19 @@ const SCRIPT_TIMEOUT_MS = 90_000;
 const DEAUTHORIZE_TIMEOUT_MS = 10_000;
 const MAX_DETAIL = 200;
 const STOPPED_WAITING = "The session stopped waiting. Ask the session to request again.";
+/** The instance id of a maintenance grant. A real instance id has 12 hex characters, so it never matches one. */
+export const MAINTENANCE_INSTANCE = "maintenance";
+export const MAINTENANCE_BUSY = "a maintenance request waits for this target";
+export const OUT_OF_DATE = "the change is out of date: start it again";
+const NO_SSH_PROGRAM = "the hub has no ssh program: install the OpenSSH client on the hub machine";
+/** The time that the `commit` of a maintenance run gets. The grant lasts one minute, and the restore needs time too. */
+const COMMIT_TIMEOUT_MS = 10_000;
+export const COMMIT_TIMEOUT_TEXT = "the change could not be stored in time";
+/**
+ * The exit codes of the script that mean it refused before it wrote anything: bad-command (2), unsafe-file (3),
+ * guard (4) and no-sources (5). A write-failed (6) can follow a write of the key line, so it is not in the list.
+ */
+const NOTHING_WRITTEN_CODES = new Set([2, 3, 4, 5]);
 
 /** A node that cannot be reached, or that answers with an error, when the hub asks it for something (502 for a route). */
 export class NodeError extends Error {
@@ -51,7 +72,54 @@ interface Deps {
   notify?: (grant: Grant, target: Target) => void;
   /** Called once when a real (not test) grant leaves `pending`, so that the request notification can close. */
   notifyClose?: (grant: Grant) => void;
+  /** Called once for each new maintenance request. A throw is audited and does not fail the request. */
+  notifyMaintenance?: (grant: Grant, target: Target) => void;
+  /** Runs one `ssh` child process for a maintenance grant. Default: `defaultRunner` of `sshmaintenance.ts`. */
+  runSsh?: SshRunner;
+  /** Whether the hub machine has an `ssh` program. Default: `Bun.which("ssh")`. */
+  hasSsh?: () => boolean;
+  /** Whether the host `local` has the grant routes (not on Windows). Default: a client for `local` exists. */
+  localReady?: () => boolean;
+  /** The timers of the commit time limit. Default: real timers. */
+  timers?: Timers;
+  /** The time limit of the `commit` of a maintenance run, in ms. Default: 10 seconds. */
+  commitTimeoutMs?: number;
 }
+
+/**
+ * The hook that stores the change of a good maintenance run, while the grant is still active. `signal` aborts when the
+ * time limit passes: the run then counts as failed and the old list goes back on the target, so a commit that ends
+ * late must undo its write.
+ */
+export type MaintenanceCommit = (grant: Grant, signal: AbortSignal) => Promise<void>;
+
+/** One step of a maintenance run: a command and the check of its answer. */
+interface Step {
+  command: ProvisionerCommand;
+  check: (answer: ProvisionerAnswer) => boolean;
+  wrong: string;
+}
+
+/** The outcome of a maintenance run. */
+interface Outcome {
+  result: "done" | "failed";
+  detail?: string;
+  /** A step that changes the target finished, and no restore undid it. */
+  changed: boolean;
+}
+
+/** What the restore of the old list did. */
+interface Restore {
+  attempted: boolean;
+  ok: boolean;
+  error?: string;
+}
+
+const CHANGED_TEXT = "the target already holds part of the change";
+const RESTORE_FAILED_TEXT = "the old list could not be put back";
+
+const sameList = (left: readonly string[], right: readonly string[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
 
 const isOk = (status: number) => status >= 200 && status < 300;
 
@@ -63,6 +131,15 @@ function errorText(body: unknown, status: number): string {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The class of an error and its status or code, for an audit line: never its text, which can hold a path. */
+export function errorKind(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown";
+  const extra = error as { status?: unknown; code?: unknown };
+  const code =
+    typeof extra.status === "number" ? extra.status : typeof extra.code === "string" ? extra.code : undefined;
+  return logToken(code === undefined ? error.name : `${error.name}:${code}`);
 }
 
 export class SshService {
@@ -113,30 +190,48 @@ export class SshService {
   /**
    * Opens the key with the unlock, starts the grant and gives it to the node. A wrong unlock leaves the grant pending
    * (403). A node that cannot take the grant ends it with `node-lost`, and the call fails with 409.
+   * A maintenance grant opens the provisioner key, never the main key, and a plain grant never opens the provisioner key.
+   * For a maintenance grant, the call then runs the action on the target, records the result and ends the grant: the
+   * answer holds `maintenance.result`. A maintenance grant whose change is out of date ends at once (409).
+   * `options.commit` (maintenance only) runs after a good run and before the grant ends. When it throws, the old list
+   * goes back on the target in the same grant, the result is `failed`, and the call throws the error of `commit`.
+   * A `commit` that does not end within the time limit fails the same way, with `COMMIT_TIMEOUT_TEXT`.
    */
-  async approve(grantId: string, by: string, unlock: UnlockSecret, minutes?: number): Promise<Grant> {
+  async approve(
+    grantId: string,
+    by: string,
+    unlock: UnlockSecret,
+    minutes?: number,
+    options: { commit?: MaintenanceCommit } = {},
+  ): Promise<Grant> {
     const { grants, keys } = this.deps;
     const grant = grants.get(grantId);
     if (!grant) throw new GrantError(404, "no such grant");
     if (grant.state !== "pending") throw new GrantError(409, `grant is ${grant.state}`);
+    // First for a maintenance grant: a grant that can never run ends here, and the lock of the target clears.
+    this.checkStillCurrent(grant);
     const target = this.usableTarget(grant);
     if (!target.hostKey) throw new TargetError(409, "the host key of the target is not pinned");
+    const slot: KeySlot = grant.maintenance ? "provisioner" : "main";
 
     let key;
 
     try {
-      key = await keys.open(grant.targetId, unlock);
+      key = await keys.open(grant.targetId, unlock, slot);
     } catch (error) {
       if (error instanceof KeyError && error.code === "wrong-unlock")
         throw new GrantError(403, "the unlock does not open the key");
+      if (error instanceof KeyError && error.code === "needs-rewrap")
+        throw new TargetError(409, "this target needs its key to be recovered");
       throw error;
     }
 
     // The derive takes a while: a disable, a retire or a recovery begin can land meanwhile. Read the target again.
     try {
       this.usableTarget(grant);
-      if (keys.pendingRewraps().includes(grant.targetId))
+      if (keys.pendingRewraps(slot).includes(grant.targetId))
         throw new TargetError(409, "this target needs its key to be recovered");
+      this.checkStillCurrent(grant);
     } catch (error) {
       key.destroy();
       throw error;
@@ -146,22 +241,70 @@ export class SshService {
     const publicKey = Buffer.from(key.publicBlob).toString("base64");
     const active = grants.approve(grantId, by, key, minutes);
 
+    if (!active.maintenance) {
+      await this.activate(active, target, publicKey);
+      return grants.get(grantId) ?? active;
+    }
+
+    // From here the run of a maintenance grant holds the lock of the target, also after the grant ended.
+    this.running.set(active.targetId, active.id);
+
     try {
-      const reply = await this.nodeCall(active.nodeId, "POST", "/grants", {
-        grantId: active.id,
-        ...(active.requestId !== undefined ? { requestId: active.requestId } : {}),
-        instanceId: active.instanceId,
-        targetId: active.targetId,
+      let config: string;
+
+      try {
+        config = (await this.activate(active, target, publicKey)).config;
+      } catch (error) {
+        this.endMaintenance(active.id, by, { result: "failed", detail: message(error) });
+        throw error;
+      }
+
+      return await this.runMaintenance(active, config, by, options.commit);
+    } finally {
+      const clear = () => {
+        if (this.running.get(active.targetId) === active.id) this.running.delete(active.targetId);
+      };
+
+      // A commit that passed its time limit can still write the store: the lock holds until it settles, so no new
+      // change of the target starts before the store is final.
+      const late = this.lateCommits.get(active.id);
+      this.lateCommits.delete(active.id);
+      if (late) void late.then(clear, clear);
+      else clear();
+    }
+  }
+
+  /**
+   * Gives an active grant to its node (`POST /grants`) and returns the answer of the node. A node that cannot take it
+   * ends the grant with `node-lost` and throws a `GrantError` 409.
+   */
+  private async activate(grant: Grant, target: Target, publicKey: string): Promise<{ socket: string; config: string }> {
+    const { grants } = this.deps;
+    let files: { socket: string; config: string };
+
+    try {
+      const reply = await this.nodeCall(grant.nodeId, "POST", "/grants", {
+        grantId: grant.id,
+        ...(grant.requestId !== undefined ? { requestId: grant.requestId } : {}),
+        instanceId: grant.instanceId,
+        targetId: grant.targetId,
         publicKey,
         address: target.address,
         port: target.port,
         account: target.account,
         hostKey: target.hostKey,
-        endsAt: active.endsAt,
+        endsAt: grant.endsAt,
       });
       if (!isOk(reply.status)) throw new Error(errorText(reply.body, reply.status));
+      const body = isObject(reply.body) ? reply.body : {};
+      files = {
+        socket: typeof body.socket === "string" ? body.socket : "",
+        config: typeof body.config === "string" ? body.config : "",
+      };
+      // The hub runs ssh with the config file of a maintenance grant: without it there is nothing to run.
+      if (grant.maintenance && !files.config) throw new Error("the node gave no config file for the grant");
     } catch (error) {
-      grants.endWhere((item) => item.id === grantId, "node-lost");
+      grants.endWhere((item) => item.id === grant.id, "node-lost");
       if (error instanceof GrantError) throw error;
       // The owner reads this text on the approve sheet, so the node text becomes plain words.
       const text = message(error);
@@ -170,25 +313,382 @@ export class SshService {
 
     // The grant ended while the POST was in flight: its DELETE may have reached the node before the grant existed
     // there, and the node has no timer of its own. Tell the node again.
-    if (grants.get(grantId)?.state !== "active") {
-      void this.nodeCall(active.nodeId, "DELETE", `/grants/${active.id}`).catch((error: unknown) => {
-        this.failed(active, message(error));
+    if (grants.get(grant.id)?.state !== "active") {
+      void this.nodeCall(grant.nodeId, "DELETE", `/grants/${grant.id}`).catch((error: unknown) => {
+        this.failed(grant, message(error));
       });
     }
 
-    return grants.get(grantId) ?? active;
+    return files;
   }
 
   /**
    * The target of a grant, if a grant may use it now: a `ready` target, or a `draft` target for the test grant that the
-   * hub makes (`test`). A real grant never uses a target that has not passed its test.
+   * hub makes (`test`). A real grant never uses a target that has not passed its test. A maintenance grant uses a
+   * target in every state: a retire sets `disabled` first, and the uninstall still runs.
    */
   private usableTarget(grant: Grant): Target {
     const target = this.deps.targets.get(grant.targetId);
     if (!target) throw new TargetError(404, "no such target");
+    if (grant.maintenance) return target;
     if (target.state !== "ready" && !(target.state === "draft" && grant.test))
       throw new TargetError(409, `the target is ${target.state}`);
     return target;
+  }
+
+  /**
+   * Makes a pending maintenance grant for the node `local`: one action of the provisioner script on an external target.
+   * Only the hub calls this, for an admin. It checks every precondition first, and it refuses a second request for the
+   * same target while one is pending, active or running. The owner approves the grant with a new unlock.
+   */
+  requestMaintenance(input: { targetId: string; action: MaintenanceAction; toNodes?: string[]; by: string }): Grant {
+    const target = this.needTarget(input.targetId);
+    const maintenance = this.planMaintenance(target, input.action, input.toNodes);
+    if (this.maintenanceFor(target.id)) throw new TargetError(409, MAINTENANCE_BUSY);
+    const grant = this.deps.grants.request({
+      nodeId: LOCAL_HOST,
+      instanceId: MAINTENANCE_INSTANCE,
+      targetId: target.id,
+      maintenance,
+    });
+    const to = maintenance.toSources ?? maintenance.fromSources;
+    this.maintenanceNote(
+      grant,
+      `event=requested by=${logToken(input.by)} from=${maintenance.fromSources.length} to=${to.length}`,
+    );
+
+    try {
+      this.deps.notifyMaintenance?.(grant, target);
+    } catch (error) {
+      this.note(`notify failed grant=${logToken(grant.id)} failed=${logToken(message(error))}`);
+    }
+
+    return grant;
+  }
+
+  /** The maintenance grant of a target that is pending or active, or whose run is not over yet. */
+  maintenanceFor(targetId: string): Grant | undefined {
+    const { grants } = this.deps;
+    const open = grants
+      .list()
+      .find((grant) => grant.maintenance !== undefined && grant.targetId === targetId && grant.state !== "ended");
+    if (open) return open;
+    const running = this.running.get(targetId);
+    return running === undefined ? undefined : grants.get(running);
+  }
+
+  /** The target ids whose maintenance run is not over, with the grant id. The lock of `maintenanceFor`. */
+  private readonly running = new Map<string, string>();
+
+  /** The commits that passed their time limit and have not settled yet, by grant id. */
+  private readonly lateCommits = new Map<string, Promise<void>>();
+
+  /** The preconditions of a maintenance grant, and its lists. It throws the first refusal, with a plain text. */
+  private planMaintenance(target: Target, action: MaintenanceAction, toNodes: string[] | undefined): Maintenance {
+    const { keys, targets } = this.deps;
+    if (target.managedHost !== undefined) throw new TargetError(409, "the target is a managed target");
+    if (!hasProvisioner(target) || !this.hasKey(target.id, "provisioner"))
+      throw new TargetError(409, "this target has no provisioner");
+    const localReady = this.deps.localReady ?? (() => this.deps.client(LOCAL_HOST) !== undefined);
+    if (!localReady()) throw new HttpError(501, "the hub cannot run maintenance on this system");
+    const hasSsh = this.deps.hasSsh ?? (() => Bun.which("ssh") !== null);
+    if (!hasSsh()) throw new TargetError(409, NO_SSH_PROGRAM);
+    const local = targets.nodeAccess(LOCAL_HOST);
+    if (local?.enabled !== true || !local.sourceAddress)
+      throw new TargetError(409, "turn on SSH access for the node local with a source address");
+    if (local.sourceAddress !== target.provisionerSource)
+      throw new TargetError(
+        409,
+        `the source address of local changed since the provisioner was installed: run claude-rc ssh target provisioner ${target.id} --identity <file>`,
+      );
+    if (keys.pendingRewraps("main").includes(target.id) || keys.pendingRewraps("provisioner").includes(target.id))
+      throw new TargetError(409, "this target needs its key to be recovered");
+    if (!target.hostKey) throw new TargetError(409, "the host key of the target is not pinned");
+
+    const fromNodes = [...target.nodes];
+    const fromSources = targets.sourcesOf(target);
+
+    if (action !== "sources") {
+      if (toNodes !== undefined) throw new TargetError(400, "only the action sources takes a new node list");
+      // `install` sends the stored list first, so the list must be one that the script takes.
+      if (action === "install")
+        this.needSources(fromSources, "no node of this target has access enabled with a source address");
+      return { action, fromNodes, fromSources };
+    }
+
+    if (
+      !Array.isArray(toNodes) ||
+      toNodes.length > MAX_NODES ||
+      !toNodes.every((id) => typeof id === "string" && HOST_ID_RE.test(id)) ||
+      new Set(toNodes).size !== toNodes.length
+    )
+      throw new TargetError(400, "the new node list must be distinct host ids");
+    const toSources = targets.sourcesOf({ nodes: toNodes });
+    this.needSources(toSources, "no node of the new list has access enabled with a source address");
+    return { action, fromNodes, toNodes: [...toNodes], fromSources, toSources };
+  }
+
+  private needSources(list: string[], empty: string): void {
+    if (list.length === 0) throw new TargetError(409, empty);
+    // A ruling of the owner: the script takes exact addresses and host names only, no pattern.
+    if (!validSources(list))
+      throw new TargetError(409, "a source address of the list is not an exact address or host name");
+  }
+
+  private hasKey(targetId: string, slot: KeySlot): boolean {
+    try {
+      this.deps.keys.publicLine(targetId, slot);
+      return true;
+    } catch (error) {
+      if (error instanceof KeyError && error.code === "no-key") return false;
+      throw error;
+    }
+  }
+
+  /**
+   * For a maintenance grant: the preconditions still hold and the lists are the ones of the request. A grant whose
+   * change is out of date can never run, so it ends at once and the lock of the target clears.
+   */
+  private checkStillCurrent(grant: Grant): void {
+    const work = grant.maintenance;
+    if (!work) return;
+
+    try {
+      const now = this.planMaintenance(this.needTarget(grant.targetId), work.action, work.toNodes);
+      // An uninstall removes the line whatever its list, so only the other actions care about the sources.
+      if (
+        (work.action !== "uninstall" && !sameList(now.fromSources, work.fromSources)) ||
+        !sameList(now.toSources ?? [], work.toSources ?? []) ||
+        (work.action === "sources" && !sameList(now.fromNodes, work.fromNodes))
+      )
+        throw new TargetError(409, OUT_OF_DATE);
+    } catch (error) {
+      if (this.deps.grants.get(grant.id)?.state === "pending") {
+        this.deps.grants.setResult(grant.id, "failed", message(error));
+        this.deps.grants.deny(grant.id, "system");
+      }
+
+      throw error;
+    }
+  }
+
+  /** The commands of an action. `status` runs after the action as a check. `uninstall` removes the script, so none. */
+  private stepsOf(work: Maintenance): Step[] {
+    const sources = (list: string[]): Step => ({
+      command: { kind: "sources", list },
+      check: (answer) => answer.kind === "sources" && sameList(answer.list, list),
+      wrong: "the script did not store the new list",
+    });
+    const status = (list: string[]): Step => ({
+      command: { kind: "status" },
+      check: (answer) => answer.kind === "status" && answer.present && sameList(answer.list, list),
+      wrong: "the key line on the target does not hold the list after the run",
+    });
+
+    if (work.action === "uninstall")
+      return [
+        {
+          command: { kind: "uninstall" },
+          check: (answer) => answer.kind === "uninstall",
+          wrong: "the script did not remove the key lines",
+        },
+      ];
+    if (work.action === "sources") return [sources(work.toSources ?? []), status(work.toSources ?? [])];
+    return [
+      sources(work.fromSources),
+      {
+        command: { kind: "on" },
+        check: (answer) => answer.kind === "on" && sameList(answer.list, work.fromSources),
+        wrong: "the script did not put the key line back",
+      },
+      status(work.fromSources),
+    ];
+  }
+
+  /**
+   * Runs the steps of an active maintenance grant, one `ssh` child process each, then `commit`, and ends the grant.
+   * Before each step the grant must still be active: a grant that ended (an expiry, a revoke) records `failed`, skips
+   * the other steps and is not finished again. A failed `sources`, or a `commit` that throws, puts the old list back in
+   * the same grant, as a best effort. `changed` tells that the target can hold a change that the hub did not store.
+   * The `finally` ends the grant on every path, a crash too.
+   */
+  private async runMaintenance(
+    grant: Grant,
+    config: string,
+    by: string,
+    commit: MaintenanceCommit | undefined,
+  ): Promise<Grant> {
+    let outcome: Outcome = { result: "failed", detail: "the run stopped", changed: false };
+    let commitError: { error: unknown } | undefined;
+
+    try {
+      if (grant.maintenance) outcome = await this.runSteps(grant, grant.maintenance, config);
+
+      if (outcome.result === "done" && commit) {
+        try {
+          await this.boundedCommit(commit, this.deps.grants.get(grant.id) ?? grant, grant.id);
+          this.maintenanceNote(grant, "event=committed");
+        } catch (error) {
+          commitError = { error };
+          this.maintenanceNote(grant, `event=commit-failed error=${errorKind(error)}`);
+          const restored = await this.restore(grant, config);
+          outcome = this.failure(`the change was not stored: ${message(error)}`, !restored.ok, restored);
+        }
+      }
+    } finally {
+      this.endMaintenance(grant.id, by, outcome);
+    }
+
+    if (commitError) throw commitError.error;
+    return this.deps.grants.get(grant.id) ?? grant;
+  }
+
+  /**
+   * Runs `commit` with a time limit, so that a hung commit cannot hold the lock of the target and the approve call for
+   * ever. At the limit the signal aborts and the call throws `COMMIT_TIMEOUT_TEXT`. A late end of `commit` is ignored.
+   */
+  private async boundedCommit(commit: MaintenanceCommit, grant: Grant, grantId: string): Promise<void> {
+    const timers = this.deps.timers ?? realTimers;
+    const controller = new AbortController();
+    let handle: unknown;
+
+    const limit = new Promise<never>((_resolve, reject) => {
+      handle = timers.setTimeout(() => {
+        controller.abort();
+        this.lateCommits.set(
+          grantId,
+          work.then(
+            () => {},
+            () => {},
+          ),
+        );
+        reject(new NodeError(COMMIT_TIMEOUT_TEXT));
+      }, this.deps.commitTimeoutMs ?? COMMIT_TIMEOUT_MS);
+    });
+    const work = commit(grant, controller.signal);
+    // A commit that fails after the limit has no one to tell.
+    work.catch(() => {});
+
+    try {
+      await Promise.race([work, limit]);
+    } finally {
+      timers.clearTimeout(handle);
+    }
+  }
+
+  private async runSteps(grant: Grant, work: Maintenance, config: string): Promise<Outcome> {
+    // A step that changes the target finished: a failure after it leaves the target changed, unless the restore works.
+    let changed = false;
+
+    for (const step of this.stepsOf(work)) {
+      if (this.deps.grants.get(grant.id)?.state !== "active")
+        return this.failure("the grant ended before the run was over", changed);
+
+      // From here the target can change: a revoke or an expiry is no longer the same as a deny.
+      this.markStarted(grant.id);
+      const run = await this.runStep(grant, config, step.command);
+
+      if (run.answer === undefined || !step.check(run.answer)) {
+        const why = run.answer === undefined ? (run.error ?? "the run failed") : step.wrong;
+        // A changing step that failed can still have written: a timeout, a lost connection or a wrong answer can come
+        // after the write. Only a refusal of the script itself says that it wrote nothing.
+        const refused = run.answer === undefined && run.code !== undefined && NOTHING_WRITTEN_CODES.has(run.code);
+        const maybe = changed || (step.command.kind !== "status" && !refused);
+        const restored = await this.restore(grant, config);
+        return this.failure(why, restored.attempted ? !restored.ok && maybe : maybe, restored);
+      }
+
+      if (step.command.kind !== "status") changed = true;
+    }
+
+    return { result: "done", changed };
+  }
+
+  private markStarted(grantId: string): void {
+    try {
+      this.deps.grants.markStarted(grantId);
+    } catch (error) {
+      this.note(`maintenance grant=${logToken(grantId)} start not recorded failed=${errorKind(error)}`);
+    }
+  }
+
+  /** A failed outcome. The fixed sentences come first, because the detail is cut to 200 characters. */
+  private failure(why: string, changed: boolean, restored?: Restore): Outcome {
+    const parts = [
+      ...(changed ? [CHANGED_TEXT] : []),
+      ...(restored?.attempted && !restored.ok ? [RESTORE_FAILED_TEXT] : []),
+      why,
+      ...(restored?.error ? [`the restore: ${restored.error}`] : []),
+    ];
+    return { result: "failed", detail: parts.join(". "), changed };
+  }
+
+  /** Records the result and ends the grant if it is still active. It never throws. */
+  private endMaintenance(grantId: string, by: string, outcome: Outcome | { result: "failed"; detail: string }): void {
+    const { grants } = this.deps;
+
+    try {
+      grants.setResult(grantId, outcome.result, outcome.detail, "changed" in outcome ? outcome.changed : false);
+    } catch (error) {
+      this.note(`maintenance grant=${logToken(grantId)} result not recorded failed=${logToken(message(error))}`);
+    }
+
+    try {
+      if (grants.get(grantId)?.state === "active") grants.finish(grantId, by);
+    } catch {
+      // The run is over in every case: `done` is the end reason, and the result says how it went.
+      grants.endWhere((item) => item.id === grantId, "done");
+    }
+  }
+
+  /** A failed change of the list: the old list goes back on the target, in the same grant. Best effort. */
+  private async restore(grant: Grant, config: string): Promise<Restore> {
+    const work = grant.maintenance;
+    if (work?.action !== "sources" || !validSources(work.fromSources)) return { attempted: false, ok: false };
+    if (this.deps.grants.get(grant.id)?.state !== "active") return { attempted: false, ok: false };
+    const run = await this.runStep(grant, config, { kind: "sources", list: work.fromSources });
+    const ok = run.answer?.kind === "sources" && sameList(run.answer.list, work.fromSources);
+    // The audit line holds a fixed word and the exit code only: the text of ssh can hold an address.
+    this.maintenanceNote(grant, ok ? "event=restored" : `event=restore-failed code=${run.code ?? "none"}`);
+    if (ok) return { attempted: true, ok };
+    return { attempted: true, ok, error: run.error ?? "the script gave another answer" };
+  }
+
+  /**
+   * One `ssh` child process. It never throws: a failure is the `error` text. The audit line names the command word,
+   * the exit code and the answer word only.
+   */
+  private async runStep(
+    grant: Grant,
+    config: string,
+    command: ProvisionerCommand,
+  ): Promise<{ answer?: ProvisionerAnswer; code?: number; error?: string }> {
+    const run = this.deps.runSsh ?? defaultRunner;
+    const seen: { code?: number } = {};
+
+    const runner: SshRunner = async (...args) => {
+      const reply = await run(...args);
+      seen.code = reply.code;
+      return reply;
+    };
+
+    try {
+      const answer = await runProvisioner(runner, config, grant.targetId, formatCommand(command));
+      this.maintenanceNote(
+        grant,
+        `event=run command=${command.kind} code=${seen.code ?? "none"} answer=${answer.kind}`,
+      );
+      return { answer, ...seen };
+    } catch (error) {
+      this.maintenanceNote(grant, `event=run command=${command.kind} code=${seen.code ?? "none"} answer=none`);
+      return { ...seen, error: message(error) };
+    }
+  }
+
+  private maintenanceNote(grant: Grant, text: string): void {
+    this.note(
+      `maintenance grant=${logToken(grant.id)} target=${logToken(grant.targetId)} action=${grant.maintenance?.action ?? "none"} ${text}`,
+    );
   }
 
   /** Ends an active grant. The node is told by `onGrantEnd`. */
@@ -231,7 +731,7 @@ export class SshService {
     const sources = targets.sourcesOf(nodes === undefined ? target : { nodes });
     if (sources.length === 0)
       throw new TargetError(409, "no node of this target has access enabled with a source address");
-    const line = authorizedKeysLine(keys.publicLine(targetId), sources);
+    const line = authorizedKeysLine(keys.publicLine(targetId), sources, target.systemType);
     const reply = await this.nodeReply(
       target.managedHost,
       "POST",
