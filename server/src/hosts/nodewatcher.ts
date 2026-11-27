@@ -1,7 +1,7 @@
 import { HostError } from "./client";
 import type { HostRegistry } from "./HostRegistry";
 import { isObject } from "../shared/requests";
-import type { SessionsPayload } from "../sessionindex";
+import type { SessionsPayload } from "../sessions/SessionIndex";
 import type { StepName } from "./NodeEvents";
 import { cutLine, MAX_AT } from "../updatelog";
 import type { UpdateLog } from "../updatelog";

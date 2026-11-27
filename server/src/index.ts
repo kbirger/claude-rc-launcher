@@ -4,7 +4,7 @@ import { applyLocal, loadConfigFile, resolveConfigPath } from "./config/file";
 import { startHub } from "./hubmain";
 import { generateSecret } from "./auth/node";
 import { startNode } from "./nodemain";
-import { runNudgeSend } from "./nudge";
+import { runNudgeSend } from "./sessions/nudge";
 import { VERSION } from "./shared/version";
 
 if (process.argv.includes("--version")) {

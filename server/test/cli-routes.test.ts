@@ -12,7 +12,7 @@ import { HostRegistry } from "../src/hosts/HostRegistry";
 import { createJwtVerifier } from "../src/auth/jwt";
 import { generateSecret, nodeAuth } from "../src/auth/node";
 import { DEFAULT_ROLES } from "../src/roles";
-import { SessionCatalog } from "../src/sessioncatalog";
+import { SessionCatalog } from "../src/sessions/SessionCatalog";
 import { ensureNodeCert } from "../src/hosts/tls";
 import type { UserAuthStrategy } from "../src/auth/user";
 

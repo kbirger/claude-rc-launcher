@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config/parse";
-import { encodeProjectDir } from "../src/transcript";
+import { encodeProjectDir } from "../src/sessions/transcript";
 
 // The refusal rules have unit tests. This checks that the node app hands its real state folders to the abs gate.
 

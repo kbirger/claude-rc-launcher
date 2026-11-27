@@ -8,7 +8,7 @@ import { HOST_ID_RE } from "../id";
 import type { HostRegistry } from "../HostRegistry";
 import { HttpError } from "../../instances/InstanceService";
 import type { LatestRelease } from "../../latest";
-import { parseRuleEdit } from "../../permissionsapi";
+import { parseRuleEdit } from "../../sessions/api/permissions";
 import {
   isObject,
   parseCloneRequest,

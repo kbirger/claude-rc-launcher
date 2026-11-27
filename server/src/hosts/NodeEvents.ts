@@ -1,4 +1,4 @@
-import type { SessionsEvent, SessionsPayload } from "../sessionindex";
+import type { SessionsEvent, SessionsPayload } from "../sessions/SessionIndex";
 
 export type StepName =
   "downloading" | "verifying" | "installing-client" | "installing" | "restarting" | "failed" | "up-to-date";
