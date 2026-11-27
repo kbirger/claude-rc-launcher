@@ -2,7 +2,8 @@
 // because it needs the Svelte plugins.
 //
 // Server layout rules (server/CLAUDE.md). They apply to server/src only. The tests and cli/ are exempt.
-// - no-restricted-imports, built by serverImportBlocks() in scripts/eslint/serverlayout.js:
+// - server-layout/imports, in scripts/eslint/serverlayout.js. It resolves each relative import, so the rules hold at
+//   any folder depth and for import(), require() and type import("...") too:
 //   (a) A feature imports another feature only through its index.ts. shared/ and win/ have no index, so
 //       their files are imported directly. The composition root (index.ts, index.win.ts, hubmain.ts,
 //       nodemain.ts, app.ts) is exempt. roles.ts, serve.ts and win/ follow the rule.
@@ -12,16 +13,16 @@
 // - server-layout/file-names, in the same file:
 //   (e) A PascalCase file exports a class of that name. Every other class of the file is an *Error class.
 //       A lowercase file holds no class other than *Error classes.
-//   (f) No file is named helpers, utils, common or misc.
+//   (f) No file or folder name holds helper, util, misc or common (sshutils.ts and utils/ fail too).
 // - import-x/no-cycle: no import cycle of values in server/src. Type-only imports do not count.
-// The rules match the import strings, so a dynamic import() is not checked. Tests: server/test/eslint-layout.test.ts.
+// Tests: server/test/eslint-layout.test.ts (it lints with this file, so it fails if a rule or setting goes).
 import honoConfig from "@hono/eslint-config";
 import stylistic from "@stylistic/eslint-plugin";
 import hono from "eslint-plugin-hono";
 import prettier from "eslint-plugin-prettier/recommended";
 import globals from "globals";
 import tseslint from "typescript-eslint";
-import serverLayout, { serverImportBlocks } from "./scripts/eslint/serverlayout.js";
+import serverLayout, { COMPOSITION_ROOT } from "./scripts/eslint/serverlayout.js";
 
 const importX = honoConfig.find((block) => block.plugins?.["import-x"])?.plugins["import-x"];
 
@@ -56,7 +57,6 @@ export default tseslint.config(
       ],
     },
   },
-  ...serverImportBlocks(),
   {
     files: ["server/src/**/*.ts"],
     plugins: { "server-layout": serverLayout },
@@ -64,10 +64,14 @@ export default tseslint.config(
     // hono config loads, so it adds no dependency.
     settings: {
       "import-x/extensions": [".ts", ".js"],
-      "import-x/resolver-next": [importX.createNodeResolver({ extensions: [".ts", ".js", ".json"] })],
+      "import-x/resolver-next": [
+        importX.createNodeResolver({ extensions: [".ts", ".js", ".json"], extensionAlias: { ".js": [".ts", ".js"] } }),
+      ],
     },
     rules: { "server-layout/file-names": "error", "import-x/no-cycle": "error" },
   },
+  // The composition root imports what it wires, so the import rules skip it.
+  { files: ["server/src/**/*.ts"], ignores: COMPOSITION_ROOT, rules: { "server-layout/imports": "error" } },
   // Explicit exceptions to the layout rules. Each one names the file and the reason.
   //
   // Exception 1, win/ (rule a): win/ is a platform folder with no index.ts. ssh/node/wiring.ts and
@@ -86,7 +90,8 @@ export default tseslint.config(
     // Exception 3:
     // GrantPlatform.ts holds the GrantPlatform interface, the platform seam of the grant code. The Linux and
     // Windows classes implement it in their own files. It has no class, so rule (e) fails. A rename to a
-    // lowercase name or a rule for interface files is an owner decision (the B1 placements stay).
+    // lowercase name or a rule for interface files is an owner decision. The file also breaks the rule of
+    // server/CLAUDE.md that a file with no class has a lowercase name.
     files: ["server/src/ssh/node/GrantPlatform.ts"],
     rules: { "server-layout/file-names": "off" },
   },
