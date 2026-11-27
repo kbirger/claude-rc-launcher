@@ -2,12 +2,11 @@
   import * as Alert from "#lib/components/ui/alert/index.js";
   import { Button } from "#lib/components/ui/button/index.js";
   import CheckPasskey from "./CheckPasskey.svelte";
-  import { createQuery } from "@tanstack/svelte-query";
-  import type { Grant } from "./api";
+  import { useQueryClient } from "@tanstack/svelte-query";
   import ApproveSheet from "./ApproveSheet.svelte";
   import GrantList from "./GrantList.svelte";
-  import { grantsQuery, statusQuery } from "./queries";
   import NodeAccess from "./NodeAccess.svelte";
+  import { createSshPageModel } from "./page.svelte";
   import ProvisionerKey from "./ProvisionerKey.svelte";
   import NotifySwitch from "../push/NotifySwitch.svelte";
   import RecoveryFlow from "./RecoveryFlow.svelte";
@@ -15,10 +14,7 @@
   import TargetList from "./TargetList.svelte";
   import TargetWizard from "./TargetWizard.svelte";
 
-  // `target` is the id of the `?target=` link of a draft target: the wizard opens on it. If the target has a pending
-  // maintenance request, the link of the command line asks for its approval, so the approval sheet opens instead. With
-  // `provisioner` (the link `?target=<id>&provisioner=1`), the card that makes the provisioner key opens. `onclose`
-  // lets the route drop the parameters, so that the same link opens it again.
+  // The SSH page. The page model chooses the open sheet from the link (`target`, `provisioner`) and the buttons.
   let {
     target = null,
     provisioner = false,
@@ -26,64 +22,14 @@
     canAdmin = false,
   }: { target?: string | null; provisioner?: boolean; onclose?: () => void; canAdmin?: boolean } = $props();
 
-  const query = createQuery(() => statusQuery());
-  // True while the setup form holds the recovery code. It wins over every other branch (a failed or a set-up status
-  // included): the hub shows the code once, so the form must stay mounted until Finish. One branch holds the form, so
-  // it is the same instance before and after `holding` turns on.
-  let holding = $state(false);
-  // The wizard is outside the branches below, so that a failed refetch of the status cannot unmount it. The status it
-  // gets is the last one that loaded.
-  let wizard = $state<{ id?: string } | null>(null);
-  let keying = $state<string | null>(null);
-  const grants = createQuery(() => grantsQuery());
-  // The target of a link that waits for the list of grants, to choose between the wizard and the approval sheet.
-  let linked = $state<string | null>(null);
-  $effect(() => {
-    if (target && provisioner) {
-      keying = target;
-      wizard = null;
-      linked = null;
-    } else if (target) {
-      linked = target;
-    }
+  const model = createSshPageModel({
+    client: useQueryClient(),
+    target: () => target,
+    provisioner: () => provisioner,
+    onclose: () => onclose?.(),
   });
-  $effect(() => {
-    if (!linked || grants.isPending) return;
-    const id = linked;
-    const waiting = grants.data?.find((item) => item.targetId === id && item.maintenance && item.state === "pending");
-
-    if (waiting) {
-      approving = waiting;
-      wizard = null;
-    } else {
-      wizard = { id };
-    }
-
-    keying = null;
-    linked = null;
-  });
-  const closeWizard = () => {
-    wizard = null;
-    onclose?.();
-  };
-  const closeKeying = () => {
-    keying = null;
-    onclose?.();
-  };
-  const closeApproving = () => {
-    approving = null;
-    onclose?.();
-  };
-  // The approval sheet is outside the branches too, for the same reason. It holds the grant as it was when the owner
-  // opened it.
-  let approving = $state<Grant | null>(null);
-  // The recovery flow is outside the branches too: it holds the recovery code, so a failed refetch must not drop it.
-  let recovering = $state(false);
-  // Count each target once: a target with two keys to re-lock is one target.
-  const pending = $derived([
-    ...new Set([...(query.data?.pendingRewrap ?? []), ...(query.data?.pendingProvisionerRewrap ?? [])]),
-  ]);
-  const nodeCount = $derived(query.data?.nodes.length ?? 0);
+  const query = model.status;
+  const sheet = $derived(model.sheet);
 </script>
 
 <h2 class="font-heading mb-3 text-lg font-bold">SSH access</h2>
@@ -93,11 +39,11 @@
   </div>
 {/if}
 <!-- The passkey check is outside the branches below, so that a failed refetch of the status cannot drop its result. -->
-{#if canAdmin && !holding && query.data?.setUp && query.data.method === "prf" && query.data.credentialId}
-  <CheckPasskey credentialId={query.data.credentialId} busy={recovering || !!wizard || !!approving || !!keying} />
+{#if canAdmin && !model.holding && query.data?.setUp && query.data.method === "prf" && query.data.credentialId}
+  <CheckPasskey credentialId={query.data.credentialId} busy={model.busy} />
 {/if}
-{#if holding || (query.data && !query.data.setUp)}
-  <SetupForm bind:holding />
+{#if model.holding || (query.data && !query.data.setUp)}
+  <SetupForm bind:holding={model.holding} />
 {:else if query.isPending}
   <p class="text-muted-foreground">Loading SSH access...</p>
 {:else if query.error}
@@ -106,57 +52,50 @@
   </Alert.Root>
 {:else if query.data}
   <p class="text-sm text-muted-foreground">
-    Unlock method: {query.data.method === "prf" ? "passkey" : "passphrase"}. {nodeCount}
-    {nodeCount === 1 ? "node" : "nodes"}.
+    Unlock method: {query.data.method === "prf" ? "passkey" : "passphrase"}. {model.nodeCount}
+    {model.nodeCount === 1 ? "node" : "nodes"}.
   </p>
   <div class="mt-2">
-    <Button variant="outline" size="touch" onclick={() => (recovering = true)}>
+    <Button variant="outline" size="touch" onclick={model.recover}>
       {query.data.method === "passphrase" ? "Forgot your passphrase? Recover" : "Lost your passkey? Recover"}
     </Button>
   </div>
-  {#if pending.length > 0}
+  {#if model.pending.length > 0}
     <Alert.Root class="mt-3" role="status">
       <Alert.Description class="flex flex-wrap items-center justify-between gap-3">
         <span>
-          {pending.length}
-          {pending.length === 1 ? "target needs its key recovered." : "targets need their keys recovered."}
+          {model.pending.length}
+          {model.pending.length === 1 ? "target needs its key recovered." : "targets need their keys recovered."}
         </span>
-        <Button size="touch" onclick={() => (recovering = true)}>Recover keys</Button>
+        <Button size="touch" onclick={model.recover}>Recover keys</Button>
       </Alert.Description>
     </Alert.Root>
   {/if}
   <div class="mt-4 grid gap-6">
-    <GrantList onapprove={(grant) => (approving = grant)} />
+    <GrantList onapprove={model.approve} />
     <NodeAccess nodes={query.data.nodes} />
-    <TargetList onapprove={(grant) => (approving = grant)} />
+    <TargetList onapprove={model.approve} />
     <div>
-      <Button
-        size="touch"
-        onclick={() => {
-          wizard = {};
-          keying = null;
-        }}
-      >
-        Add target
-      </Button>
+      <Button size="touch" onclick={model.addTarget}>Add target</Button>
     </div>
   </div>
 {/if}
-{#if wizard && query.data?.setUp && !holding}
-  {#key wizard.id ?? ""}
-    <TargetWizard targetId={wizard.id} status={query.data} onclose={closeWizard} />
+<!-- Each sheet reads its props once, so #key mounts a fresh one for each id. -->
+{#if sheet?.kind === "wizard" && query.data?.setUp && !model.holding}
+  {#key sheet.id ?? ""}
+    <TargetWizard targetId={sheet.id} status={query.data} onclose={model.closeSheet} />
   {/key}
 {/if}
-{#if keying && query.data?.setUp && !holding}
-  {#key keying}
-    <ProvisionerKey targetId={keying} status={query.data} onclose={closeKeying} />
+{#if sheet?.kind === "provisioner" && query.data?.setUp && !model.holding}
+  {#key sheet.id}
+    <ProvisionerKey targetId={sheet.id} status={query.data} onclose={model.closeSheet} />
   {/key}
 {/if}
-{#if recovering && query.data?.setUp && !holding}
-  <RecoveryFlow status={query.data} onclose={() => (recovering = false)} />
+{#if model.recovering && query.data?.setUp && !model.holding}
+  <RecoveryFlow status={query.data} onclose={model.closeRecovery} />
 {/if}
-{#if approving && query.data?.setUp && !holding}
-  {#key approving.id}
-    <ApproveSheet grant={approving} status={query.data} onclose={closeApproving} />
+{#if sheet?.kind === "approve" && query.data?.setUp && !model.holding}
+  {#key sheet.grant.id}
+    <ApproveSheet grant={sheet.grant} status={query.data} onclose={model.closeSheet} />
   {/key}
 {/if}
