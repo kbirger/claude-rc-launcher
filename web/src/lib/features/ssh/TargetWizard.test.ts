@@ -130,7 +130,7 @@ test("the wizard does not show the install line before the key exists", async ()
   typeInto('input[id$="-id"]', "nas");
   typeInto('input[id$="-address"]', "10.0.0.5");
   typeInto('input[id$="-account"]', "root");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Create target");
   await waitText("Step 2 of 6: Key");
@@ -294,9 +294,10 @@ test("the type list holds linux, windows, synology and dropbear and nothing else
 
 test("the form lists only the nodes with SSH access on, none checked, and checks the id", () => {
   show(PRF);
-  const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-  expect(boxes.map((box) => box.value)).toEqual(["node1"]);
-  expect(boxes[0]!.checked).toBe(false);
+  const boxes = [...document.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')];
+  expect(boxes.map((box) => box.dataset.value)).toEqual(["node1"]);
+  expect(boxes[0]!.getAttribute("aria-checked")).toBe("false");
+  expect(boxes[0]!.labels[0]?.textContent).toContain("node1");
   typeInto('input[id$="-id"]', "Bad Id");
   typeInto('input[id$="-address"]', "x");
   typeInto('input[id$="-account"]', "root");
@@ -318,7 +319,7 @@ test("a managed target is sent with its managed host and an optional address", a
   choose('select[id$="-host"]', "node2");
   choose('select[id$="-type"]', "windows");
   typeInto('input[id$="-account"]', "admin");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
   press("Create target");
   await waitText("Step 2 of 6");
@@ -377,7 +378,7 @@ const fillManaged = async (type: string) => {
   choose('select[id$="-host"]', "node2");
   choose('select[id$="-type"]', type);
   typeInto('input[id$="-account"]', "admin");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
 };
 
@@ -421,7 +422,7 @@ const pickLocal = async (status: SshStatus) => {
   typeInto('input[id$="-id"]', "hubhost");
   choose('select[id$="-host"]', "local");
   typeInto('input[id$="-account"]', "root");
-  label("node1").querySelector("input")!.click();
+  label("node1").querySelector<HTMLElement>('[role="checkbox"]')!.click();
   flushSync();
 };
 
