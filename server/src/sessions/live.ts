@@ -7,7 +7,8 @@ import { OPEN_READ_NO_FOLLOW } from "./openflags";
 // session id, its status ("idle" or "busy"), the name the Claude app shows, and `bridgeSessionId` when it is attached
 // to Remote Control. The same folder holds `<pid>.<hash>.key` files with a peer token: this module never opens them.
 // Only files that end in `.json` are opened, at most 64 KB of each is read, and only the fields of LiveInfo leave it
-// (`bridgeId` is the Remote Control connection id. Only the session chain store reads it, and it never reaches the web).
+// (`bridgeId` is the Remote Control connection id. Only InstanceSessions.ts reads it, for the session chain store,
+// and it never reaches the web).
 // The instance user owns this folder, so the folder must really be inside home, and the listing is bounded.
 
 /**

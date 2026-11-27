@@ -152,7 +152,8 @@ with a secret token.
   The `pidDomain` of the file must also name this machine and this pid namespace. If `/proc` cannot be read, and on
   Windows, the check is `process.kill(pid, 0)`.
 - It returns only the status, the Remote Control state, the name, `nameIsDefault` and `bridgeId`. No other field
-  leaves the module. Only `sessions/SessionChains.ts` reads `bridgeId`, and it never reaches the web.
+  leaves the module. Only `sessions/InstanceSessions.ts` reads `bridgeId`. It gives the pairs of bridge id and
+  session id to the chain store in `sessions/SessionChains.ts`. The bridge id never reaches the web.
   `nameIsDefault` is true only when the file has `nameSource: "derived"`. Claude Code then made the name itself, from
   the folder name and two characters. A missing or unknown `nameSource` counts as a name that someone set. The value
   `derived` comes from reading the Claude binary (2.1.323). It is not documented and can change.
