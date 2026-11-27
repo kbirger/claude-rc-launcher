@@ -16,7 +16,9 @@ import { confirmPendingUpdate, createWindowsUpdater, realWinUpdateEnv, UPDATE_EX
 import { taskkillTree, WinInstances } from "./win/WinInstances";
 import { WinSshBridge } from "./win/WinSshBridge";
 
-// The Windows node. Only this file imports ./win, so the Linux binaries never contain this code.
+// The Windows node. Only this file imports the Windows instance, token, update and account code of ./win, so the
+// Linux binaries never contain that code. The SSH code of a node (ssh/node/wiring.ts and WindowsGrantPlatform.ts)
+// imports win/pipe, sshclient, sshfiles and WinSshControl, so the Linux binaries do contain those four files.
 
 if (process.argv.includes("--version")) {
   console.log(`claude-rc-launcher ${VERSION}`);
