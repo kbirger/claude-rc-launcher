@@ -12,7 +12,7 @@ const text = (item: string) => readFileSync(resolve(DEPLOY, item), "utf8").repla
 // and the marker in claude-rc-launcher.xml. In both cases, put the new hash here.
 // (The launcher change that replaced Start-Process by System.Diagnostics.Process fixed a rare lost exit code and did not
 // raise the version: an installation that has the old script works, except for an agent that ends within milliseconds.)
-const DEFINITION_FILES_SHA256 = "d141b4fc8867dbec93ff306d52bd70ff7113d5e0e6aa19c4164a5c6b9b8b0cf0";
+const DEFINITION_FILES_SHA256 = "be640ab5a4118e80f6166f0e9862d93ed99032d1157055ae34826c60eb9385be";
 
 describe("service definition version", () => {
   test("the marker in the XML template is the version that this release requires", () => {
