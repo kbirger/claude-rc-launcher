@@ -41,7 +41,6 @@
 {/snippet}
 
 <section class="grid gap-3">
-  <h3 class="font-heading text-base font-bold">Targets</h3>
   {#if model.problem}
     <Alert.Root variant="destructive" role="alert"><Alert.Description>{model.problem}</Alert.Description></Alert.Root>
   {/if}

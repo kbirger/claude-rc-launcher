@@ -68,7 +68,6 @@
 </script>
 
 <section class="grid gap-3">
-  <h3 class="font-heading text-base font-bold">Nodes</h3>
   {#if nodes.length === 0}
     <p class="text-sm text-muted-foreground">No nodes are known yet.</p>
   {/if}
