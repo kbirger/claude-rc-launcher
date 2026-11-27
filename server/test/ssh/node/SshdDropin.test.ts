@@ -12,8 +12,32 @@ import {
   parseKeyList,
 } from "../../../src/ssh/node/SshdDropin";
 import { FakeSshd } from "./fakesshd";
+import type { EffectiveAnswer } from "./fakesshd";
 
 const NEW_LIST = "AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 .ssh/authorized_keys.claude-rc";
+
+const OLD_MANAGED = `${DROPIN_MARKER}\nAuthorizedKeysFile .ssh/authorized_keys\n`;
+
+/** The first `sshd -T` answers as usual. Each later one gives `later`. */
+function laterEffective(later: EffectiveAnswer): EffectiveAnswer {
+  let count = 0;
+
+  return (fake, account) => {
+    count += 1;
+    return count === 1 ? fake.defaultEffective(account) : later(fake, account);
+  };
+}
+
+/** The work must reject with exactly this error. */
+async function rejection(work: Promise<unknown>): Promise<unknown> {
+  try {
+    await work;
+  } catch (error) {
+    return error;
+  }
+
+  throw new Error("the work was not refused");
+}
 
 async function refusal(work: Promise<unknown>): Promise<SshdDropinError> {
   try {
@@ -188,6 +212,97 @@ describe("SshdDropin.install", () => {
     expect(fake.changes()).toEqual([`writeFile ${DROPIN_PATH}`]);
   });
 
+  test("install puts back the old managed file when another file sets AuthorizedKeysFile first", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, OLD_MANAGED);
+    fake.baseList = [".ssh/authorized_keys"];
+    fake.dropinCounts = false;
+    const error = await refusal(new SshdDropin(fake).install());
+    expect(error.code).toBe("not-effective");
+    expect(fake.files.get(DROPIN_PATH)).toBe(OLD_MANAGED);
+    expect(fake.calls).not.toContain("reloadSshd");
+  });
+
+  test("install removes the drop-in and keeps the error when sshd -t throws", async () => {
+    const fake = new FakeSshd();
+    const spawn = new Error("spawn sshd ETIMEDOUT");
+    fake.testError = spawn;
+    expect(await rejection(new SshdDropin(fake).install())).toBe(spawn);
+    expect(fake.files.has(DROPIN_PATH)).toBe(false);
+    expect(fake.calls).not.toContain("reloadSshd");
+  });
+
+  test("install puts back the old managed file when sshd -t throws", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, OLD_MANAGED);
+    const spawn = new Error("spawn sshd ETIMEDOUT");
+    fake.testError = spawn;
+    expect(await rejection(new SshdDropin(fake).install())).toBe(spawn);
+    expect(fake.files.get(DROPIN_PATH)).toBe(OLD_MANAGED);
+  });
+
+  test("install removes the drop-in and keeps the error when the second sshd -T throws", async () => {
+    const fake = new FakeSshd();
+    const spawn = new Error("spawn sshd EAGAIN");
+
+    fake.effective = laterEffective(() => {
+      throw spawn;
+    });
+    expect(await rejection(new SshdDropin(fake).install())).toBe(spawn);
+    expect(fake.files.has(DROPIN_PATH)).toBe(false);
+    expect(fake.calls).not.toContain("reloadSshd");
+  });
+
+  test("install puts back the old managed file when the second sshd -T throws", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, OLD_MANAGED);
+    fake.baseList = [".ssh/authorized_keys"];
+    fake.dropinCounts = false;
+    const spawn = new Error("spawn sshd EAGAIN");
+
+    fake.effective = laterEffective(() => {
+      throw spawn;
+    });
+    expect(await rejection(new SshdDropin(fake).install())).toBe(spawn);
+    expect(fake.files.get(DROPIN_PATH)).toBe(OLD_MANAGED);
+  });
+
+  test("install says the check could not run when the second sshd -T fails", async () => {
+    const fake = new FakeSshd();
+    fake.effective = laterEffective(() => ({ code: 255, stdout: "", stderr: "Missing privilege separation dir" }));
+    const error = await refusal(new SshdDropin(fake).install());
+    expect(error.code).toBe("sshd-failed");
+    expect(error.message).toContain("Missing privilege separation dir");
+    expect(error.message).not.toContain("Another file");
+    expect(error.message).not.toContain("unknown");
+    expect(fake.files.has(DROPIN_PATH)).toBe(false);
+    expect(fake.calls).not.toContain("reloadSshd");
+  });
+
+  test("install says the check could not run when sshd is gone at the second sshd -T", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, OLD_MANAGED);
+    fake.baseList = [".ssh/authorized_keys"];
+    fake.dropinCounts = false;
+    fake.effective = laterEffective(() => undefined);
+    const error = await refusal(new SshdDropin(fake).install());
+    expect(error.code).toBe("sshd-failed");
+    expect(error.message).not.toContain("Another file");
+    expect(fake.files.get(DROPIN_PATH)).toBe(OLD_MANAGED);
+  });
+
+  test("install changes nothing on a Way 2 machine with no Include line", async () => {
+    const fake = new FakeSshd();
+    const main = "Port 22\nAuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys.claude-rc\n";
+    fake.files.set(MAIN_CONFIG_PATH, main);
+    fake.baseList = [".ssh/authorized_keys", ".ssh/authorized_keys.claude-rc"];
+    const result = await new SshdDropin(fake).install();
+    expect(result).toEqual({ kind: "unchanged", list: [".ssh/authorized_keys", ".ssh/authorized_keys.claude-rc"] });
+    expect(fake.calls).toEqual(["isRoot", "sshdEffective"]);
+    expect(fake.files.get(MAIN_CONFIG_PATH)).toBe(main);
+    expect(fake.files.has(DROPIN_PATH)).toBe(false);
+  });
+
   test("install uses the paths of the options", async () => {
     const fake = new FakeSshd();
     fake.files.delete(MAIN_CONFIG_PATH);
@@ -213,7 +328,7 @@ describe("SshdDropin.remove", () => {
   test("remove deletes only a file with the marker", async () => {
     const fake = new FakeSshd();
     fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${NEW_LIST}\n`);
-    expect(await new SshdDropin(fake).remove()).toBe("removed");
+    expect(await new SshdDropin(fake).remove()).toEqual({ kind: "removed", reloaded: true });
     expect(fake.files.has(DROPIN_PATH)).toBe(false);
     expect(fake.calls).toContain("sshdTest");
     expect(fake.calls).toContain("reloadSshd");
@@ -228,7 +343,7 @@ describe("SshdDropin.remove", () => {
 
   test("remove of a missing file answers absent", async () => {
     const fake = new FakeSshd();
-    expect(await new SshdDropin(fake).remove()).toBe("absent");
+    expect(await new SshdDropin(fake).remove()).toEqual({ kind: "absent" });
     expect(fake.changes()).toEqual([]);
   });
 
@@ -242,6 +357,18 @@ describe("SshdDropin.remove", () => {
     expect(error.message).toContain("broken");
     expect(fake.files.get(DROPIN_PATH)).toBe(text);
     expect(fake.calls).not.toContain("reloadSshd");
+  });
+
+  test("remove answers removed with a note when the reload fails", async () => {
+    const fake = new FakeSshd();
+    fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${NEW_LIST}\n`);
+    fake.reloadAnswer = { ok: false, detail: "no ssh or sshd unit" };
+    const result = await new SshdDropin(fake).remove();
+    expect(result.kind).toBe("removed");
+    if (result.kind !== "removed") return;
+    expect(result.reloaded).toBe(false);
+    expect(result.note).toContain("no ssh or sshd unit");
+    expect(fake.files.has(DROPIN_PATH)).toBe(false);
   });
 
   test("remove needs root", async () => {

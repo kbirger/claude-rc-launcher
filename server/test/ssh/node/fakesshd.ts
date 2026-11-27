@@ -23,6 +23,8 @@ export class FakeSshd implements SshdMachine {
   readonly accountLists = new Map<string, string[]>();
   effective: EffectiveAnswer = (fake, account) => fake.defaultEffective(account);
   testAnswer: CommandResult = { code: 0, stdout: "", stderr: "" };
+  /** Set: `sshd -t` rejects with this error, like a spawn error or a time limit of a real machine. */
+  testError: Error | undefined = undefined;
   reloadAnswer = { ok: true, detail: "reloaded ssh" };
 
   isRoot(): boolean {
@@ -32,11 +34,15 @@ export class FakeSshd implements SshdMachine {
 
   sshdEffective(account?: string): Promise<CommandResult | undefined> {
     this.calls.push(account === undefined ? "sshdEffective" : `sshdEffective ${account}`);
-    return Promise.resolve(this.effective(this, account));
+    // A throw of the scripted answer becomes a rejection, like a spawn error of a real machine.
+    return new Promise((resolve) => {
+      resolve(this.effective(this, account));
+    });
   }
 
   sshdTest(): Promise<CommandResult> {
     this.calls.push("sshdTest");
+    if (this.testError) return Promise.reject(this.testError);
     return Promise.resolve(this.testAnswer);
   }
 

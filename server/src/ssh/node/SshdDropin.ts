@@ -69,6 +69,8 @@ export interface SshdCheck {
 export type InstallResult =
   { kind: "unchanged"; list: string[] } | { kind: "installed"; list: string[]; reloaded: boolean; note?: string };
 
+export type RemoveResult = { kind: "absent" } | { kind: "removed"; reloaded: boolean; note?: string };
+
 export interface SshdDropinOptions {
   /** The command that the messages name. Default: `claude-rc node sshd`. */
   command?: string;
@@ -153,23 +155,14 @@ export class SshdDropin {
     }
 
     await this.machine.writeFile(this.dropinPath, dropinText([...list, MANAGED_ENTRY]));
-    const test = await this.machine.sshdTest();
+    let newList: string[];
 
-    if (test.code !== 0) {
-      await this.undo(old);
-      throw new SshdDropinError("test-failed", `sshd -t refused the drop-in, so it was undone: ${failure(test)}`);
-    }
-
-    const after = await this.machine.sshdEffective();
-    const newList = after?.code === 0 ? parseKeyList(after.stdout) : undefined;
-
-    if (!newList || !listHolds(newList, MANAGED_KEY_FILE)) {
-      await this.undo(old);
-      const shown = newList ? newList.join(" ") : "unknown";
-      throw new SshdDropinError(
-        "not-effective",
-        `sshd does not use the drop-in, so it was undone. Another file sets AuthorizedKeysFile first. sshd reads: ${shown}`,
-      );
+    try {
+      newList = await this.verifyWrite();
+    } catch (error) {
+      // A refusal, or a machine call that threw: the drop-in was not proven safe, so it goes.
+      await this.undoKeeping(old, error);
+      throw error;
     }
 
     const reload = await this.machine.reloadSshd();
@@ -184,10 +177,10 @@ export class SshdDropin {
   }
 
   /** Removes the drop-in. Only a file with the marker is removed. */
-  async remove(): Promise<"removed" | "absent"> {
+  async remove(): Promise<RemoveResult> {
     this.requireRoot("remove");
     const text = await this.machine.readFile(this.dropinPath);
-    if (text === undefined) return "absent";
+    if (text === undefined) return { kind: "absent" };
 
     if (dropinState(text) !== "managed") {
       throw new SshdDropinError(
@@ -207,8 +200,14 @@ export class SshdDropin {
       );
     }
 
-    await this.machine.reloadSshd();
-    return "removed";
+    const reload = await this.machine.reloadSshd();
+    if (reload.ok) return { kind: "removed", reloaded: true };
+
+    return {
+      kind: "removed",
+      reloaded: false,
+      note: `sshd was not reloaded (${reload.detail}). A running sshd that is not socket-activated still reads the file list of the drop-in until a reload.`,
+    };
   }
 
   /** True when sshd reads `~/.ssh/<keyFile>` for the account. A Match block can give the account another list. */
@@ -228,6 +227,56 @@ export class SshdDropin {
     if (!result) throw new SshdDropinError("no-sshd", "sshd is not installed on this machine. Nothing was changed.");
     if (result.code !== 0) throw new SshdDropinError("sshd-failed", `sshd -T failed: ${failure(result)}`);
     return parseKeyList(result.stdout);
+  }
+
+  /**
+   * After the write: `sshd -t` must pass, and a new `sshd -T` must give a list that holds the file. Each refusal says that
+   * the drop-in was undone. The caller undoes it.
+   */
+  private async verifyWrite(): Promise<string[]> {
+    const test = await this.machine.sshdTest();
+
+    if (test.code !== 0) {
+      throw new SshdDropinError("test-failed", `sshd -t refused the drop-in, so it was undone: ${failure(test)}`);
+    }
+
+    const after = await this.machine.sshdEffective();
+
+    if (!after) {
+      throw new SshdDropinError(
+        "sshd-failed",
+        "sshd -T could not run after the write, so the drop-in was undone. The new list was not checked: no sshd binary.",
+      );
+    }
+
+    if (after.code !== 0) {
+      throw new SshdDropinError(
+        "sshd-failed",
+        `sshd -T failed after the write, so the drop-in was undone. The new list was not checked: ${failure(after)}`,
+      );
+    }
+
+    const newList = parseKeyList(after.stdout);
+
+    if (!listHolds(newList, MANAGED_KEY_FILE)) {
+      throw new SshdDropinError(
+        "not-effective",
+        `sshd does not use the drop-in, so it was undone. Another file sets AuthorizedKeysFile first. sshd reads: ${newList.join(" ")}`,
+      );
+    }
+
+    return newList;
+  }
+
+  /** Undoes the write. When the undo fails too, the message of the first error also names the failed undo. */
+  private async undoKeeping(old: string | undefined, cause: unknown): Promise<void> {
+    try {
+      await this.undo(old);
+    } catch (undoError) {
+      const detail = undoError instanceof Error ? undoError.message : String(undoError);
+      if (cause instanceof Error)
+        cause.message += ` The undo failed too, so check ${this.dropinPath} by hand: ${detail}`;
+    }
   }
 
   /** Puts back the old managed text, or removes the new file. */
