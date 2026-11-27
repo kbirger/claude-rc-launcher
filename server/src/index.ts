@@ -1,6 +1,6 @@
-import { ConfigError } from "./config";
-import type { Config } from "./config";
-import { applyLocal, loadConfigFile, resolveConfigPath } from "./configfile";
+import { ConfigError } from "./config/parse";
+import type { Config } from "./config/parse";
+import { applyLocal, loadConfigFile, resolveConfigPath } from "./config/file";
 import { startHub } from "./hubmain";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";

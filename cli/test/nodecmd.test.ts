@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseConfig } from "../../server/src/config";
+import { parseConfig } from "../../server/src/config/parse";
 import { saveCreds } from "../src/creds";
 import { main } from "../src/index";
 import type { Env } from "../src/index";

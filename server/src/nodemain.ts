@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { createNodeApp } from "./app";
 import type { Updater } from "./app";
 import { serviceCloner } from "./cloner";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { bunRunner, InstanceService } from "./instances";
 import type { Instances } from "./instances";
 import { nodeAuth } from "./nodeauth";

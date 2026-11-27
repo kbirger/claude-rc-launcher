@@ -1,4 +1,4 @@
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import type { DirOwner } from "./fsapi";
 import { bunRunner } from "./instances";
 

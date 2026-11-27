@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError, parseConfig, windowsDataDir } from "../src/config";
-import type { ConfigIo } from "../src/config";
-import { resolveConfigPath } from "../src/configfile";
-import { accountName, checkServiceAccount } from "../src/win/account";
-import { defined } from "./support";
+import { ConfigError, parseConfig, windowsDataDir } from "../../src/config/parse";
+import type { ConfigIo } from "../../src/config/parse";
+import { resolveConfigPath } from "../../src/config/file";
+import { accountName, checkServiceAccount } from "../../src/win/account";
+import { defined } from "../support";
 
 const io: ConfigIo = { readFile: () => "x".repeat(40) };
 const node = (extra: Record<string, unknown> = {}) => ({

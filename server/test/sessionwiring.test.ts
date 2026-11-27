@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { encodeProjectDir } from "../src/transcript";
 
 // The refusal rules have unit tests. This checks that the node app hands its real state folders to the abs gate.

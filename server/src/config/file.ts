@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { ConfigError, parseConfig } from "./config";
-import type { Config, ConfigIo, ParseOptions } from "./config";
+import { ConfigError, parseConfig } from "./parse";
+import type { Config, ConfigIo, ParseOptions } from "./parse";
 
 export const DEFAULT_CONFIG_PATH = "/etc/claude-rc-launcher/config.toml";
 

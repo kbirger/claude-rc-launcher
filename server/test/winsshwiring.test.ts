@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sshRequest, sshTargets } from "../../cli/src/sshcmd";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import type { Instance, Instances } from "../src/instances";
 import { Hono } from "hono";
 import { onError } from "../src/app";

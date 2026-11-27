@@ -1,8 +1,8 @@
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
-import { parseConfig } from "../src/config";
-import type { Config, ProxyJwtUserAuth } from "../src/config";
+import { parseConfig } from "../src/config/parse";
+import type { Config, ProxyJwtUserAuth } from "../src/config/parse";
 import { createJwtVerifier } from "../src/jwt";
 import { cidrContains, proxyJwtUserAuth } from "../src/proxyauth";
 import { DEFAULT_ROLES } from "../src/roles";

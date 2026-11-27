@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCloner } from "../src/cloner";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import type { RunOptions, RunResult } from "../src/shared/runner";
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { instanceApi, onError } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 
 const ID = "0123456789ab";
 const cfg = { mode: "node", name: "n", port: 1, host: "x", roots: ["/tmp"], hosts: [], stateDir: "/tmp/sessionindex-route" } as unknown as Config;

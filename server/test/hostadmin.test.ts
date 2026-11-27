@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createNodeApp, onError } from "../src/app";
 import { PeekError, peekCertificate } from "../src/certpeek";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { hostAdminApi } from "../src/hostadmin";
 import { createHostClient, secretAuthorizer } from "../src/hostclient";
 import type { HostClient, HostConfig } from "../src/hostclient";

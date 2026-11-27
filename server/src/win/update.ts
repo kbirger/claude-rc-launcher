@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { win32 } from "node:path";
-import type { Config } from "../config";
+import type { Config } from "../config/parse";
 import { realUpdateEnv } from "../realupdate";
 import { downloadAsset, ReleaseError, RELEASE_TAG_RE, sha256 } from "../release";
 import type { ReleaseIo } from "../release";

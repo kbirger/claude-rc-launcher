@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createNodeApp, onError } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { hostAdminApi } from "../src/hostadmin";
 import { createHostClient, hubAuthorizer } from "../src/hostclient";
 import type { HostConfig } from "../src/hostclient";

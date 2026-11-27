@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
 import { createOidcClient, mintSessionCookie, oidcUserAuth, scopeFor } from "../src/auth";
 import type { OidcClient, User } from "../src/auth";
-import type { Config, OidcUserAuth } from "../src/config";
+import type { Config, OidcUserAuth } from "../src/config/parse";
 import { DEFAULT_ROLES } from "../src/roles";
 import { rejection, defined } from "./support";
 

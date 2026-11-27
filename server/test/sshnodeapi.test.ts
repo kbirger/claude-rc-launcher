@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp, onError } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import type { Instances } from "../src/instances";
 import {
   FrameReader,

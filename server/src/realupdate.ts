@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { readRegisteredClients } from "./installs";
 import type { RegQueryResult } from "./installs";
 import type { RunResult } from "./release";

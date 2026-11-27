@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { windowsDataDir } from "./config";
-import type { Config } from "./config";
-import { loadConfigFile, resolveConfigPath } from "./configfile";
+import { windowsDataDir } from "./config/parse";
+import type { Config } from "./config/parse";
+import { loadConfigFile, resolveConfigPath } from "./config/file";
 import { bunRunner } from "./instances";
 import { generateSecret } from "./nodeauth";
 import { startNode } from "./nodemain";

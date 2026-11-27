@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono, type MiddlewareHandler } from "hono";
 import { createApp } from "../src/app";
 import type { ChangeSource } from "../src/shared/PollSource";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import type { Presence } from "../src/nodewatcher";
 import { SessionCatalog } from "../src/sessioncatalog";
 import { SessionIndex } from "../src/sessionindex";

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createApp, createNodeApp } from "../src/app";
 import { cliBearerAuth } from "../src/cliauth";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { createHostClient, secretAuthorizer } from "../src/hostclient";
 import type { HostConfig } from "../src/hostclient";
 import { HostRegistry } from "../src/hostregistry";

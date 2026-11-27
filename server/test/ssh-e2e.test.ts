@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { mintSessionCookie } from "../src/auth";
 import type { OidcClient } from "../src/auth";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { startHub } from "../src/hubmain";
 import type { Instance } from "../src/instances";
 import { DEFAULT_ROLES } from "../src/roles";

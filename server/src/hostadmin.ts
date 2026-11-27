@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { isIP } from "node:net";
 import { PeekError, peekCertificate } from "./certpeek";
-import { hostUrlProblem } from "./config";
+import { hostUrlProblem } from "./config/parse";
 import { HostError } from "./hostclient";
 import type { HostClient, HostConfig } from "./hostclient";
 import { HOST_ID_RE } from "./hostid";

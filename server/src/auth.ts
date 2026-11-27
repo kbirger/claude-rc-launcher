@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import * as client from "openid-client";
 import { timingSafeEqual } from "node:crypto";
-import type { Config, OidcUserAuth } from "./config";
+import type { Config, OidcUserAuth } from "./config/parse";
 import { isObject } from "./shared/requests";
 import { isRole, rolesFrom } from "./roles";
 import type { RoleSettings } from "./roles";

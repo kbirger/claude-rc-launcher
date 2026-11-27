@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { argsWith, settingsFromArgs } from "./instancesettings";
 import type { InstanceSettings } from "./instancesettings";
 import { USER_NAME_RE } from "./shared/users";

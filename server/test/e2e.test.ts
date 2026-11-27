@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mintSessionCookie, type OidcClient } from "../src/auth";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { startHub } from "../src/hubmain";
 import { certFingerprint } from "../src/hubproof";
 import { generateSecret, hashSecret } from "../src/nodeauth";

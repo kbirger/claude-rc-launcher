@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseConfig } from "../src/config";
+import { parseConfig } from "../src/config/parse";
 import {
   defaultName,
   instanceId,

@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { createCloner } from "../src/cloner";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { bunLoginSpawner } from "../src/ghlogin";
 import type { LoginProc, LoginSpawner } from "../src/ghlogin";
 import { HttpError } from "../src/instances";

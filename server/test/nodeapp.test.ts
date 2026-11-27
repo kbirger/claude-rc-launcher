@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import { NodeEvents } from "../src/updateevents";
 import { VERSION } from "../src/shared/version";

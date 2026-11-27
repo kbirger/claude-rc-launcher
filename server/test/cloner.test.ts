@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCloner } from "../src/cloner";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import { adoptNewDir, DirChanged } from "../src/ownedir";
 import type { AdoptDir } from "../src/ownedir";

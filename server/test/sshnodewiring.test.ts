@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeApp, onError } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import type { Instance, Instances } from "../src/instances";
 import { accountIdentity, createNodeSsh, removeGrantFiles } from "../src/sshnodewiring";

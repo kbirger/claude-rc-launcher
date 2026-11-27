@@ -3,7 +3,7 @@ import { lstat, mkdir, chmod, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { onError } from "./app";
 import type { IdentityFor } from "./shared/asuser";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { HostError } from "./hostclient";
 import type { HostClient } from "./hostclient";
 import { LOCAL_HOST } from "./hostid";

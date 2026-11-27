@@ -3,7 +3,7 @@ import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serviceCloner } from "../src/cloner";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError, InstanceService } from "../src/instances";
 import type { Instances } from "../src/instances";
 import type { RunOptions, Runner } from "../src/shared/runner";

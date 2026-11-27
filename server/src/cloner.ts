@@ -2,7 +2,7 @@ import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { asUser } from "./shared/asuser";
 import type { IdentityFor } from "./shared/asuser";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { resolveChecked } from "./fsapi";
 import type { DirOwner } from "./fsapi";
 import { createLoginManager } from "./ghlogin";

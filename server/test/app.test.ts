@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { mintSessionCookie, oidcUserAuth, type OidcClient, type User } from "../src/auth";
 import type { UserAuthStrategy } from "../src/userauth";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError, type Instance } from "../src/instances";
 import { SETTINGS_HELP } from "../src/instancesettings";
 import { PathError } from "../src/shared/paths";

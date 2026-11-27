@@ -1,7 +1,7 @@
 import { getConnInfo } from "@hono/bun";
 import type { Context } from "hono";
 import { isIPv4, isIPv6 } from "node:net";
-import type { ProxyJwtUserAuth } from "./config";
+import type { ProxyJwtUserAuth } from "./config/parse";
 import type { JwtVerifier } from "./jwt";
 import { isAllowed, userFromClaims } from "./userauth";
 import type { UserAuthStrategy } from "./userauth";

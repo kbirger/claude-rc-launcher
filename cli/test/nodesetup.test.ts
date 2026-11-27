@@ -3,7 +3,7 @@ import { createHash, X509Certificate } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseConfig } from "../../server/src/config";
+import { parseConfig } from "../../server/src/config/parse";
 import { ensureNodeCert } from "../../server/src/tls";
 import { ExitError } from "../src/creds";
 import type { HubClient } from "../src/hub";

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { createApp, createNodeApp } from "../src/app";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import { HostError, createHostClient, secretAuthorizer, type HostClient, type HostConfig } from "../src/hostclient";
 import { generateSecret, nodeAuth } from "../src/nodeauth";

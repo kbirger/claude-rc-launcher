@@ -5,7 +5,7 @@ import { allSessionsApi } from "./allsessions";
 import type { ChangeSource, Timers } from "./shared/PollSource";
 import { cliConfigRoute } from "./cliauth";
 import type { Cloner } from "./cloner";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { enrollmentApi } from "./enrollment";
 import { listDirs, makeDir, resolveChecked } from "./fsapi";
 import type { DirOwner } from "./fsapi";

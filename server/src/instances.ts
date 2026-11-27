@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Identity } from "./shared/asuser";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import {
   ChangeLock,
   isValidPatch,

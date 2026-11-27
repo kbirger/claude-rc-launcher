@@ -6,7 +6,7 @@ import type { OidcClient } from "./auth";
 import type { Timers } from "./shared/PollSource";
 import { cliBearerAuth } from "./cliauth";
 import { serviceCloner } from "./cloner";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { createHostClient, hubAuthorizer, secretAuthorizer } from "./hostclient";
 import type { Authorizer, HostClient, HostConfig } from "./hostclient";
 import { LOCAL_HOST } from "./hostid";

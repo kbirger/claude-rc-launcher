@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
 import { mintSessionCookie, oidcUserAuth } from "../src/auth";
 import type { OidcClient, User } from "../src/auth";
-import type { Config } from "../src/config";
+import type { Config } from "../src/config/parse";
 import type { createReleaseList, ReleaseNotes } from "../src/releaselist";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io" };

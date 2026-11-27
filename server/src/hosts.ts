@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { Config } from "./config";
+import type { Config } from "./config/parse";
 import { downloadHeaders, lastSegment } from "./shared/disposition";
 import { HostError } from "./hostclient";
 import type { HostClient, HostFailure } from "./hostclient";
