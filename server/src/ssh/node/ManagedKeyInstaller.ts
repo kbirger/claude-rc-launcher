@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { HttpError } from "../../shared/HttpError";
+import { MANAGED_KEY_FILE } from "../constants";
+import { needsSshdCheck } from "../keyfile";
 import { deprovisionScript, provisionScript } from "../provision";
 import type { Script } from "../provision";
 import type { SystemType } from "../TargetStore";
@@ -29,9 +31,6 @@ export type SshdReads = (account: string, keyFile: string) => Promise<"passed" |
 
 /** The sshd check of an install. `not-needed`: the install uses `authorized_keys`, or is not for a Linux target. */
 export type SshdCheckResult = "passed" | "skipped" | "not-needed";
-
-/** The file that sshd reads without any config. An install into it needs no check. */
-const DEFAULT_KEY_FILE = "authorized_keys";
 
 /** A rule of the managed routes refused a request, or the script failed. The routes answer with `status`. */
 export class ManagedKeyError extends Error {
@@ -103,11 +102,10 @@ export class ManagedKeyInstaller {
   async authorize(input: AuthorizeInput): Promise<SshdCheckResult> {
     const { account, systemType, line, keyFile } = input;
     const script = provisionScript(systemType, line, systemType === "windows" ? { account } : { keyFile });
-    const needsCheck = systemType === "linux" && keyFile !== undefined && keyFile !== DEFAULT_KEY_FILE;
     let check: SshdCheckResult = "not-needed";
 
     await this.run(account, script, undefined, async () => {
-      if (needsCheck) check = await this.checkSshd(account, keyFile);
+      if (keyFile !== undefined && needsSshdCheck(systemType, keyFile)) check = await this.checkSshd(account, keyFile);
     });
     return check;
   }
@@ -135,10 +133,18 @@ export class ManagedKeyInstaller {
       throw new ManagedKeyError(500, `cannot check that sshd reads ~/.ssh/${keyFile}: ${detail}`);
     }
 
-    if (answer === "missing") {
+    // The install command adds only the managed file to the list of sshd. Another file needs an edit by the owner.
+    if (answer === "missing" && keyFile === MANAGED_KEY_FILE) {
       throw new ManagedKeyError(
         400,
         `sshd does not read ~/.ssh/${keyFile} for ${account}. Run on this machine: sudo claude-rc node sshd install`,
+      );
+    }
+
+    if (answer === "missing") {
+      throw new ManagedKeyError(
+        400,
+        `~/.ssh/${keyFile} is not in the AuthorizedKeysFile list of sshd for ${account}. The owner must add .ssh/${keyFile} to that list on this machine.`,
       );
     }
 

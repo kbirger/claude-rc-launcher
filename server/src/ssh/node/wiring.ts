@@ -96,6 +96,8 @@ export interface NodeSsh {
   stop(): Promise<void>;
   /** Resolves when the skill deployments that are queued now are done. For tests and shutdown. */
   skillsSettled(): Promise<void>;
+  /** Resolves when the sshd check of the start is done. The start does not wait for it. For tests and shutdown. */
+  sshdSettled(): Promise<void>;
 }
 
 /** The identity of an account of the machine: its home and a uid and gid that are always set. Rejects an unknown account with a 400. */
@@ -184,6 +186,7 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       start: () => Promise.resolve(),
       stop: () => Promise.resolve(),
       skillsSettled: () => Promise.resolve(),
+      sshdSettled: () => Promise.resolve(),
     };
 
   const broker = new SshBroker({ events });
@@ -191,6 +194,8 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
   const controls = new Map<string, SshControl>();
   let chain: Promise<void> = Promise.resolve();
   let skillChain: Promise<void> = Promise.resolve();
+  /** The sshd check of the start. It runs in the background: a slow `sshd -T` must not delay the listener. */
+  let sshdCheck: Promise<void> = Promise.resolve();
   /** The version of the skill that each user got in this process. A failure is not recorded, so the next reconcile tries again. */
   const skillDone = new Map<string, string>();
   const skillText = options.skillContent ?? (() => SSH_SKILL);
@@ -312,8 +317,12 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
           `ssh: sshd does not read ~/.ssh/${MANAGED_KEY_FILE}, so a new managed Linux target on this node fails. Run on this machine: sudo claude-rc node sshd install`,
         );
     } catch (error) {
+      // "Nothing was changed." belongs to the install text. The start changes nothing anyway.
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(/\s*Nothing was changed\.\s*$/, "")
+        .replace(/\.$/, "");
       log(
-        `ssh: cannot check that sshd reads ~/.ssh/${MANAGED_KEY_FILE}: ${error instanceof Error ? error.message : String(error)}`,
+        `ssh: cannot check that sshd reads ~/.ssh/${MANAGED_KEY_FILE}: ${detail}. To check by hand, run: sudo claude-rc node sshd check`,
       );
     }
   }
@@ -360,6 +369,7 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
     sshManaged,
     instances,
     skillsSettled: () => skillChain,
+    sshdSettled: () => sshdCheck,
     async start() {
       // The default user gets the skill also when the list of instances fails.
       scheduleSkills([]);
@@ -371,10 +381,12 @@ export function createNodeSsh(options: NodeSshOptions): NodeSsh {
       }
 
       await sync();
-      await checkSshd();
+      // checkSshd never throws, so nobody needs to wait for it.
+      sshdCheck = checkSshd();
     },
     async stop() {
       await chain;
+      await sshdCheck;
 
       for (const [id, control] of controls) {
         controls.delete(id);
@@ -528,6 +540,7 @@ function createWindowsSsh(
     sshUsable: async () => pipe !== "" && (await cachedCheck()).ok,
     instances,
     skillsSettled: () => Promise.resolve(),
+    sshdSettled: () => Promise.resolve(),
     async start() {
       try {
         await ensurePrivateFolder(dir, sid(), options.winIcacls);

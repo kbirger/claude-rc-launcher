@@ -232,6 +232,21 @@ describe("ManagedKeyInstaller", () => {
     expect(calls).toHaveLength(0);
   });
 
+  test("for another key file than the managed one, the 400 says to add it to the list of sshd", async () => {
+    readsAnswer = () => Promise.resolve("missing");
+    const error = await refusal(
+      installer().authorize({ account: "alice", systemType: "linux", line: LINE, keyFile: "authorized_keys.mine" }),
+    );
+
+    expect(error).toMatchObject({
+      status: 400,
+      message:
+        "~/.ssh/authorized_keys.mine is not in the AuthorizedKeysFile list of sshd for alice. The owner must add .ssh/authorized_keys.mine to that list on this machine.",
+    });
+    expect(error.message).not.toContain("claude-rc node sshd install");
+    expect(calls).toHaveLength(0);
+  });
+
   test("authorize skips the check for authorized_keys and for no key file", async () => {
     const first = await installer().authorize({
       account: "alice",

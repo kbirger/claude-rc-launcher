@@ -585,6 +585,7 @@ describe("the sshd check at the start of a node", () => {
     const fake = new FakeSshd();
     const { ssh } = build([], { sshd: new SshdDropin(fake) });
     await ssh.start();
+    await ssh.sshdSettled();
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("~/.ssh/authorized_keys.claude-rc");
     expect(logged[0]).toContain("sudo claude-rc node sshd install");
@@ -596,6 +597,7 @@ describe("the sshd check at the start of a node", () => {
     fake.files.set(DROPIN_PATH, `${DROPIN_MARKER}\n${MANAGED_LIST}\n`);
     const { ssh } = build([], { sshd: new SshdDropin(fake) });
     await ssh.start();
+    await ssh.sshdSettled();
     expect(logged).toEqual([]);
     expect(sshdCalls(fake)).toEqual(["sshdEffective"]);
     await ssh.stop();
@@ -605,6 +607,7 @@ describe("the sshd check at the start of a node", () => {
     const fake = new FakeSshd();
     const { ssh } = build([], { sshd: new SshdDropin(fake), isRoot: () => false });
     await ssh.start();
+    await ssh.sshdSettled();
     expect(fake.calls).toEqual([]);
     // A node that is not root cannot switch to svc, so only the skill logs.
     expect(logged.filter((line) => line.includes("sshd"))).toEqual([]);
@@ -615,6 +618,7 @@ describe("the sshd check at the start of a node", () => {
     const fake = new FakeSshd();
     const { ssh } = build([], { sshd: new SshdDropin(fake), platform: "win32" });
     await ssh.start();
+    await ssh.sshdSettled();
     expect(fake.calls).toEqual([]);
     await ssh.stop();
   });
@@ -624,6 +628,7 @@ describe("the sshd check at the start of a node", () => {
     fake.effective = () => undefined;
     const { ssh } = build([instance(ID1, true, "alice")], { sshd: new SshdDropin(fake) });
     await ssh.start();
+    await ssh.sshdSettled();
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("cannot check");
     expect(logged[0]).toContain("sshd is not installed");
@@ -641,14 +646,71 @@ describe("the sshd check at the start of a node", () => {
 
     const { ssh } = build([], { sshd: new SshdDropin(fake) });
     await ssh.start();
+    await ssh.sshdSettled();
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("spawn failed");
     await ssh.stop();
   });
 
+  test("a hung sshd -T does not delay the start", async () => {
+    const fake = new FakeSshd();
+
+    let release = () => {};
+
+    const hung = new Promise<undefined>((resolve) => {
+      release = () => {
+        resolve(undefined);
+      };
+    });
+
+    fake.sshdEffective = () => {
+      fake.calls.push("sshdEffective");
+      return hung;
+    };
+
+    const { ssh } = build([instance(ID1, true, "alice")], { sshd: new SshdDropin(fake) });
+    await ssh.start();
+    expect(existsSync(socketOf(ID1))).toBe(true);
+    let settled = false;
+    void ssh.sshdSettled().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(logged).toEqual([]);
+
+    release();
+    await ssh.sshdSettled();
+    expect(logged).toHaveLength(1);
+    await ssh.stop();
+  });
+
+  test("the line for a machine without sshd ends with the command to run", async () => {
+    const fake = new FakeSshd();
+    fake.effective = () => undefined;
+    const { ssh } = build([], { sshd: new SshdDropin(fake) });
+    await ssh.start();
+    await ssh.sshdSettled();
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).not.toContain("Nothing was changed");
+    expect(logged[0]).toMatch(/sudo claude-rc node sshd check$/);
+    await ssh.stop();
+  });
+
+  test("the Windows and no-SSH wiring settle the sshd check at once", async () => {
+    const ssh = createNodeSsh({
+      cfg,
+      instances: fakeInstances([]).instances,
+      events: new NodeEvents(),
+      platform: "win32",
+    });
+    await ssh.sshdSettled();
+  });
+
   test("under test without sshd the start checks nothing", async () => {
     const { ssh } = build([]);
     await ssh.start();
+    await ssh.sshdSettled();
     expect(logged).toEqual([]);
     await ssh.stop();
   });
