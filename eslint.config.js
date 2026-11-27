@@ -12,6 +12,7 @@ export default tseslint.config(
     ignores: [
       "dist/**",
       ".claude/**",
+      ".superpowers/**",
       "web/**",
       "server/src/web/embedded.ts",
       "server/src/web/embedded.d.ts",
