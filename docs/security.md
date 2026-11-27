@@ -87,8 +87,9 @@ These limits remain:
 - The `from=` part of the line limits where a key works. A root user of the machine can change any file.
 - On a shared machine, the root-owned folder of Way 2 is the stronger choice. The account cannot change a line in that folder. Read [Way 2](ssh-delegation.md#way-2-a-root-owned-folder).
 - sshd prints the list without quotes. So the install cannot repeat a path that has a space. On such a machine, write the drop-in by hand.
+- The drop-in repeats the `AuthorizedKeysFile` list of the install day, and sshd uses the first value. While the drop-in exists, a later change of that list in another sshd file has no effect. After such a change, run `sudo claude-rc node sshd remove` and then `sudo claude-rc node sshd install`.
 
-An old node does not know key files. It writes the line into `authorized_keys`, and the hub refuses the install. The hub then asks the same node to remove that line. This cleanup is best effort. If it fails, the error tells the admin to remove the line by hand. Until the admin does so, the line keeps its `from=` list. A later change of the nodes and a retire change only the key file of the target. So an address of a removed node still matches the old line.
+An old node does not know key files. It writes the line into `authorized_keys`, and the hub refuses the install. The hub then asks the same node to remove that line. The hub tries this one time. If it fails, the error tells the admin to remove the line by hand. Until the admin does so, the line keeps its `from=` list. A later change of the nodes and a retire change only the key file of the target. So an address of a removed node still matches the old line.
 
 ### The provisioner key
 

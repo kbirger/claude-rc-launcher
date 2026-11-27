@@ -165,6 +165,8 @@ AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2 .ssh/authorized_ke
 
 The drop-in loads before the main file, and sshd uses the first value of a keyword. So the line repeats the list that sshd used before, and it adds the new file at the end.
 
+The drop-in keeps the list of the install day. While the drop-in exists, a later change of `AuthorizedKeysFile` in another sshd file has no effect. After such a change, run `sudo claude-rc node sshd remove` and then `sudo claude-rc node sshd install`.
+
 To manage the drop-in by hand, run one of these commands on the machine:
 
 ```sh
@@ -175,7 +177,7 @@ sudo claude-rc node sshd remove
 
 - `check` tells whether sshd reads the file. If sshd reads it, the line shows the list, and the exit code is 0. If not, the exit code is 1.
 - `install` reads the list with `sshd -T`, writes the drop-in and tests it with `sshd -t`. Then it reloads sshd. If sshd reads the file already, it changes nothing.
-- `remove` deletes the drop-in, but only a drop-in with the marker comment. Then it tests the configuration with `sshd -t` and reloads sshd.
+- `remove` deletes the drop-in, but only a drop-in with the marker comment. Then it tests the configuration with `sshd -t` and reloads sshd. After a remove, each target on that machine with the key file `authorized_keys.claude-rc` stops working.
 
 Read [Command-line client](cli.md#the-sshd-drop-in) for the output and the exit codes.
 
@@ -208,10 +210,18 @@ A root node is a node whose service runs as root. A managed install is an instal
 sshd does not read ~/.ssh/authorized_keys.claude-rc for <account>. Run on this machine: sudo claude-rc node sshd install
 ```
 
+If the global list names the file but a `Match` block gives the account another list, the install fails with this text:
+
+```text
+A Match block in the sshd configuration sets another AuthorizedKeysFile list for <account>. The owner must add .ssh/authorized_keys.claude-rc to the list of that Match block on this machine.
+```
+
+In that case, `sudo claude-rc node sshd install` does not help, because it changes the global list only. Find the block with `sudo grep -rn -A5 Match /etc/ssh/sshd_config /etc/ssh/sshd_config.d`. Add `.ssh/authorized_keys.claude-rc` to the `AuthorizedKeysFile` line of that block. Then run `sudo sshd -t` and reload sshd.
+
 A node that does not run as root cannot ask sshd. It skips the check, and the command prints this note:
 
 ```text
-note: the node did not check that sshd reads ~/.ssh/authorized_keys.claude-rc. It is not root, or its version is older.
+note: the node did not check that sshd reads ~/.ssh/authorized_keys.claude-rc. It is not root, or its version is older. If the test fails, run sudo claude-rc node sshd check on the machine.
 ```
 
 The web wizard shows the same note on the Test step. For such a node, check the list by hand with `sudo sshd -T | grep -i authorizedkeysfile`.
@@ -258,6 +268,13 @@ The hub logs the same line for its own host. If `claude-rc` is not on the path o
 
 In this way, the account owner cannot change the key line. The owner of the machine writes the key line into a folder that belongs to root. A root user runs these steps once for each machine. Replace `<hub key line>` with the line of the target. Replace `<account>` with the account name on the machine.
 
+Before you run the block, do these steps:
+
+1. Open an SSH session to the machine. Keep it open until a second login works.
+2. Run `sudo sshd -T | grep -i authorizedkeysfile`. Keep every entry of that output in the new `AuthorizedKeysFile` line.
+3. If `/etc/ssh/sshd_config.d/49-claude-rc.conf` exists, do not run the third command of the block. Run `sudoedit` on that file, and add `/etc/ssh/claude-rc/%u` to its line.
+4. After the block, open a second SSH login to the machine. If it fails, undo the change in the open session, and reload sshd again.
+
 ```sh
 sudo mkdir -p /etc/ssh/claude-rc
 echo '<hub key line>' | sudo tee /etc/ssh/claude-rc/<account> >/dev/null
@@ -292,24 +309,20 @@ These steps are for a managed target on a Way 2 machine. Such a machine has a ha
 
 1. Update the hub first. The hub picks the default key file. An old hub puts the line into `authorized_keys` again, and the job removes it.
 2. Update the node on the machine. Update the `claude-rc` command there too.
-3. Open an SSH session to the machine. Keep it open until step 7 is done.
-4. Run `sudoedit /etc/ssh/sshd_config.d/49-claude-rc.conf`. Add `.ssh/authorized_keys.claude-rc` to its `AuthorizedKeysFile` line.
-5. Keep `.ssh/authorized_keys` and every other entry in that line. Your own login can depend on those files.
-6. Run `sudo sshd -t`. If the test passes, run `sudo systemctl reload ssh || sudo systemctl reload sshd`.
-7. Open a second SSH login to the machine. If it fails, undo the edit in the open session, and reload sshd again.
-8. Run `sudo claude-rc node sshd check`. Expect a line that starts with `sshd reads .ssh/authorized_keys.claude-rc`.
-9. If sudo does not find `claude-rc`, run `sudo /usr/local/bin/claude-rc-launcher sshd-dropin check`.
-10. If the line starts with `sshd does not read`, stop. Check the edit of step 4. Do not retire the target.
-11. Write down the id, the managed host id, the system type, the account, the port and the nodes of the target.
-12. Retire the target on the SSH access page of the web UI. The CLI has no retire command.
-13. Read the notice. It can say that the key line was not on the machine, because the job removed it.
-14. Add the target again with the same id and no key file. Use the values of step 11.
-15. Unlock the new key, and let the test grant pass.
-16. Remove the old line from `/etc/ssh/claude-rc/<account>` by hand. The line ends with `claude-rc:<target id>`.
+3. Open an SSH session to the machine. Keep it open until step 6 is done.
+4. Run `sudoedit /etc/ssh/sshd_config.d/49-claude-rc.conf`. Add `.ssh/authorized_keys.claude-rc` to its `AuthorizedKeysFile` line. Keep `.ssh/authorized_keys` and every other entry in that line. Your own login can depend on those files.
+5. Run `sudo sshd -t`. If the test passes, run `sudo systemctl reload ssh || sudo systemctl reload sshd`.
+6. Open a second SSH login to the machine. If it fails, undo the edit in the open session, and reload sshd again.
+7. Run `sudo claude-rc node sshd check`. Expect a line that starts with `sshd reads .ssh/authorized_keys.claude-rc`. If sudo does not find `claude-rc`, run `sudo /usr/local/bin/claude-rc-launcher sshd-dropin check`. If the line starts with `sshd does not read`, stop. Check the edit of step 4. Do not retire the target.
+8. Write down the id, the managed host id, the system type, the account, the port and the nodes of the target.
+9. Retire the target on the SSH access page of the web UI. The CLI has no retire command. Read the notice. It can say that the key line was not on the machine, because the job removed it.
+10. Add the target again with the same id and no key file. Use the values of step 8.
+11. Unlock the new key, and let the test grant pass.
+12. Remove the old line from `/etc/ssh/claude-rc/<account>` by hand. The line ends with `claude-rc:<target id>`.
 
-A retire deletes the record of the target, so step 11 keeps the values for step 14. The card of a target on the SSH access page shows its address, port, account, system type and nodes. The managed host id is the id of the machine in the output of `claude-rc hosts`.
+A retire deletes the record of the target, so step 8 keeps the values for step 10. The card of a target on the SSH access page shows its address, port, account, system type and nodes. The managed host id is the id of the machine in the output of `claude-rc hosts`.
 
-For step 14 on the command line, use this command. If the port is not 22, add `--port <n>`.
+For step 10 on the command line, use this command. If the port is not 22, add `--port <n>`.
 
 ```sh
 claude-rc ssh target add <id> --managed <host id> --type linux --account <account> --node <ids>
@@ -317,11 +330,11 @@ claude-rc ssh target add <id> --managed <host id> --type linux --account <accoun
 
 The command prints `key file: ~/.ssh/authorized_keys.claude-rc`. It asks you to unlock twice: once for the key and once for the test grant. In the web UI, leave the Key file field empty.
 
-From step 12 to step 15, sessions cannot use the target.
+From step 9 to step 11, sessions cannot use the target.
 
-The old line in step 16 is harmless, because the retire deleted its private key. Remove it to keep the file clean.
+The old line in step 12 is harmless, because the retire deleted its private key. Remove it to keep the file clean.
 
-On a machine without a hand-made drop-in, steps 3 to 7 are one command: `sudo claude-rc node sshd install`. Step 16 does not apply.
+On a machine without a hand-made drop-in, steps 3 to 6 are one command: `sudo claude-rc node sshd install`. Step 12 does not apply.
 
 ### Instance setup
 

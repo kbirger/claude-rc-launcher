@@ -440,7 +440,7 @@ The exit codes are these:
 - 1: an error, or `check` found that sshd does not read the file. An error text goes to stderr.
 - 2: a wrong word. The command prints the usage.
 
-`claude-rc node sshd` also exits with 2 for an extra word. It exits with 1 for a flag other than `--json` or `--help`. The launcher form ignores an extra word.
+`claude-rc node sshd` also exits with 2 for an extra word. It exits with 1 for a flag other than `--help`. The output is plain text only, so `--json` exits with 1 too. The launcher form ignores an extra word.
 
 The command works on Linux only. On another system, it prints `the sshd drop-in works on Linux only` and exits with 1. Without root, it prints `the sshd drop-in needs root. Run: sudo claude-rc node sshd <word>`. `claude-rc update` and `node update` do not install the drop-in. On a node from before this release, run `sudo claude-rc node sshd install` once.
 
