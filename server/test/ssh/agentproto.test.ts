@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AgentProtocolError,
-  FrameReader,
   MAX_FRAME,
   failureAnswer,
   identitiesAnswer,
@@ -14,6 +13,7 @@ import {
   publicKeyLine,
   signAnswer,
 } from "../../src/ssh/agentproto";
+import { FrameReader } from "../../src/ssh/FrameReader";
 
 const raw = Uint8Array.from(Array.from({ length: 32 }, (_item, index) => index + 1));
 

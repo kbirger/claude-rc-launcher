@@ -4,7 +4,6 @@ import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  FrameReader,
   MAX_FRAME,
   failureAnswer,
   identitiesAnswer,
@@ -12,6 +11,7 @@ import {
   publicKeyLine,
   signAnswer,
 } from "../../../src/ssh/agentproto";
+import { FrameReader } from "../../../src/ssh/FrameReader";
 import { GrantAgent } from "../../../src/ssh/node/GrantAgent";
 
 function noop(): void {

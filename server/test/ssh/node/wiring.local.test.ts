@@ -10,7 +10,8 @@ import type { HostClient } from "../../../src/hosts/client";
 import { sshHostClient, startHub } from "../../../src/hubmain";
 import type { Instance } from "../../../src/instances/InstanceService";
 import { DEFAULT_ROLES } from "../../../src/roles";
-import { identitiesAnswer, FrameReader, publicKeyBlob } from "../../../src/ssh/agentproto";
+import { identitiesAnswer, publicKeyBlob } from "../../../src/ssh/agentproto";
+import { FrameReader } from "../../../src/ssh/FrameReader";
 import { TargetStore } from "../../../src/ssh/TargetStore";
 import { noSkill } from "../../support";
 

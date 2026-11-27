@@ -1,13 +1,7 @@
 import type { Socket, SocketListener } from "bun";
 import { join } from "node:path";
-import {
-  AgentProtocolError,
-  FrameReader,
-  failureAnswer,
-  identitiesAnswer,
-  parseRequest,
-  signAnswer,
-} from "../agentproto";
+import { AgentProtocolError, failureAnswer, identitiesAnswer, parseRequest, signAnswer } from "../agentproto";
+import { FrameReader } from "../FrameReader";
 import { listenStaged, removeQuietly } from "./files";
 import type { Chown } from "./files";
 

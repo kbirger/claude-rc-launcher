@@ -1,14 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { connect } from "node:net";
 import { join } from "node:path";
-import {
-  FrameReader,
-  failureAnswer,
-  identitiesAnswer,
-  publicKeyBlob,
-  publicKeyLine,
-  signAnswer,
-} from "../../src/ssh/agentproto";
+import { failureAnswer, identitiesAnswer, publicKeyBlob, publicKeyLine, signAnswer } from "../../src/ssh/agentproto";
+import { FrameReader } from "../../src/ssh/FrameReader";
 import { GrantAgent } from "../../src/ssh/node/GrantAgent";
 import type { AgentTransport, ConnectionHandler, RawConnection } from "../../src/ssh/node/GrantAgent";
 import { assertPipeName, currentUserSid, newPipeName, pipeSddl, pipeTransport, restrictPipe } from "../../src/win/pipe";

@@ -9,7 +9,6 @@ import { NodeEvents } from "../../../src/hosts/NodeEvents";
 import type { NodeEvent } from "../../../src/hosts/NodeEvents";
 import type { Instances } from "../../../src/instances/InstanceService";
 import {
-  FrameReader,
   failureAnswer,
   identitiesAnswer,
   keyFingerprint,
@@ -18,6 +17,7 @@ import {
 } from "../../../src/ssh/agentproto";
 import { SshBroker, grantConfig, knownHostsLine, sshNodeApi, unsupportedSshApi } from "../../../src/ssh/api/node";
 import type { SshNodeOptions } from "../../../src/ssh/api/node";
+import { FrameReader } from "../../../src/ssh/FrameReader";
 import { HOST_KEY_RE } from "../../../src/ssh/TargetStore";
 
 function noop(): void {
