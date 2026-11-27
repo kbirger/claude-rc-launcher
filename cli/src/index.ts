@@ -319,7 +319,8 @@ export async function main(
 
     if (name === "node" && args[0] === "sshd") {
       // Works on this machine only and talks to no hub, so no login is needed.
-      const stray = Object.keys(flags).find((flag) => !["json", "help"].includes(flag));
+      // The output is plain text only, so --json is refused too.
+      const stray = Object.keys(flags).find((flag) => flag !== "help");
       if (stray) throw new ExitError(`--${stray} does not apply to node sshd. ${SSHD_USAGE}`, 1);
       await nodeSshd({
         args: args.slice(1),

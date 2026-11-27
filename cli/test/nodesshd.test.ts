@@ -114,4 +114,12 @@ describe("claude-rc node sshd", () => {
     expect(result.code).toBe(1);
     expect(result.err[0]).toContain("--config does not apply to node sshd");
   });
+
+  test("node sshd refuses --json, because its output is plain text only", async () => {
+    const fake = new FakeSshd();
+    const result = await run(fake)("node", "sshd", "check", "--json");
+    expect(result.code).toBe(1);
+    expect(result.err[0]).toContain("--json does not apply to node sshd");
+    expect(fake.calls).toEqual([]);
+  });
 });
