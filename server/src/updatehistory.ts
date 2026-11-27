@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { writeAtomic } from "./hostregistry";
+import { writeAtomic } from "./hosts/HostRegistry";
 import { isObject } from "./shared/requests";
 import { cutLine } from "./updatelog";
 import type { LogLine } from "./updatelog";

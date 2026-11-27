@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { HOST_ID_RE } from "./hostid";
+import { HOST_ID_RE } from "./hosts/id";
 import { AWK_PROGRAM, LOCK_LINES, shQuote } from "./sshprovision";
 import type { Script } from "./sshprovision";
 import { ADDRESS_RE, DROPBEAR_OPTIONS, SCRIPT_PATH_RE } from "./sshtargets";

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
-import { onError } from "../src/app";
-import { enrollmentApi } from "../src/enrollment";
+import { onError } from "../../../src/app";
+import { enrollmentApi } from "../../../src/hosts/api/enrollment";
 
 function get(hubKeys: string[]) {
   const hono = new Hono();

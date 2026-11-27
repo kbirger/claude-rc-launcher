@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { createNodeApp } from "../src/app";
 import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
-import { NodeEvents } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
 import { VERSION } from "../src/shared/version";
 
 const cfg = { mode: "node", name: "pi", roots: ["/srv"] } as unknown as Config;

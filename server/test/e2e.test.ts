@@ -10,7 +10,7 @@ import { certFingerprint } from "../src/auth/hubproof";
 import { generateSecret, hashSecret } from "../src/auth/node";
 import { startNode } from "../src/nodemain";
 import type { UpdateReport } from "../src/serviceupdate";
-import { NodeEvents } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
 import { readSse } from "../src/shared/ssereader";
 import { VERSION } from "../src/shared/version";
 import { fakeTimers } from "./faketimers";

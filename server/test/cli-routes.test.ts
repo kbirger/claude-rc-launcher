@@ -6,14 +6,14 @@ import path from "node:path";
 import { createApp, createNodeApp } from "../src/app";
 import { cliBearerAuth } from "../src/auth/cli";
 import type { Config } from "../src/config/parse";
-import { createHostClient, secretAuthorizer } from "../src/hostclient";
-import type { HostConfig } from "../src/hostclient";
-import { HostRegistry } from "../src/hostregistry";
+import { createHostClient, secretAuthorizer } from "../src/hosts/client";
+import type { HostConfig } from "../src/hosts/client";
+import { HostRegistry } from "../src/hosts/HostRegistry";
 import { createJwtVerifier } from "../src/auth/jwt";
 import { generateSecret, nodeAuth } from "../src/auth/node";
 import { DEFAULT_ROLES } from "../src/roles";
 import { SessionCatalog } from "../src/sessioncatalog";
-import { ensureNodeCert } from "../src/tls";
+import { ensureNodeCert } from "../src/hosts/tls";
 import type { UserAuthStrategy } from "../src/auth/user";
 
 const ISS = "https://auth.example.com/o/cli/";

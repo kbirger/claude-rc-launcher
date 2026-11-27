@@ -4,14 +4,14 @@ import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseConfig } from "../src/config/parse";
-import type { ConfigIo } from "../src/config/parse";
-import { HostError, createHostClient, hubAuthorizer, secretAuthorizer } from "../src/hostclient";
-import type { HostConfig } from "../src/hostclient";
-import { createProofVerifier, certFingerprint, loadOrCreateHubKey } from "../src/auth/hubproof";
-import { nodeAuth } from "../src/auth/node";
-import { ensureNodeCert } from "../src/tls";
-import { rejection, defined } from "./support";
+import { parseConfig } from "../../src/config/parse";
+import type { ConfigIo } from "../../src/config/parse";
+import { HostError, createHostClient, hubAuthorizer, secretAuthorizer } from "../../src/hosts/client";
+import type { HostConfig } from "../../src/hosts/client";
+import { createProofVerifier, certFingerprint, loadOrCreateHubKey } from "../../src/auth/hubproof";
+import { nodeAuth } from "../../src/auth/node";
+import { ensureNodeCert } from "../../src/hosts/tls";
+import { rejection, defined } from "../support";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-host-"));
 

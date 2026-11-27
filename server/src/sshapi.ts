@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
-import { HOST_ID_RE } from "./hostid";
+import { HOST_ID_RE } from "./hosts/id";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./shared/requests";
 import { logToken } from "./roles";

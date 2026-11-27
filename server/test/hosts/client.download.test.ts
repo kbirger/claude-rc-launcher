@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { HostError, createHostClient, secretAuthorizer } from "../src/hostclient";
-import type { HostConfig } from "../src/hostclient";
-import { defined } from "./support";
+import { HostError, createHostClient, secretAuthorizer } from "../../src/hosts/client";
+import type { HostConfig } from "../../src/hosts/client";
+import { defined } from "../support";
 
 const host: HostConfig = {
   id: "nas",

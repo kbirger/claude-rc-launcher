@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { GITHUB_IDLE_TIMEOUT_SECONDS, SSH_APPROVE_IDLE_TIMEOUT_SECONDS, UPDATE_IDLE_TIMEOUT_SECONDS, withLongUpdates } from "../src/serve";
-import { REPOS_TIMEOUT_MS, UPDATE_TIMEOUT_MS } from "../src/hosts";
+import { REPOS_TIMEOUT_MS, UPDATE_TIMEOUT_MS } from "../src/hosts/api/forward";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureNodeCert } from "../src/tls";
+import { ensureNodeCert } from "../src/hosts/tls";
 
 // Bun checks idle requests on a coarse tick (about 4 s), so with idleTimeout 1 a request silent for 9 s is surely closed.
 // TLS, as on a node: Bun 1.4.4 does not time out a plain-HTTP POST that has a body, but it does over TLS.

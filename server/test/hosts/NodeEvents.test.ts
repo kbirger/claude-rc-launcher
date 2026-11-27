@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { NodeEvents } from "../src/updateevents";
-import type { NodeEvent } from "../src/updateevents";
+import { NodeEvents } from "../../src/hosts/NodeEvents";
+import type { NodeEvent } from "../../src/hosts/NodeEvents";
 
 const fixed = () => new Date("2026-11-10T10:00:00.000Z");
 

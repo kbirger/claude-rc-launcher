@@ -7,7 +7,7 @@ import { loadConfigFile, resolveConfigPath } from "./config/file";
 import { bunRunner } from "./instances";
 import { generateSecret } from "./auth/node";
 import { startNode } from "./nodemain";
-import { NodeEvents } from "./updateevents";
+import { NodeEvents } from "./hosts/NodeEvents";
 import { VERSION } from "./shared/version";
 import { checkServiceAccount } from "./win/account";
 import { definitionStatus } from "./win/definition";

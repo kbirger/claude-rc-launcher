@@ -30,7 +30,7 @@ import { linuxInstallScript } from "../src/sshprovisioner";
 import { SshService } from "../src/sshservice";
 import { TargetStore } from "../src/sshtargets";
 import { newRecovery, openWithRecovery } from "../src/sshwrap";
-import { NodeEvents } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
 import { noSkill } from "./support";
 
 const INSTANCE_ID = "0123456789ab";

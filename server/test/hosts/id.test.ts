@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { HOST_ID_RE } from "../src/hostid";
+import { HOST_ID_RE } from "../../src/hosts/id";
 
 describe("HOST_ID_RE", () => {
   test("accepts lower-case ids of 1 to 32 characters", () => {
@@ -16,7 +16,7 @@ describe("HOST_ID_RE", () => {
 
 // One definition only: the config loader, the forwarding router, the registry, the admin API and the CLI all read it.
 describe("the host id format has a single definition", () => {
-  const root = path.join(import.meta.dir, "../..");
+  const root = path.join(import.meta.dir, "../../..");
   const files = (dir: string): string[] =>
     readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((dirent) =>
       dirent.isDirectory()
@@ -30,6 +30,6 @@ describe("the host id format has a single definition", () => {
     const hits = [...files("server/src"), ...files("cli/src")].filter((item) =>
       readFileSync(path.join(root, item), "utf8").includes(pattern),
     );
-    expect(hits).toEqual([path.join("server/src", "hostid.ts")]);
+    expect(hits).toEqual([path.join("server/src", "hosts", "id.ts")]);
   });
 });

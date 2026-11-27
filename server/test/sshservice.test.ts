@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { createPublicKey, verify } from "node:crypto";
-import { HostError } from "../src/hostclient";
-import type { HostClient } from "../src/hostclient";
+import { HostError } from "../src/hosts/client";
+import type { HostClient } from "../src/hosts/client";
 import { GrantError, GrantStore } from "../src/sshgrants";
 import type { Grant } from "../src/sshgrants";
 import { SshKeyStore } from "../src/sshkeystore";

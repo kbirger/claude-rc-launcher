@@ -5,9 +5,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
-import { PeekError, peekCertificate } from "../src/certpeek";
-import { ensureNodeCert } from "../src/tls";
-import { rejection, defined } from "./support";
+import { PeekError, peekCertificate } from "../../src/hosts/certpeek";
+import { ensureNodeCert } from "../../src/hosts/tls";
+import { rejection, defined } from "../support";
 
 const stops: (() => void)[] = [];
 afterAll(() => {

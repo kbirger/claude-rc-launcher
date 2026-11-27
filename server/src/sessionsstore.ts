@@ -3,8 +3,8 @@
  * own index gives the list of `local`. The store keeps the latest list of each host and combines it with presence: it is
  * the one place that says what status a host has in `GET /api/sessions`. The hub sorts nothing.
  */
-import type { HostRegistry } from "./hostregistry";
-import type { Presence } from "./nodewatcher";
+import type { HostRegistry } from "./hosts/HostRegistry";
+import type { Presence } from "./hosts/nodewatcher";
 import type { SessionRow, SessionsPayload } from "./sessionindex";
 
 /** `truncated` is true when the node sent only its newest rows (see MAX_SESSIONS_BYTES). It is absent when the list is whole. */

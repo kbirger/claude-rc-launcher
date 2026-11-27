@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HostClient, HostConfig } from "../src/hostclient";
-import { HostRegistry } from "../src/hostregistry";
-import { ensureNodeCert } from "../src/tls";
-import { rejection } from "./support";
+import type { HostClient, HostConfig } from "../../src/hosts/client";
+import { HostRegistry } from "../../src/hosts/HostRegistry";
+import { ensureNodeCert } from "../../src/hosts/tls";
+import { rejection } from "../support";
 
 const client = (): HostClient => ({
   stream: () => {

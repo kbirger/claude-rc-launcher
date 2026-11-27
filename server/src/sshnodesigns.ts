@@ -1,4 +1,4 @@
-import type { NodeEvents } from "./updateevents";
+import type { NodeEvents } from "./hosts/NodeEvents";
 
 interface PendingSign {
   grantId: string;

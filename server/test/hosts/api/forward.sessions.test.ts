@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { describe, expect, test } from "bun:test";
-import { onError } from "../src/app";
-import { HostError } from "../src/hostclient";
-import type { HostClient, HostConfig } from "../src/hostclient";
-import { HostRegistry } from "../src/hostregistry";
-import { hostsApi } from "../src/hosts";
-import { defined } from "./support";
+import { onError } from "../../../src/app";
+import { HostError } from "../../../src/hosts/client";
+import type { HostClient, HostConfig } from "../../../src/hosts/client";
+import { HostRegistry } from "../../../src/hosts/HostRegistry";
+import { hostsApi } from "../../../src/hosts/api/forward";
+import { defined } from "../../support";
 
 const ID = "0123456789ab";
 const SID = "11111111-2222-3333-4444-555555555555";

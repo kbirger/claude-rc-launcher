@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { asUser } from "./shared/asuser";
 import type { IdentityFor } from "./shared/asuser";
-import { HOST_ID_RE } from "./hostid";
+import { HOST_ID_RE } from "./hosts/id";
 import { HttpError } from "./instances";
 import { isObject, readObject } from "./shared/requests";
 import { keyFingerprint } from "./sshagentproto";
@@ -14,7 +14,7 @@ import type { GrantRequest, SignOutcome } from "./sshnodegrants";
 import { PendingSigns } from "./sshnodesigns";
 import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem } from "./sshtargets";
 import type { SystemType } from "./sshtargets";
-import type { NodeEvents } from "./updateevents";
+import type { NodeEvents } from "./hosts/NodeEvents";
 
 export { grantConfig, knownHostsLine, sshConfigPath } from "./sshgrantconfig";
 export { ensureInstanceFolder } from "./sshgrantplatform";

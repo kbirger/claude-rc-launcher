@@ -17,8 +17,8 @@ import {
 import { SshBroker, grantConfig, knownHostsLine, sshNodeApi, unsupportedSshApi } from "../src/sshnodeapi";
 import type { SshNodeOptions } from "../src/sshnodeapi";
 import { HOST_KEY_RE } from "../src/sshtargets";
-import { NodeEvents } from "../src/updateevents";
-import type { NodeEvent } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
+import type { NodeEvent } from "../src/hosts/NodeEvents";
 
 function noop(): void {
   // The test ignores socket errors.

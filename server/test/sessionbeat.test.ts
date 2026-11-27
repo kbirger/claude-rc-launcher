@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Presence } from "../src/nodewatcher";
+import type { Presence } from "../src/hosts/nodewatcher";
 import { BEAT_MS, createBeatLoop } from "../src/sessionbeat";
 import { fakeTimers } from "./faketimers";
 

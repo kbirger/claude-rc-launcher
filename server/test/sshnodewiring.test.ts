@@ -8,8 +8,8 @@ import type { Config } from "../src/config/parse";
 import { HttpError } from "../src/instances";
 import type { Instance, Instances } from "../src/instances";
 import { accountIdentity, createNodeSsh, removeGrantFiles } from "../src/sshnodewiring";
-import { NodeEvents } from "../src/updateevents";
-import type { NodeEvent } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
+import type { NodeEvent } from "../src/hosts/NodeEvents";
 import type { SystemUser, UserDirectory } from "../src/shared/users";
 import { defined, noSkill, rejection } from "./support";
 

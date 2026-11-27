@@ -3,8 +3,8 @@ import { X509Certificate } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureNodeCert } from "../src/tls";
-import { rejection, defined } from "./support";
+import { ensureNodeCert } from "../../src/hosts/tls";
+import { rejection, defined } from "../support";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-tls-"));
 

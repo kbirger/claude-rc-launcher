@@ -4,8 +4,8 @@
  */
 import { realTimers } from "./shared/PollSource";
 import type { Timers } from "./shared/PollSource";
-import type { HostRegistry } from "./hostregistry";
-import type { Presence } from "./nodewatcher";
+import type { HostRegistry } from "./hosts/HostRegistry";
+import type { Presence } from "./hosts/nodewatcher";
 
 export const BEAT_MS = 20_000;
 const CALL_TIMEOUT_MS = 3_000;

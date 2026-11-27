@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Presence } from "../src/nodewatcher";
+import type { Presence } from "../src/hosts/nodewatcher";
 import type { SessionRow, SessionsPayload } from "../src/sessionindex";
 import { SessionsStore, type StoreChange } from "../src/sessionsstore";
 

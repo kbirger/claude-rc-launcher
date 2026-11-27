@@ -10,8 +10,8 @@ import type { AccessResult } from "../src/sshnodeapi";
 import { NO_WAITING_REQUEST, NodeGrantError, NodeGrantManager } from "../src/sshnodegrants";
 import type { GrantBroker, GrantRequest } from "../src/sshnodegrants";
 import { PendingSigns } from "../src/sshnodesigns";
-import { NodeEvents } from "../src/updateevents";
-import type { NodeEvent } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
+import type { NodeEvent } from "../src/hosts/NodeEvents";
 
 const BLOB = new Uint8Array(51).fill(1);
 const HOST_KEY = "ssh-ed25519 AAAA";

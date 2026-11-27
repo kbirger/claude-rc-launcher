@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { HostError } from "../src/hostclient";
-import type { HostClient, HostConfig } from "../src/hostclient";
-import type { HostRegistry, HostEntry } from "../src/hostregistry";
-import type { SseEvent } from "../src/shared/ssereader";
-import { createNodeWatchers, type Presence } from "../src/nodewatcher";
-import { UpdateLog } from "../src/updatelog";
+import { HostError } from "../../src/hosts/client";
+import type { HostClient, HostConfig } from "../../src/hosts/client";
+import type { HostRegistry, HostEntry } from "../../src/hosts/HostRegistry";
+import type { SseEvent } from "../../src/shared/ssereader";
+import { createNodeWatchers, type Presence } from "../../src/hosts/nodewatcher";
+import { UpdateLog } from "../../src/updatelog";
 
 const flush = async () => {
   for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
@@ -848,7 +848,7 @@ describe("createNodeWatchers fix round 1", () => {
 describe("presenceLogger", () => {
   type Level = "log" | "warn" | "error";
   test("a stream that fails 5 times in a row logs once; a change of status or reason logs again; a version change does not", async () => {
-    const { presenceLogger } = await import("../src/hubmain");
+    const { presenceLogger } = await import("../../src/hubmain");
     const lines: string[] = [];
     const s = setup(["nas"], { pre: (n) => { for (let i = 0; i < 5; i++) n.nas!.failures.push(new HostError("nas", "unreachable")); } });
     const log = presenceLogger((l) => lines.push(l));
@@ -866,7 +866,7 @@ describe("presenceLogger", () => {
   });
 
   test("each status logs at its own level, with the same line text", async () => {
-    const { presenceLogger } = await import("../src/hubmain");
+    const { presenceLogger } = await import("../../src/hubmain");
     const out: [string, Level][] = [];
     const log = presenceLogger((line, level) => out.push([line, level]));
     log({ host: "nas", status: "online", at: "t" });
@@ -882,7 +882,7 @@ describe("presenceLogger", () => {
   });
 
   test("5 identical failures log once at warn; a status change logs again at the new level", async () => {
-    const { presenceLogger } = await import("../src/hubmain");
+    const { presenceLogger } = await import("../../src/hubmain");
     const out: [string, Level][] = [];
     const log = presenceLogger((line, level) => out.push([line, level]));
     for (let i = 0; i < 5; i++) log({ host: "nas", status: "offline", reason: "unreachable", at: "t" });

@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HostClient, HostConfig } from "../src/hostclient";
-import { HostRegistry } from "../src/hostregistry";
-import { certFingerprint } from "../src/auth/hubproof";
-import { ensureNodeCert } from "../src/tls";
-import { rejection, defined } from "./support";
+import type { HostClient, HostConfig } from "../../src/hosts/client";
+import { HostRegistry } from "../../src/hosts/HostRegistry";
+import { certFingerprint } from "../../src/auth/hubproof";
+import { ensureNodeCert } from "../../src/hosts/tls";
+import { rejection, defined } from "../support";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-reg-"));
 const client = (): HostClient => ({

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { HOST_ID_RE } from "./hostid";
+import { HOST_ID_RE } from "./hosts/id";
 
 // Target store for SSH delegation. A target is a machine that the hub opens an SSH connection to, with the key that
 // the key store holds for it. The store also keeps the source address of each node, which goes into the `from=` option

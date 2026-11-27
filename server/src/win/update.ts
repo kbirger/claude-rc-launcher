@@ -8,7 +8,7 @@ import type { ReleaseIo } from "../release";
 import { isObject } from "../shared/requests";
 import { clientsOf, UpdateRefused } from "../serviceupdate";
 import type { ClientResult, UpdateReport } from "../serviceupdate";
-import type { UpdateHooks } from "../updateevents";
+import type { UpdateHooks } from "../hosts/NodeEvents";
 import { VERSION } from "../shared/version";
 
 /**

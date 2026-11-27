@@ -3,16 +3,16 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createNodeApp, onError } from "../src/app";
-import { PeekError, peekCertificate } from "../src/certpeek";
-import type { Config } from "../src/config/parse";
-import { hostAdminApi } from "../src/hostadmin";
-import { createHostClient, secretAuthorizer } from "../src/hostclient";
-import type { HostClient, HostConfig } from "../src/hostclient";
-import { HostRegistry } from "../src/hostregistry";
-import { generateSecret, nodeAuth } from "../src/auth/node";
-import { ensureNodeCert } from "../src/tls";
-import { defined } from "./support";
+import { createNodeApp, onError } from "../../../src/app";
+import { PeekError, peekCertificate } from "../../../src/hosts/certpeek";
+import type { Config } from "../../../src/config/parse";
+import { hostAdminApi } from "../../../src/hosts/api/admin";
+import { createHostClient, secretAuthorizer } from "../../../src/hosts/client";
+import type { HostClient, HostConfig } from "../../../src/hosts/client";
+import { HostRegistry } from "../../../src/hosts/HostRegistry";
+import { generateSecret, nodeAuth } from "../../../src/auth/node";
+import { ensureNodeCert } from "../../../src/hosts/tls";
+import { defined } from "../../support";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "rc-admin-"));
 const stops: (() => void)[] = [];

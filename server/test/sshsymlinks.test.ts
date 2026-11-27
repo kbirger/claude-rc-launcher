@@ -9,7 +9,7 @@ import { publicKeyBlob } from "../src/sshagentproto";
 import { createPrivateFile, writeNewFile } from "../src/sshfiles";
 import { SshBroker, sshNodeApi } from "../src/sshnodeapi";
 import { SshControl } from "../src/sshnodecontrol";
-import { NodeEvents } from "../src/updateevents";
+import { NodeEvents } from "../src/hosts/NodeEvents";
 import { rejection } from "./support";
 
 const BLOB = publicKeyBlob(new Uint8Array(32).fill(7));

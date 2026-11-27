@@ -17,7 +17,7 @@ import { VERSION } from "../src/shared/version";
 import { LatestError, type createLatestRelease } from "../src/latest";
 import type { UpdateEntry, UpdateRecord } from "../src/updaterecord";
 import { UpdateLog } from "../src/updatelog";
-import type { Presence } from "../src/nodewatcher";
+import type { Presence } from "../src/hosts/nodewatcher";
 
 const user: User = { sub: "u1", name: "Ann", email: "a@x.io", role: "admin" };
 const ID = "0123456789ab";

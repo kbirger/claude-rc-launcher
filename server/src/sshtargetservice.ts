@@ -1,4 +1,4 @@
-import { LOCAL_HOST } from "./hostid";
+import { LOCAL_HOST } from "./hosts/id";
 import { logToken } from "./roles";
 import { keyFingerprint } from "./sshagentproto";
 import { GrantError } from "./sshgrants";

@@ -2,7 +2,7 @@ import { createPrivateKey, generateKeyPairSync, randomBytes, sign as edSign, tim
 import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { HOST_ID_RE } from "./hostid";
+import { HOST_ID_RE } from "./hosts/id";
 import { keyFingerprint, publicKeyBlob, publicKeyLine } from "./sshagentproto";
 import {
   deriveWrapKey,

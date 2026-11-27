@@ -6,7 +6,7 @@ import path from "node:path";
 import { mintSessionCookie } from "../src/auth/oidc";
 import type { OidcClient } from "../src/auth/oidc";
 import type { Config } from "../src/config/parse";
-import type { HostClient } from "../src/hostclient";
+import type { HostClient } from "../src/hosts/client";
 import { sshHostClient, startHub } from "../src/hubmain";
 import type { Instance } from "../src/instances";
 import { DEFAULT_ROLES } from "../src/roles";
@@ -271,7 +271,7 @@ describe("SSH for the hub-local host", () => {
 
   test("the stop of the local SSH resets the grant routes, so an agent that the hub forgot goes too", async () => {
     const { createLocalSsh } = await import("../src/sshnodewiring");
-    const { NodeEvents } = await import("../src/updateevents");
+    const { NodeEvents } = await import("../src/hosts/NodeEvents");
     const root = tmp();
     cleanups.push(() => {
       rmSync(root, { recursive: true, force: true });
@@ -381,7 +381,7 @@ describe("SSH for the hub-local host", () => {
 
   test("startHub without sshDir is refused under test, so that the live folder is never touched", async () => {
     const { createLocalSsh } = await import("../src/sshnodewiring");
-    const { NodeEvents } = await import("../src/updateevents");
+    const { NodeEvents } = await import("../src/hosts/NodeEvents");
     expect(() =>
       createLocalSsh({ cfg: {} as Config, instances: {} as never, events: new NodeEvents(), platform: "linux" }),
     ).toThrow("needs a dir under test");

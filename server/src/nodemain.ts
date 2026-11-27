@@ -14,8 +14,8 @@ import { createClientVersions, createServiceUpdater } from "./serviceupdate";
 import { stopServer } from "./shared/sse";
 import { createNodeSsh } from "./sshnodewiring";
 import type { NodeSshOptions } from "./sshnodewiring";
-import { ensureNodeCert } from "./tls";
-import { NodeEvents } from "./updateevents";
+import { ensureNodeCert } from "./hosts/tls";
+import { NodeEvents } from "./hosts/NodeEvents";
 import type { DefinitionStatus } from "./win/definition";
 import type { WinSshBridge } from "./win/sshbridge";
 
