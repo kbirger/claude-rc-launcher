@@ -2,7 +2,7 @@
  * The checked real root of one session. A PinnedRoot exists only after the real-root check passed, and it is the only
  * code that calls the file opener for a session. See docs/session-files.md.
  *
- * EXACT means { exactRoot: true }: sessionfs.ts must find that the root it gets is already a real path, so a folder
+ * EXACT means { exactRoot: true }: files.ts must find that the root it gets is already a real path, so a folder
  * that became a link after PinnedRoot.pin checked it is refused. EXACT_FILE adds exactPath: no link anywhere below
  * the root, and a file with a second hard link is refused, because a link would name a file that is not on the
  * touched list.
@@ -75,7 +75,7 @@ export class PinnedRoot {
   }
 
   /**
-   * The settings layers that apply to this session (see settingsfile.ts). Settings files can sit outside the session
+   * The settings layers that apply to this session (see SettingsFile.ts). Settings files can sit outside the session
    * folder (the home folder, the git root above it), so they are not read through the file opener of this class.
    * Only the checked real root comes from here.
    */
@@ -83,7 +83,7 @@ export class PinnedRoot {
     return (await this.settings(options)).layers();
   }
 
-  /** The settings files that apply to this session (see settingsfile.ts). A route edits a rule through one of them. */
+  /** The settings files that apply to this session (see SettingsFile.ts). A route edits a rule through one of them. */
   settings(options: { ownerUid?: number; isRoot?: () => boolean }): Promise<ClaudeSettings> {
     const catalog = this.session.instance.catalog;
     return ClaudeSettings.forSession({

@@ -1,7 +1,7 @@
 import type { AgentTransport } from "./GrantAgent";
 
 // What the grants of a node do differently on Linux and on Windows: the folders and who may use them, the private
-// files, the agent transport and the check of the `ssh` client. `NodeGrantManager` (sshnodegrants.ts) holds the rules
+// files, the agent transport and the check of the `ssh` client. `NodeGrantManager` (NodeGrantManager.ts) holds the rules
 // that are the same on both.
 
 /** The user and group of an instance. */

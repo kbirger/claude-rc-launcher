@@ -1,7 +1,7 @@
 /*
  * The sessions of an instance folder, read from Claude Code transcripts. One SessionCatalog holds the seams and the
  * name cache. `instance()` gives the sessions of one folder, and `find()` gives one Session. This file only READS
- * TRANSCRIPTS. `Session.open()` gives a PinnedRoot (pinnedroot.ts), and only a PinnedRoot opens a project file.
+ * TRANSCRIPTS. `Session.open()` gives a PinnedRoot (PinnedRoot.ts), and only a PinnedRoot opens a project file.
  * See docs/session-files.md.
  */
 import { realpath } from "node:fs/promises";
@@ -16,7 +16,7 @@ import { SessionChains } from "./SessionChains";
 import { defaultTranscriptFs } from "./transcriptfs";
 import type { TranscriptFs } from "./transcriptfs";
 
-/** `live`: set only while the session runs (see livesessions.ts). `root` is used by the node and is never shown in the web. */
+/** `live`: set only while the session runs (see live.ts). `root` is used by the node and is never shown in the web. */
 export interface SessionSummary {
   id: string;
   root: string;

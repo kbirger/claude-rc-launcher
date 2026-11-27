@@ -55,7 +55,7 @@ async function boot(options: { platform?: NodeJS.Platform; sshRequests?: boolean
   cleanups.push(() => {
     rmSync(root, { recursive: true, force: true });
   });
-  // Only a target that passed its test can be requested, and the test needs a real sshd (ssh-e2e.test.ts). The
+  // Only a target that passed its test can be requested, and the test needs a real sshd (ssh/e2e.test.ts). The
   // hub reads its targets at start, so the test saves a ready target `nas` for the node `local` before the start.
   if (options.readyTarget) await saveReadyTarget(path.join(root, "state", "ssh", "targets.json"));
   const sshDir = path.join(root, "run-ssh");

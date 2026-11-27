@@ -3,7 +3,7 @@ import type { Server } from "bun";
 /**
  * Bun closes a request that sends nothing for `idleTimeout` seconds (10 by default). `POST /update` downloads two
  * release assets and runs `--version` before it answers, and the hub waits up to 180 s for a node
- * (`UPDATE_TIMEOUT_MS` in hosts.ts). So the update routes, and only those, get this longer limit. It is above 180 s
+ * (`UPDATE_TIMEOUT_MS` in hosts/api/forward.ts). So the update routes, and only those, get this longer limit. It is above 180 s
  * and below Bun's maximum of 255 s.
  */
 export const UPDATE_IDLE_TIMEOUT_SECONDS = 190;

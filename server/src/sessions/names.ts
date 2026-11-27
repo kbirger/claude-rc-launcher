@@ -188,7 +188,7 @@ export async function nameInfoOf(fs: TranscriptFs, found: Found, cache: NameCach
 export interface NameParts {
   /** The name in the running-session file. */
   live?: string;
-  /** True when Claude Code made `live` up (see `nameIsDefault` in livesessions.ts). */
+  /** True when Claude Code made `live` up (see `nameIsDefault` in live.ts). */
   liveIsDefault?: boolean;
   /** The name of the first transcript of the chain, when `/clear` joined several. The app names the whole connection from it. */
   chain?: string;

@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   WinSW 2.x has no start hook, so WinSW runs this script and this script runs the agent (see claude-rc-launcher.xml).
-  This is the Windows counterpart of the watchdog in server/src/serviceupdate.ts.
+  This is the Windows counterpart of the watchdog in server/src/updates/serviceupdate.ts.
 
   An update works like this:
     1. The agent puts the new binary in place (the old one stays as <exe>.prev) and writes

@@ -121,7 +121,7 @@ export class InstanceSessions {
           lastActiveAt,
         };
         const liveInfo = live?.get(item.id);
-        // The order of the sources is chooseName (sessionnames.ts). The name memory then decides: a name that the launcher
+        // The order of the sources is chooseName (names.ts). The name memory then decides: a name that the launcher
         // learned from a better source stays, also after `/compact`.
         const liveName = tidy(liveInfo?.name);
         const chainInfo = first ? await nameInfoOf(fs, first, this.catalog.names) : undefined;

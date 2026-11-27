@@ -1,8 +1,8 @@
 /*
  * What this file is: it OPENS PROJECT FILES safely (list a folder, preview a file, download a file) inside one root
- * folder. How it differs from the transcript files: sessioncatalog.ts and the files it uses READ TRANSCRIPTS to find
+ * folder. How it differs from the transcript files: SessionCatalog.ts and the files it uses READ TRANSCRIPTS to find
  * sessions, their names and the paths they touched, and they never open the user's project files. This file never
- * reads a transcript. pinnedroot.ts joins the two: it checks the session folder (or the touched file) and hands it to
+ * reads a transcript. PinnedRoot.ts joins the two: it checks the session folder (or the touched file) and hands it to
  * this file to open.
  */
 import { constants } from "node:fs";

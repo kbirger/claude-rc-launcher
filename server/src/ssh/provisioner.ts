@@ -10,7 +10,7 @@ import { ADDRESS_RE, DROPBEAR_OPTIONS, SCRIPT_PATH_RE } from "./TargetStore";
 // The script is trusted code on a machine that holds a real account. The grammar is small on purpose. The value of
 // `SSH_ORIGINAL_COMMAND` must match one form exactly. A list in `sources` holds exact IP addresses or host names, with
 // no wildcard, no range and no quote (a ruling of the owner, stricter than `from=` of OpenSSH). The rule for one
-// element is `ADDRESS_RE` of `sshtargets.ts`. The shared vectors in `sshprovisioner.vectors.json` keep the hub and
+// element is `ADDRESS_RE` of `TargetStore.ts`. The shared vectors in `provisioner.vectors.json` keep the hub and
 // the script equal.
 
 // Texts of the hub that the CLI matches. One definition keeps both sides equal.
@@ -39,7 +39,7 @@ export const MAX_COMMAND_BYTES = 4096;
 /** The most characters in one element. */
 export const MAX_ELEMENT = 255;
 
-// The pattern for a script path lives in `sshtargets.ts` (the target store uses it too), so the two modules do not import each other.
+// The pattern for a script path lives in `TargetStore.ts` (the target store uses it too), so the two modules do not import each other.
 export { SCRIPT_PATH_RE };
 const SCRIPT_PATH_CLASS = "A-Za-z0-9._/+:@=-";
 

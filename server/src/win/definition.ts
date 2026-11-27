@@ -3,7 +3,7 @@ import { win32 } from "node:path";
 /**
  * The version of the service definition that this release expects: the WinSW XML and the launcher script (and the
  * WinSW program) that `install.ps1` writes once. The binary update never rewrites them. Raise this number in a
- * release that needs a changed definition. The test in `win-definition.test.ts` fails when the files change and
+ * release that needs a changed definition. The test in `server/test/win/definition.test.ts` fails when the files change and
  * the number does not.
  */
 export const REQUIRED_DEFINITION = 1;

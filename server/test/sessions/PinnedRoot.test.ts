@@ -55,10 +55,10 @@ describe("PinnedRoot", () => {
     expect(typeof never).toBe("function");
   });
 
-  test("PinnedFile cannot be built outside pinnedroot.ts", () => {
-    // Never called: pinnedroot.ts exports PinnedFile as a type only, so the module has no value here to build.
+  test("PinnedFile cannot be built outside PinnedRoot.ts", () => {
+    // Never called: PinnedRoot.ts exports PinnedFile as a type only, so the module has no value here to build.
     const never = (sessionCatalog: SessionCatalog): PinnedFile => {
-      // @ts-expect-error PinnedFile is a type only outside pinnedroot.ts
+      // @ts-expect-error PinnedFile is a type only outside PinnedRoot.ts
       return new pinnedroot.PinnedFile(sessionCatalog, "/dir", "name");
     };
 

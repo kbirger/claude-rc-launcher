@@ -10,7 +10,7 @@ describe("isObject", () => {
   });
 });
 
-// The local routes (app.ts), the forwarding routes (hosts.ts) and the host admin API (hostadmin.ts) share these helpers.
+// The local routes (app.ts), the forwarding routes (hosts/api/forward.ts) and the host admin API (hosts/api/admin.ts) share these helpers.
 describe("the request helpers have a single definition", () => {
   const src = (item: string) => readFileSync(path.join(import.meta.dir, "../../src", item), "utf8");
   test.each(["app.ts", "hosts/api/forward.ts", "hosts/api/admin.ts"])("%s does not define its own isObject or readJson", (item) => {

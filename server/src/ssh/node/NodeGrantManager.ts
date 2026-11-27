@@ -79,7 +79,7 @@ interface Grant {
 /**
  * The SSH grants of a node. For each grant it runs an agent, writes an `ssh` config file, a known_hosts file and the
  * public key file in the folder of the instance, and ends the waiting sign requests when the grant ends. The routes in
- * `sshnodeapi.ts` parse a request, call one method and map a `NodeGrantError` to its status.
+ * `ssh/api/node.ts` parse a request, call one method and map a `NodeGrantError` to its status.
  */
 export class NodeGrantManager {
   private readonly grants = new Map<string, Grant>();

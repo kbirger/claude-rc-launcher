@@ -5,7 +5,7 @@ import type { SystemType } from "../TargetStore";
 import { AccountQueue } from "./AccountQueue";
 
 // The hub asks a managed node to add or remove the key line of a target in the `authorized_keys` list of an account.
-// The node runs a provisioning script as that account. The routes in `sshnodeapi.ts` check the body, call
+// The node runs a provisioning script as that account. The routes in `ssh/api/node.ts` check the body, call
 // `ManagedKeyInstaller` and map a `ManagedKeyError` to its status.
 
 // The hub waits 10 seconds for a removal. The script itself stops sooner. A removal that waits behind another script of

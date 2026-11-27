@@ -106,11 +106,11 @@ export interface KeyMade {
 
 /**
  * The rules of SSH targets on the hub: the change of node lists, the retire, the keys and the provisioner, and the
- * approve of maintenance grants. The routes in `sshapi.ts` parse a request, call one method and map the result.
+ * approve of maintenance grants. The routes in `ssh/api/hub.ts` parse a request, call one method and map the result.
  * Every method that changes a target takes its lock in `TargetLocks` before its first await.
  *
  * An external target with a provisioner (a provisioner key and an installed script) changes through a maintenance
- * grant: read the comment at the top of `sshapi.ts`.
+ * grant: read the comment at the top of `ssh/api/hub.ts`.
  */
 export class SshTargetService {
   constructor(private readonly deps: SshTargetServiceDeps) {}

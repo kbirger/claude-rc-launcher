@@ -24,7 +24,7 @@ import type { KeySlot, SshKeyStore, UnlockSecret } from "./SshKeyStore";
 // sends each sign request as an `ssh.sign` event, and the service answers it with `POST /api/ssh/sign-result`. The
 // private key never leaves the hub. Every grant needs a new unlock: the service keeps no key and no secret, because
 // the grant store holds the key until the grant ends.
-// The node routes are the ones of `sshnodeapi.ts`, below `/api` like all node routes. A call to a node that fails is
+// The node routes are the ones of `ssh/api/node.ts`, below `/api` like all node routes. A call to a node that fails is
 // audited and never thrown out of an event handler or of `onGrantEnd`.
 
 const NODE_API = "/api/ssh";

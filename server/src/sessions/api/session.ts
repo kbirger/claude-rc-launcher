@@ -1,7 +1,7 @@
 /*
  * The HTTP routes for the sessions of one instance. They are a thin layer over the session classes in
- * sessioncatalog.ts (which read transcripts) and pinnedroot.ts (which checks the real root and opens files through
- * sessionfs.ts). This file never holds a checked root as a string. See docs/session-files.md for the whole picture.
+ * SessionCatalog.ts (which read transcripts) and PinnedRoot.ts (which checks the real root and opens files through
+ * files.ts). This file never holds a checked root as a string. See docs/session-files.md for the whole picture.
  *
  * The five routes, mounted at /instances/:id/sessions:
  *   GET /                 the sessions of the instance folder, newest first (InstanceSessions.list, plus live status).
@@ -20,7 +20,7 @@
  *   - the real root is inside the real instance folder,
  *   - for a work tree session, the real root is inside <instance>/.claude/worktrees.
  *
- * A `path` request stays inside that real root: sessionfs.ts checks each path. An `abs` request names a file by its
+ * A `path` request stays inside that real root: files.ts checks each path. An `abs` request names a file by its
  * full path, so it can reach a file outside the session folder. The `abs` gate (PinnedRoot.touchedFile) serves it
  * only when:
  *   - the path is touched AND confirmed: the transcript has a Write, Edit, MultiEdit or NotebookEdit call for it,
@@ -31,9 +31,9 @@
  *     and on Windows any path that is not a drive-letter path. The /touched route leaves the same places out.
  *
  * Where each check lives: the instance id and session id patterns and targetOf are here. The real-root check, the
- * `abs` gate and the EXACT and EXACT_FILE open modes are in pinnedroot.ts. The refused places are in paths.ts
+ * `abs` gate and the EXACT and EXACT_FILE open modes are in PinnedRoot.ts. The refused places are in shared/paths.ts
  * (absRefused). The touched list and its confirmation rules are in touched.ts (touchedIn). The checks while a file is
- * opened (inside the root, links, hard links, no blocking open) are in sessionfs.ts.
+ * opened (inside the root, links, hard links, no blocking open) are in files.ts.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";

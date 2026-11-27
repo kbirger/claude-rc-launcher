@@ -8,7 +8,7 @@ import type { TranscriptFs } from "./transcriptfs";
 
 // Name memory. A Remote Control session has no title record in its transcript, so after `/compact` the launcher can
 // only name it from the first prompt that is left. This store keeps the best name the launcher ever learned for each
-// session, so that the name survives. A better source is never replaced by a worse one (see NAME_RANK in sessionnames.ts).
+// session, so that the name survives. A better source is never replaced by a worse one (see NAME_RANK in names.ts).
 // A first-prompt name is never replaced by a later first prompt: the first one is the real one.
 // The store is a small JSON file in the node's state folder. A file that is missing, too big or not valid is empty.
 // Cleanup: at most 1000 names, each cut to 200 characters, the oldest `seen` dropped first, `seen` refreshed when the

@@ -10,7 +10,7 @@ import type { AgentTransport, ConnectionHandler, RawConnection, AccessResult, Ta
 // The token stops a confused session from using the grant of another instance. It does not stop a hostile session of the
 // same Windows user, which can read the environment of a sibling. The design note names this limit.
 //
-// The protocol is the one of the Linux node (sshnodecontrol.ts): one JSON object for each line, in both directions.
+// The protocol is the one of the Linux node (ssh/node/SshControl.ts): one JSON object for each line, in both directions.
 
 /** The longest line that a client may send. */
 const MAX_LINE = 16 * 1024;

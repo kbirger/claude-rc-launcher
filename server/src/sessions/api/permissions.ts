@@ -1,6 +1,6 @@
 /*
  * The HTTP routes that show and edit the permission rules, and show the blocked tool calls. They are a thin layer over
- * ClaudeSettings (settingsfile.ts) and Session.permissions, Session.settings and Session.blocked (sessioncatalog.ts).
+ * ClaudeSettings (ClaudeSettings.ts) and Session.permissions, Session.settings and Session.blocked (Session.ts).
  * See docs/superpowers/specs/2026-11-14-permissions-design.md.
  *
  * Mount at `/instances/:id`:

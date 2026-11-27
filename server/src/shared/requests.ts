@@ -3,7 +3,7 @@ import { HttpError } from "./HttpError";
 
 /**
  * Reading and validating request bodies. The local routes (`app.ts`), the routes that forward to a node
- * (`hosts.ts`) and the host admin API (`hostadmin.ts`) all use this module, so a local host and a remote host accept
+ * (`hosts/api/forward.ts`) and the host admin API (`hosts/api/admin.ts`) all use this module, so a local host and a remote host accept
  * the same input and a new field is added in one place.
  */
 

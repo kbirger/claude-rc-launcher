@@ -16,9 +16,9 @@ import { DROPBEAR_OPTIONS, HOST_KEY_RE, isAccount, isSystemType, keyFileProblem 
 import type { SystemType } from "../TargetStore";
 
 // The routes of a node for SSH grants. The node holds no private key. For each grant it runs an agent socket
-// (sshnodeagent.ts), writes an `ssh` config file and a known_hosts file, and asks the hub to sign when the SSH client
+// (ssh/node/GrantAgent.ts), writes an `ssh` config file and a known_hosts file, and asks the hub to sign when the SSH client
 // asks for a signature. A session of an instance on this node reaches the target through that socket. The grant rules
-// are in `NodeGrantManager` (sshnodegrants.ts): the routes parse a request, call it and map a `NodeGrantError`.
+// are in `NodeGrantManager` (ssh/node/NodeGrantManager.ts): the routes parse a request, call it and map a `NodeGrantError`.
 // The broker is the other way round: the node CLI asks for access, the node tells the hub with an `ssh.request` event,
 // and the hub answers through `POST /grants` (with the request id) or `POST /requests/:id/reject`.
 // A node that has no SSH wiring mounts `unsupportedSshApi` instead, and its grant routes answer 501.
