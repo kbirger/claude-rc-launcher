@@ -38,7 +38,7 @@ When you add a file, look for its feature folder first. Create a new feature fol
 
 Put code in `shared/` only when two features need it and it knows nothing about either of them.
 
-`eslint.config.js` checks these rules and the file name rules.
+`eslint.config.js` checks the import rules and the main file name rules. In the lint, `shared/` imports nothing outside `shared/`. The lint also stops import cycles with `import-x/no-cycle`. That rule ignores type-only imports. The config lists three exceptions, each with its reason.
 
 ## Tests
 
