@@ -23,7 +23,7 @@ import type { Presence } from "./hosts/nodewatcher";
 import type { AdoptDir } from "./instances/ownedir";
 import { PathError, within } from "./shared/paths";
 import { permissionsApi } from "./sessions/api/permissions";
-import { pushApi } from "./pushapi";
+import { pushApi } from "./push/api/subscriptions";
 import type { createReleaseList } from "./updates/releaselist";
 import {
   isObject,
@@ -63,7 +63,7 @@ import type { UpdateRecord } from "./updates/UpdateRecord";
 import { createUpdateTracker } from "./updates/tracker";
 import type { User, UserAuthStrategy } from "./auth/user";
 import { VERSION } from "./shared/version";
-import type { PushService } from "./webpush";
+import type { PushService } from "./push/PushService";
 import type { DefinitionStatus } from "./win/definition";
 
 /** The command-line client's surface: bearer-authenticated, mounted under `/cli`. */

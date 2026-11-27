@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PushService } from "./webpush";
-import type { PushMessage, PushSubscriptionJson, PushTransport } from "./webpush";
+import { PushService } from "../../src/push/PushService";
+import type { PushMessage, PushSubscriptionJson, PushTransport } from "../../src/push/PushService";
 
 const dirs: string[] = [];
 

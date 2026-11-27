@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import { onError } from "./app";
-import { pushApi } from "./pushapi";
-import { requiredRole } from "./roles";
-import { PushValidationError } from "./webpush";
-import type { PushService, PushSubscriptionJson } from "./webpush";
+import { onError } from "../../../src/app";
+import { pushApi } from "../../../src/push/api/subscriptions";
+import { requiredRole } from "../../../src/roles";
+import { PushValidationError } from "../../../src/push/PushService";
+import type { PushService, PushSubscriptionJson } from "../../../src/push/PushService";
 
 const good = (endpoint = "https://push.example.com/a"): PushSubscriptionJson => ({
   endpoint,

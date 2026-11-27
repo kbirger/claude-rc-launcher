@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
-import { HttpError } from "./instances/InstanceService";
-import { isObject, readObject } from "./shared/requests";
-import { logToken } from "./roles";
-import type { User } from "./auth/user";
-import { PushValidationError } from "./webpush";
-import type { PushService, PushSubscriptionJson } from "./webpush";
+import { HttpError } from "../../instances/InstanceService";
+import { isObject, readObject } from "../../shared/requests";
+import { logToken } from "../../roles";
+import type { User } from "../../auth/user";
+import { PushValidationError } from "../PushService";
+import type { PushService, PushSubscriptionJson } from "../PushService";
 
 // The routes that register a device for push notifications, mounted at `/push` of the browser API and of the CLI API.
 // `GET /key` gives the VAPID public key, `POST /subscribe` stores a device subscription of the caller and

@@ -52,7 +52,7 @@ import { UpdateRecord } from "./updates/UpdateRecord";
 import type { UserAuthStrategy } from "./auth/user";
 import { VERSION } from "./shared/version";
 import { loadWebFiles } from "./webfiles";
-import { PushService } from "./webpush";
+import { PushService } from "./push/PushService";
 
 export interface HubDeps {
   instances?: Instances;

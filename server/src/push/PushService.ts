@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { logToken } from "./roles";
+import { logToken } from "../roles";
 
 // Web Push for SSH requests. The hub holds one VAPID key pair (`<dir>/vapid.json`) and the device subscriptions of its
 // admins (`<dir>/subscriptions.json`). Both files have mode 600 in a folder with mode 700. A write goes through a

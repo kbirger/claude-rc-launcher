@@ -7,7 +7,7 @@ import {
   maintenanceMessage,
   requestMessage,
 } from "../../../src/ssh/hub/notify";
-import type { PushMessage } from "../../../src/webpush";
+import type { PushMessage } from "../../../src/push/PushService";
 import type { Target } from "../../../src/ssh/TargetStore";
 
 const target = {

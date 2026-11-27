@@ -1,6 +1,6 @@
 import type { Grant, MaintenanceAction } from "./GrantStore";
 import type { Target } from "../TargetStore";
-import type { PushMessage } from "../../webpush";
+import type { PushMessage } from "../../push/PushService";
 
 const MAX_REASON_CHARS = 120;
 
