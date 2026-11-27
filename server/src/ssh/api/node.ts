@@ -1,10 +1,9 @@
 import { Hono } from "hono";
-import { asUser } from "../../shared/asuser";
-import type { IdentityFor } from "../../shared/asuser";
 import { HOST_ID_RE } from "../../shared/hostid";
 import { HttpError } from "../../shared/HttpError";
 import { isObject, readObject } from "../../shared/requests";
 import { keyFingerprint } from "../agentproto";
+import { defaultRunAs, keyscanDefault, probeDefault } from "../node/commands";
 import { LinuxGrantPlatform } from "../node/LinuxGrantPlatform";
 import { ManagedKeyError, ManagedKeyInstaller } from "../node/ManagedKeyInstaller";
 import { NodeGrantError, NodeGrantManager } from "../node/NodeGrantManager";
@@ -36,53 +35,6 @@ const KEY_BLOB_LEN = 51;
 const TOKEN_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** One word without white space, control characters or a leading dash. It ends up on one line of the config file. */
 const WORD_RE = /^[^\s\p{Cc}-][^\s\p{Cc}]{0,252}$/u;
-
-async function runCommand(cmd: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
-  let child: ReturnType<typeof Bun.spawn>;
-
-  try {
-    child = Bun.spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  } catch (error) {
-    return { code: 127, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
-  }
-
-  const timer = setTimeout(() => {
-    child.kill();
-  }, timeoutMs);
-
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout as ReadableStream).text(),
-      new Response(child.stderr as ReadableStream).text(),
-      child.exited,
-    ]);
-    return { code, stdout, stderr };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** The host keys that `ssh-keyscan` finds, as `<type> <base64>` lines. It gives up after 5 seconds. */
-async function keyscanDefault(address: string, port: number): Promise<string[]> {
-  const result = await runCommand(["ssh-keyscan", "-T", "5", "-t", "ed25519", "-p", String(port), address], 5000);
-  const lines: string[] = [];
-
-  for (const line of result.stdout.split("\n")) {
-    if (line.startsWith("#")) continue;
-    const [, type, key] = line.trim().split(/\s+/);
-    if (type && key) lines.push(`${type} ${key}`);
-  }
-
-  return lines;
-}
-
-async function probeDefault(config: string, targetId: string): Promise<{ code: number; stderr: string }> {
-  const { code, stderr } = await runCommand(
-    ["ssh", "-F", config, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", targetId, "true"],
-    30_000,
-  );
-  return { code, stderr };
-}
 
 function token(value: unknown, name: string): string {
   if (typeof value !== "string" || !TOKEN_RE.test(value))
@@ -251,75 +203,9 @@ export function sshNodeApi(options: SshNodeOptions): Hono {
 }
 
 const MAX_LINE = 2000;
-const SCRIPT_TIMEOUT_MS = 60_000;
 
 const defaultHostKeyFile = () =>
   process.platform === "win32" ? "C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub" : "/etc/ssh/ssh_host_ed25519_key.pub";
-
-/** Runs a command with the script on stdin. A command that cannot start gives code 127. */
-async function runWithStdin(
-  cmd: string,
-  args: string[],
-  script: string,
-  env?: Record<string, string>,
-  timeoutMs: number = SCRIPT_TIMEOUT_MS,
-): Promise<{ code: number; stderr: string; stdout: string }> {
-  let child: ReturnType<typeof Bun.spawn>;
-
-  try {
-    child = Bun.spawn([cmd, ...args], {
-      stdin: new Blob([script]),
-      stdout: "pipe",
-      stderr: "pipe",
-      ...(env ? { env } : {}),
-    });
-  } catch (error) {
-    return { code: 127, stderr: error instanceof Error ? error.message : String(error), stdout: "" };
-  }
-
-  const timer = setTimeout(() => {
-    child.kill();
-  }, timeoutMs);
-
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout as ReadableStream).text(),
-      new Response(child.stderr as ReadableStream).text(),
-      child.exited,
-    ]);
-    return { code, stderr, stdout };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** A test must never run a real provision script: it would write an `authorized_keys` file of the machine. */
-function refuseUnderTest(): void {
-  if (process.env.NODE_ENV === "test")
-    throw new HttpError(500, "the provision script does not run under test: inject runAs in sshManaged");
-}
-
-function defaultRunAs(identityFor?: IdentityFor): NonNullable<SshManagedOptions["runAs"]> {
-  return async (account, { shell, script }, timeoutMs) => {
-    if (shell === "powershell") {
-      refuseUnderTest();
-      return runWithStdin(
-        "powershell",
-        ["-NoProfile", "-NonInteractive", "-Command", "-"],
-        script,
-        undefined,
-        timeoutMs,
-      );
-    }
-
-    // Fail closed: without a user switch the script would write to the home of the node's own user.
-    if (!identityFor) throw new HttpError(501, "the node has no user switch");
-    // identityFor rejects an unknown account with a 400.
-    const wrapped = asUser(await identityFor(account), "sh", ["-s"]);
-    refuseUnderTest();
-    return runWithStdin(wrapped.cmd, wrapped.args, script, wrapped.env, timeoutMs);
-  };
-}
 
 /**
  * The line of `/authorize`. An OpenSSH line starts with `from="` or `ssh-ed25519 `. The line of a `dropbear` target
