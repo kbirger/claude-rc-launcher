@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunSpawn } from "../src/win/instances";
-import { mergeEnvBlock } from "../src/win/token";
+import { bunSpawn } from "../../src/win/instances";
+import { mergeEnvBlock } from "../../src/win/token";
 
 const entries = (block: Buffer) =>
   block

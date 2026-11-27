@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { HttpError } from "../src/instances/InstanceService";
-import { grantConfig, sshConfigPath } from "../src/ssh/api/node";
-import { newPipeName, currentUserSid } from "../src/win/pipe";
+import { HttpError } from "../../src/instances/InstanceService";
+import { grantConfig, sshConfigPath } from "../../src/ssh/api/node";
+import { newPipeName, currentUserSid } from "../../src/win/pipe";
 import {
   countEntries,
   ensurePrivateFolder,
@@ -13,8 +13,8 @@ import {
   removeStaleGrantFiles,
   runIcacls,
   writeGrantFile,
-} from "../src/win/sshfiles";
-import type { RunIcacls } from "../src/win/sshfiles";
+} from "../../src/win/sshfiles";
+import type { RunIcacls } from "../../src/win/sshfiles";
 
 const onWindows = process.platform === "win32";
 const windowsTest = test.skipIf(!onWindows);

@@ -9,8 +9,8 @@ import {
   mergedEnv,
   parseVersion,
   pipeSelfTest,
-} from "../src/win/sshclient";
-import type { RunResult, SshClientDeps } from "../src/win/sshclient";
+} from "../../src/win/sshclient";
+import type { RunResult, SshClientDeps } from "../../src/win/sshclient";
 
 const onWindows = process.platform === "win32";
 const windowsTest = test.skipIf(!onWindows);

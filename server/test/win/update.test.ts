@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sha256 } from "../src/updates/release";
-import { UpdateRefused } from "../src/updates/serviceupdate";
+import { sha256 } from "../../src/updates/release";
+import { UpdateRefused } from "../../src/updates/serviceupdate";
 import {
   PENDING_FILE,
   STAY_ACTIVE_SECONDS,
@@ -9,9 +9,9 @@ import {
   confirmPendingUpdate,
   createWindowsUpdater,
   pendingPath,
-} from "../src/win/update";
-import type { WinUpdateEnv } from "../src/win/update";
-import { rejection, defined } from "./support";
+} from "../../src/win/update";
+import type { WinUpdateEnv } from "../../src/win/update";
+import { rejection, defined } from "../support";
 
 const DIR = "C:\\Program Files\\claude-rc-launcher";
 const EXE = `${DIR}\\claude-rc-launcher.exe`;

@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { definitionStatus, parseInstalledDefinition, REQUIRED_DEFINITION } from "../src/win/definition";
+import { definitionStatus, parseInstalledDefinition, REQUIRED_DEFINITION } from "../../src/win/definition";
 
-const DEPLOY = resolve(import.meta.dir, "../../deploy/windows");
+const DEPLOY = resolve(import.meta.dir, "../../../deploy/windows");
 const text = (item: string) => readFileSync(resolve(DEPLOY, item), "utf8").replaceAll("\r\n", "\n");
 
 // The hash of the files that make up the service definition. When it no longer matches, a file of the definition

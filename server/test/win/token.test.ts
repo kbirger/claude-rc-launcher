@@ -2,15 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunSpawn } from "../src/win/instances";
+import { bunSpawn } from "../../src/win/instances";
 import {
   RestrictedTokenError,
   planSessions,
   restrictedSpawn,
   serviceAdminState,
   serviceIsAdmin,
-} from "../src/win/token";
-import { defined } from "./support";
+} from "../../src/win/token";
+import { defined } from "../support";
 
 test("token.ts imports on every platform", () => {
   expect(typeof restrictedSpawn).toBe("function");
