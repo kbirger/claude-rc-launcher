@@ -497,7 +497,7 @@ test("the sections come in order, with Access requests and Targets open and Sett
   expect(contentOf("Settings").hidden).toBe(true);
   expect(squashed()).toContain("A target is a machine that you connect to. The hub holds one key for each target.");
   expect(squashed()).toContain(
-    "A node is a machine that runs the launcher. Choose which nodes may ask for SSH access, and the address that targets see for each.",
+    "A node is a machine that runs the launcher. Choose which nodes can ask for SSH access, and the address that targets see for each.",
   );
 });
 

@@ -107,7 +107,7 @@
         <Accordion.Trigger>Nodes</Accordion.Trigger>
         <Accordion.Content class="grid gap-3">
           <p class="text-muted-foreground">
-            A node is a machine that runs the launcher. Choose which nodes may ask for SSH access, and the address that
+            A node is a machine that runs the launcher. Choose which nodes can ask for SSH access, and the address that
             targets see for each.
           </p>
           <NodeAccess nodes={query.data.nodes} />
