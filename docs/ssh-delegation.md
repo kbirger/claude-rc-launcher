@@ -252,7 +252,7 @@ A passphrase works on any device. The hub derives a wrapping key from the passph
 
 A password manager can generate, save and fill the passphrase. It can fill the passphrase field on the first key and on the test step. It can also fill it on each approval and on a recovery. It does not fill the recovery code or the target fields. A passphrase needs at least 12 characters when you set it. The hub counts characters, not bytes. An older shorter passphrase keeps working until you recover and set a new one.
 
-With a passkey, the SSH access page has a `Check my passkey` button for admins. A tap asks the passkey for one secret and sends nothing to the hub. A good result proves that the passkey returns a PRF secret now. It does not make sure that the hub keys open.
+With a passkey, the Settings section of the SSH access page has a `Check my passkey` button for admins. A tap asks the passkey for one secret and sends nothing to the hub. A good result proves that the passkey returns a PRF secret now. It does not make sure that the hub keys open.
 
 A wrong unlock fails with `the unlock does not open the key`. No grant is lost. Try again.
 
@@ -266,7 +266,7 @@ Keep the code away from the hub. Without it and without your unlock method, nobo
 
 Use the recovery code when you lose your passkey or forget your passphrase. A recovery chooses a new unlock method. It keeps the keys, the targets and the lines on the targets.
 
-1. Open the SSH access page. Tap Lost your passkey? Recover, or Forgot your passphrase? Recover.
+1. Open the SSH access page, then open Settings. Tap Lost your passkey? Recover, or Forgot your passphrase? Recover.
 2. Type the recovery code.
 3. Choose the new unlock method. For a passkey, the browser registers it. If the passkey gave no secret yet, tap Test your passkey. If the passkey has no PRF support, the page offers the passphrase.
 4. For a passphrase, type it twice. The two must match, because a typo locks every key under a passphrase that nobody knows.
@@ -580,7 +580,7 @@ Do these checks once after you install a provisioner on a Linux target:
 
 If a session asks for SSH access, the hub sends a push message to each registered device. The message tells you that a request waits. You still approve on the SSH access page.
 
-- Only an admin can register a device. Turn on Notify this device on the SSH access page. Read [Web UI](web-ui.md#ssh-access).
+- Only an admin can register a device. Turn on Notify this device in the Settings section of the SSH access page. Read [Web UI](web-ui.md#ssh-access).
 - The message holds the target id, the instance name, the minutes and the reason. The reason is cut to 120 characters. If the instance has no name, the message shows the instance id.
 - A test grant sends no message.
 - On Android Chrome, the message has an Open button and a Deny button. Deny refuses the request. There is no Approve button, because the unlock needs a passkey or passphrase on the page.

@@ -2,6 +2,7 @@ import { untrack } from "svelte";
 import { createQuery, type QueryClient } from "@tanstack/svelte-query";
 import type { Grant } from "./api";
 import { grantsQuery, statusQuery } from "./queries";
+import { browserStorage, createSectionsModel } from "./sections.svelte";
 
 /** The sheet that the SSH page shows over the list: the wizard, the provisioner key card or the approval sheet. */
 export type PageSheet =
@@ -18,11 +19,16 @@ export const waitingMaintenance = (grants: Grant[] | undefined, targetId: string
 // maintenance request, the link of the command line asks for its approval, so the approval sheet opens instead. With
 // `provisioner` (the link `?target=<id>&provisioner=1`), the card that makes the provisioner key opens. `onclose` lets
 // the route drop the parameters, so that the same link opens it again.
+//
+// The page groups its content in accordion sections. A pending request opens Access requests. A link to a target opens
+// Targets, because the target card holds the wizard state, the provisioner key and the waiting maintenance request.
+// `storage` holds the open sections. It defaults to the localStorage of the browser.
 export function createSshPageModel(opts: {
   client: QueryClient;
   target: () => string | null;
   provisioner: () => boolean;
   onclose: () => void;
+  storage?: Pick<Storage, "getItem" | "setItem">;
 }) {
   const { client } = opts;
   const status = createQuery(
@@ -67,6 +73,24 @@ export function createSshPageModel(opts: {
   });
   const nodeCount = $derived(status.data?.nodes.length ?? 0);
 
+  // The pending requests, as Access requests lists them (maintenance requests included).
+  const pendingIds = $derived(
+    (grants.data ?? [])
+      .filter((grant) => grant.state === "pending")
+      .map((grant) => grant.id)
+      .sort(),
+  );
+  const sections = createSectionsModel({
+    storage: "storage" in opts ? opts.storage : browserStorage(),
+    needs: () => {
+      const id = opts.target();
+      return [
+        { section: "requests", token: pendingIds.join(",") },
+        { section: "targets", token: id ? `${id}${opts.provisioner() ? "/provisioner" : ""}` : "" },
+      ];
+    },
+  });
+
   const close = () => {
     sheet = null;
     opts.onclose();
@@ -95,6 +119,12 @@ export function createSshPageModel(opts: {
     get nodeCount() {
       return nodeCount;
     },
+    /** The count for the badge of Access requests. */
+    get pendingRequests() {
+      return pendingIds.length;
+    },
+    /** Which accordion sections are open. */
+    sections,
     /** True while a sheet or the recovery flow is open: the passkey check then waits. */
     get busy() {
       return recovering || sheet !== null;

@@ -61,7 +61,6 @@
 </script>
 
 <section class="grid gap-3">
-  <h3 class="font-heading text-base font-bold">Access requests</h3>
   {#if problem}
     <Alert.Root variant="destructive" role="alert"><Alert.Description>{problem}</Alert.Description></Alert.Root>
   {/if}
