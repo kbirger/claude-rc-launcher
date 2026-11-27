@@ -144,12 +144,63 @@ describe("target wizard model", () => {
     wizard.dispose();
   });
 
-  test("the node is the first allowed one until the owner chooses another", async () => {
+  const BOTH = {
+    ...STATUS,
+    nodes: [
+      { host: "node2", enabled: true, sourceAddress: "10.0.0.3" },
+      { host: "node1", enabled: true, sourceAddress: "10.0.0.2" },
+    ],
+  } as SshStatus;
+
+  test("the node list holds only target nodes with access on and a source address, in the order of the target", async () => {
+    answers["GET /api/ssh/targets/nas"] = () => ({
+      body: detail({ keyFingerprint: "k", nodes: ["node3", "node1", "node2", "node4", "node5"] }),
+    });
+    const status = {
+      ...STATUS,
+      nodes: [
+        { host: "node1", enabled: true, sourceAddress: "10.0.0.2" },
+        { host: "node2", enabled: false, sourceAddress: "10.0.0.3" },
+        { host: "node3", enabled: true, sourceAddress: "10.0.0.4" },
+        { host: "node4", enabled: true, sourceAddress: "" },
+      ],
+    } as SshStatus;
+    const wizard = mount("nas", status);
+    await vi.waitFor(() => expect(wizard.model.step).toBe("hostkey"));
+    expect(wizard.model.allowed).toEqual(["node3", "node1"]);
+    expect(wizard.model.node).toBe("node3");
+    wizard.dispose();
+  });
+
+  test("one node left is used for the scan without a choice", async () => {
     answers["GET /api/ssh/targets/nas"] = () => ({ body: detail({ keyFingerprint: "k" }) });
     answers["POST /api/ssh/targets/nas/scan"] = () => ({
       body: { keys: [{ line: "ssh-ed25519 H", fingerprint: "F" }] },
     });
     const wizard = mount("nas");
+    await vi.waitFor(() => expect(wizard.model.step).toBe("hostkey"));
+    expect(wizard.model.allowed).toEqual(["node1"]);
+    void wizard.model.scanKey();
+    await settled(wizard.model);
+    expect(calls.find((call) => call.url.endsWith("/scan"))?.body).toEqual({ node: "node1" });
+    wizard.dispose();
+  });
+
+  test("no node left gives an empty node", async () => {
+    answers["GET /api/ssh/targets/nas"] = () => ({ body: detail({ keyFingerprint: "k", nodes: ["node2"] }) });
+    const wizard = mount("nas");
+    await vi.waitFor(() => expect(wizard.model.step).toBe("hostkey"));
+    expect(wizard.model.allowed).toEqual([]);
+    expect(wizard.model.node).toBe("");
+    wizard.dispose();
+  });
+
+  test("the node is the first allowed one until the owner chooses another", async () => {
+    answers["GET /api/ssh/targets/nas"] = () => ({ body: detail({ keyFingerprint: "k" }) });
+    answers["POST /api/ssh/targets/nas/scan"] = () => ({
+      body: { keys: [{ line: "ssh-ed25519 H", fingerprint: "F" }] },
+    });
+    const wizard = mount("nas", { ...BOTH, nodes: [...BOTH.nodes].reverse() } as SshStatus);
     await vi.waitFor(() => expect(wizard.model.step).toBe("hostkey"));
     expect(wizard.model.node).toBe("node1");
     wizard.model.node = "node2";

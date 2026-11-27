@@ -115,7 +115,15 @@ export function createTargetWizardModel(opts: {
   let testFailure = $state("");
 
   const external = $derived(target?.managedHost === undefined);
-  const allowed = $derived(target?.nodes ?? []);
+  // The nodes of the target with access on and a source address, in the order of the target. Only these can run a scan
+  // or a test.
+  const allowed = $derived.by(() => {
+    const nodes = opts.status().nodes;
+
+    return (target?.nodes ?? []).filter((host) =>
+      nodes.some((item) => item.host === host && item.enabled && item.sourceAddress !== ""),
+    );
+  });
   const node = $derived(allowed.includes(nodeChoice) ? nodeChoice : (allowed[0] ?? ""));
   const needsScript = $derived(step === "install" && external && installLine === "");
   const script = createQuery(
@@ -209,7 +217,7 @@ export function createTargetWizardModel(opts: {
     set node(value: string) {
       nodeChoice = value;
     },
-    /** The nodes of the target. The sheet offers a choice when there are two or more. */
+    /** The nodes of the target that have access on and a source address. The sheet offers a choice when there are two or more. */
     get allowed() {
       return allowed;
     },

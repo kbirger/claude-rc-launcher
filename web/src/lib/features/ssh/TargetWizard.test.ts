@@ -28,6 +28,14 @@ const PRF: SshStatus = {
     { host: "node2", enabled: false, sourceAddress: "" },
   ],
 };
+const BOTH: SshStatus = {
+  ...PRF,
+  nodes: [
+    { host: "node1", enabled: true, sourceAddress: "10.0.0.2" },
+    { host: "node2", enabled: true, sourceAddress: "10.0.0.3" },
+  ],
+};
+const NO_NODE = "No node of this target has SSH access on. Turn it on, with a source address, on the Nodes card.";
 const PASSPHRASE: SshStatus = { ...PRF, method: "passphrase", credentialId: undefined };
 
 const detail = (extra: Partial<TargetDetail> = {}): TargetDetail => ({
@@ -498,7 +506,7 @@ test("a passed test shows ready", async () => {
 test("the test step asks for a new unlock every time", async () => {
   prf.unlockWithPasskey.mockResolvedValueOnce("Zmlyc3Q").mockResolvedValueOnce("c2Vjb25k");
   answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: false, error: "nope" } });
-  await toTest({ nodes: ["node1", "node2"] });
+  await toTest({ nodes: ["node1", "node2"] }, BOTH);
   await pick('[id$="-test-node"]', "node2");
   press("Test connection");
   await waitText("nope");
@@ -587,9 +595,9 @@ test("Cancel calls onclose", () => {
 
 test("the node select shows the node that the scan uses when the admin does not touch it", async () => {
   answers["POST /api/ssh/targets/nas/scan"] = () => ({ body: { keys: [{ line: ED, fingerprint: "SHA256:ed" }] } });
-  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node1", "node2"] });
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node1", "node2"] }, BOTH);
   const select = document.querySelector<HTMLElement>('[id$="-scan-node"]')!;
-  expect(select.labels[0]?.textContent).toBe("Node");
+  expect(select.labels[0]?.textContent).toBe("Read the host key from this node");
   expect(select.textContent?.trim()).toBe("node1");
   press("Scan host key");
   await waitText("SHA256:ed");
@@ -598,8 +606,9 @@ test("the node select shows the node that the scan uses when the admin does not 
 
 test("the node select of the test step shows the node that the test uses", async () => {
   answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: true } });
-  await toTest({ nodes: ["node1", "node2"] });
+  await toTest({ nodes: ["node1", "node2"] }, BOTH);
   const select = document.querySelector<HTMLElement>('[id$="-test-node"]')!;
+  expect(select.labels[0]?.textContent).toBe("Run the test from this node");
   expect(select.textContent?.trim()).toBe("node1");
   press("Test connection");
   await waitText("nas is ready");
@@ -684,4 +693,65 @@ test.each([
   await resumeAt({ keyFingerprint: "SHA256:key", hostKey: ED, state: "ready", ...extra });
   expect(document.body.textContent).toContain("is ready");
   expect(document.querySelector("[data-provisioner-hint]")).toBeNull();
+});
+
+test("the test step says what the test does", async () => {
+  await toTest();
+  const text = document.body.textContent!.replace(/\s+/g, " ");
+  expect(text).toContain("A test connects to the target from the node you choose.");
+  expect(text).toContain("The address of that node must be allowed for this target.");
+  expect(text).toContain("The test opens a connection for one minute and needs a new unlock.");
+  expect(text).toContain("A failed test leaves the target in draft.");
+});
+
+test("the node list leaves out a node with access off or no source address, and keeps the order", async () => {
+  const status: SshStatus = {
+    ...PRF,
+    nodes: [
+      { host: "node1", enabled: true, sourceAddress: "10.0.0.2" },
+      { host: "node2", enabled: false, sourceAddress: "10.0.0.3" },
+      { host: "node3", enabled: true, sourceAddress: "" },
+      { host: "node4", enabled: true, sourceAddress: "10.0.0.5" },
+    ],
+  };
+  await toTest({ nodes: ["node4", "node3", "node2", "node1"] }, status);
+  const trigger = document.querySelector<HTMLElement>('[id$="-test-node"]')!;
+  expect(trigger.textContent?.trim()).toBe("node4");
+  await openSelect(trigger);
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.dataset.value);
+  expect(options).toEqual(["node4", "node1"]);
+});
+
+test("one node left shows no selector and the requests use it", async () => {
+  answers["POST /api/ssh/targets/nas/test"] = () => ({ body: { ok: true } });
+  answers["POST /api/ssh/targets/nas/scan"] = () => ({ body: { keys: [{ line: ED, fingerprint: "SHA256:ed" }] } });
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node2", "node1"] });
+  expect(document.querySelector('[id$="-scan-node"]')).toBeNull();
+  press("Scan host key");
+  await waitText("SHA256:ed");
+  expect(posts().find((call) => call.url.endsWith("/scan"))!.body).toEqual({ node: "node1" });
+  label("They match").querySelector<HTMLElement>('[role="checkbox"]')!.click();
+  flushSync();
+  answers["POST /api/ssh/targets/nas/pin"] = () => ({ body: detail({ hostKey: ED }) });
+  press("Pin host key");
+  await waitText("Step 4 of 6");
+  press("I installed it");
+  expect(document.querySelector('[id$="-test-node"]')).toBeNull();
+  press("Test connection");
+  await waitText("nas is ready");
+  expect(posts().find((call) => call.url.endsWith("/test"))!.body).toMatchObject({ node: "node1" });
+});
+
+test("no node left at the host key step shows the message and disables the scan", async () => {
+  await resumeAt({ keyFingerprint: "SHA256:key", nodes: ["node2"] });
+  expect(document.body.textContent).toContain(NO_NODE);
+  expect(document.querySelector('[id$="-scan-node"]')).toBeNull();
+  expect(button("Scan host key")!.disabled).toBe(true);
+});
+
+test("no node left at the test step shows the message and disables the test", async () => {
+  await toTest({ nodes: ["node2"] });
+  expect(document.body.textContent).toContain(NO_NODE);
+  expect(document.querySelector('[id$="-test-node"]')).toBeNull();
+  expect(button("Test connection")!.disabled).toBe(true);
 });

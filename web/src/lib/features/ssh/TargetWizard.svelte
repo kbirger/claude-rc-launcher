@@ -66,9 +66,17 @@
   {/if}
 {/snippet}
 
-{#snippet nodeSelect(name: string)}
+{#snippet noNode()}
+  <Alert.Root variant="destructive" role="alert">
+    <Alert.Description>
+      No node of this target has SSH access on. Turn it on, with a source address, on the Nodes card.
+    </Alert.Description>
+  </Alert.Root>
+{/snippet}
+
+{#snippet nodeSelect(name: string, label: string)}
   <div class="grid gap-1">
-    <Label for="{uid}-{name}">Node</Label>
+    <Label for="{uid}-{name}">{label}</Label>
     <Select.Root type="single" bind:value={model.node}>
       <Select.Trigger id="{uid}-{name}" class="w-full min-w-0 data-[size=default]:h-11">
         {hostLabel(model.node, model.hosts)}
@@ -130,8 +138,10 @@
               The hub reads the host key of the target through a node. Compare each fingerprint with the one the target
               shows, then confirm.
             </p>
-            {#if model.allowed.length > 1}
-              {@render nodeSelect("scan-node")}
+            {#if model.allowed.length === 0}
+              {@render noNode()}
+            {:else if model.allowed.length > 1}
+              {@render nodeSelect("scan-node", "Read the host key from this node")}
             {/if}
             {#if model.found.length > 0}
               <ul class="grid min-w-0 gap-1">
@@ -215,10 +225,14 @@
           {/if}
         {:else if step === "test"}
           <p class="text-sm">
-            A test opens a connection for one minute and needs a new unlock. A failed test leaves the target in draft.
+            A test connects to the target from the node you choose. The address of that node must be allowed for this
+            target. The test opens a connection for one minute and needs a new unlock. A failed test leaves the target
+            in draft.
           </p>
-          {#if model.allowed.length > 1}
-            {@render nodeSelect("test-node")}
+          {#if model.allowed.length === 0}
+            {@render noNode()}
+          {:else if model.allowed.length > 1}
+            {@render nodeSelect("test-node", "Run the test from this node")}
           {/if}
           {@render unlockField(false)}
           {#if model.testFailure}
